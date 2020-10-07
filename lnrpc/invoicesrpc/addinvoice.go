@@ -426,7 +426,7 @@ func selectHopHints(amtMSat lnwire.MilliSatoshi, cfg *AddInvoiceConfig,
 	graph := cfg.ChanDB.ChannelGraph()
 
 	// We'll add our hop hints in two passes, first we'll add all channels
-	// that are eligible to be hop hints, and also have a local balance
+	// that are eligible to be hop hints, and also have a remote balance
 	// above the payment amount.
 	var totalHintBandwidth lnwire.MilliSatoshi
 	hopHintChans := make(map[wire.OutPoint]struct{})
