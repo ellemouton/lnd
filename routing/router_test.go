@@ -3103,3 +3103,105 @@ func TestBuildRoute(t *testing.T) {
 		t.Fatalf("unexpected no channel error node")
 	}
 }
+
+// TestBlockManager tests that blockCache works as expected.
+func TestBlockManager(t *testing.T) {
+	// Initialize the block manager with a max size of 2
+	bm := newBlockCache(2)
+
+	// Set up a mock chain client
+	mc := newMockChain(1)
+
+	block1 := &wire.MsgBlock{Header: wire.BlockHeader{Nonce: 1}}
+	block2 := &wire.MsgBlock{Header: wire.BlockHeader{Nonce: 2}}
+	block3 := &wire.MsgBlock{Header: wire.BlockHeader{Nonce: 3}}
+
+	mc.addBlock(&wire.MsgBlock{}, 1, 1)
+	mc.addBlock(&wire.MsgBlock{}, 2, 2)
+	mc.addBlock(&wire.MsgBlock{}, 3, 3)
+
+	// We expect the initial cache to be empty
+	require.Len(t, bm.blocks, 0)
+
+	// After querying for block 1, we expect that it was not found in the
+	// cache and that it had to be fetched using the chain client.
+	// After this, the cache size should be 1. Block 1 should be
+	// in the cache.
+	_, err := bm.getBlock(mc, 1, block1.BlockHash())
+	require.NoError(t, err)
+
+	require.Len(t, bm.blocks, 1)
+	require.Equal(t, bm.newestHeight, int64(1))
+	require.Equal(t, mc.clientCallCount, 1)
+
+	_, ok := bm.blocks[block1.BlockHash()]
+	require.True(t, ok)
+
+	// After querying for block 3, we expect that it was not found in the
+	// cache and that it had to be fetched using the chain client.
+	// After this, the cache size should be 2.
+	// Both block 1 and block 3 should be in the cache.
+	_, err = bm.getBlock(mc, 3, block3.BlockHash())
+	require.NoError(t, err)
+
+	require.Len(t, bm.blocks, 2)
+	require.Equal(t, bm.newestHeight, int64(3))
+	require.Equal(t, mc.clientCallCount, 2)
+
+	_, ok = bm.blocks[block1.BlockHash()]
+	require.True(t, ok)
+
+	_, ok = bm.blocks[block3.BlockHash()]
+	require.True(t, ok)
+
+	// Since block 3 is already stored in the cache,
+	// this call should not result in a call to the client and so
+	// clientCallCount should be the same as before.
+	_, err = bm.getBlock(mc, 3, block3.BlockHash())
+	require.NoError(t, err)
+
+	require.Len(t, bm.blocks, 2)
+	require.Equal(t, bm.newestHeight, int64(3))
+	require.Equal(t, mc.clientCallCount, 2)
+
+	// After querying for block 2, we expect that it was not found in the
+	// cache and that it had to be fetched using the chain client.
+	// Since the max cache size is 2, we expect block 2 to replace the
+	// oldest block, block 1. The cache size should be 2 and both block 2
+	// and block 3 should be in the cache.
+	_, err = bm.getBlock(mc, 2, block2.BlockHash())
+	require.NoError(t, err)
+
+	require.Len(t, bm.blocks, 2)
+	require.Equal(t, bm.newestHeight, int64(3))
+	require.Equal(t, mc.clientCallCount, 3)
+
+	_, ok = bm.blocks[block1.BlockHash()]
+	require.False(t, ok)
+
+	_, ok = bm.blocks[block2.BlockHash()]
+	require.True(t, ok)
+
+	_, ok = bm.blocks[block3.BlockHash()]
+	require.True(t, ok)
+
+	// We expect that block 1 has been evicted before and so is not in
+	// the cache and so a call to the chain client is expected.
+	// Since the cache is full, we expect the oldest block,
+	// block 2, to be evicted leaving block 1 and 3 in the cache.
+	_, err = bm.getBlock(mc, 1, block1.BlockHash())
+	require.NoError(t, err)
+
+	require.Len(t, bm.blocks, 2)
+	require.Equal(t, bm.newestHeight, int64(3))
+	require.Equal(t, mc.clientCallCount, 4)
+
+	_, ok = bm.blocks[block2.BlockHash()]
+	require.False(t, ok)
+
+	_, ok = bm.blocks[block1.BlockHash()]
+	require.True(t, ok)
+
+	_, ok = bm.blocks[block3.BlockHash()]
+	require.True(t, ok)
+}

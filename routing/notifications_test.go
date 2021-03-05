@@ -128,6 +128,8 @@ type mockChain struct {
 
 	bestHeight int32
 
+	clientCallCount int
+
 	sync.RWMutex
 }
 
@@ -155,18 +157,26 @@ func (m *mockChain) GetBestBlock() (*chainhash.Hash, int32, error) {
 	m.RLock()
 	defer m.RUnlock()
 
+	m.clientCallCount++
 	blockHash := m.blockIndex[uint32(m.bestHeight)]
 
 	return &blockHash, m.bestHeight, nil
 }
 
 func (m *mockChain) GetTransaction(txid *chainhash.Hash) (*wire.MsgTx, error) {
+	m.RLock()
+	defer m.RUnlock()
+
+	m.clientCallCount++
+
 	return nil, nil
 }
 
 func (m *mockChain) GetBlockHash(blockHeight int64) (*chainhash.Hash, error) {
 	m.RLock()
 	defer m.RUnlock()
+
+	m.clientCallCount++
 
 	hash, ok := m.blockIndex[uint32(blockHeight)]
 	if !ok {
@@ -187,6 +197,8 @@ func (m *mockChain) GetUtxo(op *wire.OutPoint, _ []byte, _ uint32,
 	m.RLock()
 	defer m.RUnlock()
 
+	m.clientCallCount++
+
 	utxo, ok := m.utxos[*op]
 	if !ok {
 		return nil, fmt.Errorf("utxo not found")
@@ -206,6 +218,8 @@ func (m *mockChain) addBlock(block *wire.MsgBlock, height uint32, nonce uint32) 
 func (m *mockChain) GetBlock(blockHash *chainhash.Hash) (*wire.MsgBlock, error) {
 	m.RLock()
 	defer m.RUnlock()
+
+	m.clientCallCount++
 
 	block, ok := m.blocks[*blockHash]
 	if !ok {

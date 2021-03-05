@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/davecgh/go-spew/spew"
@@ -372,6 +373,10 @@ type ChannelRouter struct {
 	// when doing any path finding.
 	selfNode *channeldb.LightningNode
 
+	// blochCache is a simple LFU block cache that assumes that the LFU
+	// block will be the oldest block.
+	blockCache *blockCache
+
 	// newBlocks is a channel in which new blocks connected to the end of
 	// the main chain are sent over, and blocks updated after a call to
 	// UpdateFilter.
@@ -438,6 +443,7 @@ func New(cfg Config) (*ChannelRouter, error) {
 		topologyClients:   make(map[uint64]*topologyClient),
 		ntfnClientUpdates: make(chan *topologyClientUpdate),
 		channelEdgeMtx:    multimutex.NewMutex(),
+		blockCache:        newBlockCache(5),
 		selfNode:          selfNode,
 		statTicker:        ticker.New(defaultStatInterval),
 		stats:             new(routerStats),
@@ -1447,7 +1453,9 @@ func (r *ChannelRouter) fetchFundingTx(
 	if err != nil {
 		return nil, err
 	}
-	fundingBlock, err := r.cfg.Chain.GetBlock(blockHash)
+
+	fundingBlock, err := r.blockCache.getBlock(r.cfg.Chain, blockNum,
+		*blockHash)
 	if err != nil {
 		return nil, err
 	}
@@ -2631,4 +2639,89 @@ func (r *ChannelRouter) BuildRoute(amt *lnwire.MilliSatoshi,
 			paymentAddr: payAddr,
 		},
 	)
+}
+
+// blockCache is a simple LFU block cache. It assumes that the LFU block
+// will be the oldest block.
+type blockCache struct {
+	maxSize      int
+	blocks       map[chainhash.Hash]*blockData
+	newestHeight int64
+	mu           sync.Mutex
+}
+
+// blockData wraps a block message struct with its associated height.
+type blockData struct {
+	height int64
+	block  *wire.MsgBlock
+}
+
+// newBlockCache creates a new blockCache with the given maxSize.
+func newBlockCache(maxSize int) *blockCache {
+	return &blockCache{
+		maxSize: maxSize,
+		blocks:  make(map[chainhash.Hash]*blockData),
+	}
+}
+
+// getBlock first checks the blockCache blocks map to see if the requested
+// block has already been stored in the cache and returns the block if it is.
+// Otherwise a call is made to the block client to fetch the block and it is
+// then stored in the cache.
+func (b *blockCache) getBlock(chain lnwallet.BlockChainIO,
+	height int64, hash chainhash.Hash) (*wire.MsgBlock, error) {
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	data, ok := b.blocks[hash]
+	if ok {
+		return data.block, nil
+	}
+
+	block, err := chain.GetBlock(&hash)
+	if err != nil {
+		return nil, err
+	}
+
+	b.addBlockUnsafe(height, hash, block)
+
+	return block, nil
+}
+
+// addBlockUnsafe adds blocks to the blockCache. If the blockCache is already
+// at its maximum size then the oldest block is first evicted from the cache
+// before the new one is added. The blockCache's mutex should be locked before
+// calling addBlockUnsafe.
+func (b *blockCache) addBlockUnsafe(height int64, hash chainhash.Hash,
+	block *wire.MsgBlock) {
+
+	if len(b.blocks) >= b.maxSize {
+		b.evictOldestUnsafe()
+	}
+
+	if height > b.newestHeight {
+		b.newestHeight = height
+	}
+
+	b.blocks[hash] = &blockData{
+		height: height,
+		block:  block,
+	}
+}
+
+// evictOldestUnsafe deletes the block with the lowest height from the cache.
+// The blockCache's mutex should be locked before calling evictOldestUnsafe.
+func (b *blockCache) evictOldestUnsafe() {
+	var oldestHash chainhash.Hash
+	oldest := b.newestHeight
+
+	for hash, data := range b.blocks {
+		if data.height < oldest {
+			oldest = data.height
+			oldestHash = hash
+		}
+	}
+
+	delete(b.blocks, oldestHash)
 }
