@@ -11,6 +11,7 @@ import (
 
 	"github.com/btcsuite/btcwallet/chain"
 	"github.com/lightninglabs/neutrino"
+	"github.com/lightninglabs/neutrino/cache"
 	"github.com/lightninglabs/neutrino/headerfs"
 	"github.com/lightningnetwork/lnd/lnwallet"
 )
@@ -127,11 +128,53 @@ func (b *BtcWallet) GetUtxo(op *wire.OutPoint, pkScript []byte,
 	}
 }
 
+// cacheableBlock is a wrapper around the wire.MsgBlock type which provides a
+// Size method used by the cache to target certain memory usage in terms of
+// number of blocks.
+type cacheableBlock struct {
+	*wire.MsgBlock
+}
+
+// Size returns the number of block that a cacheableBlock object represents.
+// It is used to satisfy the cache. Value interface and allows the lfu cache
+// capacity to be specified in terms of number of blocks.
+func (c *cacheableBlock) Size() (uint64, error) {
+	return 1, nil
+}
+
 // GetBlock returns a raw block from the server given its hash.
 //
 // This method is a part of the lnwallet.BlockChainIO interface.
 func (b *BtcWallet) GetBlock(blockHash *chainhash.Hash) (*wire.MsgBlock, error) {
-	return b.chain.GetBlock(blockHash)
+	var block *wire.MsgBlock
+
+	// Check if the block corresponding to the given hash is already
+	// stored in the blockCache and return it if it is.
+	cacheBlock, err := b.blockCache.Get(*blockHash)
+	if err != nil && err != cache.ErrElementNotFound {
+		return nil, err
+	}
+	if cacheBlock != nil {
+		return cacheBlock.(*cacheableBlock).MsgBlock, nil
+	}
+
+	// Fetch the block from the chain backends.
+	block, err = b.chain.GetBlock(blockHash)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add the new block to blockCache. If the cache is at its maximum
+	// capacity then the LFU item will be evicted in favour of this new
+	// block.
+	_, err = b.blockCache.Put(
+		*blockHash, &cacheableBlock{block},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return block, nil
 }
 
 // GetBlockHash returns the hash of the block in the best blockchain at the

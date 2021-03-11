@@ -21,6 +21,7 @@ import (
 	"github.com/btcsuite/btcwallet/wallet/txrules"
 	"github.com/btcsuite/btcwallet/walletdb"
 	"github.com/btcsuite/btcwallet/wtxmgr"
+	"github.com/lightninglabs/neutrino/cache/lru"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
@@ -32,6 +33,10 @@ const (
 	// UnconfirmedHeight is the special case end height that is used to
 	// obtain unconfirmed transactions from ListTransactionDetails.
 	UnconfirmedHeight int32 = -1
+
+	// defaultBlockCacheSize is the default maximum number of blocks that
+	// the LFU block cache can hold.
+	defaultBlockCacheSize = 5
 )
 
 var (
@@ -57,6 +62,9 @@ type BtcWallet struct {
 	wallet *base.Wallet
 
 	chain chain.Interface
+
+	// blockCache is a LRU block cache.
+	blockCache *lru.Cache
 
 	db walletdb.DB
 
@@ -133,6 +141,7 @@ func New(cfg Config) (*BtcWallet, error) {
 		chain:         cfg.ChainSource,
 		netParams:     cfg.NetParams,
 		chainKeyScope: chainKeyScope,
+		blockCache:    lru.NewCache(defaultBlockCacheSize),
 	}, nil
 }
 
