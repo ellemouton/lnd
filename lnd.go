@@ -563,6 +563,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, interceptor signal.Interceptor) error
 		NeutrinoCS:                  neutrinoCS,
 		ActiveNetParams:             cfg.ActiveNetParams,
 		FeeURL:                      cfg.FeeURL,
+		BlockCacheSize:              cfg.BlockCacheSize,
 	}
 
 	activeChainControl, err := chainreg.NewChainControl(chainControlCfg)
