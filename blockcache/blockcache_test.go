@@ -170,9 +170,8 @@ func TestBlockCacheMutexs(t *testing.T) {
 	// backend.
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
+		wg.Add(1)
 		go func(e int) {
-			wg.Add(1)
-
 			if e%2 == 0 {
 				_, err := bc.GetBlock(&blockhash1, getBlockImpl)
 				require.NoError(t, err)
