@@ -247,6 +247,10 @@ func (s *Server) SubscribeSingleInvoice(req *SubscribeSingleInvoiceRequest,
 				return err
 			}
 
+		case <-updateStream.Context().Done():
+			log.Debugf("invoice event stream cancelled")
+			return updateStream.Context().Err()
+
 		case <-s.quit:
 			return nil
 		}
