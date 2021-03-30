@@ -17,6 +17,7 @@ import (
 	"github.com/btcsuite/btcutil/gcs/builder"
 	"github.com/lightninglabs/neutrino"
 	"github.com/lightninglabs/neutrino/headerfs"
+	"github.com/lightningnetwork/lnd/blockcache"
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/queue"
 )
@@ -73,6 +74,9 @@ type NeutrinoNotifier struct {
 	// which the transaction could have confirmed within the chain.
 	confirmHintCache chainntnfs.ConfirmHintCache
 
+	// blockCache is an LRU block cache.
+	blockCache *blockcache.BlockCache
+
 	wg   sync.WaitGroup
 	quit chan struct{}
 }
@@ -86,7 +90,8 @@ var _ chainntnfs.ChainNotifier = (*NeutrinoNotifier)(nil)
 // NOTE: The passed neutrino node should already be running and active before
 // being passed into this function.
 func New(node *neutrino.ChainService, spendHintCache chainntnfs.SpendHintCache,
-	confirmHintCache chainntnfs.ConfirmHintCache) *NeutrinoNotifier {
+	confirmHintCache chainntnfs.ConfirmHintCache,
+	blockCache *blockcache.BlockCache) *NeutrinoNotifier {
 
 	return &NeutrinoNotifier{
 		notificationCancels:  make(chan interface{}),
@@ -104,6 +109,8 @@ func New(node *neutrino.ChainService, spendHintCache chainntnfs.SpendHintCache,
 
 		spendHintCache:   spendHintCache,
 		confirmHintCache: confirmHintCache,
+
+		blockCache: blockCache,
 
 		quit: make(chan struct{}),
 	}
@@ -571,7 +578,7 @@ func (n *NeutrinoNotifier) historicalConfDetails(confRequest chainntnfs.ConfRequ
 		// In the case that we do have a match, we'll fetch the block
 		// from the network so we can find the positional data required
 		// to send the proper response.
-		block, err := n.p2pNode.GetBlock(*blockHash)
+		block, err := n.GetBlock(*blockHash)
 		if err != nil {
 			return nil, fmt.Errorf("unable to get block from network: %v", err)
 		}
@@ -628,7 +635,7 @@ func (n *NeutrinoNotifier) handleBlockConnected(newBlock *filteredBlock) error {
 
 // getFilteredBlock is a utility to retrieve the full filtered block from a block epoch.
 func (n *NeutrinoNotifier) getFilteredBlock(epoch chainntnfs.BlockEpoch) (*filteredBlock, error) {
-	rawBlock, err := n.p2pNode.GetBlock(*epoch.Hash)
+	rawBlock, err := n.GetBlock(*epoch.Hash)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get block: %v", err)
 	}
@@ -894,6 +901,15 @@ func (n *NeutrinoNotifier) RegisterConfirmationsNtfn(txid *chainhash.Hash,
 	}
 
 	return ntfn.Event, nil
+}
+
+// GetBlock is used to retrieve the block with the given hash.
+func (n *NeutrinoNotifier) GetBlock(hash chainhash.Hash) (
+	*btcutil.Block, error) {
+	n.blockCache.LockHash(hash)
+	defer n.blockCache.UnlockHash(hash)
+
+	return n.p2pNode.GetBlock(hash)
 }
 
 // blockEpochRegistration represents a client's intent to receive a
