@@ -314,7 +314,9 @@ func NewChainControl(cfg *Config, blockCache *blockcache.BlockCache) (
 		cc.ChainNotifier = neutrinonotify.New(
 			cfg.NeutrinoCS, hintCache, hintCache,
 		)
-		cc.ChainView, err = chainview.NewCfFilteredChainView(cfg.NeutrinoCS)
+		cc.ChainView, err = chainview.NewCfFilteredChainView(
+			cfg.NeutrinoCS, blockCache,
+		)
 		if err != nil {
 			return nil, err
 		}
