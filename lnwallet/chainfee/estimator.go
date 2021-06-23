@@ -284,7 +284,7 @@ type BitcoindEstimator struct {
 	// This will be used as the default fee rate for a transaction when the
 	// estimated fee rate is too low to allow the transaction to propagate
 	// through the network.
-	minFeePerKW SatPerKWeight
+	minFeePerKW *minRelayFeeManager
 
 	// feeMode is the estimate_mode to use when calling "estimatesmartfee".
 	// It can be either "ECONOMICAL" or "CONSERVATIVE", and it's default
@@ -311,11 +311,13 @@ func NewBitcoindEstimator(rpcConfig rpcclient.ConnConfig, feeMode string,
 		return nil, err
 	}
 
-	return &BitcoindEstimator{
+	b := &BitcoindEstimator{
 		fallbackFeePerKW: fallBackFeeRate,
 		bitcoindConn:     chainConn,
 		feeMode:          feeMode,
-	}, nil
+	}
+
+	return b, nil
 }
 
 // Start signals the Estimator to start any processes or goroutines
@@ -324,43 +326,47 @@ func NewBitcoindEstimator(rpcConfig rpcclient.ConnConfig, feeMode string,
 // NOTE: This method is part of the Estimator interface.
 func (b *BitcoindEstimator) Start() error {
 	// Once the connection to the backend node has been established, we'll
-	// query it for its minimum relay fee. Since the `getinfo` RPC has been
-	// deprecated for `bitcoind`, we'll need to send a `getnetworkinfo`
-	// command as a raw request.
-	resp, err := b.bitcoindConn.RawRequest("getnetworkinfo", nil)
+	// initialise the minimum relay fee manager which will query
+	// the backend node for its minimum mempool fee.
+	relayFeeManager, err := newMinRelayFeeManager(
+		defaultUpdateInterval,
+		b.fetchMinMempoolFee,
+	)
 	if err != nil {
 		return err
 	}
+	b.minFeePerKW = relayFeeManager
 
-	// Parse the response to retrieve the relay fee in sat/KB.
+	return nil
+}
+
+// fetchMinMempoolFee is used to fetch the minimum fee that the backend node
+// requires for a tx to enter its mempool. The returned fee will be the
+// maximum of the minimum relay fee and the minimum mempool fee.
+func (b *BitcoindEstimator) fetchMinMempoolFee() (SatPerKWeight, error) {
+	resp, err := b.bitcoindConn.RawRequest("getmempoolinfo", nil)
+	if err != nil {
+		return 0, err
+	}
+
+	// Parse the response to retrieve the min mempool fee in sat/KB.
+	// mempoolminfee is the maximum of minrelaytxfee and
+	// minimum mempool fee
 	info := struct {
-		RelayFee float64 `json:"relayfee"`
+		MinMempoolFee float64 `json:"mempoolminfee"`
 	}{}
 	if err := json.Unmarshal(resp, &info); err != nil {
-		return err
+		return 0, err
 	}
 
-	relayFee, err := btcutil.NewAmount(info.RelayFee)
+	minMempoolFee, err := btcutil.NewAmount(info.MinMempoolFee)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	// The fee rate is expressed in sat/kb, so we'll manually convert it to
 	// our desired sat/kw rate.
-	minRelayFeePerKw := SatPerKVByte(relayFee).FeePerKWeight()
-
-	// By default, we'll use the backend node's minimum relay fee as the
-	// minimum fee rate we'll propose for transacations. However, if this
-	// happens to be lower than our fee floor, we'll enforce that instead.
-	b.minFeePerKW = minRelayFeePerKw
-	if b.minFeePerKW < FeePerKwFloor {
-		b.minFeePerKW = FeePerKwFloor
-	}
-
-	log.Debugf("Using minimum fee rate of %v sat/kw",
-		int64(b.minFeePerKW))
-
-	return nil
+	return SatPerKVByte(minMempoolFee).FeePerKWeight(), nil
 }
 
 // Stop stops any spawned goroutines and cleans up the resources used
@@ -406,7 +412,7 @@ func (b *BitcoindEstimator) EstimateFeePerKW(
 //
 // NOTE: This method is part of the Estimator interface.
 func (b *BitcoindEstimator) RelayFeePerKW() SatPerKWeight {
-	return b.minFeePerKW
+	return b.minFeePerKW.fetchMinFee()
 }
 
 // fetchEstimate returns a fee estimate for a transaction to be confirmed in
@@ -453,12 +459,13 @@ func (b *BitcoindEstimator) fetchEstimate(confTarget uint32) (SatPerKWeight, err
 	satPerKw := SatPerKVByte(satPerKB).FeePerKWeight()
 
 	// Finally, we'll enforce our fee floor.
-	if satPerKw < b.minFeePerKW {
+	minRelayFee := b.minFeePerKW.fetchMinFee()
+	if satPerKw < minRelayFee {
 		log.Debugf("Estimated fee rate of %v sat/kw is too low, "+
 			"using fee floor of %v sat/kw instead", satPerKw,
 			b.minFeePerKW)
 
-		satPerKw = b.minFeePerKW
+		satPerKw = minRelayFee
 	}
 
 	log.Debugf("Returning %v sat/kw for conf target of %v",

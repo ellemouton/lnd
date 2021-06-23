@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+const defaultUpdateInterval = 10 * time.Minute
+
 // minRelayFeeManager is used to store and update the minimum relay fee that is
 // required by a transaction to be accepted to the mempool.
 // The minRelayFeeManager ensures that the backend used to fetch the fee is not
