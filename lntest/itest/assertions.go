@@ -542,47 +542,45 @@ func assertNumOpenChannelsPending(ctxt context.Context, t *harnessTest,
 	require.NoError(t.t, err)
 }
 
-// assertNumConnections asserts number current connections between two peers.
-func assertNumConnections(t *harnessTest, alice, bob *lntest.HarnessNode,
-	expected int) {
+// assertConnected asserts that two peers are connected.
+func assertConnected(t *harnessTest, alice, bob *lntest.HarnessNode,
+	connected bool) {
+
 	ctxb := context.Background()
 	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
 
 	err := wait.NoError(func() error {
-		aNumPeers, err := alice.ListPeers(
-			ctxt, &lnrpc.ListPeersRequest{},
+		peers, err := alice.ListPeers(ctxt, &lnrpc.ListPeersRequest{})
+		if err != nil {
+			return fmt.Errorf(
+				"error listing %s's peers: %v",
+				alice.Name(), err,
+			)
+		}
+
+		var connectionFound bool
+		for _, peer := range peers.Peers {
+			if peer.PubKey == bob.PubKeyStr {
+				connectionFound = true
+				break
+			}
+		}
+
+		if connectionFound == connected {
+			return nil
+		}
+
+		if connectionFound {
+			return fmt.Errorf(
+				"%s and %s are connected",
+				alice.Name(), bob.Name(),
+			)
+		}
+
+		return fmt.Errorf(
+			"%s and %s are not connected",
+			alice.Name(), bob.Name(),
 		)
-		if err != nil {
-			return fmt.Errorf(
-				"unable to fetch %s's node (%v) list peers %v",
-				alice.Name(), alice.NodeID, err,
-			)
-		}
-
-		bNumPeers, err := bob.ListPeers(ctxt, &lnrpc.ListPeersRequest{})
-		if err != nil {
-			return fmt.Errorf(
-				"unable to fetch %s's node (%v) list peers %v",
-				bob.Name(), bob.NodeID, err,
-			)
-		}
-
-		if len(aNumPeers.Peers) != expected {
-			return fmt.Errorf(
-				"number of peers connected to %s is "+
-					"incorrect: expected %v, got %v",
-				alice.Name(), expected, len(aNumPeers.Peers),
-			)
-		}
-		if len(bNumPeers.Peers) != expected {
-			return fmt.Errorf(
-				"number of peers connected to %s is "+
-					"incorrect: expected %v, got %v",
-				bob.Name(), expected, len(bNumPeers.Peers),
-			)
-		}
-
-		return nil
 
 	}, defaultTimeout)
 	require.NoError(t.t, err)

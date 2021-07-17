@@ -51,7 +51,7 @@ func testDisconnectingTargetPeer(net *lntest.NetworkHarness, t *harnessTest) {
 	net.ConnectNodes(ctxt, t.t, alice, bob)
 
 	// Check existing connection.
-	assertNumConnections(t, alice, bob, 1)
+	assertConnected(t, alice, bob, true)
 
 	// Give Alice some coins so she can fund a channel.
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
@@ -87,7 +87,7 @@ func testDisconnectingTargetPeer(net *lntest.NetworkHarness, t *harnessTest) {
 	time.Sleep(time.Millisecond * 300)
 
 	// Assert that the connection was torn down.
-	assertNumConnections(t, alice, bob, 0)
+	assertConnected(t, alice, bob, false)
 
 	fundingTxID, err := chainhash.NewHash(pendingUpdate.Txid)
 	if err != nil {
@@ -137,7 +137,7 @@ func testDisconnectingTargetPeer(net *lntest.NetworkHarness, t *harnessTest) {
 	}
 
 	// Check existing connection.
-	assertNumConnections(t, alice, bob, 0)
+	assertConnected(t, alice, bob, false)
 
 	// Reconnect both nodes before force closing the channel.
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
@@ -164,14 +164,14 @@ func testDisconnectingTargetPeer(net *lntest.NetworkHarness, t *harnessTest) {
 	}
 
 	// Check zero peer connections.
-	assertNumConnections(t, alice, bob, 0)
+	assertConnected(t, alice, bob, false)
 
 	// Finally, re-connect both nodes.
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
 	net.ConnectNodes(ctxt, t.t, alice, bob)
 
 	// Check existing connection.
-	assertNumConnections(t, alice, net.Bob, 1)
+	assertConnected(t, alice, bob, true)
 
 	// Cleanup by mining the force close and sweep transaction.
 	cleanupForceClose(t, net, alice, chanPoint)
