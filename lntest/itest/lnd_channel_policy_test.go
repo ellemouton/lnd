@@ -113,7 +113,7 @@ func testUpdateChannelPolicy(net *lntest.NetworkHarness, t *harnessTest) {
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
 	net.SendCoins(ctxt, t.t, btcutil.SatoshiPerBitcoin, carol)
 
-	net.ConnectNodes(ctxb, t.t, carol, net.Bob)
+	net.ConnectNodes(ctxb, t.t, carol, net.Bob, false)
 
 	// Open the channel Carol->Bob with a custom min_htlc value set. Since
 	// Carol is opening the channel, she will require Bob to not forward
@@ -390,7 +390,7 @@ func testUpdateChannelPolicy(net *lntest.NetworkHarness, t *harnessTest) {
 	}
 
 	// We'll now open a channel from Alice directly to Carol.
-	net.ConnectNodes(ctxb, t.t, net.Alice, carol)
+	net.ConnectNodes(ctxb, t.t, net.Alice, carol, false)
 	ctxt, _ = context.WithTimeout(ctxb, channelOpenTimeout)
 	chanPoint3 := openChannelAndAssert(
 		ctxt, t, net, net.Alice, carol,

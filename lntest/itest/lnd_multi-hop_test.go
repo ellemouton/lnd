@@ -89,7 +89,7 @@ func testMultiHopHtlcClaims(net *lntest.NetworkHarness, t *harnessTest) {
 
 			ctxb := context.Background()
 			ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-			net.ConnectNodes(ctxt, t, alice, bob)
+			net.ConnectNodes(ctxt, t, alice, bob, false)
 
 			for _, subTest := range subTests {
 				subTest := subTest
@@ -253,7 +253,7 @@ func createThreeHopNetwork(t *harnessTest, net *lntest.NetworkHarness,
 	carol := net.NewNode(t.t, "Carol", carolFlags)
 
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, bob, carol)
+	net.ConnectNodes(ctxt, t.t, bob, carol, false)
 
 	// Make sure Carol has enough utxos for anchoring. Because the anchor by
 	// itself often doesn't meet the dust limit, a utxo from the wallet

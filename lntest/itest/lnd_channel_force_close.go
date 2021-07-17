@@ -98,7 +98,7 @@ func testCommitmentTransactionDeadline(net *lntest.NetworkHarness,
 		defer shutdownAndAssert(net, t, bob)
 
 		// Connect Alice to Bob.
-		net.ConnectNodes(ctxt, t.t, alice, bob)
+		net.ConnectNodes(ctxt, t.t, alice, bob, false)
 
 		// Open a channel between Alice and Bob.
 		chanPoint := openChannelAndAssert(
@@ -312,7 +312,7 @@ func channelForceClosureTest(net *lntest.NetworkHarness, t *harnessTest,
 	// We must let Alice have an open channel before she can send a node
 	// announcement, so we open a channel with Carol,
 	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, alice, carol)
+	net.ConnectNodes(ctxt, t.t, alice, carol, false)
 
 	// Before we start, obtain Carol's current wallet balance, we'll check
 	// to ensure that at the end of the force closure by Alice, Carol
@@ -1409,7 +1409,7 @@ func testFailingChannel(net *lntest.NetworkHarness, t *harnessTest) {
 
 	// Let Alice connect and open a channel to Carol,
 	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, net.Alice, carol)
+	net.ConnectNodes(ctxt, t.t, net.Alice, carol, false)
 	ctxt, _ = context.WithTimeout(ctxb, channelOpenTimeout)
 	chanPoint := openChannelAndAssert(
 		ctxt, t, net, net.Alice, carol,

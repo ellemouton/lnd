@@ -59,7 +59,7 @@ func testSwitchCircuitPersistence(net *lntest.NetworkHarness, t *harnessTest) {
 	defer shutdownAndAssert(net, t, dave)
 
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, dave, net.Alice)
+	net.ConnectNodes(ctxt, t.t, dave, net.Alice, false)
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
 	net.SendCoins(ctxt, t.t, btcutil.SatoshiPerBitcoin, dave)
 
@@ -88,7 +88,7 @@ func testSwitchCircuitPersistence(net *lntest.NetworkHarness, t *harnessTest) {
 	defer shutdownAndAssert(net, t, carol)
 
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, carol, dave)
+	net.ConnectNodes(ctxt, t.t, carol, dave, false)
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
 	net.SendCoins(ctxt, t.t, btcutil.SatoshiPerBitcoin, carol)
 
@@ -353,7 +353,7 @@ func testSwitchOfflineDelivery(net *lntest.NetworkHarness, t *harnessTest) {
 	defer shutdownAndAssert(net, t, dave)
 
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, dave, net.Alice)
+	net.ConnectNodes(ctxt, t.t, dave, net.Alice, false)
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
 	net.SendCoins(ctxt, t.t, btcutil.SatoshiPerBitcoin, dave)
 
@@ -382,7 +382,7 @@ func testSwitchOfflineDelivery(net *lntest.NetworkHarness, t *harnessTest) {
 	defer shutdownAndAssert(net, t, carol)
 
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, carol, dave)
+	net.ConnectNodes(ctxt, t.t, carol, dave, false)
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
 	net.SendCoins(ctxt, t.t, btcutil.SatoshiPerBitcoin, carol)
 
@@ -492,7 +492,7 @@ func testSwitchOfflineDelivery(net *lntest.NetworkHarness, t *harnessTest) {
 
 	// Then, reconnect them to ensure Dave doesn't just fail back the htlc.
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, dave, net.Alice)
+	net.ConnectNodes(ctxt, t.t, dave, net.Alice, false)
 
 	// Wait to ensure that the payment remain are not failed back after
 	// reconnecting. All node should report the number payments initiated
@@ -674,7 +674,7 @@ func testSwitchOfflineDeliveryPersistence(net *lntest.NetworkHarness, t *harness
 	defer shutdownAndAssert(net, t, dave)
 
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, dave, net.Alice)
+	net.ConnectNodes(ctxt, t.t, dave, net.Alice, false)
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
 	net.SendCoins(ctxt, t.t, btcutil.SatoshiPerBitcoin, dave)
 
@@ -704,7 +704,7 @@ func testSwitchOfflineDeliveryPersistence(net *lntest.NetworkHarness, t *harness
 	defer shutdownAndAssert(net, t, carol)
 
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, carol, dave)
+	net.ConnectNodes(ctxt, t.t, carol, dave, false)
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
 	net.SendCoins(ctxt, t.t, btcutil.SatoshiPerBitcoin, carol)
 
@@ -981,7 +981,7 @@ func testSwitchOfflineDeliveryOutgoingOffline(
 	defer shutdownAndAssert(net, t, dave)
 
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, dave, net.Alice)
+	net.ConnectNodes(ctxt, t.t, dave, net.Alice, false)
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
 	net.SendCoins(ctxt, t.t, btcutil.SatoshiPerBitcoin, dave)
 
@@ -1008,7 +1008,7 @@ func testSwitchOfflineDeliveryOutgoingOffline(
 	// intermediary hops before starting the settle.
 	carol := net.NewNode(t.t, "Carol", []string{"--hodl.exit-settle"})
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, carol, dave)
+	net.ConnectNodes(ctxt, t.t, carol, dave, false)
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
 	net.SendCoins(ctxt, t.t, btcutil.SatoshiPerBitcoin, carol)
 

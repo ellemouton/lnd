@@ -177,7 +177,7 @@ func testAnchorReservedValue(net *lntest.NetworkHarness, t *harnessTest) {
 
 	ctxb := context.Background()
 	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, alice, bob)
+	net.ConnectNodes(ctxt, t.t, alice, bob, false)
 
 	// Send just enough coins for Alice to open a channel without a change
 	// output.

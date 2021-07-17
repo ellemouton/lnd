@@ -101,7 +101,7 @@ func testEtcdFailoverCase(net *lntest.NetworkHarness, ht *harnessTest,
 	info1, err := carol1.GetInfo(ctxt, &lnrpc.GetInfoRequest{})
 
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, ht.t, carol1, net.Alice)
+	net.ConnectNodes(ctxt, ht.t, carol1, net.Alice, false)
 
 	// Open a channel with 100k satoshis between Carol and Alice with Alice
 	// being the sole funder of the channel.
