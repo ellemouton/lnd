@@ -177,6 +177,81 @@ func testDisconnectingTargetPeer(net *lntest.NetworkHarness, t *harnessTest) {
 	cleanupForceClose(t, net, alice, chanPoint)
 }
 
+// testReconnectAfterIPChange verifies that if an inbound node changes its
+// IP address then its peer will not reconnect to it. This test asserts
+// that this bug exists and will be changes to assert that peers are able to
+// reconnect in the commit that fixes the bug.
+func testReconnectAfterIPChange(net *lntest.NetworkHarness, t *harnessTest) {
+
+	// In this test, the following network will be set up. A single
+	// dash line represents a peer connection and a double dash line
+	// represents a channel.
+	// Charlie will create a connection to Bob so that Bob is the inbound
+	// peer. A channel will be opened between Bob and Alice so as to
+	// ensure that Bob will reconnect with Alice if restarted and hence
+	// broadcast any NodeAnnouncement messages to Alice.
+	// The connection between Alice and Charlie ensures that if Bob and
+	// Alice do not reconnect after Bob restarts then Alice is still able
+	// to receive Bob's NodeAnnouncement messages from Charlie.
+	// The desired behaviour is that if Bob changes his P2P IP address then
+	// Alice should be able to reconnect to his node.
+	//
+	//    /------- Charlie <-----\
+	//    |                      |
+	//    v                      |
+	//   Bob <===============> Alice
+
+	ctxb := context.Background()
+
+	// Create a new node, Charlie
+	charlie := net.NewNode(t.t, "Charlie", nil)
+	defer shutdownAndAssert(net, t, charlie)
+
+	// Start by creating a persistent connection between Charlie and Bob
+	// with no channels. Charlie is the outbound node and Bob is the
+	// inbound node.
+	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
+	net.ConnectNodes(ctxt, t.t, charlie, net.Bob, true)
+
+	// Connect Charlie to Alice
+	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
+	net.ConnectNodes(ctxt, t.t, charlie, net.Alice, false)
+
+	// Open a channel between Bob and Alice to ensure that
+	// they are reconnected after Bob restarts so that Alice
+	// is then able to pass Bob's NodeAnnouncement to Charlie.
+	ctxt, _ = context.WithTimeout(ctxb, channelOpenTimeout)
+	chanPoint := openChannelAndAssert(
+		ctxt, t, net, net.Alice, net.Bob,
+		lntest.OpenChannelParams{
+			Amt: 1000000,
+		},
+	)
+
+	// Sleep for a second so that the timestamp of the NodeAnnouncement
+	// that Bob will send below after changing his listening port will be
+	// younger than the timestamp Bob's NodeAnnouncement sent after the
+	// channel open above.
+	time.Sleep(time.Second)
+
+	// assert that Bob and Charlie are connected
+	assertConnected(t, net.Bob, charlie, true)
+
+	// Change Bob's listening port and restart.
+	net.Bob.Cfg.P2PPort = lntest.NextAvailablePort()
+	if err := net.RestartNode(net.Bob, nil); err != nil {
+		t.Fatalf("unable to restart bob's node: %v", err)
+	}
+
+	// Check that Charlie and Bob did not reconnect once Bob restarted.
+	// This is the bug that will be fixed in a following commit.
+	assertConnected(t, net.Bob, charlie, false)
+
+	// Close the channel between Alice and Bob.
+	ctxt, _ = context.WithTimeout(ctxb, channelCloseTimeout)
+	closeChannelAndAssert(ctxt, t, net, net.Alice, chanPoint, false)
+}
+
 // testSphinxReplayPersistence verifies that replayed onion packets are rejected
 // by a remote peer after a restart. We use a combination of unsafe
 // configuration arguments to force Carol to replay the same sphinx packet after
