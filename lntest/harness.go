@@ -178,7 +178,7 @@ func (n *NetworkHarness) SetUp(t *testing.T,
 	// both nodes are fully started since the Connect RPC is guarded behind
 	// the server.Started() flag that waits for all subsystems to be ready.
 	ctxb := context.Background()
-	n.ConnectNodes(ctxb, t, n.Alice, n.Bob)
+	n.ConnectNodes(ctxb, t, n.Alice, n.Bob, false)
 
 	// Load up the wallets of the seeder nodes with 10 outputs of 1 BTC
 	// each.
@@ -671,7 +671,7 @@ func (n *NetworkHarness) EnsureConnected(ctx context.Context,
 // NOTE: This function may block for up to 15-seconds as it will not return
 // until the new connection is detected as being known to both nodes.
 func (n *NetworkHarness) ConnectNodes(ctx context.Context, t *testing.T,
-	a, b *HarnessNode) {
+	a, b *HarnessNode, perm bool) {
 
 	bobInfo, err := b.GetInfo(ctx, &lnrpc.GetInfoRequest{})
 	require.NoErrorf(
@@ -684,6 +684,7 @@ func (n *NetworkHarness) ConnectNodes(ctx context.Context, t *testing.T,
 			Pubkey: bobInfo.IdentityPubkey,
 			Host:   b.Cfg.P2PAddr(),
 		},
+		Perm: perm,
 	}
 
 	err = n.connect(ctx, req, a)

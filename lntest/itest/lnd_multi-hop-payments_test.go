@@ -51,7 +51,7 @@ func testMultiHopPayments(net *lntest.NetworkHarness, t *harnessTest) {
 	defer shutdownAndAssert(net, t, dave)
 
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, dave, net.Alice)
+	net.ConnectNodes(ctxt, t.t, dave, net.Alice, false)
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
 	net.SendCoins(ctxt, t.t, btcutil.SatoshiPerBitcoin, dave)
 
@@ -78,7 +78,7 @@ func testMultiHopPayments(net *lntest.NetworkHarness, t *harnessTest) {
 	defer shutdownAndAssert(net, t, carol)
 
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, carol, dave)
+	net.ConnectNodes(ctxt, t.t, carol, dave, false)
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
 	net.SendCoins(ctxt, t.t, btcutil.SatoshiPerBitcoin, carol)
 

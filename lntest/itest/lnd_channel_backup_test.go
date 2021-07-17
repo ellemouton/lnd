@@ -477,7 +477,7 @@ func testChannelBackupUpdates(net *lntest.NetworkHarness, t *harnessTest) {
 	// With Carol up, we'll now connect her to Alice, and open a channel
 	// between them.
 	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, carol, net.Alice)
+	net.ConnectNodes(ctxt, t.t, carol, net.Alice, false)
 
 	// Next, we'll open two channels between Alice and Carol back to back.
 	var chanPoints []*lnrpc.ChannelPoint
@@ -606,7 +606,7 @@ func testExportChannelBackup(net *lntest.NetworkHarness, t *harnessTest) {
 	// With Carol up, we'll now connect her to Alice, and open a channel
 	// between them.
 	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, carol, net.Alice)
+	net.ConnectNodes(ctxt, t.t, carol, net.Alice, false)
 
 	// Next, we'll open two channels between Alice and Carol back to back.
 	var chanPoints []*lnrpc.ChannelPoint
@@ -859,7 +859,7 @@ func testChanRestoreScenario(t *harnessTest, net *lntest.NetworkHarness,
 
 	// Next, we'll connect Dave to Carol, and open a new channel to her
 	// with a portion pushed.
-	net.ConnectNodes(ctxt, t.t, dave, carol)
+	net.ConnectNodes(ctxt, t.t, dave, carol, false)
 
 	// We will either open a confirmed or unconfirmed channel, depending on
 	// the requirements of the test case.

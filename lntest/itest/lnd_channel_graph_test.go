@@ -45,7 +45,7 @@ func testUpdateChanStatus(net *lntest.NetworkHarness, t *harnessTest) {
 	defer shutdownAndAssert(net, t, bob)
 
 	// Connect Alice to Bob.
-	net.ConnectNodes(ctxb, t.t, alice, bob)
+	net.ConnectNodes(ctxb, t.t, alice, bob, false)
 
 	// Give Alice some coins so she can fund a channel.
 	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
@@ -85,10 +85,10 @@ func testUpdateChanStatus(net *lntest.NetworkHarness, t *harnessTest) {
 	defer shutdownAndAssert(net, t, carol)
 
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, alice, carol)
+	net.ConnectNodes(ctxt, t.t, alice, carol, false)
 
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, bob, carol)
+	net.ConnectNodes(ctxt, t.t, bob, carol, false)
 
 	carolSub := subscribeGraphNotifications(ctxb, t, carol)
 	defer close(carolSub.quit)
@@ -606,7 +606,7 @@ out:
 	defer shutdownAndAssert(net, t, carol)
 
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, bob, carol)
+	net.ConnectNodes(ctxt, t.t, bob, carol, false)
 	ctxt, _ = context.WithTimeout(ctxb, channelOpenTimeout)
 	chanPoint = openChannelAndAssert(
 		ctxt, t, net, bob, carol,
@@ -706,7 +706,7 @@ func testNodeAnnouncement(net *lntest.NetworkHarness, t *harnessTest) {
 	// We must let Dave have an open channel before he can send a node
 	// announcement, so we open a channel with Bob,
 	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, net.Bob, dave)
+	net.ConnectNodes(ctxt, t.t, net.Bob, dave, false)
 
 	// Alice shouldn't receive any new updates yet since the channel has yet
 	// to be opened.
