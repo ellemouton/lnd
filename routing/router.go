@@ -4,6 +4,7 @@ import (
 	"bytes"
 	goErrors "errors"
 	"fmt"
+	"net"
 	"runtime"
 	"strings"
 	"sync"
@@ -334,6 +335,12 @@ type Config struct {
 	// date knowledge of the available bandwidth of the link should be
 	// returned.
 	QueryBandwidth func(edge *channeldb.ChannelEdgeInfo) lnwire.MilliSatoshi
+
+	// UpdateConnRequests checks if there are currently any connection
+	// requests to a node with the given pubKey. If there are and if the
+	// nodes net addresses have changed then the old connection requests
+	// are canceled and new ones are created.
+	UpdateConnRequests func(pubKey *btcec.PublicKey, addrs []net.Addr) error
 
 	// NextPaymentID is a method that guarantees to return a new, unique ID
 	// each time it is called. This is used by the router to generate a
@@ -1325,6 +1332,19 @@ func (r *ChannelRouter) processUpdate(msg interface{},
 		if err := r.cfg.Graph.AddLightningNode(msg, op...); err != nil {
 			return errors.Errorf("unable to add node %v to the "+
 				"graph: %v", msg.PubKeyBytes, err)
+		}
+
+		pk, err := msg.PubKey()
+		if err != nil {
+			return err
+		}
+
+		// If we currently have any connection requests pending for this
+		// node then update the requests if the node address has changed.
+		if err = r.cfg.UpdateConnRequests(pk, msg.Addresses); err != nil {
+			return errors.Errorf("unable to update "+
+				"connection requests for node%v: %v",
+				msg.PubKeyBytes, err)
 		}
 
 		log.Tracef("Updated vertex data for node=%x", msg.PubKeyBytes)

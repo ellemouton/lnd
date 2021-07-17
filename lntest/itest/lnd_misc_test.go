@@ -178,9 +178,7 @@ func testDisconnectingTargetPeer(net *lntest.NetworkHarness, t *harnessTest) {
 }
 
 // testReconnectAfterIPChange verifies that if an inbound node changes its
-// IP address then its peer will not reconnect to it. This test asserts
-// that this bug exists and will be changes to assert that peers are able to
-// reconnect in the commit that fixes the bug.
+// IP address then its peer will not reconnect to it.
 func testReconnectAfterIPChange(net *lntest.NetworkHarness, t *harnessTest) {
 
 	// In this test, the following network will be set up. A single
@@ -243,9 +241,8 @@ func testReconnectAfterIPChange(net *lntest.NetworkHarness, t *harnessTest) {
 		t.Fatalf("unable to restart bob's node: %v", err)
 	}
 
-	// Check that Charlie and Bob did not reconnect once Bob restarted.
-	// This is the bug that will be fixed in a following commit.
-	assertConnected(t, net.Bob, charlie, false)
+	// Check that Charlie and Bob reconnect once Bob restarts.
+	assertConnected(t, net.Bob, charlie, true)
 
 	// Close the channel between Alice and Bob.
 	ctxt, _ = context.WithTimeout(ctxb, channelCloseTimeout)
