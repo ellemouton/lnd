@@ -797,6 +797,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		PathFindingConfig:   pathFindingConfig,
 		Clock:               clock.NewDefaultClock(),
 		StrictZombiePruning: strictPruning,
+		UpdateConnRequests:  s.updateConnRequests,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("can't create router: %v", err)
@@ -3724,6 +3725,51 @@ func (s *server) connectToPeer(addr *lnwire.NetAddress,
 	close(errChan)
 
 	s.OutboundPeerConnected(nil, conn)
+}
+
+// updateConnRequests checks to see if there are any existing connection requests
+// active for the given pubKey and if there are then it checks that there are
+// connection requests active for all the given addresses. If any are missing
+// then new connection requests are created.
+func (s *server) updateConnRequests(pubKey *btcec.PublicKey, addrs []net.Addr) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Check if there are currently any connection requests for this node.
+	pubStr := string(pubKey.SerializeCompressed())
+	reqs, ok := s.persistentConnReqs[pubStr]
+	if !ok {
+		return nil
+	}
+
+	connSet := make(map[string]bool)
+	for _, req := range reqs {
+		connSet[req.Addr.String()] = true
+	}
+
+	for _, addr := range addrs {
+		lnAddr := &lnwire.NetAddress{
+			IdentityKey: pubKey,
+			Address:     addr,
+		}
+
+		if connSet[lnAddr.String()] {
+			continue
+		}
+
+		connReq := &connmgr.ConnReq{
+			Addr:      lnAddr,
+			Permanent: true,
+		}
+
+		s.persistentConnReqs[pubStr] = append(
+			s.persistentConnReqs[pubStr], connReq,
+		)
+
+		go s.connMgr.Connect(connReq)
+	}
+
+	return nil
 }
 
 // DisconnectPeer sends the request to server to close the connection with peer

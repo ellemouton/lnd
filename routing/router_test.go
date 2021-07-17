@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"math"
 	"math/rand"
+	"net"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -159,6 +160,9 @@ func createTestCtxFromGraphInstanceAssumeValid(t *testing.T,
 		Clock:               clock.NewTestClock(time.Unix(1, 0)),
 		AssumeChannelValid:  assumeValid,
 		StrictZombiePruning: strictPruning,
+		UpdateConnRequests: func(pubKey *btcec.PublicKey, addrs []net.Addr) error {
+			return nil
+		},
 	})
 	require.NoError(t, err, "unable to create router")
 	require.NoError(t, router.Start(), "unable to start router")
