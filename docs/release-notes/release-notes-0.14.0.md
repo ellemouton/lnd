@@ -198,6 +198,8 @@ you.
 
 * [Fixed wallet recovery itests on Travis ARM](https://github.com/lightningnetwork/lnd/pull/5688)
 
+* [Respect minimum relay fee during commitment fee updates](https://github.com/lightningnetwork/lnd/pull/5483).
+
 ## Database
 
 * [Ensure single writer for legacy
@@ -263,6 +265,7 @@ change](https://github.com/lightningnetwork/lnd/pull/5613).
 # Contributors (Alphabetical Order)
 * Andras Banki-Horvath
 * de6df1re
+* Elle Mouton
 * ErikEk
 * Eugene Siegel
 * Martin Habovstiak
