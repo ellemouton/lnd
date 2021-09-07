@@ -1168,12 +1168,26 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			// we'll set false to prevent the server from continuing
 			// to connect to this peer even if the number of
 			// channels with this peer is zero.
-			s.mu.Lock()
 			pubStr := string(peerKey.SerializeCompressed())
 			if !s.persistentPeerMgr.IsPersistentPeer(pubStr) {
-				s.persistentPeerMgr.AddPeer(pubStr, nil, false)
+				advertisedAddrs, err := s.fetchNodeAdvertisedAddrs(peerKey)
+				if err != nil && err != errNoAdvertisedAddr {
+					srvrLog.Errorf("Unable to "+
+						"retrieve advertised address "+
+						"for node %x: %v", pubStr, err)
+				}
+
+				addrs := make([]*lnwire.NetAddress, 0, len(advertisedAddrs))
+				for _, addr := range advertisedAddrs {
+					addrs = append(addrs, &lnwire.NetAddress{
+						IdentityKey: peerKey,
+						Address:     addr,
+						ChainNet:    s.cfg.ActiveNetParams.Net,
+					})
+				}
+
+				s.persistentPeerMgr.AddPeer(pubStr, addrs, false)
 			}
-			s.mu.Unlock()
 
 			// With that taken care of, we'll send this channel to
 			// the chain arb so it can react to on-chain events.
@@ -1714,6 +1728,15 @@ func (s *server) Start() error {
 			return nil
 		})
 
+		if err := s.persistentPeerMgr.Start(); err != nil {
+			startErr = err
+			return
+		}
+		cleanup = cleanup.add(func() error {
+			s.persistentPeerMgr.Stop()
+			return nil
+		})
+
 		// With all the relevant sub-systems started, we'll now attempt
 		// to establish persistent connections to our direct channel
 		// collaborators within the network. Before doing so however,
@@ -1863,6 +1886,7 @@ func (s *server) Stop() error {
 			srvrLog.Warnf("failed to stop htlcNotifier: %v", err)
 		}
 		s.connMgr.Stop()
+		s.persistentPeerMgr.Stop()
 		if err := s.invoices.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop invoices: %v", err)
 		}
@@ -3457,64 +3481,6 @@ func (s *server) peerTerminationWatcher(p *peer.Brontide, ready chan struct{}) {
 		return
 	}
 
-	// We'll only need to re-launch a connection request if one
-	// isn't already currently pending.
-	if s.persistentPeerMgr.NumConnReq(pubStr) > 0 {
-		return
-	}
-
-	// Get the last address that we used to connect to the peer.
-	s.persistentPeerMgr.UpdateAddresses(pubStr, p.NetAddress())
-
-	// We'll ensure that we locate the advertised addresses to use
-	// within the peer's address for reconnection purposes.
-	advertisedAddrs, err := s.fetchNodeAdvertisedAddrs(pubKey)
-	switch {
-	// We found an advertised address, so use it.
-	case err == nil:
-		addrs := make([]*lnwire.NetAddress, 0, len(advertisedAddrs))
-		for _, addr := range advertisedAddrs {
-			addrs = append(addrs, &lnwire.NetAddress{
-				IdentityKey: p.IdentityKey(),
-				Address:     addr,
-				ChainNet:    p.NetAddress().ChainNet,
-			})
-		}
-		s.persistentPeerMgr.UpdateAddresses(pubStr, addrs...)
-
-	// The peer doesn't have an advertised address.
-	case err == errNoAdvertisedAddr:
-		// If it is an outbound peer then we fall back to the existing
-		// peer address.
-		if !p.Inbound() {
-			break
-		}
-
-		// Fall back to the existing peer address if
-		// we're not accepting connections over Tor.
-		if s.torController == nil {
-			break
-		}
-
-		// If we are, the peer's address won't be known
-		// to us (we'll see a private address, which is
-		// the address used by our onion service to dial
-		// to lnd), so we don't have enough information
-		// to attempt a reconnect.
-		srvrLog.Debugf("Ignoring reconnection attempt "+
-			"to inbound peer %v without "+
-			"advertised address", p)
-		return
-
-	// We came across an error retrieving an advertised
-	// address, log it, and fall back to the existing peer
-	// address.
-	default:
-		srvrLog.Errorf("Unable to retrieve advertised "+
-			"address for node %x: %v", p.PubKey(),
-			err)
-	}
-
 	// Otherwise, we'll launch a new connection request in order to
 	// attempt to maintain a persistent connection with this peer.
 
@@ -3637,19 +3603,36 @@ func (s *server) ConnectToPeer(addr *lnwire.NetAddress,
 	// persistent connection to the peer.
 	srvrLog.Debugf("Connecting to %x@%v", targetPub, addr)
 	if perm {
-		// Since the user requested a permanent connection, we'll set
-		// the perm to true which will tell the server to continue
-		// reconnecting even if the number of channels with this peer is
-		// zero.
-		s.persistentPeerMgr.AddPeer(
-			targetPub, []*lnwire.NetAddress{addr}, true,
-		)
 		if _, ok := s.persistentPeersBackoff[targetPub]; !ok {
 			s.persistentPeersBackoff[targetPub] = s.cfg.MinBackoff
 		}
 		s.mu.Unlock()
 
-		go s.persistentPeerMgr.ConnectPeer(targetPub)
+		// Since this is a persistent peer, we will want to reconnect to
+		// the peer if its address changes. So initialise the peers
+		// persistent peer manager object with the given address and
+		// any stored advertised addresses for this peer as well.
+		addrs := []*lnwire.NetAddress{addr}
+		advertisedAddrs, err := s.fetchNodeAdvertisedAddrs(addr.IdentityKey)
+		if err != nil && err != errNoAdvertisedAddr {
+			srvrLog.Errorf("Unable to retrieve advertised "+
+				"address for node %x: %v", targetPub, err)
+		}
+
+		for _, advertisedAddr := range advertisedAddrs {
+			addrs = append(addrs, &lnwire.NetAddress{
+				IdentityKey: addr.IdentityKey,
+				Address:     advertisedAddr,
+				ChainNet:    addr.ChainNet,
+			})
+		}
+
+		// Since the user requested a permanent connection, we'll set
+		// perm to true which will tell the server to continue
+		// reconnecting even if the number of channels with this peer is
+		// zero.
+		s.persistentPeerMgr.AddPeer(targetPub, addrs, true)
+		s.persistentPeerMgr.ConnectPeer(targetPub)
 
 		return nil
 	}
