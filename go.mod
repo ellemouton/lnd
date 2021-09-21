@@ -80,6 +80,8 @@ replace github.com/lightningnetwork/lnd/healthcheck => ./healthcheck
 
 replace github.com/lightningnetwork/lnd/kvdb => ./kvdb
 
+replace github.com/lightninglabs/neutrino => github.com/ellemouton/neutrino v0.11.1-0.20210921111409-eb86c412013d
+
 replace git.schwanenlied.me/yawning/bsaes.git => github.com/Yawning/bsaes v0.0.0-20180720073208-c0276d75487e
 
 // This replace is for https://github.com/advisories/GHSA-w73w-5m7g-f7qc
