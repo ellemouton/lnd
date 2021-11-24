@@ -276,6 +276,10 @@ type ChannelLinkConfig struct {
 	// the initiator for channels of the anchor type.
 	MaxAnchorsCommitFeeRate chainfee.SatPerKWeight
 
+	// AnchorsCommitConfTarget is the confirmation target used to determine
+	// the fee to use for anchor commitments.
+	AnchorsCommitConfTarget uint32
+
 	// NotifyActiveLink allows the link to tell the ChannelNotifier when a
 	// link is first started.
 	NotifyActiveLink func(wire.OutPoint)
@@ -599,19 +603,19 @@ func (l *channelLink) markReestablished() {
 }
 
 // sampleNetworkFee samples the current fee rate on the network to get into the
-// chain in a timely manner. The returned value is expressed in fee-per-kw, as
-// this is the native rate used when computing the fee for commitment
-// transactions, and the second-level HTLC transactions.
-func (l *channelLink) sampleNetworkFee() (chainfee.SatPerKWeight, error) {
-	// We'll first query for the sat/kw recommended to be confirmed within 3
-	// blocks.
-	feePerKw, err := l.cfg.FeeEstimator.EstimateFeePerKW(3)
+// chain in within the given confirmation target. The returned value is
+// expressed in fee-per-kw, as this is the native rate used when computing the
+// fee for commitment transactions, and the second-level HTLC transactions.
+func (l *channelLink) sampleNetworkFee(confTarget uint32) (chainfee.SatPerKWeight, error) {
+	// We'll first query for the sat/kw recommended to be confirmed within
+	// the given conf target.
+	feePerKw, err := l.cfg.FeeEstimator.EstimateFeePerKW(confTarget)
 	if err != nil {
 		return 0, err
 	}
 
-	l.log.Debugf("sampled fee rate for 3 block conf: %v sat/kw",
-		int64(feePerKw))
+	l.log.Debugf("sampled fee rate for %d block conf: %v sat/kw",
+		confTarget, int64(feePerKw))
 
 	return feePerKw, nil
 }
@@ -1104,10 +1108,17 @@ func (l *channelLink) htlcManager() {
 				continue
 			}
 
+			// For normal channels, we use a conf target of 3 to
+			// determine the current network fee.
+			confTarget := uint32(3)
+			if l.channel.State().ChanType.HasAnchors() {
+				confTarget = l.cfg.AnchorsCommitConfTarget
+			}
+
 			// If we are the initiator, then we'll sample the
 			// current fee rate to get into the chain within 3
 			// blocks.
-			netFee, err := l.sampleNetworkFee()
+			netFee, err := l.sampleNetworkFee(confTarget)
 			if err != nil {
 				l.log.Errorf("unable to sample network fee: %v",
 					err)
