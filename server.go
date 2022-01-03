@@ -201,7 +201,6 @@ type server struct {
 
 	persistentPeerMgr      *peer.PersistentPeerManager
 	persistentPeersBackoff map[string]time.Duration
-	persistentPeerAddrs    map[string][]*lnwire.NetAddress
 	persistentConnReqs     map[string][]*connmgr.ConnReq
 	persistentRetryCancels map[string]chan struct{}
 
@@ -378,7 +377,7 @@ func (s *server) updatePersistentPeerAddrs() error {
 
 					// Update the stored addresses for this
 					// to peer to reflect the new set.
-					s.persistentPeerAddrs[pubKeyStr] = addrs
+					s.persistentPeerMgr.SetPeerAddresses(pubKeyStr, addrs...)
 
 					// If there are no outstanding
 					// connection requests for this peer
@@ -571,7 +570,6 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 		persistentPeersBackoff:  make(map[string]time.Duration),
 		persistentConnReqs:      make(map[string][]*connmgr.ConnReq),
-		persistentPeerAddrs:     make(map[string][]*lnwire.NetAddress),
 		persistentRetryCancels:  make(map[string]chan struct{}),
 		peerErrors:              make(map[string]*queue.CircularBuffer),
 		ignorePeerTermination:   make(map[*peer.Brontide]struct{}),
@@ -2827,28 +2825,27 @@ func (s *server) establishPersistentConnections() error {
 	// node announcements and attempt to reconnect to each node.
 	var numOutboundConns int
 	for pubStr, nodeAddr := range nodeAddrsMap {
+		if _, ok := s.persistentPeersBackoff[pubStr]; !ok {
+			s.persistentPeersBackoff[pubStr] = s.cfg.MinBackoff
+		}
+
+		addrs := make([]*lnwire.NetAddress, len(nodeAddr.addresses))
+		for i, address := range nodeAddr.addresses {
+			// Create a wrapper address which couples the IP and
+			// the pubkey so the brontide authenticated connection
+			// can be established.
+			addrs[i] = &lnwire.NetAddress{
+				IdentityKey: nodeAddr.pubKey,
+				Address:     address,
+			}
+		}
+
 		// Add this peer to the set of peers we should maintain a
 		// persistent connection with. We set perm to false in order to
 		// indicate that we should not continue to reconnect if the
 		// number of channels returns to zero, since this peer has not
 		// been requested as perm by the user.
-		s.persistentPeerMgr.AddPeer(pubStr, nil, false)
-		if _, ok := s.persistentPeersBackoff[pubStr]; !ok {
-			s.persistentPeersBackoff[pubStr] = s.cfg.MinBackoff
-		}
-
-		for _, address := range nodeAddr.addresses {
-			// Create a wrapper address which couples the IP and
-			// the pubkey so the brontide authenticated connection
-			// can be established.
-			lnAddr := &lnwire.NetAddress{
-				IdentityKey: nodeAddr.pubKey,
-				Address:     address,
-			}
-
-			s.persistentPeerAddrs[pubStr] = append(
-				s.persistentPeerAddrs[pubStr], lnAddr)
-		}
+		s.persistentPeerMgr.AddPeer(pubStr, addrs, false)
 
 		// We'll connect to the first 10 peers immediately, then
 		// randomly stagger any remaining connections if the
@@ -2895,7 +2892,6 @@ func (s *server) prunePersistentPeerConnection(compressedPubKey [33]byte) {
 		!s.persistentPeerMgr.IsPermPeer(pubKeyStr) {
 
 		delete(s.persistentPeersBackoff, pubKeyStr)
-		delete(s.persistentPeerAddrs, pubKeyStr)
 		s.cancelConnReqs(pubKeyStr, nil)
 		s.persistentPeerMgr.DelPeer(pubKeyStr)
 		s.mu.Unlock()
@@ -3744,27 +3740,13 @@ func (s *server) peerTerminationWatcher(p *peer.Brontide, ready chan struct{}) {
 			err)
 	}
 
-	// Make an easy lookup map so that we can check if an address
-	// is already in the address list that we have stored for this peer.
-	existingAddrs := make(map[string]bool)
-	for _, addr := range s.persistentPeerAddrs[pubStr] {
-		existingAddrs[addr.String()] = true
-	}
-
-	// Add any missing addresses for this peer to persistentPeerAddr.
+	// Add any missing addresses for this peer to the PersistentPeerManager.
 	for _, addr := range addrs {
-		if existingAddrs[addr.String()] {
-			continue
-		}
-
-		s.persistentPeerAddrs[pubStr] = append(
-			s.persistentPeerAddrs[pubStr],
-			&lnwire.NetAddress{
-				IdentityKey: p.IdentityKey(),
-				Address:     addr,
-				ChainNet:    p.NetAddress().ChainNet,
-			},
-		)
+		s.persistentPeerMgr.AddPeerAddresses(pubStr, &lnwire.NetAddress{
+			IdentityKey: p.IdentityKey(),
+			Address:     addr,
+			ChainNet:    p.NetAddress().ChainNet,
+		})
 	}
 
 	// Record the computed backoff in the backoff map.
@@ -3818,7 +3800,7 @@ func (s *server) connectToPersistentPeer(pubKeyStr string) {
 	// entries will indicate which addresses we should create new
 	// connection requests for.
 	addrMap := make(map[string]*lnwire.NetAddress)
-	for _, addr := range s.persistentPeerAddrs[pubKeyStr] {
+	for _, addr := range s.persistentPeerMgr.GetPeerAddresses(pubKeyStr) {
 		addrMap[addr.String()] = addr
 	}
 
