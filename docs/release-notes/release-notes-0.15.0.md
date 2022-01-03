@@ -47,11 +47,14 @@
 ### Code cleanup, refactor, typo fixes
 
 * [Refactored itest to better manage contexts inside integration tests](https://github.com/lightningnetwork/lnd/pull/5756).
+* [Refactor of all persistent peer related management to the new
+    PersistentPeerManager](https://github.com/lightningnetwork/lnd/pull/5700).
 
 # Contributors (Alphabetical Order)
 
 * Andreas Schjønhaug
 * Daniel McNally
+* Elle Mouton
 * ErikEk
 * Liviu
 * Torkel Rogstad
