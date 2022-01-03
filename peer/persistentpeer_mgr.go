@@ -358,6 +358,7 @@ func (m *PersistentPeerManager) DelPeer(pubKeyStr string) {
 	m.connsMu.Lock()
 	defer m.connsMu.Unlock()
 
+	m.removePeerConnsUnsafe(pubKeyStr, nil)
 	delete(m.conns, pubKeyStr)
 }
 
@@ -412,6 +413,16 @@ func (m *PersistentPeerManager) RemovePeerConns(pubKeyStr string,
 
 	m.connsMu.Lock()
 	defer m.connsMu.Unlock()
+
+	m.removePeerConnsUnsafe(pubKeyStr, skip)
+}
+
+// removePeerConnsUnsafe removes any connection requests that are active for the
+// given peer. An optional skip id can be provided to exclude removing the
+// successful connection request. This function must only be called if the
+// connsMu is already held.
+func (m *PersistentPeerManager) removePeerConnsUnsafe(pubKeyStr string,
+	skip *uint64) {
 
 	peer, ok := m.conns[pubKeyStr]
 	if !ok {
