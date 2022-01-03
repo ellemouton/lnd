@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"image/color"
-	"math/big"
 	prand "math/rand"
 	"net"
 	"regexp"
@@ -77,12 +76,6 @@ const (
 	// defaultMinPeers is the minimum number of peers nodes should always be
 	// connected to.
 	defaultMinPeers = 3
-
-	// defaultStableConnDuration is a floor under which all reconnection
-	// attempts will apply exponential randomized backoff. Connections
-	// durations exceeding this value will be eligible to have their
-	// backoffs reduced.
-	defaultStableConnDuration = 10 * time.Minute
 
 	// numInstantInitReconnect specifies how many persistent peers we should
 	// always attempt outbound connections to immediately. After this value
@@ -196,7 +189,6 @@ type server struct {
 	peerDisconnectedListeners map[string][]chan<- struct{}
 
 	persistentPeerMgr      *peer.PersistentPeerManager
-	persistentPeersBackoff map[string]time.Duration
 	persistentRetryCancels map[string]chan struct{}
 
 	// peerErrors keeps a set of peer error buffers for peers that have
@@ -480,7 +472,6 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 		torController: torController,
 
-		persistentPeersBackoff:  make(map[string]time.Duration),
 		persistentRetryCancels:  make(map[string]chan struct{}),
 		peerErrors:              make(map[string]*queue.CircularBuffer),
 		ignorePeerTermination:   make(map[*peer.Brontide]struct{}),
@@ -1422,6 +1413,8 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			ConnMgr:           cmgr,
 			SubscribeTopology: s.chanRouter.SubscribeTopology,
 			ChainNet:          s.cfg.ActiveNetParams.Net,
+			MinBackoff:        s.cfg.MinBackoff,
+			MaxBackoff:        s.cfg.MaxBackoff,
 		},
 	)
 
@@ -2767,10 +2760,6 @@ func (s *server) establishPersistentConnections() error {
 	// node announcements and attempt to reconnect to each node.
 	var numOutboundConns int
 	for pubStr, nodeAddr := range nodeAddrsMap {
-		if _, ok := s.persistentPeersBackoff[pubStr]; !ok {
-			s.persistentPeersBackoff[pubStr] = s.cfg.MinBackoff
-		}
-
 		addrs := make([]*lnwire.NetAddress, len(nodeAddr.addresses))
 		for i, address := range nodeAddr.addresses {
 			// Create a wrapper address which couples the IP and
@@ -2833,7 +2822,6 @@ func (s *server) prunePersistentPeerConnection(compressedPubKey [33]byte) {
 	if s.persistentPeerMgr.IsPersistentPeer(pubKeyStr) &&
 		!s.persistentPeerMgr.IsPermPeer(pubKeyStr) {
 
-		delete(s.persistentPeersBackoff, pubKeyStr)
 		s.cancelConnReqs(pubKeyStr, nil)
 		s.persistentPeerMgr.DelPeer(pubKeyStr)
 		s.mu.Unlock()
@@ -2994,51 +2982,6 @@ func (s *server) findPeerByPubStr(pubStr string) (*peer.Brontide, error) {
 	}
 
 	return peer, nil
-}
-
-// nextPeerBackoff computes the next backoff duration for a peer's pubkey using
-// exponential backoff. If no previous backoff was known, the default is
-// returned.
-func (s *server) nextPeerBackoff(pubStr string,
-	startTime time.Time) time.Duration {
-
-	// Now, determine the appropriate backoff to use for the retry.
-	backoff, ok := s.persistentPeersBackoff[pubStr]
-	if !ok {
-		// If an existing backoff was unknown, use the default.
-		return s.cfg.MinBackoff
-	}
-
-	// If the peer failed to start properly, we'll just use the previous
-	// backoff to compute the subsequent randomized exponential backoff
-	// duration. This will roughly double on average.
-	if startTime.IsZero() {
-		return computeNextBackoff(backoff, s.cfg.MaxBackoff)
-	}
-
-	// The peer succeeded in starting. If the connection didn't last long
-	// enough to be considered stable, we'll continue to back off retries
-	// with this peer.
-	connDuration := time.Since(startTime)
-	if connDuration < defaultStableConnDuration {
-		return computeNextBackoff(backoff, s.cfg.MaxBackoff)
-	}
-
-	// The peer succeed in starting and this was stable peer, so we'll
-	// reduce the timeout duration by the length of the connection after
-	// applying randomized exponential backoff. We'll only apply this in the
-	// case that:
-	//   reb(curBackoff) - connDuration > cfg.MinBackoff
-	relaxedBackoff := computeNextBackoff(backoff, s.cfg.MaxBackoff) - connDuration
-	if relaxedBackoff > s.cfg.MinBackoff {
-		return relaxedBackoff
-	}
-
-	// Lastly, if reb(currBackoff) - connDuration <= cfg.MinBackoff, meaning
-	// the stable connection lasted much longer than our previous backoff.
-	// To reward such good behavior, we'll reconnect after the default
-	// timeout.
-	return s.cfg.MinBackoff
 }
 
 // shouldDropConnection determines if our local connection to a remote peer
@@ -3603,8 +3546,7 @@ func (s *server) peerTerminationWatcher(p *peer.Brontide, ready chan struct{}) {
 	}
 
 	// Record the computed backoff in the backoff map.
-	backoff := s.nextPeerBackoff(pubStr, p.StartTime())
-	s.persistentPeersBackoff[pubStr] = backoff
+	backoff := s.persistentPeerMgr.NextPeerBackoff(pubStr, p.StartTime())
 
 	// Initialize a retry canceller for this peer if one does not
 	// exist.
@@ -3751,9 +3693,6 @@ func (s *server) ConnectToPeer(addr *lnwire.NetAddress,
 		// reconnecting even if the number of channels with this peer is
 		// zero.
 		s.persistentPeerMgr.AddPeer(targetPub, addrs, true)
-		if _, ok := s.persistentPeersBackoff[targetPub]; !ok {
-			s.persistentPeersBackoff[targetPub] = s.cfg.MinBackoff
-		}
 		s.mu.Unlock()
 
 		go s.persistentPeerMgr.ConnectPeer(targetPub)
@@ -3830,7 +3769,6 @@ func (s *server) DisconnectPeer(pubKey *btcec.PublicKey) error {
 	// them from this map so we don't attempt to re-connect after we
 	// disconnect.
 	s.persistentPeerMgr.DelPeer(pubStr)
-	delete(s.persistentPeersBackoff, pubStr)
 
 	// Remove the current peer from the server's internal state and signal
 	// that the peer termination watcher does not need to execute for this
@@ -3934,34 +3872,6 @@ func parseHexColor(colorStr string) (color.RGBA, error) {
 	}
 
 	return color.RGBA{R: colorBytes[0], G: colorBytes[1], B: colorBytes[2]}, nil
-}
-
-// computeNextBackoff uses a truncated exponential backoff to compute the next
-// backoff using the value of the exiting backoff. The returned duration is
-// randomized in either direction by 1/20 to prevent tight loops from
-// stabilizing.
-func computeNextBackoff(currBackoff, maxBackoff time.Duration) time.Duration {
-	// Double the current backoff, truncating if it exceeds our maximum.
-	nextBackoff := 2 * currBackoff
-	if nextBackoff > maxBackoff {
-		nextBackoff = maxBackoff
-	}
-
-	// Using 1/10 of our duration as a margin, compute a random offset to
-	// avoid the nodes entering connection cycles.
-	margin := nextBackoff / 10
-
-	var wiggle big.Int
-	wiggle.SetUint64(uint64(margin))
-	if _, err := rand.Int(rand.Reader, &wiggle); err != nil {
-		// Randomizing is not mission critical, so we'll just return the
-		// current backoff.
-		return nextBackoff
-	}
-
-	// Otherwise add in our wiggle, but subtract out half of the margin so
-	// that the backoff can tweaked by 1/20 in either direction.
-	return nextBackoff + (time.Duration(wiggle.Uint64()) - margin/2)
 }
 
 // errNoAdvertisedAddr is an error returned when we attempt to retrieve the
