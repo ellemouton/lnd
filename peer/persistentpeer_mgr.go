@@ -449,22 +449,55 @@ func (m *PersistentPeerManager) RemovePeerConns(pubKeyStr string,
 	peer.connReqs = nil
 }
 
-// NextPeerBackoff calculates, sets and returns the next backoff duration for
-// a peer.
-func (m *PersistentPeerManager) NextPeerBackoff(pubKeyStr string,
-	startTime time.Time) time.Duration {
+// ConnectPeerWithBackoff starts a connection attempt to the given peer after
+// the peer's backoff time has passed.
+func (m *PersistentPeerManager) ConnectPeerWithBackoff(pubKeyStr string,
+	startTime time.Time) {
 
 	m.connsMu.Lock()
 	defer m.connsMu.Unlock()
 
 	peer, ok := m.conns[pubKeyStr]
 	if !ok {
-		return m.cfg.MinBackoff
+		peerLog.Debugf(
+			"Peer %x is not a persistent peer. Ignoring "+
+				"connection attempt", pubKeyStr,
+		)
+		return
 	}
 
-	backoff := m.nextBackoff(peer.backoff, startTime)
-	peer.backoff = backoff
-	return backoff
+	// Initialize a retry canceller for this peer if one does not exist.
+	var cancelChan chan struct{}
+	if peer.retryCanceller != nil {
+		cancelChan = *peer.retryCanceller
+	} else {
+		cancelChan = make(chan struct{})
+		peer.retryCanceller = &cancelChan
+	}
+
+	peer.backoff = m.nextBackoff(peer.backoff, startTime)
+
+	// We choose not to wait group this go routine since the Connect call
+	// can stall for arbitrarily long if we shutdown while an outbound
+	// connection attempt is being made.
+	go func() {
+		peerLog.Debugf("Scheduling connection "+
+			"re-establishment to persistent peer %x in %s",
+			pubKeyStr, peer.backoff)
+
+		select {
+		case <-time.After(peer.backoff):
+		case <-cancelChan:
+			return
+		case <-m.quit:
+			return
+		}
+
+		peerLog.Debugf("Attempting to re-establish persistent "+
+			"connection to peer %x", pubKeyStr)
+
+		m.ConnectPeer(pubKeyStr)
+	}()
 }
 
 // nextBackoff computes the next backoff duration for a peer's pubkey using
