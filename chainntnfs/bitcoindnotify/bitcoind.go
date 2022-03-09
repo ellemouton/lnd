@@ -20,8 +20,12 @@ import (
 
 const (
 	// notifierType uniquely identifies this concrete implementation of the
-	// ChainNotifier interface.
-	notifierType = "bitcoind"
+	// ChainNotifier interface that makes use of the bitcoind ZMQ interface.
+	notifierTypeZMQ = "bitcoind"
+
+	// notifierType uniquely identifies this concrete implementation of the
+	// ChainNotifier interface that makes use of the bitcoind RPC interface.
+	notifierTypeRPCPolling = "bitcoind-rpc-polling"
 )
 
 // TODO(roasbeef): generalize struct below:
