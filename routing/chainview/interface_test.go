@@ -774,6 +774,85 @@ var interfaceImpls = []struct {
 	chainViewInit chainViewInitFunc
 }{
 	{
+		name: "bitcoind_rpc_polling",
+		chainViewInit: func(rpcInfo rpcclient.ConnConfig, p2pAddr string) (func(), FilteredChainView, error) {
+			// Start a bitcoind instance.
+			tempBitcoindDir, err := ioutil.TempDir("", "bitcoind")
+			if err != nil {
+				return nil, nil, err
+			}
+			cleanUp1 := func() {
+				os.RemoveAll(tempBitcoindDir)
+			}
+			rpcPort := rand.Int()%(65536-1024) + 1024
+			bitcoind := exec.Command(
+				"bitcoind",
+				"-datadir="+tempBitcoindDir,
+				"-regtest",
+				"-connect="+p2pAddr,
+				"-txindex",
+				"-rpcauth=weks:469e9bb14ab2360f8e226efed5ca6f"+
+					"d$507c670e800a95284294edb5773b05544b"+
+					"220110063096c221be9933c82d38e1",
+				fmt.Sprintf("-rpcport=%d", rpcPort),
+				"-disablewallet",
+			)
+			err = bitcoind.Start()
+			if err != nil {
+				cleanUp1()
+				return nil, nil, err
+			}
+			cleanUp2 := func() {
+				_ = bitcoind.Process.Kill()
+				_ = bitcoind.Wait()
+				cleanUp1()
+			}
+
+			// Wait for the bitcoind instance to start up.
+			time.Sleep(time.Second)
+
+			host := fmt.Sprintf("127.0.0.1:%d", rpcPort)
+			chainConn, err := chain.NewBitcoindConn(&chain.BitcoindConfig{
+				ChainParams: &chaincfg.RegressionNetParams,
+				Host:        host,
+				User:        "weks",
+				Pass:        "weks",
+				PollingConfig: &chain.PollingConfig{
+					Enable:               true,
+					BlockPollingInterval: time.Millisecond * 100,
+					TxPollingInterval:    time.Millisecond * 100,
+					MempoolEvictionAge:   time.Millisecond * 500,
+				},
+				// Fields only required for pruned nodes, not
+				// needed for these tests.
+				Dialer:             nil,
+				PrunedModeMaxPeers: 0,
+			})
+			if err != nil {
+				return cleanUp2, nil, fmt.Errorf("unable to "+
+					"establish connection to bitcoind: %v",
+					err)
+			}
+			if err := chainConn.Start(); err != nil {
+				return cleanUp2, nil, fmt.Errorf("unable to "+
+					"establish connection to bitcoind: %v",
+					err)
+			}
+			cleanUp3 := func() {
+				chainConn.Stop()
+				cleanUp2()
+			}
+
+			blockCache := blockcache.NewBlockCache(10000)
+
+			chainView := NewBitcoindFilteredChainView(
+				chainConn, blockCache,
+			)
+
+			return cleanUp3, chainView, nil
+		},
+	},
+	{
 		name: "bitcoind_zmq",
 		chainViewInit: func(_ rpcclient.ConnConfig, p2pAddr string) (func(), FilteredChainView, error) {
 			// Start a bitcoind instance.
