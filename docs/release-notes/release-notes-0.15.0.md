@@ -18,6 +18,12 @@
 
 * [Update description for `state` command](https://github.com/lightningnetwork/lnd/pull/6237).
 
+## Btcwallet
+
+* [Add option to configure the block and transaction subscription 
+  notifications from bitcoind to be obtained through polling of the RPC 
+  interface instead of using ZMQ](https://github.com/lightningnetwork/lnd/pull/6345)
+
 ## Bug Fixes
 
 * [Pipelining an UpdateFulfillHTLC message now only happens when the related UpdateAddHTLC is locked-in.](https://github.com/lightningnetwork/lnd/pull/6246)
@@ -184,6 +190,7 @@ gRPC performance metrics (latency to process `GetInfo`, etc)](https://github.com
 * mateuszmp
 * Naveen Srinivasan
 * Olaoluwa Osuntokun
+* orbitalturtle
 * randymcmillan
 * Rong Ou
 * Thebora Kompanioni
