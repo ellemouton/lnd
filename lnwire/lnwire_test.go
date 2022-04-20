@@ -228,8 +228,8 @@ func TestChanUpdateChanFlags(t *testing.T) {
 	}
 }
 
-// TestDecodeUnknownAddressType shows that an unknown address type is currently
-// incorrectly dealt with.
+// TestDecodeUnknownAddressType tests that an unknown address type is correctly
+// ignored and skipped
 func TestDecodeUnknownAddressType(t *testing.T) {
 	// First, we'll encode all the addresses into an intermediate
 	// buffer. We need to do this in order to compute the total
@@ -266,11 +266,15 @@ func TestDecodeUnknownAddressType(t *testing.T) {
 	err = writeDataWithLength(buffer, addrBuf.Bytes())
 	require.NoError(t, err)
 
-	// Now we attempt to parse the bytes and we assert that we get an error.
+	// Now we attempt to parse the bytes and we check that we were still
+	// able to get the two addresses with they types that we are aware of.
 	var addrs []net.Addr
 	err = ReadElement(buffer, &addrs)
-	require.Error(t, err)
-	require.IsType(t, err, &ErrUnknownAddrType{})
+	require.NoError(t, err)
+
+	require.Len(t, addrs, 2)
+	require.Equal(t, tcpAddr.String(), addrs[0].String())
+	require.Equal(t, onionAddr.String(), addrs[1].String())
 }
 
 func TestMaxOutPointIndex(t *testing.T) {

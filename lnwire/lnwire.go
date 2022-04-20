@@ -804,7 +804,17 @@ func ReadElement(r io.Reader, element interface{}) error {
 				addrBytesRead += aType.AddrLen()
 
 			default:
-				return &ErrUnknownAddrType{aType}
+				// If we don't understand this address type,
+				// we just ignore it along with the remaining
+				// address bytes.
+				garbage := make([]byte, addrsLen-addrBytesRead)
+				_, err := io.ReadFull(addrBuf, garbage[:])
+				if err != nil {
+					return err
+				}
+
+				addrBytesRead = addrsLen
+				continue
 			}
 
 			addresses = append(addresses, address)
