@@ -13,6 +13,8 @@ import (
 	"testing/quick"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
@@ -224,6 +226,51 @@ func TestChanUpdateChanFlags(t *testing.T) {
 				test.expected, toStr)
 		}
 	}
+}
+
+// TestDecodeUnknownAddressType shows that an unknown address type is currently
+// incorrectly dealt with.
+func TestDecodeUnknownAddressType(t *testing.T) {
+	// First, we'll encode all the addresses into an intermediate
+	// buffer. We need to do this in order to compute the total
+	// length of the addresses.
+	addrBuf := bytes.NewBuffer(make([]byte, 0, MaxMsgBody))
+
+	// Add a normal, clearnet address.
+	tcpAddr := &net.TCPAddr{
+		IP:   net.IP{127, 0, 0, 1},
+		Port: 8080,
+	}
+
+	err := WriteTCPAddr(addrBuf, tcpAddr)
+	require.NoError(t, err)
+
+	// Add an onion address.
+	onionAddr := &tor.OnionAddr{
+		OnionService: "abcdefghijklmnop.onion",
+		Port:         9065,
+	}
+
+	err = WriteOnionAddr(addrBuf, onionAddr)
+	require.NoError(t, err)
+
+	// Now add an address with an unknown type.
+	var newAddrType addressType = math.MaxUint8
+	data := make([]byte, 0, 16)
+	data = append(data, uint8(newAddrType))
+	_, err = addrBuf.Write(data)
+	require.NoError(t, err)
+
+	// Now that we have all the addresses, we can append the length.
+	buffer := bytes.NewBuffer(make([]byte, 0, MaxMsgBody))
+	err = writeDataWithLength(buffer, addrBuf.Bytes())
+	require.NoError(t, err)
+
+	// Now we attempt to parse the bytes and we assert that we get an error.
+	var addrs []net.Addr
+	err = ReadElement(buffer, &addrs)
+	require.Error(t, err)
+	require.IsType(t, err, &ErrUnknownAddrType{})
 }
 
 func TestMaxOutPointIndex(t *testing.T) {
