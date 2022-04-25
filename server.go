@@ -1176,36 +1176,13 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			// to connect to this peer even if the number of
 			// channels with this peer is zero.
 			s.mu.Lock()
-			pubStr := string(peerKey.SerializeCompressed())
-			if !s.persistentPeerMgr.IsPersistentPeer(pubStr) {
-				// Fetch any stored addresses we may have for
-				// this peer.
-				advertisedAddrs, err := s.fetchNodeAdvertisedAddrs(peerKey)
-				if err != nil && err != errNoAdvertisedAddr {
-					srvrLog.Errorf("Unable to retrieve "+
-						"advertised address for node "+
-						"%x: %v", pubStr, err)
-				}
-
-				// Convert the addresses to lnwire.NetAddress
-				// format.
-				addrs := make(
-					[]*lnwire.NetAddress,
-					len(advertisedAddrs),
-				)
-				for i, addr := range advertisedAddrs {
-					addrs[i] = &lnwire.NetAddress{
-						IdentityKey: peerKey,
-						Address:     addr,
-						ChainNet:    s.cfg.ActiveNetParams.Net,
-					}
-				}
-
+			peerVertex := route.NewVertex(peerKey)
+			if !s.persistentPeerMgr.IsPersistentPeer(peerVertex) {
 				// Register this peer with the persistent peer
 				// manager along with the addresses we have
 				// stored for the peer.
 				s.persistentPeerMgr.AddPeer(
-					pubStr, addrs, false,
+					peerKey, nil, false,
 				)
 			}
 			s.mu.Unlock()
@@ -1421,8 +1398,18 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			ConnMgr:           cmgr,
 			SubscribeTopology: s.chanRouter.SubscribeTopology,
 			ChainNet:          s.cfg.ActiveNetParams.Net,
-			MinBackoff:        s.cfg.MinBackoff,
-			MaxBackoff:        s.cfg.MaxBackoff,
+			FetchNodeAdvertisedAddrs: func(
+				peer route.Vertex) ([]net.Addr, error) {
+
+				node, err := s.graphDB.FetchLightningNode(peer)
+				if err != nil {
+					return nil, err
+				}
+
+				return node.Addresses, nil
+			},
+			MinBackoff: s.cfg.MinBackoff,
+			MaxBackoff: s.cfg.MaxBackoff,
 		},
 	)
 
@@ -2355,9 +2342,9 @@ func (s *server) createBootstrapIgnorePeers() map[autopilot.NodeID]struct{} {
 
 	// Ignore all persistent peers as they have a dedicated reconnecting
 	// process.
-	for _, pubKeyStr := range s.persistentPeerMgr.PersistentPeers() {
+	for _, peerKey := range s.persistentPeerMgr.PersistentPeers() {
 		var nID autopilot.NodeID
-		copy(nID[:], []byte(pubKeyStr))
+		copy(nID[:], peerKey.SerializeCompressed())
 		ignore[nID] = struct{}{}
 	}
 
@@ -2900,7 +2887,7 @@ func (s *server) establishPersistentConnections() error {
 	// Iterate through the combined list of addresses from prior links and
 	// node announcements and attempt to reconnect to each node.
 	var numOutboundConns int
-	for pubStr, nodeAddr := range nodeAddrsMap {
+	for _, nodeAddr := range nodeAddrsMap {
 		addrs := make([]*lnwire.NetAddress, len(nodeAddr.addresses))
 		for i, address := range nodeAddr.addresses {
 			// Create a wrapper address which couples the IP and
@@ -2917,7 +2904,7 @@ func (s *server) establishPersistentConnections() error {
 		// order to indicate that we should not continue to reconnect
 		// if the number of channels returns to zero, since this peer
 		// has not been requested as perm by the user.
-		s.persistentPeerMgr.AddPeer(pubStr, addrs, false)
+		s.persistentPeerMgr.AddPeer(nodeAddr.pubKey, addrs, false)
 
 		// We'll connect to the first 10 peers immediately, then
 		// randomly stagger any remaining connections if the
@@ -2926,12 +2913,13 @@ func (s *server) establishPersistentConnections() error {
 		// channels obtain connectivity quickly, but larger
 		// nodes are able to disperse the costs of connecting to
 		// all peers at once.
+		peerKey := route.NewVertex(nodeAddr.pubKey)
 		if numOutboundConns < numInstantInitReconnect ||
 			!s.cfg.StaggerInitialReconnect {
 
-			go s.persistentPeerMgr.ConnectPeer(pubStr)
+			go s.persistentPeerMgr.ConnectPeer(peerKey)
 		} else {
-			go s.delayInitialReconnect(pubStr)
+			go s.delayInitialReconnect(peerKey)
 		}
 
 		numOutboundConns++
@@ -2944,11 +2932,11 @@ func (s *server) establishPersistentConnections() error {
 // sampling a value for the delay between 0s and the maxInitReconnectDelay.
 //
 // NOTE: This method MUST be run as a goroutine.
-func (s *server) delayInitialReconnect(pubStr string) {
+func (s *server) delayInitialReconnect(peerKey route.Vertex) {
 	delay := time.Duration(prand.Intn(maxInitReconnectDelay)) * time.Second
 	select {
 	case <-time.After(delay):
-		s.persistentPeerMgr.ConnectPeer(pubStr)
+		s.persistentPeerMgr.ConnectPeer(peerKey)
 	case <-s.quit:
 	}
 }
@@ -2957,21 +2945,24 @@ func (s *server) delayInitialReconnect(pubStr string) {
 // persistent connections to a peer within the server. This is used to avoid
 // persistent connection retries to peers we do not have any open channels with.
 func (s *server) prunePersistentPeerConnection(compressedPubKey [33]byte) {
-	pubKeyStr := string(compressedPubKey[:])
+	peerKey, err := route.NewVertexFromBytes(compressedPubKey[:])
+	if err != nil {
+		srvrLog.Errorf("could not convert pubKey bytes (%x) to "+
+			"route.Vertex: %v", compressedPubKey, err)
+	}
 
 	s.mu.Lock()
-	if s.persistentPeerMgr.IsPersistentPeer(pubKeyStr) &&
-		!s.persistentPeerMgr.IsPermPeer(pubKeyStr) {
+	defer s.mu.Unlock()
 
-		s.persistentPeerMgr.DelPeer(pubKeyStr)
-		s.mu.Unlock()
-
-		srvrLog.Infof("Pruned peer %x from persistent connections, "+
-			"peer has no open channels", compressedPubKey)
-
+	// We don't prune any persistent peer that has been marked as permanent.
+	if !s.persistentPeerMgr.IsNonPermPersistentPeer(peerKey) {
 		return
 	}
-	s.mu.Unlock()
+
+	s.persistentPeerMgr.DelPeer(peerKey)
+
+	srvrLog.Infof("Pruned peer %x from persistent connections, "+
+		"peer has no open channels", compressedPubKey)
 }
 
 // BroadcastMessage sends a request to the server to broadcast a set of
@@ -3153,6 +3144,7 @@ func (s *server) InboundPeerConnected(conn net.Conn) {
 
 	nodePub := conn.(*brontide.Conn).RemotePub()
 	pubStr := string(nodePub.SerializeCompressed())
+	peerKey := route.NewVertex(nodePub)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -3190,7 +3182,7 @@ func (s *server) InboundPeerConnected(conn net.Conn) {
 	case ErrPeerNotConnected:
 		// We were unable to locate an existing connection with the
 		// target peer, proceed to connect.
-		s.persistentPeerMgr.RemovePeerConns(pubStr, nil)
+		s.persistentPeerMgr.RemovePeerConns(peerKey, nil)
 		s.peerConnected(conn, nil, true)
 
 	case nil:
@@ -3215,7 +3207,7 @@ func (s *server) InboundPeerConnected(conn net.Conn) {
 		srvrLog.Debugf("Disconnecting stale connection to %v",
 			connectedPeer)
 
-		s.persistentPeerMgr.RemovePeerConns(pubStr, nil)
+		s.persistentPeerMgr.RemovePeerConns(peerKey, nil)
 
 		// Remove the current peer from the server's internal state and
 		// signal that the peer termination watcher does not need to
@@ -3240,6 +3232,7 @@ func (s *server) OutboundPeerConnected(connReq *connmgr.ConnReq, conn net.Conn) 
 
 	nodePub := conn.(*brontide.Conn).RemotePub()
 	pubStr := string(nodePub.SerializeCompressed())
+	peerKey := route.NewVertex(nodePub)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -3257,7 +3250,7 @@ func (s *server) OutboundPeerConnected(connReq *connmgr.ConnReq, conn net.Conn) 
 		conn.Close()
 		return
 	}
-	if s.persistentPeerMgr.NumConnReq(pubStr) == 0 && connReq != nil {
+	if s.persistentPeerMgr.NumConnReq(peerKey) == 0 && connReq != nil {
 		srvrLog.Debugf("Ignoring canceled outbound connection")
 		s.connMgr.Remove(connReq.ID())
 		conn.Close()
@@ -3286,11 +3279,11 @@ func (s *server) OutboundPeerConnected(connReq *connmgr.ConnReq, conn net.Conn) 
 		// Immediately cancel all pending requests, excluding the
 		// outbound connection we just established.
 		ignore := connReq.ID()
-		s.persistentPeerMgr.RemovePeerConns(pubStr, &ignore)
+		s.persistentPeerMgr.RemovePeerConns(peerKey, &ignore)
 	} else {
 		// This was a successful connection made by some other
 		// subsystem. Remove all requests being managed by the connmgr.
-		s.persistentPeerMgr.RemovePeerConns(pubStr, nil)
+		s.persistentPeerMgr.RemovePeerConns(peerKey, nil)
 	}
 
 	// If we already have a connection with this peer, decide whether or not
@@ -3667,11 +3660,12 @@ func (s *server) peerTerminationWatcher(p *peer.Brontide, ready chan struct{}) {
 	s.removePeer(p)
 
 	// Next, check to see if this is a persistent peer or not.
-	if !s.persistentPeerMgr.IsPersistentPeer(pubStr) {
+	peerKey := route.NewVertex(pubKey)
+	if !s.persistentPeerMgr.IsPersistentPeer(peerKey) {
 		return
 	}
 
-	s.persistentPeerMgr.ConnectPeerWithBackoff(pubStr, p.StartTime())
+	s.persistentPeerMgr.ConnectPeerWithBackoff(peerKey, p.StartTime())
 }
 
 // removePeer removes the passed peer from the server's state of all active
@@ -3732,6 +3726,7 @@ func (s *server) ConnectToPeer(addr *lnwire.NetAddress,
 	perm bool, timeout time.Duration) error {
 
 	targetPub := string(addr.IdentityKey.SerializeCompressed())
+	targetKey := route.NewVertex(addr.IdentityKey)
 
 	// Acquire mutex, but use explicit unlocking instead of defer for
 	// better granularity.  In certain conditions, this method requires
@@ -3751,7 +3746,7 @@ func (s *server) ConnectToPeer(addr *lnwire.NetAddress,
 	// If there's already a pending connection request for this pubkey,
 	// then we ignore this request to ensure we don't create a redundant
 	// connection.
-	if numReqs := s.persistentPeerMgr.NumConnReq(targetPub); numReqs > 0 {
+	if numReqs := s.persistentPeerMgr.NumConnReq(targetKey); numReqs > 0 {
 		srvrLog.Warnf("Already have %d persistent connection "+
 			"requests for %v, connecting anyway.", numReqs, addr)
 	}
@@ -3761,35 +3756,16 @@ func (s *server) ConnectToPeer(addr *lnwire.NetAddress,
 	// persistent connection to the peer.
 	srvrLog.Debugf("Connecting to %v", addr)
 	if perm {
-		// Since this is a persistent peer, we will want to reconnect to
-		// the peer if its address changes. So initialise the peers
-		// persistent peer manager object with the given address and
-		// any stored advertised addresses for this peer as well.
-		addrs := []*lnwire.NetAddress{addr}
-		advertisedAddrs, err := s.fetchNodeAdvertisedAddrs(
-			addr.IdentityKey,
-		)
-		if err != nil && err != errNoAdvertisedAddr {
-			srvrLog.Errorf("Unable to retrieve advertised "+
-				"address for node %x: %v", targetPub, err)
-		}
-
-		for _, advertisedAddr := range advertisedAddrs {
-			addrs = append(addrs, &lnwire.NetAddress{
-				IdentityKey: addr.IdentityKey,
-				Address:     advertisedAddr,
-				ChainNet:    addr.ChainNet,
-			})
-		}
-
 		// Since the user requested a permanent connection, we'll set
 		// the entry to true which will tell the server to continue
 		// reconnecting even if the number of channels with this peer is
 		// zero.
-		s.persistentPeerMgr.AddPeer(targetPub, addrs, true)
+		s.persistentPeerMgr.AddPeer(
+			addr.IdentityKey, []*lnwire.NetAddress{addr}, true,
+		)
 		s.mu.Unlock()
 
-		go s.persistentPeerMgr.ConnectPeer(targetPub)
+		go s.persistentPeerMgr.ConnectPeer(targetKey)
 
 		return nil
 	}
@@ -3860,7 +3836,7 @@ func (s *server) DisconnectPeer(pubKey *btcec.PublicKey) error {
 	// If this peer was formerly a persistent connection, then we'll remove
 	// them from this map so we don't attempt to re-connect after we
 	// disconnect.
-	s.persistentPeerMgr.DelPeer(pubStr)
+	s.persistentPeerMgr.DelPeer(route.NewVertex(pubKey))
 
 	// Remove the current peer from the server's internal state and signal
 	// that the peer termination watcher does not need to execute for this
@@ -3944,29 +3920,6 @@ func (s *server) Peers() []*peer.Brontide {
 	}
 
 	return peers
-}
-
-// errNoAdvertisedAddr is an error returned when we attempt to retrieve the
-// advertised address of a node, but they don't have one.
-var errNoAdvertisedAddr = errors.New("no advertised address found")
-
-// fetchNodeAdvertisedAddrs attempts to fetch the advertised addresses of a node.
-func (s *server) fetchNodeAdvertisedAddrs(pub *btcec.PublicKey) ([]net.Addr, error) {
-	vertex, err := route.NewVertexFromBytes(pub.SerializeCompressed())
-	if err != nil {
-		return nil, err
-	}
-
-	node, err := s.graphDB.FetchLightningNode(vertex)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(node.Addresses) == 0 {
-		return nil, errNoAdvertisedAddr
-	}
-
-	return node.Addresses, nil
 }
 
 // fetchLastChanUpdate returns a function which is able to retrieve our latest
