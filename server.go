@@ -2963,7 +2963,6 @@ func (s *server) prunePersistentPeerConnection(compressedPubKey [33]byte) {
 	if s.persistentPeerMgr.IsPersistentPeer(pubKeyStr) &&
 		!s.persistentPeerMgr.IsPermPeer(pubKeyStr) {
 
-		s.persistentPeerMgr.RemovePeerConns(pubKeyStr, nil)
 		s.persistentPeerMgr.DelPeer(pubKeyStr)
 		s.mu.Unlock()
 
@@ -3857,8 +3856,6 @@ func (s *server) DisconnectPeer(pubKey *btcec.PublicKey) error {
 	}
 
 	srvrLog.Infof("Disconnecting from %v", peer)
-
-	s.persistentPeerMgr.RemovePeerConns(pubStr, nil)
 
 	// If this peer was formerly a persistent connection, then we'll remove
 	// them from this map so we don't attempt to re-connect after we
