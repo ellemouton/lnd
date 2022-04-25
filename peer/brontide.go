@@ -269,8 +269,9 @@ type Config struct {
 		...netann.NodeAnnModifier) (lnwire.NodeAnnouncement, error)
 
 	// PrunePersistentPeerConnection is used to remove all internal state
-	// related to this peer in the server.
-	PrunePersistentPeerConnection func([33]byte)
+	// related to this peer in the server. It returns false if the peer
+	// has not been pruned.
+	PrunePersistentPeerConnection func([33]byte) bool
 
 	// FetchLastChanUpdate fetches our latest channel update for a target
 	// channel.
@@ -506,7 +507,11 @@ func (p *Brontide) Start() error {
 	}
 
 	if len(activeChans) == 0 {
-		p.cfg.PrunePersistentPeerConnection(p.cfg.PubKeyBytes)
+		pruned := p.cfg.PrunePersistentPeerConnection(p.cfg.PubKeyBytes)
+		if pruned {
+			peerLog.Infof("Pruned peer %x", p.cfg.PubKeyBytes)
+			return fmt.Errorf("pruning peer %x", p.cfg.PubKeyBytes)
+		}
 	}
 
 	// Quickly check if we have any existing legacy channels with this

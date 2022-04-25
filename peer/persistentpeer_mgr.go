@@ -85,11 +85,6 @@ type persistentPeer struct {
 
 	// perm indicates if we should maintain a connection with a peer even
 	// if we have no channels with the peer.
-	//
-	// TODO(yy): the Brontide.Start doesn't know this value, which means it
-	// will continue to send messages even if there are no active channels
-	// and the value below is false. Once it's pruned, all its connections
-	// will be closed, thus the Brontide.Start will return an error.
 	perm bool
 
 	// retryCanceller is used to cancel any retry attempts with backoffs
@@ -423,23 +418,9 @@ func (m *PersistentPeerManager) IsPersistentPeer(peerKey route.Vertex) bool {
 	return ok
 }
 
-// IsPermPeer returns true if a connection should be kept with the given peer
-// even in the case when we have no channels with the peer.
-func (m *PersistentPeerManager) IsPermPeer(peerKey route.Vertex) bool {
-	m.connsMu.RLock()
-	defer m.connsMu.RUnlock()
-
-	peer, ok := m.conns[peerKey]
-	if !ok {
-		return false
-	}
-
-	return peer.perm
-}
-
-// IsNonPermPersistentPeer returns true if the peer is a persistent peer but
-// has been marked as non-permanent.
-func (m *PersistentPeerManager) IsNonPermPersistentPeer(
+// IsPermanentPersistentPeer returns true if the peer is a persistent peer and
+// has also been marked as permanent.
+func (m *PersistentPeerManager) IsPermanentPersistentPeer(
 	peerKey route.Vertex) bool {
 
 	m.connsMu.RLock()
@@ -450,7 +431,7 @@ func (m *PersistentPeerManager) IsNonPermPersistentPeer(
 		return false
 	}
 
-	return !peer.perm
+	return peer.perm
 }
 
 // NumConnReq the number of active connection requests for a peer.

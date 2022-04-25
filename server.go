@@ -2944,7 +2944,7 @@ func (s *server) delayInitialReconnect(peerKey route.Vertex) {
 // prunePersistentPeerConnection removes all internal state related to
 // persistent connections to a peer within the server. This is used to avoid
 // persistent connection retries to peers we do not have any open channels with.
-func (s *server) prunePersistentPeerConnection(compressedPubKey [33]byte) {
+func (s *server) prunePersistentPeerConnection(compressedPubKey [33]byte) bool {
 	peerKey, err := route.NewVertexFromBytes(compressedPubKey[:])
 	if err != nil {
 		srvrLog.Errorf("could not convert pubKey bytes (%x) to "+
@@ -2955,14 +2955,16 @@ func (s *server) prunePersistentPeerConnection(compressedPubKey [33]byte) {
 	defer s.mu.Unlock()
 
 	// We don't prune any persistent peer that has been marked as permanent.
-	if !s.persistentPeerMgr.IsNonPermPersistentPeer(peerKey) {
-		return
+	if s.persistentPeerMgr.IsPermanentPersistentPeer(peerKey) {
+		return false
 	}
 
 	s.persistentPeerMgr.DelPeer(peerKey)
 
 	srvrLog.Infof("Pruned peer %x from persistent connections, "+
 		"peer has no open channels", compressedPubKey)
+
+	return true
 }
 
 // BroadcastMessage sends a request to the server to broadcast a set of
