@@ -392,23 +392,6 @@ func (m *PersistentPeerManager) NumConnReq(pubKeyStr string) int {
 	return len(peer.connReqs)
 }
 
-// AddPeerAddresses is used to add addresses to a peers list of addresses.
-func (m *PersistentPeerManager) AddPeerAddresses(pubKeyStr string,
-	addrs ...*lnwire.NetAddress) {
-
-	m.connsMu.Lock()
-	defer m.connsMu.Unlock()
-
-	peer, ok := m.conns[pubKeyStr]
-	if !ok {
-		return
-	}
-
-	for _, addr := range addrs {
-		peer.addrs[addr.String()] = addr
-	}
-}
-
 // UnassignedConnID is the default connection ID that a request can have before
 // it actually is submitted to the connmgr.
 // TODO(conner): move into connmgr package, or better, add connmgr method for
