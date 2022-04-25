@@ -67,6 +67,11 @@ type persistentPeer struct {
 
 	// perm indicates if we should maintain a connection with a peer even
 	// if we have no channels with the peer.
+	//
+	// TODO(yy): the Brontide.Start doesn't know this value, which means it
+	// will continue to send messages even if there are no active channels
+	// and the value below is false. Once it's pruned, all its connections
+	// will be closed, thus the Brontide.Start will return an error.
 	perm bool
 
 	// retryCanceller is used to cancel any retry attempts with backoffs
