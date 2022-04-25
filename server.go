@@ -475,7 +475,6 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 		torController: torController,
 
-		persistentRetryCancels:  make(map[string]chan struct{}),
 		peerErrors:              make(map[string]*queue.CircularBuffer),
 		ignorePeerTermination:   make(map[*peer.Brontide]struct{}),
 		scheduledPeerConnection: make(map[string]func()),
@@ -3350,13 +3349,6 @@ func (s *server) OutboundPeerConnected(connReq *connmgr.ConnReq, conn net.Conn) 
 // canceling a successful request. All persistent connreqs for the provided
 // pubkey are discarded after the operationjw.
 func (s *server) cancelConnReqs(pubStr string, skip *uint64) {
-	// First, cancel any lingering persistent retry attempts, which will
-	// prevent retries for any with backoffs that are still maturing.
-	if cancelChan, ok := s.persistentRetryCancels[pubStr]; ok {
-		close(cancelChan)
-		delete(s.persistentRetryCancels, pubStr)
-	}
-
 	s.persistentPeerMgr.RemovePeerConns(pubStr, skip)
 }
 
@@ -3690,39 +3682,7 @@ func (s *server) peerTerminationWatcher(p *peer.Brontide, ready chan struct{}) {
 		return
 	}
 
-	// Record the computed backoff in the backoff map.
-	backoff := s.persistentPeerMgr.NextPeerBackoff(pubStr, p.StartTime())
-
-	// Initialize a retry canceller for this peer if one does not
-	// exist.
-	cancelChan, ok := s.persistentRetryCancels[pubStr]
-	if !ok {
-		cancelChan = make(chan struct{})
-		s.persistentRetryCancels[pubStr] = cancelChan
-	}
-
-	// We choose not to wait group this go routine since the Connect
-	// call can stall for arbitrarily long if we shutdown while an
-	// outbound connection attempt is being made.
-	go func() {
-		srvrLog.Debugf("Scheduling connection re-establishment to "+
-			"persistent peer %x in %s",
-			p.IdentityKey().SerializeCompressed(), backoff)
-
-		select {
-		case <-time.After(backoff):
-		case <-cancelChan:
-			return
-		case <-s.quit:
-			return
-		}
-
-		srvrLog.Debugf("Attempting to re-establish persistent "+
-			"connection to peer %x",
-			p.IdentityKey().SerializeCompressed())
-
-		s.persistentPeerMgr.ConnectPeer(pubStr)
-	}()
+	s.persistentPeerMgr.ConnectPeerWithBackoff(pubStr, p.StartTime())
 }
 
 // removePeer removes the passed peer from the server's state of all active
