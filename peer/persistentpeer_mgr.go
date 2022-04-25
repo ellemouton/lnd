@@ -327,26 +327,6 @@ func (m *PersistentPeerManager) PersistentPeers() []string {
 	return peers
 }
 
-// GetPeerAddresses returns all the addresses stored for the peer.
-func (m *PersistentPeerManager) GetPeerAddresses(
-	pubKeyStr string) []*lnwire.NetAddress {
-
-	m.connsMu.Lock()
-	defer m.connsMu.Unlock()
-
-	peer, ok := m.conns[pubKeyStr]
-	if !ok {
-		return nil
-	}
-
-	addrs := make([]*lnwire.NetAddress, 0, len(peer.addrs))
-	for _, addr := range peer.addrs {
-		addrs = append(addrs, addr)
-	}
-
-	return addrs
-}
-
 // AddPeer adds a new persistent peer for which address updates will be kept
 // track of. The peer can be initialised with an initial set of addresses.
 func (m *PersistentPeerManager) AddPeer(pubKeyStr string,
@@ -410,26 +390,6 @@ func (m *PersistentPeerManager) NumConnReq(pubKeyStr string) int {
 	}
 
 	return len(peer.connReqs)
-}
-
-// SetPeerAddresses can be used to manually set the addresses for the persistent
-// peer that will then be used during connection request creation. This function
-// overwrites any previously stored addresses for the peer.
-func (m *PersistentPeerManager) SetPeerAddresses(pubKeyStr string,
-	addrs ...*lnwire.NetAddress) {
-
-	m.connsMu.Lock()
-	defer m.connsMu.Unlock()
-
-	peer, ok := m.conns[pubKeyStr]
-	if !ok {
-		return
-	}
-
-	peer.addrs = make(map[string]*lnwire.NetAddress)
-	for _, addr := range addrs {
-		peer.addrs[addr.String()] = addr
-	}
 }
 
 // AddPeerAddresses is used to add addresses to a peers list of addresses.

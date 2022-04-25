@@ -138,10 +138,10 @@ func TestPersistentPeerManager(t *testing.T) {
 	require.Equal(t, 0, manager.NumConnReq(alicePubKeyStr))
 
 	// Manually add an address for Alice.
-	manager.SetPeerAddresses(alicePubKeyStr, &lnwire.NetAddress{
+	manager.AddPeer(alicePubKeyStr, []*lnwire.NetAddress{{
 		IdentityKey: alicePubKey,
 		Address:     testAddr1,
-	})
+	}}, false)
 
 	// Calling ConnectPeer for Alice should result in a connection request
 	// since we have added an address for Alice.
