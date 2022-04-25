@@ -15,6 +15,7 @@ import (
 	"github.com/lightningnetwork/lnd/lntest/wait"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing"
+	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,7 +41,7 @@ func TestPersistentPeerManager(t *testing.T) {
 	defer cancel()
 
 	_, alicePubKey := btcec.PrivKeyFromBytes(channels.AlicesPrivKey)
-	alicePubKeyStr := string(alicePubKey.SerializeCompressed())
+	aliceVertex := route.NewVertex(alicePubKey)
 
 	// Create and start a new connection manager.
 	connMgr, err := connmgr.New(&connmgr.Config{
@@ -121,33 +122,38 @@ func TestPersistentPeerManager(t *testing.T) {
 		SubscribeTopology:          updates,
 		ChainNet:                   wire.MainNet,
 		MultiAddrConnectionStagger: time.Millisecond,
+		FetchNodeAdvertisedAddrs: func(vertex route.Vertex) (
+			[]net.Addr, error) {
+
+			return nil, nil
+		},
 	})
 	require.NoError(t, manager.Start())
 	defer manager.Stop()
 
 	// Alice should not be persistent peers initially.
-	require.False(t, manager.IsPersistentPeer(alicePubKeyStr))
+	require.False(t, manager.IsPersistentPeer(aliceVertex))
 
 	// Register Alice as a persistent peer.
-	manager.AddPeer(alicePubKeyStr, nil, false)
-	require.True(t, manager.IsPersistentPeer(alicePubKeyStr))
+	manager.AddPeer(alicePubKey, nil, false)
+	require.True(t, manager.IsPersistentPeer(aliceVertex))
 
 	// Calling ConnectPeer for Alice should result in no connection
 	// requests since Alice has no addresses yet.
-	manager.ConnectPeer(alicePubKeyStr)
-	require.Equal(t, 0, manager.NumConnReq(alicePubKeyStr))
+	manager.ConnectPeer(aliceVertex)
+	require.Equal(t, 0, manager.NumConnReq(aliceVertex))
 
 	// Manually add an address for Alice.
-	manager.AddPeer(alicePubKeyStr, []*lnwire.NetAddress{{
+	manager.AddPeer(alicePubKey, []*lnwire.NetAddress{{
 		IdentityKey: alicePubKey,
 		Address:     testAddr1,
 	}}, false)
 
 	// Calling ConnectPeer for Alice should result in a connection request
 	// since we have added an address for Alice.
-	manager.ConnectPeer(alicePubKeyStr)
+	manager.ConnectPeer(aliceVertex)
 	assertOneConnReqPerAddress(testAddr1)
-	require.Equal(t, 1, manager.NumConnReq(alicePubKeyStr))
+	require.Equal(t, 1, manager.NumConnReq(aliceVertex))
 
 	// Advertise the same address for Alice in a new NodeAnnouncement.
 	addUpdate(alicePubKey, testAddr1)
@@ -155,7 +161,7 @@ func TestPersistentPeerManager(t *testing.T) {
 	// Check that there is still only one connection request for Alice
 	// since her address did not change.
 	assertOneConnReqPerAddress(testAddr1)
-	require.Equal(t, 1, manager.NumConnReq(alicePubKeyStr))
+	require.Equal(t, 1, manager.NumConnReq(aliceVertex))
 
 	// Advertise new addresses for Alice, one being the same as what she
 	// had before and the other being a new one.
@@ -164,7 +170,7 @@ func TestPersistentPeerManager(t *testing.T) {
 	// Check that there is now one connection request for each of Alice's
 	// addresses.
 	assertOneConnReqPerAddress(testAddr1, testAddr2)
-	require.Equal(t, 2, manager.NumConnReq(alicePubKeyStr))
+	require.Equal(t, 2, manager.NumConnReq(aliceVertex))
 
 	// Advertise new addresses for Alice. This announcement has one of the
 	// same addresses as what she advertised before and is missing the
@@ -176,7 +182,7 @@ func TestPersistentPeerManager(t *testing.T) {
 	// still a connection request for the other.
 	assertNoConnReqs(testAddr1)
 	assertOneConnReqPerAddress(testAddr2)
-	require.Equal(t, 1, manager.NumConnReq(alicePubKeyStr))
+	require.Equal(t, 1, manager.NumConnReq(aliceVertex))
 
 	// Once again advertise two addresses for Alice.
 	addUpdate(alicePubKey, testAddr1, testAddr2)
@@ -186,27 +192,27 @@ func TestPersistentPeerManager(t *testing.T) {
 	// and remove all connection requests for Alice except for this one.
 	idAddr1 := cm.getID(testAddr1)
 	require.False(t, idAddr1 == UnassignedConnID)
-	manager.RemovePeerConns(alicePubKeyStr, &idAddr1)
+	manager.RemovePeerConns(aliceVertex, &idAddr1)
 	assertOneConnReqPerAddress(testAddr1)
 	assertNoConnReqs(testAddr2)
 
 	// Remove all connection request for Alice.
-	manager.RemovePeerConns(alicePubKeyStr, nil)
+	manager.RemovePeerConns(aliceVertex, nil)
 
 	// Check that there are no more connection requests for Alice.
 	assertNoConnReqs(testAddr2)
-	require.Equal(t, 0, manager.NumConnReq(alicePubKeyStr))
+	require.Equal(t, 0, manager.NumConnReq(aliceVertex))
 
 	// Delete Alice from the persistent manager.
-	manager.DelPeer(alicePubKeyStr)
-	require.False(t, manager.IsPersistentPeer(alicePubKeyStr))
+	manager.DelPeer(aliceVertex)
+	require.False(t, manager.IsPersistentPeer(aliceVertex))
 
 	// Send an update for Alice. This should result in no new connection
 	// requests though since Alice is no longer a persistent peer.
 	addUpdate(alicePubKey, testAddr2)
-	manager.ConnectPeer(alicePubKeyStr)
+	manager.ConnectPeer(aliceVertex)
 	assertNoConnReqs(testAddr2)
-	require.Equal(t, 0, manager.NumConnReq(alicePubKeyStr))
+	require.Equal(t, 0, manager.NumConnReq(aliceVertex))
 }
 
 type mockConnMgr struct {

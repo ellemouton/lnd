@@ -4,13 +4,16 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
+	"net"
 	"sync"
 	"time"
 
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/connmgr"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing"
+	"github.com/lightningnetwork/lnd/routing/route"
 )
 
 const (
@@ -36,6 +39,8 @@ type PersistentPeerMgrConfig struct {
 	// peer's advertised addresses.
 	SubscribeTopology func() (*routing.TopologyClient, error)
 
+	FetchNodeAdvertisedAddrs func(route.Vertex) ([]net.Addr, error)
+
 	// ChainNet is the Bitcoin network this node is associated with.
 	ChainNet wire.BitcoinNet
 
@@ -54,7 +59,7 @@ type PersistentPeerManager struct {
 	cfg *PersistentPeerMgrConfig
 
 	// conns maps a peer's public key string to a persistentPeer object.
-	conns map[string]*persistentPeer
+	conns map[route.Vertex]*persistentPeer
 
 	// connsMu is used to guard the conns map.
 	connsMu sync.RWMutex
@@ -68,6 +73,8 @@ type PersistentPeerManager struct {
 // is permanent if we want to maintain a connection to them even when we have
 // no open channels with them.
 type persistentPeer struct {
+	pubkey *btcec.PublicKey
+
 	// addrs is all the addresses we know about for this peer. It is a map
 	// of from the address string form to the address struct.
 	addrs map[string]*lnwire.NetAddress
@@ -94,6 +101,16 @@ type persistentPeer struct {
 	backoff time.Duration
 }
 
+func (p *persistentPeer) recreateRetryCanceller() chan struct{} {
+	if p.retryCanceller != nil {
+		close(*p.retryCanceller)
+	}
+	cancelChan := make(chan struct{})
+	p.retryCanceller = &cancelChan
+
+	return cancelChan
+}
+
 // connMgr is what the PersistentPeerManager will use to create and remove
 // connection requests. The purpose of this interface is to make testing easier.
 type connMgr interface {
@@ -111,7 +128,7 @@ func NewPersistentPeerManager(
 
 	return &PersistentPeerManager{
 		cfg:   cfg,
-		conns: make(map[string]*persistentPeer),
+		conns: make(map[route.Vertex]*persistentPeer),
 		quit:  make(chan struct{}),
 	}
 }
@@ -170,70 +187,73 @@ func (m *PersistentPeerManager) processNodeUpdates(
 	updates []*routing.NetworkNodeUpdate) {
 
 	for _, update := range updates {
-		pubKeyStr := string(update.IdentityKey.SerializeCompressed())
-
-		// We only care about updates from the persistent peers that we
-		// are keeping track of.
-		m.connsMu.RLock()
-		_, ok := m.conns[pubKeyStr]
-		m.connsMu.RUnlock()
-		if !ok {
+		if !m.processSingleNodeUpdate(update) {
 			continue
 		}
 
-		addrs := make(map[string]*lnwire.NetAddress)
-		for _, addr := range update.Addresses {
-			lnAddr := &lnwire.NetAddress{
-				IdentityKey: update.IdentityKey,
-				Address:     addr,
-				ChainNet:    m.cfg.ChainNet,
-			}
-
-			addrs[lnAddr.String()] = lnAddr
-		}
-
-		// Update the stored addresses for this peer to reflect the new
-		// set.
-		m.connsMu.Lock()
-		peer, ok := m.conns[pubKeyStr]
-		if !ok {
-			m.connsMu.Unlock()
-			continue
-		}
-
-		peer.addrs = addrs
-
-		// If there are no outstanding connection requests for this peer
-		// then our work is done since we are not currently trying to
-		// connect to them.
-		if len(peer.connReqs) == 0 {
-			m.connsMu.Unlock()
-			continue
-		}
-		m.connsMu.Unlock()
-
-		m.ConnectPeer(pubKeyStr)
+		peerKey := route.NewVertex(update.IdentityKey)
+		m.ConnectPeer(peerKey)
 	}
+}
+
+func (m *PersistentPeerManager) processSingleNodeUpdate(
+	update *routing.NetworkNodeUpdate) bool {
+
+	m.connsMu.Lock()
+	defer m.connsMu.Unlock()
+
+	// We only care about updates from the persistent peers that we
+	// are keeping track of.
+	peerKey := route.NewVertex(update.IdentityKey)
+	_, ok := m.conns[peerKey]
+	if !ok {
+		return false
+	}
+
+	addrs := make(map[string]*lnwire.NetAddress)
+	for _, addr := range update.Addresses {
+		lnAddr := &lnwire.NetAddress{
+			IdentityKey: update.IdentityKey,
+			Address:     addr,
+			ChainNet:    m.cfg.ChainNet,
+		}
+
+		addrs[lnAddr.String()] = lnAddr
+	}
+
+	// Update the stored addresses for this peer to reflect the new
+	// set.
+	peer, ok := m.conns[peerKey]
+	if !ok {
+		return false
+	}
+
+	peer.addrs = addrs
+
+	// If there are no outstanding connection requests for this peer then
+	// our work is done since we are not currently trying to connect to
+	// them.
+	return len(peer.connReqs) != 0
 }
 
 // ConnectPeer uses all the stored addresses for a peer to attempt to connect
 // to the peer. It creates connection requests if there are currently none for
 // a given address, and it removes old connection requests if the associated
 // address is no longer in the latest address list for the peer.
-func (m *PersistentPeerManager) ConnectPeer(pubKeyStr string) {
+func (m *PersistentPeerManager) ConnectPeer(peerKey route.Vertex) {
 	m.connsMu.Lock()
 	defer m.connsMu.Unlock()
 
-	peer, ok := m.conns[pubKeyStr]
+	peer, ok := m.conns[peerKey]
 	if !ok {
-		peerLog.Debugf("Peer %x is not a persistent peer. Ignoring "+
-			"connection attempt", pubKeyStr)
+		peerLog.Debugf("Peer %s is not a persistent peer. Ignoring "+
+			"connection attempt", peerKey)
 		return
 	}
 
 	if len(peer.addrs) == 0 {
-		peerLog.Debugf("Ignoring connection attempt to peer %x "+
-			"without any stored address", pubKeyStr)
+		peerLog.Debugf("Ignoring connection attempt to peer %s "+
+			"without any stored address", peerKey)
 		return
 	}
 
@@ -243,8 +263,8 @@ func (m *PersistentPeerManager) ConnectPeer(pubKeyStr string) {
 	// addresses left over in the map will indicate which addresses we
 	// should create new connection requests for.
 	addrMap := make(map[string]*lnwire.NetAddress)
-	for _, addr := range peer.addrs {
-		addrMap[addr.String()] = addr
+	for key, addr := range peer.addrs {
+		addrMap[key] = addr
 	}
 
 	// Go through each of the existing connection requests and check if
@@ -278,17 +298,11 @@ func (m *PersistentPeerManager) ConnectPeer(pubKeyStr string) {
 
 	peer.connReqs = updatedConnReqs
 
-	// Initialize a retry canceller for this peer if one does not exist.
-	var cancelChan chan struct{}
-	if peer.retryCanceller != nil {
-		cancelChan = *peer.retryCanceller
-	} else {
-		cancelChan = make(chan struct{})
-		peer.retryCanceller = &cancelChan
-	}
+	// Close any previously created retryCanceller and create a new one.
+	cancelChan := peer.recreateRetryCanceller()
 
 	// Any addresses left in addrMap are new ones that we have not made
-	// connection requests for. So create new connection requests for those.
+	// connection requests for.est So create new connection requs for those.
 	// If there is more than one address in the address map, stagger the
 	// creation of the connection requests for those.
 	go func() {
@@ -305,7 +319,7 @@ func (m *PersistentPeerManager) ConnectPeer(pubKeyStr string) {
 			}
 
 			m.connsMu.Lock()
-			if peer, ok = m.conns[pubKeyStr]; !ok {
+			if peer, ok = m.conns[peerKey]; !ok {
 				m.connsMu.Unlock()
 				return
 			}
@@ -330,13 +344,13 @@ func (m *PersistentPeerManager) ConnectPeer(pubKeyStr string) {
 
 // PersistentPeers returns the list of pub key strings of the peers it is
 // currently keeping track of.
-func (m *PersistentPeerManager) PersistentPeers() []string {
+func (m *PersistentPeerManager) PersistentPeers() []*btcec.PublicKey {
 	m.connsMu.Lock()
 	defer m.connsMu.Unlock()
 
-	peers := make([]string, 0, len(m.conns))
-	for p := range m.conns {
-		peers = append(peers, p)
+	peers := make([]*btcec.PublicKey, 0, len(m.conns))
+	for _, p := range m.conns {
+		peers = append(peers, p.pubkey)
 	}
 
 	return peers
@@ -344,7 +358,7 @@ func (m *PersistentPeerManager) PersistentPeers() []string {
 
 // AddPeer adds a new persistent peer for which address updates will be kept
 // track of. The peer can be initialised with an initial set of addresses.
-func (m *PersistentPeerManager) AddPeer(pubKeyStr string,
+func (m *PersistentPeerManager) AddPeer(pubKey *btcec.PublicKey,
 	addrs []*lnwire.NetAddress, perm bool) {
 
 	m.connsMu.Lock()
@@ -355,13 +369,35 @@ func (m *PersistentPeerManager) AddPeer(pubKeyStr string,
 		addrMap[addr.String()] = addr
 	}
 
+	peerKey := route.NewVertex(pubKey)
+
+	// Fetch any stored addresses we may have for this peer.
+	advertisedAddrs, err := m.cfg.FetchNodeAdvertisedAddrs(peerKey)
+	if err != nil {
+		peerLog.Errorf("Unable to retrieve advertised address for "+
+			"node %s: %v", peerKey, err)
+	}
+
+	// Convert the addresses to lnwire.NetAddress
+	// format.
+	for _, newAddr := range advertisedAddrs {
+		addr := &lnwire.NetAddress{
+			IdentityKey: pubKey,
+			Address:     newAddr,
+			ChainNet:    m.cfg.ChainNet,
+		}
+
+		addrMap[addr.String()] = addr
+	}
+
 	backoff := m.cfg.MinBackoff
-	peer, ok := m.conns[pubKeyStr]
+	peer, ok := m.conns[peerKey]
 	if ok {
 		backoff = peer.backoff
 	}
 
-	m.conns[pubKeyStr] = &persistentPeer{
+	m.conns[peerKey] = &persistentPeer{
+		pubkey:  pubKey,
 		addrs:   addrMap,
 		perm:    perm,
 		backoff: backoff,
@@ -370,30 +406,30 @@ func (m *PersistentPeerManager) AddPeer(pubKeyStr string,
 
 // DelPeer removes a peer from the list of persistent peers that the
 // PersistentPeerManager will manage.
-func (m *PersistentPeerManager) DelPeer(pubKeyStr string) {
+func (m *PersistentPeerManager) DelPeer(peerKey route.Vertex) {
 	m.connsMu.Lock()
 	defer m.connsMu.Unlock()
 
-	delete(m.conns, pubKeyStr)
+	delete(m.conns, peerKey)
 }
 
 // IsPersistentPeer returns true if the given peer is a persistent peer that the
 // PersistentPeerManager manages.
-func (m *PersistentPeerManager) IsPersistentPeer(pubKeyStr string) bool {
+func (m *PersistentPeerManager) IsPersistentPeer(peerKey route.Vertex) bool {
 	m.connsMu.RLock()
 	defer m.connsMu.RUnlock()
 
-	_, ok := m.conns[pubKeyStr]
+	_, ok := m.conns[peerKey]
 	return ok
 }
 
 // IsPermPeer returns true if a connection should be kept with the given peer
 // even in the case when we have no channels with the peer.
-func (m *PersistentPeerManager) IsPermPeer(pubKeyStr string) bool {
+func (m *PersistentPeerManager) IsPermPeer(peerKey route.Vertex) bool {
 	m.connsMu.RLock()
 	defer m.connsMu.RUnlock()
 
-	peer, ok := m.conns[pubKeyStr]
+	peer, ok := m.conns[peerKey]
 	if !ok {
 		return false
 	}
@@ -401,12 +437,28 @@ func (m *PersistentPeerManager) IsPermPeer(pubKeyStr string) bool {
 	return peer.perm
 }
 
-// NumConnReq the number of active connection requests for a peer.
-func (m *PersistentPeerManager) NumConnReq(pubKeyStr string) int {
+// IsNonPermPersistentPeer returns true if the peer is a persistent peer but
+// has been marked as non-permanent.
+func (m *PersistentPeerManager) IsNonPermPersistentPeer(
+	peerKey route.Vertex) bool {
+
 	m.connsMu.RLock()
 	defer m.connsMu.RUnlock()
 
-	peer, ok := m.conns[pubKeyStr]
+	peer, ok := m.conns[peerKey]
+	if !ok {
+		return false
+	}
+
+	return !peer.perm
+}
+
+// NumConnReq the number of active connection requests for a peer.
+func (m *PersistentPeerManager) NumConnReq(peerKey route.Vertex) int {
+	m.connsMu.RLock()
+	defer m.connsMu.RUnlock()
+
+	peer, ok := m.conns[peerKey]
 	if !ok {
 		return 0
 	}
@@ -423,23 +475,23 @@ const UnassignedConnID uint64 = 0
 // RemovePeerConns removes any connection requests that are active for the
 // given peer. An optional skip id can be provided to exclude removing the
 // successful connection request.
-func (m *PersistentPeerManager) RemovePeerConns(pubKeyStr string,
+func (m *PersistentPeerManager) RemovePeerConns(peerKey route.Vertex,
 	skip *uint64) {
 
 	m.connsMu.Lock()
 	defer m.connsMu.Unlock()
 
-	m.removePeerConnsUnsafe(pubKeyStr, skip)
+	m.removePeerConnsUnsafe(peerKey, skip)
 }
 
 // removePeerConnsUnsafe removes any connection requests that are active for
 // the given peer. An optional skip id can be provided to exclude removing the
 // successful connection request. This function must only be called if the
 // connsMu is already held.
-func (m *PersistentPeerManager) removePeerConnsUnsafe(pubKeyStr string,
+func (m *PersistentPeerManager) removePeerConnsUnsafe(peerKey route.Vertex,
 	skip *uint64) {
 
-	peer, ok := m.conns[pubKeyStr]
+	peer, ok := m.conns[peerKey]
 	if !ok {
 		return
 	}
@@ -477,30 +529,23 @@ func (m *PersistentPeerManager) removePeerConnsUnsafe(pubKeyStr string,
 
 // ConnectPeerWithBackoff starts a connection attempt to the given peer after
 // the peer's backoff time has passed.
-func (m *PersistentPeerManager) ConnectPeerWithBackoff(pubKeyStr string,
+func (m *PersistentPeerManager) ConnectPeerWithBackoff(peerKey route.Vertex,
 	startTime time.Time) {
 
 	m.connsMu.Lock()
 	defer m.connsMu.Unlock()
 
-	peer, ok := m.conns[pubKeyStr]
+	peer, ok := m.conns[peerKey]
 	if !ok {
 		peerLog.Debugf(
-			"Peer %x is not a persistent peer. Ignoring "+
-				"connection attempt", pubKeyStr,
+			"Peer %s is not a persistent peer. Ignoring "+
+				"connection attempt", peerKey.String(),
 		)
 		return
 	}
 
-	// Initialize a retry canceller for this peer if one does not
-	// exist.
-	var cancelChan chan struct{}
-	if peer.retryCanceller != nil {
-		cancelChan = *peer.retryCanceller
-	} else {
-		cancelChan = make(chan struct{})
-		peer.retryCanceller = &cancelChan
-	}
+	// Close any previously created retryCanceller and create a new one.
+	cancelChan := peer.recreateRetryCanceller()
 
 	backoff := m.nextBackoff(peer.backoff, startTime)
 	peer.backoff = backoff
@@ -510,7 +555,7 @@ func (m *PersistentPeerManager) ConnectPeerWithBackoff(pubKeyStr string,
 	// outbound connection attempt is being made.
 	go func() {
 		peerLog.Debugf("Scheduling connection re-establishment to "+
-			"persistent peer %x in %s", pubKeyStr, backoff)
+			"persistent peer %s in %s", peerKey, backoff)
 
 		select {
 		case <-time.After(backoff):
@@ -521,9 +566,9 @@ func (m *PersistentPeerManager) ConnectPeerWithBackoff(pubKeyStr string,
 		}
 
 		peerLog.Debugf("Attempting to re-establish persistent "+
-			"connection to peer %x", pubKeyStr)
+			"connection to peer %s", peerKey)
 
-		m.ConnectPeer(pubKeyStr)
+		m.ConnectPeer(peerKey)
 	}()
 }
 
