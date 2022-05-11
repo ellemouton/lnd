@@ -7,15 +7,8 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/lightningnetwork/lnd/lntest/channels"
+	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/stretchr/testify/require"
-)
-
-var (
-	testAddr1 = &net.TCPAddr{IP: (net.IP)([]byte{0xA, 0x0, 0x0, 0x1}),
-		Port: 9000}
-
-	testAddr2 = &net.TCPAddr{IP: (net.IP)([]byte{0xA, 0x0, 0x0, 0x1}),
-		Port: 9001}
 )
 
 // TestPersistentPeerManager tests that the PersistentPeerManager correctly
@@ -27,6 +20,14 @@ func TestPersistentPeerManager(t *testing.T) {
 	m := NewPersistentPeerManager(&PersistentPeerMgrConfig{
 		MinBackoff: time.Millisecond * 10,
 		MaxBackoff: time.Millisecond * 100,
+		FetchNodeAdvertisedAddrs: func(vertex route.Vertex) ([]net.Addr,
+			error) {
+
+			return nil, nil
+		},
+		AddrTypeIsSupported: func(addr net.Addr) bool {
+			return true
+		},
 	})
 
 	// Alice should not initially be a persistent peer.
