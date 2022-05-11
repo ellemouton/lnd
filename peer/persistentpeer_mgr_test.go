@@ -35,7 +35,7 @@ func TestPersistentPeerManager(t *testing.T) {
 	require.False(t, m.IsPersistentPeer(alicePubKey))
 
 	// Now add Alice as a non-permanent persistent peer.
-	m.AddPeer(alicePubKey, false)
+	m.AddPeer(alicePubKey, false, nil)
 	require.True(t, m.IsPersistentPeer(alicePubKey))
 	require.True(t, m.IsNonPermPersistentPeer(alicePubKey))
 
@@ -43,7 +43,7 @@ func TestPersistentPeerManager(t *testing.T) {
 	require.False(t, m.IsPersistentPeer(bobPubKey))
 
 	// Now add Bob as a permanent persistent peer.
-	m.AddPeer(bobPubKey, true)
+	m.AddPeer(bobPubKey, true, nil)
 	require.True(t, m.IsPersistentPeer(bobPubKey))
 	require.False(t, m.IsNonPermPersistentPeer(bobPubKey))
 
