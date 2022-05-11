@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
+	"net"
 	"sync"
 	"time"
 
@@ -36,6 +37,11 @@ type PersistentPeerMgrConfig struct {
 	// SubscribeTopology will be used to listen for updates to a persistent
 	// peer's advertised addresses.
 	SubscribeTopology func() (*routing.TopologyClient, error)
+
+	// FetchNodeAdvertisedAddrs can be used to fetch the advertised
+	// addresses of a node that we have persisted. This should only ge used
+	// to fetch an initial set of addresses for the peer.
+	FetchNodeAdvertisedAddrs func(route.Vertex) ([]net.Addr, error)
 
 	// ChainNet is the Bitcoin network this node is associated with.
 	ChainNet wire.BitcoinNet
@@ -162,14 +168,33 @@ func (m *PersistentPeerManager) AddPeer(pubKey *btcec.PublicKey, perm bool,
 
 	peerKey := route.NewVertex(pubKey)
 
-	backoff := m.cfg.MinBackoff
-	if peer, ok := m.conns[peerKey]; ok {
-		backoff = peer.backoff
-	}
-
 	addrMap := make(map[string]*lnwire.NetAddress)
 	for _, addr := range addrs {
 		addrMap[addr.String()] = addr
+	}
+
+	// Fetch any stored addresses we may have for this peer.
+	advertisedAddrs, err := m.cfg.FetchNodeAdvertisedAddrs(peerKey)
+	if err != nil {
+		peerLog.Errorf("Unable to retrieve advertised address for "+
+			"node %s: %v", peerKey, err)
+	}
+
+	// Convert the addresses to lnwire.NetAddress
+	// format.
+	for _, newAddr := range advertisedAddrs {
+		addr := &lnwire.NetAddress{
+			IdentityKey: pubKey,
+			Address:     newAddr,
+			ChainNet:    m.cfg.ChainNet,
+		}
+
+		addrMap[addr.String()] = addr
+	}
+
+	backoff := m.cfg.MinBackoff
+	if peer, ok := m.conns[peerKey]; ok {
+		backoff = peer.backoff
 	}
 
 	m.conns[peerKey] = &persistentPeer{
@@ -229,23 +254,6 @@ func (m *PersistentPeerManager) PersistentPeers() []*btcec.PublicKey {
 	}
 
 	return peers
-}
-
-// AddPeerAddresses is used to add addresses to a peers list of addresses.
-func (m *PersistentPeerManager) AddPeerAddresses(pubKey *btcec.PublicKey,
-	addrs ...*lnwire.NetAddress) {
-
-	m.Lock()
-	defer m.Unlock()
-
-	peer, ok := m.conns[route.NewVertex(pubKey)]
-	if !ok {
-		return
-	}
-
-	for _, addr := range addrs {
-		peer.addrs[addr.String()] = addr
-	}
 }
 
 // NumConnReqs returns the number of connection requests of the given peer.

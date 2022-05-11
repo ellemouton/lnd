@@ -7,8 +7,6 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/lightningnetwork/lnd/lntest/channels"
-	"github.com/lightningnetwork/lnd/lnwire"
-	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/stretchr/testify/require"
 )
 
@@ -65,32 +63,6 @@ func TestPersistentPeerManager(t *testing.T) {
 	peers = m.PersistentPeers()
 	require.Len(t, peers, 1)
 	require.True(t, peers[0].IsEqual(bobPubKey))
-
-	// Add an address for Bob.
-	m.AddPeerAddresses(bobPubKey, &lnwire.NetAddress{
-		IdentityKey: bobPubKey,
-		Address:     testAddr1,
-	})
-
-	// Add another address for Bob.
-	m.AddPeerAddresses(bobPubKey, &lnwire.NetAddress{
-		IdentityKey: bobPubKey,
-		Address:     testAddr2,
-	})
-
-	// Both addresses should appear in Bob's address list.
-	var addrs []*lnwire.NetAddress
-	for _, addr := range m.conns[route.NewVertex(bobPubKey)].addrs {
-		addrs = append(addrs, addr)
-	}
-
-	require.Len(t, addrs, 2)
-	if addrs[0].Address.String() == testAddr1.String() {
-		require.Equal(t, addrs[1].Address.String(), testAddr2.String())
-	} else {
-		require.Equal(t, addrs[0].Address.String(), testAddr2.String())
-		require.Equal(t, addrs[1].Address.String(), testAddr1.String())
-	}
 
 	// Delete Bob.
 	m.DelPeer(bobPubKey)
