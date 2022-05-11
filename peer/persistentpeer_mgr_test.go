@@ -18,9 +18,6 @@ var (
 
 	testAddr2 = &net.TCPAddr{IP: (net.IP)([]byte{0xA, 0x0, 0x0, 0x1}),
 		Port: 9001}
-
-	testAddr3 = &net.TCPAddr{IP: (net.IP)([]byte{0xA, 0x0, 0x0, 0x1}),
-		Port: 9003}
 )
 
 // TestPersistentPeerManager tests that the PersistentPeerManager correctly
@@ -94,19 +91,6 @@ func TestPersistentPeerManager(t *testing.T) {
 		require.Equal(t, addrs[0].Address.String(), testAddr2.String())
 		require.Equal(t, addrs[1].Address.String(), testAddr1.String())
 	}
-
-	// If SetAddresses is used, however, then this should overwrite any
-	// previous addresses stored for Bob.
-	m.SetPeerAddresses(bobPubKey, &lnwire.NetAddress{
-		IdentityKey: bobPubKey,
-		Address:     testAddr3,
-	})
-	addrs = []*lnwire.NetAddress{}
-	for _, addr := range m.conns[route.NewVertex(bobPubKey)].addrs {
-		addrs = append(addrs, addr)
-	}
-	require.Len(t, addrs, 1)
-	require.Equal(t, addrs[0].Address.String(), testAddr3.String())
 
 	// Delete Bob.
 	m.DelPeer(bobPubKey)

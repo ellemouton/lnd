@@ -2,13 +2,16 @@ package peer
 
 import (
 	"crypto/rand"
+	"fmt"
 	"math/big"
 	"sync"
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/connmgr"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
 
@@ -29,6 +32,13 @@ type PersistentPeerMgrConfig struct {
 	// ConnMgr is used to manage the creation and removal of connection
 	// requests. It handles the actual connection to a peer.
 	ConnMgr connMgr
+
+	// SubscribeTopology will be used to listen for updates to a persistent
+	// peer's advertised addresses.
+	SubscribeTopology func() (*routing.TopologyClient, error)
+
+	// ChainNet is the Bitcoin network this node is associated with.
+	ChainNet wire.BitcoinNet
 
 	// MinBackoff is the shortest backoff when reconnecting to a persistent
 	// peer.
@@ -103,6 +113,45 @@ func (m *PersistentPeerManager) Stop() {
 	m.wg.Wait()
 }
 
+// Start begins the processes of PersistentPeerManager. It subscribes to graph
+// updates and listens for any NodeAnnouncement messages that indicate that the
+// addresses of one of the persistent peers has changed and then updates the
+// peer's addresses and connection requests accordingly.
+func (m *PersistentPeerManager) Start() error {
+	graphSub, err := m.cfg.SubscribeTopology()
+	if err != nil {
+		return fmt.Errorf("could not subscribe to graph: %v", err)
+	}
+
+	m.wg.Add(1)
+	go func() {
+		defer func() {
+			graphSub.Cancel()
+			m.wg.Done()
+		}()
+
+		for {
+			select {
+			case topChange, ok := <-graphSub.TopologyChanges:
+				// If the router is shutting down, then we will
+				// as well.
+				if !ok {
+					peerLog.Errorf("graph subscription " +
+						"channel has been closed")
+					return
+				}
+
+				m.processNodeUpdates(topChange.NodeUpdates)
+
+			case <-m.quit:
+				return
+			}
+		}
+	}()
+
+	return nil
+}
+
 // AddPeer adds a new persistent peer for the PersistentPeerManager to keep
 // track of.
 func (m *PersistentPeerManager) AddPeer(pubKey *btcec.PublicKey, perm bool) {
@@ -171,26 +220,6 @@ func (m *PersistentPeerManager) PersistentPeers() []*btcec.PublicKey {
 	}
 
 	return peers
-}
-
-// SetPeerAddresses can be used to manually set the addresses for the persistent
-// peer that will then be used during connection request creation. This function
-// overwrites any previously stored addresses for the peer.
-func (m *PersistentPeerManager) SetPeerAddresses(pubKey *btcec.PublicKey,
-	addrs ...*lnwire.NetAddress) {
-
-	m.Lock()
-	defer m.Unlock()
-
-	peer, ok := m.conns[route.NewVertex(pubKey)]
-	if !ok {
-		return
-	}
-
-	peer.addrs = make(map[string]*lnwire.NetAddress)
-	for _, addr := range addrs {
-		peer.addrs[addr.String()] = addr
-	}
 }
 
 // AddPeerAddresses is used to add addresses to a peers list of addresses.
@@ -425,6 +454,58 @@ func (m *PersistentPeerManager) ConnectPeer(pubKey *btcec.PublicKey) {
 			}
 		}
 	}()
+}
+
+// processNodeUpdate iterates over a list of node updates to see if any are
+// relevant to the list of persistent peers we are keeping track of. If an
+// update is relevant then the peer's addresses and connection requests are
+// updated accordingly.
+func (m *PersistentPeerManager) processNodeUpdates(
+	updates []*routing.NetworkNodeUpdate) {
+
+	for _, update := range updates {
+		if !m.processSingleNodeUpdate(update) {
+			continue
+		}
+
+		m.ConnectPeer(update.IdentityKey)
+	}
+}
+
+// processSingeNodeUpdate processes a single network node update. It updates
+// our persistent peer addresses if the node update is relevant. It returns
+// true if we should attempt to update our connection to this node.
+func (m *PersistentPeerManager) processSingleNodeUpdate(
+	update *routing.NetworkNodeUpdate) bool {
+
+	m.Lock()
+	defer m.Unlock()
+
+	// We only care about updates from the persistent peers that we
+	// are keeping track of.
+	peerKey := route.NewVertex(update.IdentityKey)
+	peer, ok := m.conns[peerKey]
+	if !ok {
+		return false
+	}
+
+	addrs := make(map[string]*lnwire.NetAddress)
+	for _, addr := range update.Addresses {
+		lnAddr := &lnwire.NetAddress{
+			IdentityKey: update.IdentityKey,
+			Address:     addr,
+			ChainNet:    m.cfg.ChainNet,
+		}
+
+		addrs[lnAddr.String()] = lnAddr
+	}
+
+	peer.addrs = addrs
+
+	// If there are no outstanding connection requests for this peer then
+	// our work is done since we are not currently trying to connect to
+	// them.
+	return len(peer.connReqs) != 0
 }
 
 // nextPeerBackoff computes the next backoff duration for a peer using
