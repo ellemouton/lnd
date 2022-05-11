@@ -283,65 +283,6 @@ func (m *PersistentPeerManager) NumConnReqs(pubKey *btcec.PublicKey) int {
 	return len(peer.connReqs)
 }
 
-// AddConnReq appends the given connection request to the give peers list of
-// connection requests.
-func (m *PersistentPeerManager) AddConnReq(pubKey *btcec.PublicKey,
-	connReq *connmgr.ConnReq) {
-
-	m.Lock()
-	defer m.Unlock()
-
-	peer, ok := m.conns[route.NewVertex(pubKey)]
-	if !ok {
-		return
-	}
-
-	peer.connReqs = append(peer.connReqs, connReq)
-}
-
-// PeerBackoff calculates, sets and returns the next backoff duration that
-// should be used before attempting to reconnect to the peer.
-func (m *PersistentPeerManager) PeerBackoff(pubKey *btcec.PublicKey,
-	startTime time.Time) time.Duration {
-
-	m.Lock()
-	defer m.Unlock()
-
-	peer, ok := m.conns[route.NewVertex(pubKey)]
-	if !ok {
-		return m.cfg.MinBackoff
-	}
-
-	peer.backoff = nextPeerBackoff(
-		peer.backoff, m.cfg.MinBackoff, m.cfg.MaxBackoff, startTime,
-	)
-
-	return peer.backoff
-}
-
-// GetRetryCanceller returns the existing retry canceller channel of the peer
-// or creates one if one does not exist yet.
-func (m *PersistentPeerManager) GetRetryCanceller(
-	pubKey *btcec.PublicKey) chan struct{} {
-
-	m.Lock()
-	defer m.Unlock()
-
-	peer, ok := m.conns[route.NewVertex(pubKey)]
-	if !ok {
-		return nil
-	}
-
-	if peer.retryCanceller != nil {
-		return *peer.retryCanceller
-	}
-
-	cancelChan := make(chan struct{})
-	peer.retryCanceller = &cancelChan
-
-	return cancelChan
-}
-
 // ConnectPeer uses all the stored addresses for a peer to attempt to connect
 // to the peer. It creates connection requests if there are currently none for
 // a given address, and it removes old connection requests if the associated
@@ -449,6 +390,57 @@ func (m *PersistentPeerManager) ConnectPeer(pubKey *btcec.PublicKey) {
 			case <-ticker.C:
 			}
 		}
+	}()
+}
+
+// ConnectPeerWithBackoff starts a connection attempt to the given peer after
+// the peer's backoff time has passed.
+func (m *PersistentPeerManager) ConnectPeerWithBackoff(pubKey *btcec.PublicKey,
+	startTime time.Time) {
+
+	m.Lock()
+	defer m.Unlock()
+
+	peer, ok := m.conns[route.NewVertex(pubKey)]
+	if !ok {
+		return
+	}
+
+	backoff := nextPeerBackoff(
+		peer.backoff, m.cfg.MinBackoff, m.cfg.MaxBackoff, startTime,
+	)
+	peer.backoff = backoff
+
+	// Initialize a retry canceller for this peer if one does not
+	// exist.
+	var cancelChan chan struct{}
+	if peer.retryCanceller != nil {
+		cancelChan = *peer.retryCanceller
+	} else {
+		cancelChan = make(chan struct{})
+		peer.retryCanceller = &cancelChan
+	}
+
+	// We choose not to wait group this go routine since the Connect
+	// call can stall for arbitrarily long if we shutdown while an
+	// outbound connection attempt is being made.
+	go func() {
+		peerLog.Debugf("Scheduling connection re-establishment to "+
+			"persistent peer %x in %s",
+			pubKey)
+
+		select {
+		case <-time.After(backoff):
+		case <-cancelChan:
+			return
+		case <-m.quit:
+			return
+		}
+
+		peerLog.Debugf("Attempting to re-establish persistent "+
+			"connection to peer %x", pubKey)
+
+		m.ConnectPeer(pubKey)
 	}()
 }
 
@@ -587,6 +579,10 @@ func (m *PersistentPeerManager) cancelConnReqsUnsafe(pubKey *btcec.PublicKey,
 // returned.
 func nextPeerBackoff(currentBackoff, minBackoff, maxBackoff time.Duration,
 	startTime time.Time) time.Duration {
+
+	if currentBackoff < minBackoff {
+		return minBackoff
+	}
 
 	// If the peer failed to start properly, we'll just use the previous
 	// backoff to compute the subsequent randomized exponential backoff
