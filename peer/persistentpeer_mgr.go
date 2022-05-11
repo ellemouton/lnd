@@ -53,6 +53,10 @@ type PersistentPeerMgrConfig struct {
 	// MaxBackoff is the longest backoff when reconnecting to a persistent
 	// peer.
 	MaxBackoff time.Duration
+
+	// AddrTypeIsSupported returns true if we can connect to this type of
+	// address.
+	AddrTypeIsSupported func(addr net.Addr) bool
 }
 
 // PersistentPeerManager manages persistent peers.
@@ -170,6 +174,10 @@ func (m *PersistentPeerManager) AddPeer(pubKey *btcec.PublicKey, perm bool,
 
 	addrMap := make(map[string]*lnwire.NetAddress)
 	for _, addr := range addrs {
+		if !m.cfg.AddrTypeIsSupported(addr) {
+			continue
+		}
+
 		addrMap[addr.String()] = addr
 	}
 
@@ -180,9 +188,12 @@ func (m *PersistentPeerManager) AddPeer(pubKey *btcec.PublicKey, perm bool,
 			"node %s: %v", peerKey, err)
 	}
 
-	// Convert the addresses to lnwire.NetAddress
-	// format.
+	// Convert the addresses to lnwire.NetAddress format.
 	for _, newAddr := range advertisedAddrs {
+		if !m.cfg.AddrTypeIsSupported(newAddr) {
+			continue
+		}
+
 		addr := &lnwire.NetAddress{
 			IdentityKey: pubKey,
 			Address:     newAddr,
@@ -473,6 +484,10 @@ func (m *PersistentPeerManager) processSingleNodeUpdate(
 
 	addrs := make(map[string]*lnwire.NetAddress)
 	for _, addr := range update.Addresses {
+		if !m.cfg.AddrTypeIsSupported(addr) {
+			continue
+		}
+
 		lnAddr := &lnwire.NetAddress{
 			IdentityKey: update.IdentityKey,
 			Address:     addr,
