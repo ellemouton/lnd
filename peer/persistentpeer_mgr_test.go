@@ -8,6 +8,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/lightningnetwork/lnd/lntest/channels"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/stretchr/testify/require"
 )
 
@@ -81,7 +82,11 @@ func TestPersistentPeerManager(t *testing.T) {
 	})
 
 	// Both addresses should appear in Bob's address list.
-	addrs := m.GetPeerAddresses(bobPubKey)
+	var addrs []*lnwire.NetAddress
+	for _, addr := range m.conns[route.NewVertex(bobPubKey)].addrs {
+		addrs = append(addrs, addr)
+	}
+
 	require.Len(t, addrs, 2)
 	if addrs[0].Address.String() == testAddr1.String() {
 		require.Equal(t, addrs[1].Address.String(), testAddr2.String())
@@ -96,7 +101,10 @@ func TestPersistentPeerManager(t *testing.T) {
 		IdentityKey: bobPubKey,
 		Address:     testAddr3,
 	})
-	addrs = m.GetPeerAddresses(bobPubKey)
+	addrs = []*lnwire.NetAddress{}
+	for _, addr := range m.conns[route.NewVertex(bobPubKey)].addrs {
+		addrs = append(addrs, addr)
+	}
 	require.Len(t, addrs, 1)
 	require.Equal(t, addrs[0].Address.String(), testAddr3.String())
 
