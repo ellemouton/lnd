@@ -165,7 +165,7 @@ func (m *PersistentPeerManager) Start() error {
 // AddPeer adds a new persistent peer for the PersistentPeerManager to keep
 // track of.
 func (m *PersistentPeerManager) AddPeer(pubKey *btcec.PublicKey, perm bool,
-	addrs []*lnwire.NetAddress) {
+	addrs []net.Addr) {
 
 	m.Lock()
 	defer m.Unlock()
@@ -178,7 +178,10 @@ func (m *PersistentPeerManager) AddPeer(pubKey *btcec.PublicKey, perm bool,
 			continue
 		}
 
-		addrMap[addr.String()] = addr
+		addrMap[addr.String()] = &lnwire.NetAddress{
+			IdentityKey: pubKey,
+			Address:     addr,
+		}
 	}
 
 	// Fetch any stored addresses we may have for this peer.

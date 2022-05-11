@@ -42,7 +42,6 @@ import (
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/keychain"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnpeer"
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -2790,99 +2789,6 @@ func (s *server) establishPersistentConnections() error {
 		nodeAddrsMap[pubStr] = nodeAddrs
 	}
 
-	// After checking our previous connections for addresses to connect to,
-	// iterate through the nodes in our channel graph to find addresses
-	// that have been added via NodeAnnouncement messages.
-	sourceNode, err := s.graphDB.SourceNode()
-	if err != nil {
-		return err
-	}
-
-	// TODO(roasbeef): instead iterate over link nodes and query graph for
-	// each of the nodes.
-	selfPub := s.identityECDH.PubKey().SerializeCompressed()
-	err = sourceNode.ForEachChannel(nil, func(
-		tx kvdb.RTx,
-		chanInfo *channeldb.ChannelEdgeInfo,
-		policy, _ *channeldb.ChannelEdgePolicy) error {
-
-		// If the remote party has announced the channel to us, but we
-		// haven't yet, then we won't have a policy. However, we don't
-		// need this to connect to the peer, so we'll log it and move on.
-		if policy == nil {
-			srvrLog.Warnf("No channel policy found for "+
-				"ChannelPoint(%v): ", chanInfo.ChannelPoint)
-		}
-
-		// We'll now fetch the peer opposite from us within this
-		// channel so we can queue up a direct connection to them.
-		channelPeer, err := chanInfo.FetchOtherNode(tx, selfPub)
-		if err != nil {
-			return fmt.Errorf("unable to fetch channel peer for "+
-				"ChannelPoint(%v): %v", chanInfo.ChannelPoint,
-				err)
-		}
-
-		pubStr := string(channelPeer.PubKeyBytes[:])
-
-		// Add all unique addresses from channel
-		// graph/NodeAnnouncements to the list of addresses we'll
-		// connect to for this peer.
-		addrSet := make(map[string]net.Addr)
-		for _, addr := range channelPeer.Addresses {
-			switch addr.(type) {
-			case *net.TCPAddr:
-				addrSet[addr.String()] = addr
-
-			// We'll only attempt to connect to Tor addresses if Tor
-			// outbound support is enabled.
-			case *tor.OnionAddr:
-				if s.cfg.Tor.Active {
-					addrSet[addr.String()] = addr
-				}
-			}
-		}
-
-		// If this peer is also recorded as a link node, we'll add any
-		// additional addresses that have not already been selected.
-		linkNodeAddrs, ok := nodeAddrsMap[pubStr]
-		if ok {
-			for _, lnAddress := range linkNodeAddrs.addresses {
-				switch lnAddress.(type) {
-				case *net.TCPAddr:
-					addrSet[lnAddress.String()] = lnAddress
-
-				// We'll only attempt to connect to Tor
-				// addresses if Tor outbound support is enabled.
-				case *tor.OnionAddr:
-					if s.cfg.Tor.Active {
-						addrSet[lnAddress.String()] = lnAddress
-					}
-				}
-			}
-		}
-
-		// Construct a slice of the deduped addresses.
-		var addrs []net.Addr
-		for _, addr := range addrSet {
-			addrs = append(addrs, addr)
-		}
-
-		n := &nodeAddresses{
-			addresses: addrs,
-		}
-		n.pubKey, err = channelPeer.PubKey()
-		if err != nil {
-			return err
-		}
-
-		nodeAddrsMap[pubStr] = n
-		return nil
-	})
-	if err != nil && err != channeldb.ErrGraphNoEdgesFound {
-		return err
-	}
-
 	srvrLog.Debugf("Establishing %v persistent connections on start",
 		len(nodeAddrsMap))
 
@@ -2895,23 +2801,14 @@ func (s *server) establishPersistentConnections() error {
 	// node announcements and attempt to reconnect to each node.
 	var numOutboundConns int
 	for _, nodeAddr := range nodeAddrsMap {
-		addrs := make([]*lnwire.NetAddress, len(nodeAddr.addresses))
-		for i, address := range nodeAddr.addresses {
-			// Create a wrapper address which couples the IP and
-			// the pubkey so the brontide authenticated connection
-			// can be established.
-			addrs[i] = &lnwire.NetAddress{
-				IdentityKey: nodeAddr.pubKey,
-				Address:     address,
-			}
-		}
-
 		// Add this peer to the set of peers we should maintain a
 		// persistent connection with. We set the value to false to
 		// indicate that we should not continue to reconnect if the
 		// number of channels returns to zero, since this peer has not
 		// been requested as perm by the user.
-		s.persistentPeerMgr.AddPeer(nodeAddr.pubKey, false, addrs)
+		s.persistentPeerMgr.AddPeer(
+			nodeAddr.pubKey, false, nodeAddr.addresses,
+		)
 
 		// We'll connect to the first 10 peers immediately, then
 		// randomly stagger any remaining connections if the
@@ -3794,7 +3691,7 @@ func (s *server) ConnectToPeer(addr *lnwire.NetAddress,
 		// reconnecting even if the number of channels with this peer is
 		// zero.
 		s.persistentPeerMgr.AddPeer(
-			addr.IdentityKey, true, []*lnwire.NetAddress{addr},
+			addr.IdentityKey, true, []net.Addr{addr.Address},
 		)
 		s.mu.Unlock()
 
