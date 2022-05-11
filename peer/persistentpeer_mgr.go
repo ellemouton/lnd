@@ -239,32 +239,17 @@ func (m *PersistentPeerManager) AddPeerAddresses(pubKey *btcec.PublicKey,
 	}
 }
 
-// GetConnReqs returns all the connection requests of the given peer.
-func (m *PersistentPeerManager) GetConnReqs(
-	pubKey *btcec.PublicKey) []*connmgr.ConnReq {
-
+// NumConnReqs returns the number of connection requests of the given peer.
+func (m *PersistentPeerManager) NumConnReqs(pubKey *btcec.PublicKey) int {
 	m.RLock()
 	defer m.RUnlock()
 
 	peer, ok := m.conns[route.NewVertex(pubKey)]
 	if !ok {
-		return nil
+		return 0
 	}
 
-	return peer.connReqs
-}
-
-// DelConnReqs deletes all the connection requests for the given peer.
-func (m *PersistentPeerManager) DelConnReqs(pubKey *btcec.PublicKey) {
-	m.Lock()
-	defer m.Unlock()
-
-	peer, ok := m.conns[route.NewVertex(pubKey)]
-	if !ok {
-		return
-	}
-
-	peer.connReqs = nil
+	return len(peer.connReqs)
 }
 
 // AddConnReq appends the given connection request to the give peers list of
@@ -301,26 +286,6 @@ func (m *PersistentPeerManager) PeerBackoff(pubKey *btcec.PublicKey,
 	)
 
 	return peer.backoff
-}
-
-// CancelRetries closes the retry canceller channel of the given peer.
-func (m *PersistentPeerManager) CancelRetries(pubKey *btcec.PublicKey) {
-	m.Lock()
-	defer m.Unlock()
-
-	peer, ok := m.conns[route.NewVertex(pubKey)]
-	if !ok {
-		return
-	}
-
-	if peer.retryCanceller == nil {
-		return
-	}
-
-	// Cancel any lingering persistent retry attempts, which will
-	// prevent retries for any with backoffs that are still maturing.
-	close(*peer.retryCanceller)
-	peer.retryCanceller = nil
 }
 
 // GetRetryCanceller returns the existing retry canceller channel of the peer
@@ -506,6 +471,66 @@ func (m *PersistentPeerManager) processSingleNodeUpdate(
 	// our work is done since we are not currently trying to connect to
 	// them.
 	return len(peer.connReqs) != 0
+}
+
+// UnassignedConnID is the default connection ID that a request can have before
+// it actually is submitted to the connmgr.
+// TODO(conner): move into connmgr package, or better, add connmgr method for
+// generating atomic IDs.
+const UnassignedConnID uint64 = 0
+
+// CancelConnReqs stops all persistent connection requests for a given pubkey.
+// Any attempts initiated by the peerTerminationWatcher are canceled first.
+// Afterwards, each connection request removed from the connmgr. The caller can
+// optionally specify a connection ID to ignore, which prevents us from
+// canceling a successful request. All persistent connreqs for the provided
+// pubkey are discarded after the operation.
+func (m *PersistentPeerManager) CancelConnReqs(pubKey *btcec.PublicKey,
+	skip *uint64) {
+
+	m.Lock()
+	defer m.Unlock()
+
+	peer, ok := m.conns[route.NewVertex(pubKey)]
+	if !ok {
+		return
+	}
+
+	// Cancel any lingering persistent retry attempts, which will prevent
+	// retries for any with backoffs that are still maturing.
+	if peer.retryCanceller != nil {
+		close(*peer.retryCanceller)
+		peer.retryCanceller = nil
+	}
+
+	// Next, check to see if we have any outstanding persistent connection
+	// requests to this peer. If so, then we'll remove all of these
+	// connection requests, and also delete the entry from the map.
+	if len(peer.connReqs) == 0 {
+		return
+	}
+
+	for _, connReq := range peer.connReqs {
+		peerLog.Tracef("Canceling %s:", peer.connReqs)
+
+		// Atomically capture the current request identifier.
+		connID := connReq.ID()
+
+		// Skip any zero IDs, this indicates the request has not
+		// yet been schedule.
+		if connID == UnassignedConnID {
+			continue
+		}
+
+		// Skip a particular connection ID if instructed.
+		if skip != nil && connID == *skip {
+			continue
+		}
+
+		m.cfg.ConnMgr.Remove(connID)
+	}
+
+	peer.connReqs = nil
 }
 
 // nextPeerBackoff computes the next backoff duration for a peer using
