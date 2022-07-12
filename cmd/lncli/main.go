@@ -6,9 +6,7 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,12 +16,10 @@ import (
 	"github.com/lightningnetwork/lnd/build"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnrpc"
-	"github.com/lightningnetwork/lnd/macaroons"
-	"github.com/lightningnetwork/lnd/tor"
 	"github.com/urfave/cli"
 	"golang.org/x/term"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
 )
 
 const (
@@ -79,129 +75,37 @@ func getClient(ctx *cli.Context) (lnrpc.LightningClient, func()) {
 	return lnrpc.NewLightningClient(conn), cleanUp
 }
 
-func getClientConn(ctx *cli.Context, skipMacaroons bool) *grpc.ClientConn {
-	// First, we'll get the selected stored profile or an ephemeral one
-	// created from the global options in the CLI context.
-	profile, err := getGlobalOptions(ctx, skipMacaroons)
-	if err != nil {
-		fatal(fmt.Errorf("could not load global options: %v", err))
-	}
-
-	// Load the specified TLS certificate.
-	certPool, err := profile.cert()
-	if err != nil {
-		fatal(fmt.Errorf("could not create cert pool: %v", err))
-	}
-
-	// Build transport credentials from the certificate pool. If there is no
-	// certificate pool, we expect the server to use a non-self-signed
-	// certificate such as a certificate obtained from Let's Encrypt.
-	var creds credentials.TransportCredentials
-	if certPool != nil {
-		creds = credentials.NewClientTLSFromCert(certPool, "")
-	} else {
-		// Fallback to the system pool. Using an empty tls config is an
-		// alternative to x509.SystemCertPool(). That call is not
-		// supported on Windows.
-		creds = credentials.NewTLS(&tls.Config{})
-	}
-
-	// Create a dial options array.
+func getClientConn(ctx *cli.Context, _ bool) *grpc.ClientConn {
 	opts := []grpc.DialOption{
-		grpc.WithTransportCredentials(creds),
+		grpc.WithInsecure(),
+		grpc.WithUnaryInterceptor(addClientID(ctx)),
 	}
 
-	// Only process macaroon credentials if --no-macaroons isn't set and
-	// if we're not skipping macaroon processing.
-	if !profile.NoMacaroons && !skipMacaroons {
-		// Find out which macaroon to load.
-		macName := profile.Macaroons.Default
-		if ctx.GlobalIsSet("macfromjar") {
-			macName = ctx.GlobalString("macfromjar")
-		}
-		var macEntry *macaroonEntry
-		for _, entry := range profile.Macaroons.Jar {
-			if entry.Name == macName {
-				macEntry = entry
-				break
-			}
-		}
-		if macEntry == nil {
-			fatal(fmt.Errorf("macaroon with name '%s' not found "+
-				"in profile", macName))
-		}
-
-		// Get and possibly decrypt the specified macaroon.
-		//
-		// TODO(guggero): Make it possible to cache the password so we
-		// don't need to ask for it every time.
-		mac, err := macEntry.loadMacaroon(readPassword)
-		if err != nil {
-			fatal(fmt.Errorf("could not load macaroon: %v", err))
-		}
-
-		macConstraints := []macaroons.Constraint{
-			// We add a time-based constraint to prevent replay of the
-			// macaroon. It's good for 60 seconds by default to make up for
-			// any discrepancy between client and server clocks, but leaking
-			// the macaroon before it becomes invalid makes it possible for
-			// an attacker to reuse the macaroon. In addition, the validity
-			// time of the macaroon is extended by the time the server clock
-			// is behind the client clock, or shortened by the time the
-			// server clock is ahead of the client clock (or invalid
-			// altogether if, in the latter case, this time is more than 60
-			// seconds).
-			// TODO(aakselrod): add better anti-replay protection.
-			macaroons.TimeoutConstraint(profile.Macaroons.Timeout),
-
-			// Lock macaroon down to a specific IP address.
-			macaroons.IPLockConstraint(profile.Macaroons.IP),
-
-			// ... Add more constraints if needed.
-		}
-
-		// Apply constraints to the macaroon.
-		constrainedMac, err := macaroons.AddConstraints(
-			mac, macConstraints...,
-		)
-		if err != nil {
-			fatal(err)
-		}
-
-		// Now we append the macaroon credentials to the dial options.
-		cred, err := macaroons.NewMacaroonCredential(constrainedMac)
-		if err != nil {
-			fatal(fmt.Errorf("error cloning mac: %v", err))
-		}
-		opts = append(opts, grpc.WithPerRPCCredentials(cred))
-	}
-
-	// If a socksproxy server is specified we use a tor dialer
-	// to connect to the grpc server.
-	if ctx.GlobalIsSet("socksproxy") {
-		socksProxy := ctx.GlobalString("socksproxy")
-		torDialer := func(_ context.Context, addr string) (net.Conn, error) {
-			return tor.Dial(
-				addr, socksProxy, false, false,
-				tor.DefaultConnTimeout,
-			)
-		}
-		opts = append(opts, grpc.WithContextDialer(torDialer))
-	} else {
-		// We need to use a custom dialer so we can also connect to
-		// unix sockets and not just TCP addresses.
-		genericDialer := lncfg.ClientAddressDialer(defaultRPCPort)
-		opts = append(opts, grpc.WithContextDialer(genericDialer))
-	}
-
-	opts = append(opts, grpc.WithDefaultCallOptions(maxMsgRecvSize))
-
-	conn, err := grpc.Dial(profile.RPCServer, opts...)
+	// Dial the admin rpc directly.
+	rpcServer := ctx.GlobalString("rpcserver")
+	conn, err := grpc.Dial(rpcServer, opts...)
 	if err != nil {
 		fatal(fmt.Errorf("unable to connect to RPC server: %v", err))
 	}
 
 	return conn
+}
+
+func addClientID(cliCtx *cli.Context) grpc.UnaryClientInterceptor {
+	return func(ctx context.Context, method string, req, reply interface{},
+		cc *grpc.ClientConn, invoker grpc.UnaryInvoker,
+		opts ...grpc.CallOption) error {
+
+		outCtx := metadata.AppendToOutgoingContext(
+			ctx,
+			"clientID", cliCtx.GlobalString("clientid"),
+			"feature", cliCtx.GlobalString("feature"),
+			"trigger", cliCtx.GlobalString("trigger"),
+			"intent", cliCtx.GlobalString("intent"),
+		)
+
+		return invoker(outCtx, method, req, reply, cc, opts...)
+	}
 }
 
 // extractPathArgs parses the TLS certificate and macaroon paths from the
@@ -286,6 +190,22 @@ func main() {
 			Name:  "rpcserver",
 			Value: defaultRPCHostPort,
 			Usage: "The host:port of LN daemon.",
+		},
+		cli.Int64Flag{
+			Name:     "clientid",
+			Required: true,
+		},
+		cli.StringFlag{
+			Name:     "feature",
+			Required: true,
+		},
+		cli.StringFlag{
+			Name:     "trigger",
+			Required: true,
+		},
+		cli.StringFlag{
+			Name:     "intent",
+			Required: true,
 		},
 		cli.StringFlag{
 			Name:      "lnddir",
