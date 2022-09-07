@@ -33,6 +33,7 @@ const (
 	csvDelay uint32 = 144
 
 	towerAddrStr = "18.28.243.2:9911"
+	timeout      = 200 * time.Millisecond
 )
 
 var (
@@ -379,18 +380,15 @@ func (c *mockChannel) getState(
 }
 
 type testHarness struct {
-	t          *testing.T
-	cfg        harnessCfg
-	signer     *wtmock.MockSigner
-	capacity   lnwire.MilliSatoshi
-	clientDB   *wtmock.ClientDB
-	clientCfg  *wtclient.Config
-	client     wtclient.Client
-	serverAddr *lnwire.NetAddress
-	serverDB   *wtmock.TowerDB
-	serverCfg  *wtserver.Config
-	server     *wtserver.Server
-	net        *mockNet
+	t         *testing.T
+	cfg       harnessCfg
+	signer    *wtmock.MockSigner
+	capacity  lnwire.MilliSatoshi
+	clientDB  *wtmock.ClientDB
+	clientCfg *wtclient.Config
+	client    wtclient.Client
+	server    *serverHarness
+	net       *mockNet
 
 	mu       sync.Mutex
 	channels map[lnwire.ChannelID]*mockChannel
@@ -405,37 +403,6 @@ type harnessCfg struct {
 }
 
 func newHarness(t *testing.T, cfg harnessCfg) *testHarness {
-	towerTCPAddr, err := net.ResolveTCPAddr("tcp", towerAddrStr)
-	require.NoError(t, err, "Unable to resolve tower TCP addr")
-
-	privKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err, "Unable to generate tower private key")
-	privKeyECDH := &keychain.PrivKeyECDH{PrivKey: privKey}
-
-	towerPubKey := privKey.PubKey()
-
-	towerAddr := &lnwire.NetAddress{
-		IdentityKey: towerPubKey,
-		Address:     towerTCPAddr,
-	}
-
-	const timeout = 200 * time.Millisecond
-	serverDB := wtmock.NewTowerDB()
-
-	serverCfg := &wtserver.Config{
-		DB:           serverDB,
-		ReadTimeout:  timeout,
-		WriteTimeout: timeout,
-		NodeKeyECDH:  privKeyECDH,
-		NewAddress: func() (btcutil.Address, error) {
-			return addr, nil
-		},
-		NoAckCreateSession: cfg.noAckCreateSession,
-	}
-
-	server, err := wtserver.New(serverCfg)
-	require.NoError(t, err, "unable to create wtserver")
-
 	signer := wtmock.NewMockSigner()
 	mockNet := newMockNet()
 	clientDB := wtmock.NewClientDB()
@@ -456,38 +423,22 @@ func newHarness(t *testing.T, cfg harnessCfg) *testHarness {
 		MaxBackoff:     time.Second,
 		ForceQuitDelay: 10 * time.Second,
 	}
-	client, err := wtclient.New(clientCfg)
-	require.NoError(t, err, "Unable to create wtclient")
-
-	if err := server.Start(); err != nil {
-		t.Fatalf("Unable to start wtserver: %v", err)
-	}
-
-	if err = client.Start(); err != nil {
-		server.Stop()
-		t.Fatalf("Unable to start wtclient: %v", err)
-	}
-	mockNet.registerConnCallback(towerAddr, server.InboundPeerConnected)
-	if err := client.AddTower(towerAddr); err != nil {
-		server.Stop()
-		t.Fatalf("Unable to add tower to wtclient: %v", err)
-	}
 
 	h := &testHarness{
-		t:          t,
-		cfg:        cfg,
-		signer:     signer,
-		capacity:   cfg.localBalance + cfg.remoteBalance,
-		clientDB:   clientDB,
-		clientCfg:  clientCfg,
-		client:     client,
-		serverAddr: towerAddr,
-		serverDB:   serverDB,
-		serverCfg:  serverCfg,
-		server:     server,
-		net:        mockNet,
-		channels:   make(map[lnwire.ChannelID]*mockChannel),
+		t:         t,
+		cfg:       cfg,
+		signer:    signer,
+		capacity:  cfg.localBalance + cfg.remoteBalance,
+		clientDB:  clientDB,
+		clientCfg: clientCfg,
+		net:       mockNet,
+		channels:  make(map[lnwire.ChannelID]*mockChannel),
 	}
+
+	server := h.newServerHarness(towerAddrStr)
+	h.server = server
+	h.server.start()
+	h.startClient()
 
 	h.makeChannel(0, h.cfg.localBalance, h.cfg.remoteBalance)
 	if !cfg.noRegisterChan0 {
@@ -495,24 +446,6 @@ func newHarness(t *testing.T, cfg harnessCfg) *testHarness {
 	}
 
 	return h
-}
-
-// startServer creates a new server using the harness's current serverCfg and
-// starts it after pointing the mockNet's callback to the new server.
-func (h *testHarness) startServer() {
-	h.t.Helper()
-
-	var err error
-	h.server, err = wtserver.New(h.serverCfg)
-	if err != nil {
-		h.t.Fatalf("unable to create wtserver: %v", err)
-	}
-
-	h.net.registerConnCallback(h.serverAddr, h.server.InboundPeerConnected)
-
-	if err := h.server.Start(); err != nil {
-		h.t.Fatalf("unable to start wtserver: %v", err)
-	}
 }
 
 // startClient creates a new server using the harness's current clientCf and
@@ -525,7 +458,7 @@ func (h *testHarness) startClient() {
 		h.t.Fatalf("Unable to resolve tower TCP addr: %v", err)
 	}
 	towerAddr := &lnwire.NetAddress{
-		IdentityKey: h.serverCfg.NodeKeyECDH.PubKey(),
+		IdentityKey: h.server.cfg.NodeKeyECDH.PubKey(),
 		Address:     towerTCPAddr,
 	}
 
@@ -685,10 +618,11 @@ func (h *testHarness) recvPayments(id, from, to uint64,
 // waitServerUpdates blocks until the breach hints provided all appear in the
 // watchtower's database or the timeout expires. This is used to test that the
 // client in fact sends the updates to the server, even if it is offline.
-func (h *testHarness) waitServerUpdates(hints []blob.BreachHint,
+func (s *serverHarness) waitServerUpdates(hints []blob.BreachHint,
 	timeout time.Duration) {
 
-	h.t.Helper()
+	t := s.h.t
+	t.Helper()
 
 	// If no breach hints are provided, we will wait out the full timeout to
 	// assert that no updates appear.
@@ -698,11 +632,7 @@ func (h *testHarness) waitServerUpdates(hints []blob.BreachHint,
 	for _, hint := range hints {
 		hintSet[hint] = struct{}{}
 	}
-
-	if len(hints) != len(hintSet) {
-		h.t.Fatalf("breach hints are not unique, list-len: %d "+
-			"set-len: %d", len(hints), len(hintSet))
-	}
+	require.Equal(t, len(hints), len(hintSet))
 
 	// Closure to assert the server's matches are consistent with the hint
 	// set.
@@ -712,12 +642,9 @@ func (h *testHarness) waitServerUpdates(hints []blob.BreachHint,
 		}
 
 		for _, match := range matches {
-			if _, ok := hintSet[match.Hint]; ok {
-				continue
-			}
-
-			h.t.Fatalf("match %v in db is not in hint set",
-				match.Hint)
+			_, ok := hintSet[match.Hint]
+			require.Truef(t, ok, "match %v in db is not in hint "+
+				"set", match.Hint)
 		}
 
 		return true
@@ -727,30 +654,30 @@ func (h *testHarness) waitServerUpdates(hints []blob.BreachHint,
 	for {
 		select {
 		case <-time.After(time.Second):
-			matches, err := h.serverDB.QueryMatches(hints)
+			matches, err := s.db.QueryMatches(hints)
 			switch {
 			case err != nil:
-				h.t.Fatalf("unable to query for hints: %v", err)
+				t.Fatalf("unable to query for hints: %v", err)
 
 			case wantUpdates && serverHasHints(matches):
 				return
 
 			case wantUpdates:
-				h.t.Logf("Received %d/%d\n", len(matches),
+				t.Logf("Received %d/%d\n", len(matches),
 					len(hints))
 			}
 
 		case <-failTimeout:
-			matches, err := h.serverDB.QueryMatches(hints)
+			matches, err := s.db.QueryMatches(hints)
 			switch {
 			case err != nil:
-				h.t.Fatalf("unable to query for hints: %v", err)
+				t.Fatalf("unable to query for hints: %v", err)
 
 			case serverHasHints(matches):
 				return
 
 			default:
-				h.t.Fatalf("breach hints not received, only "+
+				t.Fatalf("breach hints not received, only "+
 					"got %d/%d", len(matches), len(hints))
 			}
 		}
@@ -760,30 +687,22 @@ func (h *testHarness) waitServerUpdates(hints []blob.BreachHint,
 // assertUpdatesForPolicy queries the server db for matches using the provided
 // breach hints, then asserts that each match has a session with the expected
 // policy.
-func (h *testHarness) assertUpdatesForPolicy(hints []blob.BreachHint,
+func (s *serverHarness) assertUpdatesForPolicy(hints []blob.BreachHint,
 	expPolicy wtpolicy.Policy) {
 
 	// Query for matches on the provided hints.
-	matches, err := h.serverDB.QueryMatches(hints)
-	if err != nil {
-		h.t.Fatalf("unable to query for matches: %v", err)
-	}
+	matches, err := s.db.QueryMatches(hints)
+	require.NoError(s.h.t, err)
 
 	// Assert that the number of matches is exactly the number of provided
 	// hints.
-	if len(matches) != len(hints) {
-		h.t.Fatalf("expected: %d matches, got: %d", len(hints),
-			len(matches))
-	}
+	require.Equal(s.h.t, len(matches), len(hints))
 
 	// Assert that all of the matches correspond to a session with the
 	// expected policy.
 	for _, match := range matches {
 		matchPolicy := match.SessionInfo.Policy
-		if expPolicy != matchPolicy {
-			h.t.Fatalf("expected session to have policy: %v, "+
-				"got: %v", expPolicy, matchPolicy)
-		}
+		require.Equal(s.h.t, expPolicy, matchPolicy)
 	}
 }
 
@@ -804,6 +723,82 @@ func (h *testHarness) removeTower(pubKey *btcec.PublicKey, addr net.Addr) {
 	if err := h.client.RemoveTower(pubKey, addr); err != nil {
 		h.t.Fatalf("unable to remove tower: %v", err)
 	}
+}
+
+// newServerHarness constructs a new mock watchtower server.
+func (h *testHarness) newServerHarness(netAddr string) *serverHarness {
+	towerTCPAddr, err := net.ResolveTCPAddr("tcp", netAddr)
+	require.NoError(h.t, err, "Unable to resolve tower TCP addr")
+
+	privKey, err := btcec.NewPrivateKey()
+	require.NoError(h.t, err, "Unable to generate tower private key")
+	privKeyECDH := &keychain.PrivKeyECDH{PrivKey: privKey}
+
+	towerPubKey := privKey.PubKey()
+	towerAddr := &lnwire.NetAddress{
+		IdentityKey: towerPubKey,
+		Address:     towerTCPAddr,
+	}
+
+	db := wtmock.NewTowerDB()
+	cfg := &wtserver.Config{
+		DB:           db,
+		ReadTimeout:  timeout,
+		WriteTimeout: timeout,
+		NodeKeyECDH:  privKeyECDH,
+		NewAddress: func() (btcutil.Address, error) {
+			return addr, nil
+		},
+		NoAckCreateSession: h.cfg.noAckCreateSession,
+	}
+
+	server, err := wtserver.New(cfg)
+	require.NoError(h.t, err, "unable to create wtserver")
+
+	return &serverHarness{
+		h:      h,
+		cfg:    cfg,
+		db:     db,
+		addr:   towerAddr,
+		server: server,
+	}
+}
+
+// serverHarness represents a mock watchtower server.
+type serverHarness struct {
+	h *testHarness
+
+	cfg    *wtserver.Config
+	addr   *lnwire.NetAddress
+	db     *wtmock.TowerDB
+	server *wtserver.Server
+}
+
+// start creates a new server using the harness's current server cfg and starts
+// it after registering its Dial callback with the mockNet.
+func (s *serverHarness) start() {
+	s.h.t.Helper()
+
+	var err error
+	s.server, err = wtserver.New(s.cfg)
+	require.NoError(s.h.t, err)
+
+	s.h.net.registerConnCallback(s.addr, s.server.InboundPeerConnected)
+	require.NoError(s.h.t, s.server.Start())
+}
+
+// stop halts the server and removes its Dial callback from the mockNet.
+func (s *serverHarness) stop() {
+	require.NoError(s.h.t, s.server.Stop())
+	s.h.net.removeConnCallback(s.addr)
+}
+
+// restart stops the server, applies any given config tweaks and then starts the
+// server again.
+func (s *serverHarness) restart(op func(cfg *wtserver.Config)) {
+	s.stop()
+	op(s.cfg)
+	s.start()
 }
 
 const (
@@ -920,7 +915,7 @@ var clientTests = []clientTest{
 
 			// Wait for all of the updates to be populated in the
 			// server's database.
-			h.waitServerUpdates(hints, time.Second)
+			h.server.waitServerUpdates(hints, time.Second)
 		},
 	},
 	{
@@ -951,7 +946,7 @@ var clientTests = []clientTest{
 
 			// Ensure that no updates are received by the server,
 			// since they should all be marked as ineligible.
-			h.waitServerUpdates(nil, time.Second)
+			h.server.waitServerUpdates(nil, time.Second)
 		},
 	},
 	{
@@ -986,14 +981,13 @@ var clientTests = []clientTest{
 
 			// Wait for both to be reflected in the server's
 			// database.
-			h.waitServerUpdates(hints[:numSent], time.Second)
+			h.server.waitServerUpdates(hints[:numSent], time.Second)
 
 			// Now, restart the server and prevent it from acking
 			// state updates.
-			h.server.Stop()
-			h.serverCfg.NoAckUpdates = true
-			h.startServer()
-			defer h.server.Stop()
+			h.server.restart(func(cfg *wtserver.Config) {
+				cfg.NoAckUpdates = true
+			})
 
 			// Send the next state update to the tower. Since the
 			// tower isn't acking state updates, we expect this
@@ -1011,10 +1005,9 @@ var clientTests = []clientTest{
 
 			// Restart the server and allow it to ack the updates
 			// after the client retransmits the unacked update.
-			h.server.Stop()
-			h.serverCfg.NoAckUpdates = false
-			h.startServer()
-			defer h.server.Stop()
+			h.server.restart(func(cfg *wtserver.Config) {
+				cfg.NoAckUpdates = false
+			})
 
 			// Restart the client and allow it to process the
 			// committed update.
@@ -1023,7 +1016,7 @@ var clientTests = []clientTest{
 
 			// Wait for the committed update to be accepted by the
 			// tower.
-			h.waitServerUpdates(hints[:numSent], time.Second)
+			h.server.waitServerUpdates(hints[:numSent], time.Second)
 
 			// Finally, send the rest of the updates and wait for
 			// the tower to receive the remaining states.
@@ -1031,7 +1024,7 @@ var clientTests = []clientTest{
 
 			// Wait for all of the updates to be populated in the
 			// server's database.
-			h.waitServerUpdates(hints, time.Second)
+			h.server.waitServerUpdates(hints, time.Second)
 
 		},
 	},
@@ -1063,10 +1056,9 @@ var clientTests = []clientTest{
 
 			// Restart the server and prevent it from acking state
 			// updates.
-			h.server.Stop()
-			h.serverCfg.NoAckUpdates = true
-			h.startServer()
-			defer h.server.Stop()
+			h.server.restart(func(cfg *wtserver.Config) {
+				cfg.NoAckUpdates = true
+			})
 
 			// Now, queue the retributions for backup.
 			h.backupStates(chanID, 0, numUpdates, nil)
@@ -1082,14 +1074,13 @@ var clientTests = []clientTest{
 
 			// Restart the server and allow it to ack the updates
 			// after the client retransmits the unacked updates.
-			h.server.Stop()
-			h.serverCfg.NoAckUpdates = false
-			h.startServer()
-			defer h.server.Stop()
+			h.server.restart(func(cfg *wtserver.Config) {
+				cfg.NoAckUpdates = false
+			})
 
 			// Wait for all of the updates to be populated in the
 			// server's database.
-			h.waitServerUpdates(hints, 5*time.Second)
+			h.server.waitServerUpdates(hints, 5*time.Second)
 		},
 	},
 	{
@@ -1137,7 +1128,7 @@ var clientTests = []clientTest{
 
 			// Wait for all of the updates to be populated in the
 			// server's database.
-			h.waitServerUpdates(hints, 3*time.Second)
+			h.server.waitServerUpdates(hints, 3*time.Second)
 		},
 	},
 	{
@@ -1188,7 +1179,7 @@ var clientTests = []clientTest{
 
 			// Wait for all of the updates to be populated in the
 			// server's database.
-			h.waitServerUpdates(hints, 10*time.Second)
+			h.server.waitServerUpdates(hints, 10*time.Second)
 		},
 	},
 	{
@@ -1219,17 +1210,16 @@ var clientTests = []clientTest{
 
 			// Since the client is unable to create a session, the
 			// server should have no updates.
-			h.waitServerUpdates(nil, time.Second)
+			h.server.waitServerUpdates(nil, time.Second)
 
 			// Force quit the client since it has queued backups.
 			h.client.ForceQuit()
 
 			// Restart the server and allow it to ack session
 			// creation.
-			h.server.Stop()
-			h.serverCfg.NoAckCreateSession = false
-			h.startServer()
-			defer h.server.Stop()
+			h.server.restart(func(cfg *wtserver.Config) {
+				cfg.NoAckCreateSession = false
+			})
 
 			// Restart the client with the same policy, which will
 			// immediately try to overwrite the old session with an
@@ -1242,11 +1232,13 @@ var clientTests = []clientTest{
 
 			// Wait for all of the updates to be populated in the
 			// server's database.
-			h.waitServerUpdates(hints, 5*time.Second)
+			h.server.waitServerUpdates(hints, 5*time.Second)
 
 			// Assert that the server has updates for the clients
 			// most recent policy.
-			h.assertUpdatesForPolicy(hints, h.clientCfg.Policy)
+			h.server.assertUpdatesForPolicy(
+				hints, h.clientCfg.Policy,
+			)
 		},
 	},
 	{
@@ -1277,17 +1269,16 @@ var clientTests = []clientTest{
 
 			// Since the client is unable to create a session, the
 			// server should have no updates.
-			h.waitServerUpdates(nil, time.Second)
+			h.server.waitServerUpdates(nil, time.Second)
 
 			// Force quit the client since it has queued backups.
 			h.client.ForceQuit()
 
 			// Restart the server and allow it to ack session
 			// creation.
-			h.server.Stop()
-			h.serverCfg.NoAckCreateSession = false
-			h.startServer()
-			defer h.server.Stop()
+			h.server.restart(func(cfg *wtserver.Config) {
+				cfg.NoAckCreateSession = false
+			})
 
 			// Restart the client with a new policy, which will
 			// immediately try to overwrite the prior session with
@@ -1301,11 +1292,13 @@ var clientTests = []clientTest{
 
 			// Wait for all of the updates to be populated in the
 			// server's database.
-			h.waitServerUpdates(hints, 5*time.Second)
+			h.server.waitServerUpdates(hints, 5*time.Second)
 
 			// Assert that the server has updates for the clients
 			// most recent policy.
-			h.assertUpdatesForPolicy(hints, h.clientCfg.Policy)
+			h.server.assertUpdatesForPolicy(
+				hints, h.clientCfg.Policy,
+			)
 		},
 	},
 	{
@@ -1339,7 +1332,9 @@ var clientTests = []clientTest{
 			h.backupStates(chanID, 0, numUpdates/2, nil)
 
 			// Wait for the server to collect the first half.
-			h.waitServerUpdates(hints[:numUpdates/2], time.Second)
+			h.server.waitServerUpdates(
+				hints[:numUpdates/2], time.Second,
+			)
 
 			// Stop the client, which should have no more backups.
 			h.client.Stop()
@@ -1362,11 +1357,11 @@ var clientTests = []clientTest{
 
 			// Wait for all of the updates to be populated in the
 			// server's database.
-			h.waitServerUpdates(hints, 5*time.Second)
+			h.server.waitServerUpdates(hints, 5*time.Second)
 
 			// Assert that the server has updates for the client's
 			// original policy.
-			h.assertUpdatesForPolicy(hints, expPolicy)
+			h.server.assertUpdatesForPolicy(hints, expPolicy)
 		},
 	},
 	{
@@ -1403,7 +1398,9 @@ var clientTests = []clientTest{
 
 			// Wait for the first half of the updates to be
 			// populated in the server's database.
-			h.waitServerUpdates(hints[:len(hints)/2], 5*time.Second)
+			h.server.waitServerUpdates(
+				hints[:len(hints)/2], 5*time.Second,
+			)
 
 			// Restart the client, so we can ensure the deduping is
 			// maintained across restarts.
@@ -1417,7 +1414,7 @@ var clientTests = []clientTest{
 
 			// Wait for all of the updates to be populated in the
 			// server's database.
-			h.waitServerUpdates(hints, 5*time.Second)
+			h.server.waitServerUpdates(hints, 5*time.Second)
 		},
 	},
 	{
@@ -1445,35 +1442,37 @@ var clientTests = []clientTest{
 			// first two.
 			hints := h.advanceChannelN(chanID, numUpdates)
 			h.backupStates(chanID, 0, numUpdates/2, nil)
-			h.waitServerUpdates(hints[:numUpdates/2], 5*time.Second)
+			h.server.waitServerUpdates(
+				hints[:numUpdates/2], 5*time.Second,
+			)
 
 			// Fully remove the tower, causing its existing sessions
 			// to be marked inactive.
-			h.removeTower(h.serverAddr.IdentityKey, nil)
+			h.removeTower(h.server.addr.IdentityKey, nil)
 
 			// Back up the remaining states. Since the tower has
 			// been removed, it shouldn't receive any updates.
 			h.backupStates(chanID, numUpdates/2, numUpdates, nil)
-			h.waitServerUpdates(nil, time.Second)
+			h.server.waitServerUpdates(nil, time.Second)
 
 			// Re-add the tower. We prevent the tower from acking
 			// session creation to ensure the inactive sessions are
 			// not used.
-			err := h.server.Stop()
-			require.Nil(h.t, err)
-			h.serverCfg.NoAckCreateSession = true
-			h.startServer()
-			h.addTower(h.serverAddr)
-			h.waitServerUpdates(nil, time.Second)
+			h.server.restart(func(cfg *wtserver.Config) {
+				cfg.NoAckCreateSession = true
+			})
+			h.addTower(h.server.addr)
+			h.server.waitServerUpdates(nil, time.Second)
 
 			// Finally, allow the tower to ack session creation,
 			// allowing the state updates to be sent through the new
 			// session.
-			err = h.server.Stop()
-			require.Nil(h.t, err)
-			h.serverCfg.NoAckCreateSession = false
-			h.startServer()
-			h.waitServerUpdates(hints[numUpdates/2:], 5*time.Second)
+			h.server.restart(func(cfg *wtserver.Config) {
+				cfg.NoAckCreateSession = false
+			})
+			h.server.waitServerUpdates(
+				hints[numUpdates/2:], 5*time.Second,
+			)
 		},
 	},
 	{
@@ -1504,15 +1503,16 @@ var clientTests = []clientTest{
 
 			// Back up 4 of the 5 states for the negotiated session.
 			h.backupStates(chanID, 0, maxUpdates-1, nil)
-			h.waitServerUpdates(hints[:maxUpdates-1], 5*time.Second)
+			h.server.waitServerUpdates(
+				hints[:maxUpdates-1], 5*time.Second,
+			)
 
 			// Now, restart the tower and prevent it from acking any
 			// new sessions. We do this here as once the last slot
 			// is exhausted the client will attempt to renegotiate.
-			err := h.server.Stop()
-			require.Nil(h.t, err)
-			h.serverCfg.NoAckCreateSession = true
-			h.startServer()
+			h.server.restart(func(cfg *wtserver.Config) {
+				cfg.NoAckCreateSession = true
+			})
 
 			// Back up the remaining two states. Once the first is
 			// processed, the session will be exhausted but the
@@ -1520,14 +1520,16 @@ var clientTests = []clientTest{
 			// the final state. We'll only wait for the first five
 			// states to arrive at the tower.
 			h.backupStates(chanID, maxUpdates-1, numUpdates, nil)
-			h.waitServerUpdates(hints[:maxUpdates], 5*time.Second)
+			h.server.waitServerUpdates(
+				hints[:maxUpdates], 5*time.Second,
+			)
 
 			// Finally, stop the client which will continue to
 			// attempt session negotiation since it has one more
 			// state to process. After the force quite delay
 			// expires, the client should force quite itself and
 			// allow the test to complete.
-			err = h.client.Stop()
+			err := h.client.Stop()
 			require.Nil(h.t, err)
 		},
 	},
@@ -1542,7 +1544,7 @@ func TestClient(t *testing.T) {
 			t.Parallel()
 
 			h := newHarness(t, tc.cfg)
-			defer h.server.Stop()
+			defer h.server.stop()
 			defer h.client.ForceQuit()
 
 			tc.fn(h)
