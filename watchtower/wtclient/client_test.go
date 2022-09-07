@@ -1544,8 +1544,7 @@ var clientTests = []clientTest{
 	{
 		// Show that if a client switches to a new tower _after_ backup
 		// tasks have been bound to the session with the first old tower
-		// then these updates are _not_ replayed onto the new tower.
-		// This is a bug that will be fixed in a future commit.
+		// then these updates are replayed onto the new tower.
 		name: "switch to new tower after tasks are bound",
 		cfg: harnessCfg{
 			localBalance:  localBalance,
@@ -1593,10 +1592,11 @@ var clientTests = []clientTest{
 			}, time.Second*5)
 			require.NoError(h.t, err)
 
-			// Now we assert that the backups are _not_ backed up
-			// to the new tower. This is a bug that will be fixed
-			// in a future commit.
-			server2.waitServerUpdates(nil, time.Second)
+			// Now we assert that the backups are backed up to the
+			// new tower.
+			server2.waitServerUpdates(
+				hints[numUpdates-2:], 5*time.Second,
+			)
 		},
 	},
 }

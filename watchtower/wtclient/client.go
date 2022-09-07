@@ -1172,9 +1172,36 @@ func (c *TowerClient) handleStaleTower(msg *staleTowerMsg) error {
 	// If our active session queue corresponds to the stale tower, we'll
 	// proceed to negotiate a new one.
 	if c.sessionQueue != nil {
-		activeTower := c.sessionQueue.towerAddr.IdentityKey.SerializeCompressed()
-		if bytes.Equal(pubKey, activeTower) {
+		activeTower := c.sessionQueue.towerAddr.IdentityKey
+		if bytes.Equal(pubKey, activeTower.SerializeCompressed()) {
 			c.sessionQueue = nil
+		}
+	}
+
+	// Iterate over all the tower's sessions. For each session, drain all
+	// its tasks from the session's pendingQueue, unbind them, and then
+	// re-add them to the main task pipeline.
+	for sessionID := range sessions {
+		session, ok := c.activeSessions[sessionID]
+		if !ok {
+			continue
+		}
+
+		// Best effort attempt at re-queueing the pending back up tasks
+		// of each session onto the task pipeline.
+		for session.pendingQueue.Len() > 0 {
+			next := session.pendingQueue.Front()
+			session.pendingQueue.Remove(next)
+
+			task := next.Value.(*backupTask)
+			task.unbindSession()
+
+			err := c.pipeline.QueueBackupTask(task)
+			if err != nil {
+				log.Errorf("could not re-queue backup task: "+
+					"%v", err)
+				continue
+			}
 		}
 	}
 

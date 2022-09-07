@@ -266,6 +266,14 @@ func (t *backupTask) bindSession(session *wtdb.ClientSessionBody) error {
 	return nil
 }
 
+// unbindSession reverts the actions performed by bindSession and resets all the
+// tasks session-dependent variables so that they can be re-bound to a new
+// session.
+func (t *backupTask) unbindSession() {
+	t.blobType = 0
+	t.outputs = nil
+}
+
 // craftSessionPayload is the final stage for a backupTask, and generates the
 // encrypted payload and breach hint that should be sent to the tower. This
 // method computes the final justice transaction using the bound
