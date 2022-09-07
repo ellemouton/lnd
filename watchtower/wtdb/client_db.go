@@ -1002,6 +1002,38 @@ func (c *ClientDB) AckUpdate(id *SessionID, seqNum uint16,
 	}, func() {})
 }
 
+// DeleteCommittedUpdate deletes the committed update with the given sequence
+// number from the given session.
+func (c *ClientDB) DeleteCommittedUpdate(id *SessionID, seqNum uint16) error {
+	return kvdb.Update(c.db, func(tx kvdb.RwTx) error {
+		sessions := tx.ReadWriteBucket(cSessionBkt)
+		if sessions == nil {
+			return ErrUninitializedDB
+		}
+
+		sessionBkt := sessions.NestedReadWriteBucket(id[:])
+		if sessionBkt == nil {
+			return fmt.Errorf("session bucket %s not found",
+				id.String())
+		}
+
+		// If the commits sub-bucket doesn't exist, there can't possibly
+		// be a corresponding update to remove.
+		sessionCommits := sessionBkt.NestedReadWriteBucket(
+			cSessionCommits,
+		)
+		if sessionCommits == nil {
+			return ErrCommittedUpdateNotFound
+		}
+
+		var seqNumBuf [2]byte
+		byteOrder.PutUint16(seqNumBuf[:], seqNum)
+
+		// Remove the corresponding committed update.
+		return sessionCommits.Delete(seqNumBuf[:])
+	}, func() {})
+}
+
 // getClientSessionBody loads the body of a ClientSession from the sessions
 // bucket corresponding to the serialized session id. This does not deserialize
 // the CommittedUpdates or AckUpdates associated with the session. If the caller

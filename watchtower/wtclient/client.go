@@ -1141,24 +1141,20 @@ func (c *TowerClient) handleStaleTower(msg *staleTowerMsg) error {
 		return err
 	}
 
-	// We'll update our persisted state, followed by our in-memory state,
-	// with the stale tower.
-	if err := c.cfg.DB.RemoveTower(msg.pubKey, msg.addr); err != nil {
-		return err
+	// If an address was provided, then we're only meant to remove the
+	// address from the tower.
+	if msg.addr != nil {
+		return c.removeTowerAddr(tower, msg.addr)
 	}
-	err = c.candidateTowers.RemoveCandidate(tower.ID, msg.addr)
+
+	// Otherwise, the tower should no longer be used for future session
+	// negotiations and backups. First, we'll update our in-memory state
+	// with the stale tower.
+	err = c.candidateTowers.RemoveCandidate(tower.ID, nil)
 	if err != nil {
 		return err
 	}
 
-	// If an address was provided, then we're only meant to remove the
-	// address from the tower, so there's nothing left for us to do.
-	if msg.addr != nil {
-		return nil
-	}
-
-	// Otherwise, the tower should no longer be used for future session
-	// negotiations and backups.
 	pubKey := msg.pubKey.SerializeCompressed()
 	sessions, err := c.cfg.DB.ListClientSessions(&tower.ID)
 	if err != nil {
@@ -1181,10 +1177,16 @@ func (c *TowerClient) handleStaleTower(msg *staleTowerMsg) error {
 	// Iterate over all the tower's sessions. For each session, drain all
 	// its tasks from the session's pendingQueue, unbind them, and then
 	// re-add them to the main task pipeline.
-	for sessionID := range sessions {
+	for sessionID, dbSession := range sessions {
 		session, ok := c.activeSessions[sessionID]
 		if !ok {
 			continue
+		}
+
+		// Collect the persisted un-acked updates for this session.
+		unAckedUpdates := make(map[wtdb.BackupID]uint16)
+		for _, update := range dbSession.CommittedUpdates {
+			unAckedUpdates[update.BackupID] = update.SeqNum
 		}
 
 		// Best effort attempt at re-queueing the pending back up tasks
@@ -1202,10 +1204,45 @@ func (c *TowerClient) handleStaleTower(msg *staleTowerMsg) error {
 					"%v", err)
 				continue
 			}
+
+			// The task was successfully reloaded onto the pipeline,
+			// so we can now delete the CommittedUpdate from the
+			// DB if there is an associated one.
+			seqNum, ok := unAckedUpdates[task.id]
+			if !ok {
+				continue
+			}
+
+			err = c.cfg.DB.DeleteCommittedUpdate(
+				session.ID(), seqNum,
+			)
+			if err != nil {
+				log.Errorf("could not delete committed "+
+					"update: %v", err)
+			}
 		}
 	}
 
+	// Finally, we will update our persisted state with the stale tower.
+	if err := c.cfg.DB.RemoveTower(msg.pubKey, nil); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// removeTowerAddr removes the given address from the tower.
+func (c *TowerClient) removeTowerAddr(tower *wtdb.Tower, addr net.Addr) error {
+	if addr == nil {
+		return fmt.Errorf("an address must be provided")
+	}
+
+	// We'll update our persisted state, followed by our in-memory state,
+	// with the stale tower.
+	if err := c.cfg.DB.RemoveTower(tower.IdentityKey, addr); err != nil {
+		return err
+	}
+	return c.candidateTowers.RemoveCandidate(tower.ID, addr)
 }
 
 // RegisteredTowers retrieves the list of watchtowers registered with the

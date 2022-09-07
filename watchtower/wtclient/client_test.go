@@ -1600,10 +1600,10 @@ var clientTests = []clientTest{
 		},
 	},
 	{
-		// Assert that a client is unable to remove a tower if there
-		// are persisted un-acked updates. This is a bug that will be
-		// fixed in a future commit.
-		name: "cant remove due to un-acked updates",
+		// Assert that a client is able to remove a tower if there
+		// are persisted un-acked updates as long as the client is not
+		// restarted.
+		name: "can remove tower with un-acked updates before restart",
 		cfg: harnessCfg{
 			localBalance:  localBalance,
 			remoteBalance: remoteBalance,
@@ -1661,14 +1661,22 @@ var clientTests = []clientTest{
 			}, time.Second*5)
 			require.NoError(h.t, err)
 
-			// Now attempt to remove the tower. This will fail due
-			// the tower having "un-acked" updates. This is a bug
-			// that will be fixed in a future commit.
+			// Now remove the tower.
 			err = h.client.RemoveTower(
 				h.server.addr.IdentityKey, nil,
 			)
-			require.ErrorContains(h.t, err,
-				"tower has unacked updates")
+			require.NoError(h.t, err)
+
+			// Add a new tower.
+			server2 := h.newServerHarness(tower2AddrStr)
+			server2.start()
+			h.addTower(server2.addr)
+
+			// Now we assert that the backups are backed up to the
+			// new tower.
+			server2.waitServerUpdates(
+				hints[numUpdates-2:], 5*time.Second,
+			)
 		},
 	},
 }

@@ -409,6 +409,39 @@ func (m *ClientDB) AckUpdate(id *wtdb.SessionID, seqNum, lastApplied uint16) err
 	return wtdb.ErrCommittedUpdateNotFound
 }
 
+// DeleteCommittedUpdate deletes the committed update with the given sequence
+// number from the given session.
+func (m *ClientDB) DeleteCommittedUpdate(id *wtdb.SessionID,
+	seqNum uint16) error {
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Fail if session doesn't exist.
+	session, ok := m.activeSessions[*id]
+	if !ok {
+		return wtdb.ErrClientSessionNotFound
+	}
+
+	// Retrieve the committed update, failing if none is found.
+	updates := session.CommittedUpdates
+	for i, update := range updates {
+		if update.SeqNum != seqNum {
+			continue
+		}
+
+		// Remove the committed update from disk.
+		copy(updates[:i], updates[i+1:])
+		updates[len(updates)-1] = wtdb.CommittedUpdate{}
+		session.CommittedUpdates = updates[:len(updates)-1]
+
+		m.activeSessions[*id] = session
+		return nil
+	}
+
+	return wtdb.ErrCommittedUpdateNotFound
+}
+
 // FetchChanSummaries loads a mapping from all registered channels to their
 // channel summaries.
 func (m *ClientDB) FetchChanSummaries() (wtdb.ChannelSummaries, error) {
