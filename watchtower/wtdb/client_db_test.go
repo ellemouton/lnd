@@ -50,7 +50,9 @@ func (h *clientDBHarness) insertSession(session *wtdb.ClientSession, expErr erro
 func (h *clientDBHarness) listSessions(id *wtdb.TowerID) map[wtdb.SessionID]*wtdb.ClientSession {
 	h.t.Helper()
 
-	sessions, err := h.db.ListClientSessions(id)
+	sessions, err := h.db.ListClientSessions(
+		id, wtdb.WithAckedUpdates(), wtdb.WithCommittedUpdates(),
+	)
 	if err != nil {
 		h.t.Fatalf("unable to list client sessions: %v", err)
 	}

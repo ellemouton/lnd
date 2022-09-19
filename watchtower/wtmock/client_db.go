@@ -200,8 +200,9 @@ func (m *ClientDB) MarkBackupIneligible(chanID lnwire.ChannelID, commitHeight ui
 // ListClientSessions returns the set of all client sessions known to the db. An
 // optional tower ID can be used to filter out any client sessions in the
 // response that do not correspond to this tower.
-func (m *ClientDB) ListClientSessions(
-	tower *wtdb.TowerID) (map[wtdb.SessionID]*wtdb.ClientSession, error) {
+func (m *ClientDB) ListClientSessions(tower *wtdb.TowerID,
+	_ ...wtdb.ClientSessionOption) (map[wtdb.SessionID]*wtdb.ClientSession,
+	error) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -270,8 +271,9 @@ func (m *ClientDB) CreateClientSession(session *wtdb.ClientSession) error {
 			Policy:           session.Policy,
 			RewardPkScript:   cloneBytes(session.RewardPkScript),
 		},
-		CommittedUpdates: make([]wtdb.CommittedUpdate, 0),
-		AckedUpdates:     make(map[uint16]wtdb.BackupID),
+		CommittedUpdates:     make([]wtdb.CommittedUpdate, 0),
+		AckedUpdates:         make(map[uint16]wtdb.BackupID),
+		MaxChanCommitHeights: make(map[lnwire.ChannelID]uint64),
 	}
 
 	return nil

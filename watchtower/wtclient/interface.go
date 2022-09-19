@@ -62,7 +62,8 @@ type DB interface {
 	// still be able to accept state updates. An optional tower ID can be
 	// used to filter out any client sessions in the response that do not
 	// correspond to this tower.
-	ListClientSessions(*wtdb.TowerID) (map[wtdb.SessionID]*wtdb.ClientSession, error)
+	ListClientSessions(*wtdb.TowerID, ...wtdb.ClientSessionOption) (
+		map[wtdb.SessionID]*wtdb.ClientSession, error)
 
 	// FetchChanSummaries loads a mapping from all registered channels to
 	// their channel summaries.

@@ -44,15 +44,37 @@ type ClientSession struct {
 	// NOTE: This list is serialized in it's own bucket, separate from the
 	// body of the ClientSession. The representation on disk is a key value
 	// map from sequence number to CommittedUpdateBody to allow efficient
-	// insertion and retrieval.
+	// insertion and retrieval. It is only populated if the
+	// WithCommittedUpdates functional option is used when fetching
+	// ClientSessions from the db.
 	CommittedUpdates []CommittedUpdate
 
 	// AckedUpdates is a map from sequence number to backup id to record
 	// which revoked states were uploaded via this session.
 	//
-	// NOTE: This map is serialized in it's own bucket, separate from the
-	// body of the ClientSession.
+	// NOTE: This map is serialized in its own bucket, separate from the
+	// body of the ClientSession. It is only populated if the
+	// WithAckedUpdates functional option is used when fetching
+	// ClientSessions from the db.
 	AckedUpdates map[uint16]BackupID
+
+	// NumAckedUpdate is the number of acked updates that this session has.
+	//
+	// NOTE: This number is not serialized. It is derived while the
+	// ClientSession is being read from the DB. It will only be populated
+	// if the WithAckedUpdateSummary or WithAckedUpdates functional options
+	// are used. It is useful when the caller wants the number of acked
+	// updates but does not want to read all the acked updates into memory.
+	NumAckedUpdates uint16
+
+	// MaxChanCommitHeights is a map from channel ID to the maximum
+	// commit height that the session has backed up for that channel.
+	//
+	// NOTE: This map is not serialized. It is derived while the
+	// ClientSession is being read from the DB. It will only be populated
+	// if the WithAckedUpdateSummary or WithAckedUpdates functional options
+	// are used.
+	MaxChanCommitHeights map[lnwire.ChannelID]uint64
 
 	// Tower holds the pubkey and address of the watchtower.
 	//

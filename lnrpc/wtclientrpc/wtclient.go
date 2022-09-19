@@ -265,12 +265,20 @@ func (c *WatchtowerClient) ListTowers(ctx context.Context,
 		return nil, err
 	}
 
-	anchorTowers, err := c.cfg.AnchorClient.RegisteredTowers()
+	opts := []wtdb.ClientSessionOption{
+		wtdb.WithCommittedUpdates(),
+	}
+
+	if req.IncludeSessions {
+		opts = append(opts, wtdb.WithAckedUpdateSummary())
+	}
+
+	anchorTowers, err := c.cfg.AnchorClient.RegisteredTowers(opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	legacyTowers, err := c.cfg.Client.RegisteredTowers()
+	legacyTowers, err := c.cfg.Client.RegisteredTowers(opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -306,10 +314,18 @@ func (c *WatchtowerClient) GetTowerInfo(ctx context.Context,
 		return nil, err
 	}
 
+	opts := []wtdb.ClientSessionOption{
+		wtdb.WithCommittedUpdates(),
+	}
+
+	if req.IncludeSessions {
+		opts = append(opts, wtdb.WithAckedUpdateSummary())
+	}
+
 	var tower *wtclient.RegisteredTower
-	tower, err = c.cfg.Client.LookupTower(pubKey)
+	tower, err = c.cfg.Client.LookupTower(pubKey, opts...)
 	if err == wtdb.ErrTowerNotFound {
-		tower, err = c.cfg.AnchorClient.LookupTower(pubKey)
+		tower, err = c.cfg.AnchorClient.LookupTower(pubKey, opts...)
 	}
 	if err != nil {
 		return nil, err
@@ -399,7 +415,7 @@ func marshallTower(tower *wtclient.RegisteredTower, includeSessions bool) *Tower
 		for _, session := range tower.Sessions {
 			satPerVByte := session.Policy.SweepFeeRate.FeePerKVByte() / 1000
 			rpcSessions = append(rpcSessions, &TowerSession{
-				NumBackups:        uint32(len(session.AckedUpdates)),
+				NumBackups:        uint32(session.NumAckedUpdates),
 				NumPendingBackups: uint32(len(session.CommittedUpdates)),
 				MaxBackups:        uint32(session.Policy.MaxUpdates),
 				SweepSatPerVbyte:  uint32(satPerVByte),
