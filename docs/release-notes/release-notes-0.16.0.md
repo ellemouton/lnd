@@ -94,6 +94,11 @@ minimum version needed to build the project.
   caller is expected to know that doing so with untrusted input is
   unsafe.](https://github.com/lightningnetwork/lnd/pull/6779)
 
+## Watchtowers
+
+* [Make including AckedUpdates optional when reading a ClientSession from the 
+  DB](https://github.com/lightningnetwork/lnd/pull/6928)
+
 ### Tooling and documentation
 
 * [The `golangci-lint` tool was updated to

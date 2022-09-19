@@ -44,15 +44,10 @@ type ClientSession struct {
 	// NOTE: This list is serialized in it's own bucket, separate from the
 	// body of the ClientSession. The representation on disk is a key value
 	// map from sequence number to CommittedUpdateBody to allow efficient
-	// insertion and retrieval.
+	// insertion and retrieval. It is only populated if the
+	// WithCommittedUpdates functional option is used when fetching
+	// ClientSessions from the db.
 	CommittedUpdates []CommittedUpdate
-
-	// AckedUpdates is a map from sequence number to backup id to record
-	// which revoked states were uploaded via this session.
-	//
-	// NOTE: This map is serialized in it's own bucket, separate from the
-	// body of the ClientSession.
-	AckedUpdates map[uint16]BackupID
 
 	// Tower holds the pubkey and address of the watchtower.
 	//

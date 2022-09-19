@@ -26,6 +26,7 @@ type ClientDB struct {
 	mu             sync.Mutex
 	summaries      map[lnwire.ChannelID]wtdb.ClientChanSummary
 	activeSessions map[wtdb.SessionID]wtdb.ClientSession
+	ackedUpdates   map[wtdb.SessionID]map[uint16]wtdb.BackupID
 	towerIndex     map[towerPK]wtdb.TowerID
 	towers         map[wtdb.TowerID]*wtdb.Tower
 
@@ -39,6 +40,7 @@ func NewClientDB() *ClientDB {
 	return &ClientDB{
 		summaries:      make(map[lnwire.ChannelID]wtdb.ClientChanSummary),
 		activeSessions: make(map[wtdb.SessionID]wtdb.ClientSession),
+		ackedUpdates:   make(map[wtdb.SessionID]map[uint16]wtdb.BackupID),
 		towerIndex:     make(map[towerPK]wtdb.TowerID),
 		towers:         make(map[wtdb.TowerID]*wtdb.Tower),
 		indexes:        make(map[keyIndexKey]uint32),
@@ -58,13 +60,24 @@ func (m *ClientDB) CreateTower(lnAddr *lnwire.NetAddress) (*wtdb.Tower, error) {
 	var towerPubKey towerPK
 	copy(towerPubKey[:], lnAddr.IdentityKey.SerializeCompressed())
 
+	perAckedUpdate := func(s *wtdb.ClientSession, seq uint16,
+		id wtdb.BackupID) {
+
+		if m.ackedUpdates[s.ID] == nil {
+			m.ackedUpdates[s.ID] = make(map[uint16]wtdb.BackupID)
+		}
+		m.ackedUpdates[s.ID][seq] = id
+	}
+
 	var tower *wtdb.Tower
 	towerID, ok := m.towerIndex[towerPubKey]
 	if ok {
 		tower = m.towers[towerID]
 		tower.AddAddress(lnAddr.Address)
 
-		towerSessions, err := m.listClientSessions(&towerID)
+		towerSessions, err := m.listClientSessions(
+			&towerID, wtdb.WithPerAckedUpdate(perAckedUpdate),
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -200,19 +213,26 @@ func (m *ClientDB) MarkBackupIneligible(chanID lnwire.ChannelID, commitHeight ui
 // ListClientSessions returns the set of all client sessions known to the db. An
 // optional tower ID can be used to filter out any client sessions in the
 // response that do not correspond to this tower.
-func (m *ClientDB) ListClientSessions(
-	tower *wtdb.TowerID) (map[wtdb.SessionID]*wtdb.ClientSession, error) {
+func (m *ClientDB) ListClientSessions(tower *wtdb.TowerID,
+	opts ...wtdb.ClientSessionListOption) (
+	map[wtdb.SessionID]*wtdb.ClientSession, error) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.listClientSessions(tower)
+	return m.listClientSessions(tower, opts...)
 }
 
 // listClientSessions returns the set of all client sessions known to the db. An
 // optional tower ID can be used to filter out any client sessions in the
 // response that do not correspond to this tower.
-func (m *ClientDB) listClientSessions(
-	tower *wtdb.TowerID) (map[wtdb.SessionID]*wtdb.ClientSession, error) {
+func (m *ClientDB) listClientSessions(tower *wtdb.TowerID,
+	opts ...wtdb.ClientSessionListOption) (
+	map[wtdb.SessionID]*wtdb.ClientSession, error) {
+
+	cfg := wtdb.NewClientSessionCfg()
+	for _, o := range opts {
+		o(cfg)
+	}
 
 	sessions := make(map[wtdb.SessionID]*wtdb.ClientSession)
 	for _, session := range m.activeSessions {
@@ -221,6 +241,14 @@ func (m *ClientDB) listClientSessions(
 			continue
 		}
 		sessions[session.ID] = &session
+
+		if cfg.PerAckedUpdate == nil {
+			continue
+		}
+
+		for seq, id := range m.ackedUpdates[session.ID] {
+			cfg.PerAckedUpdate(&session, seq, id)
+		}
 	}
 
 	return sessions, nil
@@ -271,7 +299,6 @@ func (m *ClientDB) CreateClientSession(session *wtdb.ClientSession) error {
 			RewardPkScript:   cloneBytes(session.RewardPkScript),
 		},
 		CommittedUpdates: make([]wtdb.CommittedUpdate, 0),
-		AckedUpdates:     make(map[uint16]wtdb.BackupID),
 	}
 
 	return nil
@@ -399,7 +426,11 @@ func (m *ClientDB) AckUpdate(id *wtdb.SessionID, seqNum, lastApplied uint16) err
 		updates[len(updates)-1] = wtdb.CommittedUpdate{}
 		session.CommittedUpdates = updates[:len(updates)-1]
 
-		session.AckedUpdates[seqNum] = update.BackupID
+		if _, ok := m.ackedUpdates[*id]; !ok {
+			m.ackedUpdates[*id] = make(map[uint16]wtdb.BackupID)
+		}
+
+		m.ackedUpdates[*id][seqNum] = update.BackupID
 		session.TowerLastApplied = lastApplied
 
 		m.activeSessions[*id] = session
