@@ -5661,6 +5661,11 @@
         "scid_alias": {
           "type": "boolean",
           "description": "If this is true, then an option-scid-alias channel-type open will be\nattempted."
+        },
+        "remote_chan_reserve_sat": {
+          "type": "string",
+          "format": "uint64",
+          "description": "The number of satoshis we require the remote peer to reserve."
         }
       }
     },
