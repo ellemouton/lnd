@@ -4028,6 +4028,23 @@ func (f *Manager) handleInitFundingMsg(msg *InitFundingMsg) {
 	// remote party.
 	chanReserve := f.cfg.RequiredRemoteChanReserve(capacity, ourDustLimit)
 
+	// Check the sanity of the selected channel constraints.
+	channelConstraints := &channeldb.ChannelConstraints{
+		DustLimit:        ourDustLimit,
+		ChanReserve:      chanReserve,
+		MaxPendingAmount: maxValue,
+		MinHTLC:          minHtlcIn,
+		MaxAcceptedHtlcs: maxHtlcs,
+		CsvDelay:         remoteCsvDelay,
+	}
+	err = lnwallet.VerifyConstraints(
+		channelConstraints, resCtx.maxLocalCsv, capacity,
+	)
+	if err != nil {
+		msg.Err <- err
+		return
+	}
+
 	// When opening a script enforced channel lease, include the required
 	// expiry TLV record in our proposal.
 	var leaseExpiry *lnwire.LeaseExpiry
