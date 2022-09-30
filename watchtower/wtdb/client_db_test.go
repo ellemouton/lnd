@@ -60,6 +60,19 @@ func (h *clientDBHarness) listSessions(id *wtdb.TowerID,
 	return sessions
 }
 
+func (h *clientDBHarness) fetchCommittedUpdates(
+	id wtdb.SessionID) []wtdb.CommittedUpdate {
+
+	h.t.Helper()
+
+	sessions, err := h.db.FetchSessionCommittedUpdates(id)
+	if err != nil {
+		h.t.Fatalf("unable to list client sessions: %v", err)
+	}
+
+	return sessions
+}
+
 func (h *clientDBHarness) nextKeyIndex(id wtdb.TowerID,
 	blobType blob.Type) uint32 {
 
@@ -575,16 +588,15 @@ func testCommitUpdate(h *clientDBHarness) {
 	// Assert that the committed update appears in the client session's
 	// CommittedUpdates map when loaded from disk and that there are no
 	// AckedUpdates.
-	updates := make(map[uint16]wtdb.BackupID)
-	dbSessions := h.listSessions(
-		nil, wtdb.WithPerAckedUpdate(perAckedUpdate(updates)),
+	ackedUpdates := make(map[uint16]wtdb.BackupID)
+	_ = h.listSessions(
+		nil, wtdb.WithPerAckedUpdate(perAckedUpdate(ackedUpdates)),
 	)
-	checkCommittedUpdates(h.t, dbSessions[session.ID],
-		[]wtdb.CommittedUpdate{
-			*update1,
-		},
-	)
-	checkAckedUpdates(h.t, updates, nil)
+	committedUpdates := h.fetchCommittedUpdates(session.ID)
+	checkCommittedUpdates(h.t, committedUpdates, []wtdb.CommittedUpdate{
+		*update1,
+	})
+	checkAckedUpdates(h.t, ackedUpdates, nil)
 
 	// Try to commit the same update, which should succeed due to
 	// idempotency (which is preserved when the breach hint is identical to
@@ -597,16 +609,15 @@ func testCommitUpdate(h *clientDBHarness) {
 	}
 
 	// Assert that the loaded ClientSession is the same as before.
-	updates = make(map[uint16]wtdb.BackupID)
-	dbSessions = h.listSessions(
-		nil, wtdb.WithPerAckedUpdate(perAckedUpdate(updates)),
+	ackedUpdates = make(map[uint16]wtdb.BackupID)
+	_ = h.listSessions(
+		nil, wtdb.WithPerAckedUpdate(perAckedUpdate(ackedUpdates)),
 	)
-	checkCommittedUpdates(h.t, dbSessions[session.ID],
-		[]wtdb.CommittedUpdate{
-			*update1,
-		},
-	)
-	checkAckedUpdates(h.t, updates, nil)
+	committedUpdates = h.fetchCommittedUpdates(session.ID)
+	checkCommittedUpdates(h.t, committedUpdates, []wtdb.CommittedUpdate{
+		*update1,
+	})
+	checkAckedUpdates(h.t, ackedUpdates, nil)
 
 	// Generate another random update and try to commit it at the identical
 	// sequence number. Since the breach hint has changed, this should fail.
@@ -624,17 +635,16 @@ func testCommitUpdate(h *clientDBHarness) {
 
 	// Check that both updates now appear as committed on the ClientSession
 	// loaded from disk.
-	updates = make(map[uint16]wtdb.BackupID)
-	dbSessions = h.listSessions(
-		nil, wtdb.WithPerAckedUpdate(perAckedUpdate(updates)),
+	ackedUpdates = make(map[uint16]wtdb.BackupID)
+	_ = h.listSessions(
+		nil, wtdb.WithPerAckedUpdate(perAckedUpdate(ackedUpdates)),
 	)
-	checkCommittedUpdates(h.t, dbSessions[session.ID],
-		[]wtdb.CommittedUpdate{
-			*update1,
-			*update2,
-		},
-	)
-	checkAckedUpdates(h.t, updates, nil)
+	committedUpdates = h.fetchCommittedUpdates(session.ID)
+	checkCommittedUpdates(h.t, committedUpdates, []wtdb.CommittedUpdate{
+		*update1,
+		*update2,
+	})
+	checkAckedUpdates(h.t, ackedUpdates, nil)
 
 	// Finally, create one more random update and try to commit it at index
 	// 4, which should be rejected since 3 is the next slot the database
@@ -643,24 +653,23 @@ func testCommitUpdate(h *clientDBHarness) {
 	h.commitUpdate(&session.ID, update4, wtdb.ErrCommitUnorderedUpdate)
 
 	// Assert that the ClientSession loaded from disk remains unchanged.
-	updates = make(map[uint16]wtdb.BackupID)
-	dbSessions = h.listSessions(
-		nil, wtdb.WithPerAckedUpdate(perAckedUpdate(updates)),
+	ackedUpdates = make(map[uint16]wtdb.BackupID)
+	_ = h.listSessions(
+		nil, wtdb.WithPerAckedUpdate(perAckedUpdate(ackedUpdates)),
 	)
-	checkCommittedUpdates(h.t, dbSessions[session.ID],
-		[]wtdb.CommittedUpdate{
-			*update1,
-			*update2,
-		},
-	)
-	checkAckedUpdates(h.t, updates, nil)
+	committedUpdates = h.fetchCommittedUpdates(session.ID)
+	checkCommittedUpdates(h.t, committedUpdates, []wtdb.CommittedUpdate{
+		*update1,
+		*update2,
+	})
+	checkAckedUpdates(h.t, ackedUpdates, nil)
 }
 
 // testAckUpdate asserts the behavior of AckUpdate.
 func testAckUpdate(h *clientDBHarness) {
 	const blobType = blob.TypeAltruistCommit
 
-	// Create a new session that the updates in this will be tied to.
+	// Create a new session that the ackedUpdates in this will be tied to.
 	session := &wtdb.ClientSession{
 		ClientSessionBody: wtdb.ClientSessionBody{
 			TowerID: wtdb.TowerID(3),
@@ -710,12 +719,13 @@ func testAckUpdate(h *clientDBHarness) {
 
 	// Assert that the ClientSession loaded from disk has one update in it's
 	// AckedUpdates map, and that the committed update has been removed.
-	updates := make(map[uint16]wtdb.BackupID)
-	dbSessions := h.listSessions(
-		nil, wtdb.WithPerAckedUpdate(perAckedUpdate(updates)),
+	ackedUpdates := make(map[uint16]wtdb.BackupID)
+	_ = h.listSessions(
+		nil, wtdb.WithPerAckedUpdate(perAckedUpdate(ackedUpdates)),
 	)
-	checkCommittedUpdates(h.t, dbSessions[session.ID], nil)
-	checkAckedUpdates(h.t, updates, map[uint16]wtdb.BackupID{
+	committedUpdates := h.fetchCommittedUpdates(session.ID)
+	checkCommittedUpdates(h.t, committedUpdates, nil)
+	checkAckedUpdates(h.t, ackedUpdates, map[uint16]wtdb.BackupID{
 		1: update1.BackupID,
 	})
 
@@ -732,13 +742,14 @@ func testAckUpdate(h *clientDBHarness) {
 	// Ack seqnum 2.
 	h.ackUpdate(&session.ID, 2, 2, nil)
 
-	// Assert that both updates exist as AckedUpdates when loaded from disk.
-	updates = make(map[uint16]wtdb.BackupID)
-	dbSessions = h.listSessions(
-		nil, wtdb.WithPerAckedUpdate(perAckedUpdate(updates)),
+	// Assert that both ackedUpdates exist as AckedUpdates when loaded from disk.
+	ackedUpdates = make(map[uint16]wtdb.BackupID)
+	_ = h.listSessions(
+		nil, wtdb.WithPerAckedUpdate(perAckedUpdate(ackedUpdates)),
 	)
-	checkCommittedUpdates(h.t, dbSessions[session.ID], nil)
-	checkAckedUpdates(h.t, updates, map[uint16]wtdb.BackupID{
+	committedUpdates = h.fetchCommittedUpdates(session.ID)
+	checkCommittedUpdates(h.t, committedUpdates, nil)
+	checkAckedUpdates(h.t, ackedUpdates, map[uint16]wtdb.BackupID{
 		1: update1.BackupID,
 		2: update2.BackupID,
 	})
@@ -766,7 +777,7 @@ func perAckedUpdate(updates map[uint16]wtdb.BackupID) func(
 
 // checkCommittedUpdates asserts that the CommittedUpdates on session match the
 // expUpdates provided.
-func checkCommittedUpdates(t *testing.T, session *wtdb.ClientSession,
+func checkCommittedUpdates(t *testing.T, actualUpdates,
 	expUpdates []wtdb.CommittedUpdate) {
 
 	t.Helper()
@@ -778,9 +789,9 @@ func checkCommittedUpdates(t *testing.T, session *wtdb.ClientSession,
 		expUpdates = make([]wtdb.CommittedUpdate, 0)
 	}
 
-	if !reflect.DeepEqual(session.CommittedUpdates, expUpdates) {
+	if !reflect.DeepEqual(actualUpdates, expUpdates) {
 		t.Fatalf("committed updates mismatch, want: %v, got: %v",
-			expUpdates, session.CommittedUpdates)
+			expUpdates, actualUpdates)
 	}
 }
 

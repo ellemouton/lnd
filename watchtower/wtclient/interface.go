@@ -65,6 +65,9 @@ type DB interface {
 	ListClientSessions(*wtdb.TowerID, ...wtdb.ClientSessionListOption) (
 		map[wtdb.SessionID]*wtdb.ClientSession, error)
 
+	FetchSessionCommittedUpdates(id wtdb.SessionID) ([]wtdb.CommittedUpdate,
+		error)
+
 	// FetchChanSummaries loads a mapping from all registered channels to
 	// their channel summaries.
 	FetchChanSummaries() (wtdb.ChannelSummaries, error)

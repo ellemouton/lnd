@@ -388,7 +388,18 @@ func (c *ClientDB) RemoveTower(pubKey *btcec.PublicKey, addr net.Addr) error {
 			return ErrUninitializedDB
 		}
 		towerID := TowerIDFromBytes(towerIDBytes)
-		towerSessions, err := listClientSessions(sessions, &towerID)
+
+		committedUpdateCount := make(map[SessionID]uint16)
+		perCommittedUpdate := func(s *ClientSession,
+			_ *CommittedUpdate) {
+
+			committedUpdateCount[s.ID]++
+		}
+
+		towerSessions, err := listClientSessions(
+			sessions, &towerID,
+			WithPerCommittedUpdate(perCommittedUpdate),
+		)
 		if err != nil {
 			return err
 		}
@@ -406,7 +417,7 @@ func (c *ClientDB) RemoveTower(pubKey *btcec.PublicKey, addr net.Addr) error {
 		// have any pending updates to ensure we don't load them upon
 		// restarts.
 		for _, session := range towerSessions {
-			if len(session.CommittedUpdates) > 0 {
+			if committedUpdateCount[session.ID] > 0 {
 				return ErrTowerUnackedUpdates
 			}
 			err := markSessionStatus(
@@ -684,6 +695,33 @@ func (c *ClientDB) ListClientSessions(id *TowerID,
 	return clientSessions, nil
 }
 
+func (c *ClientDB) FetchSessionCommittedUpdates(id SessionID) (
+	[]CommittedUpdate, error) {
+
+	var committedUpdates []CommittedUpdate
+	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
+		sessions := tx.ReadBucket(cSessionBkt)
+		if sessions == nil {
+			return ErrUninitializedDB
+		}
+
+		session, err := getClientSessionBody(sessions, id[:])
+		if err != nil {
+			return err
+		}
+
+		committedUpdates, err = getClientSessionCommits(
+			sessions, id[:], session, nil,
+		)
+		return err
+	}, func() {})
+	if err != nil {
+		return nil, err
+	}
+
+	return committedUpdates, nil
+}
+
 // listClientSessions returns the set of all client sessions known to the db. An
 // optional tower ID can be used to filter out any client sessions in the
 // response that do not correspond to this tower.
@@ -696,9 +734,6 @@ func listClientSessions(sessions kvdb.RBucket, id *TowerID,
 		// the CommittedUpdates and AckedUpdates on startup to resume
 		// committed updates and compute the highest known commit height
 		// for each channel.
-		var sessionID SessionID
-		copy(sessionID[:], k)
-
 		session, err := getClientSession(sessions, k, opts...)
 		if err != nil {
 			return err
@@ -1084,16 +1119,21 @@ func getClientSession(sessions kvdb.RBucket, idBytes []byte,
 	}
 
 	// Fetch the committed updates for this session.
-	committedUpdates, err := getClientSessionCommits(
-		cfg, sessions, idBytes, session,
+	_, err = getClientSessionCommits(
+		sessions, idBytes, session, cfg.PerCommittedUpdate,
 	)
 	if err != nil {
 		return nil, err
 	}
-	session.CommittedUpdates = committedUpdates
 
 	// Fetch the acked updates for this session.
-	err = getClientSessionAcks(cfg, sessions, idBytes, session)
+	if cfg.PerAckedUpdate == nil {
+		return session, nil
+	}
+
+	err = getClientSessionAcks(
+		sessions, idBytes, session, cfg.PerAckedUpdate,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1103,8 +1143,8 @@ func getClientSession(sessions kvdb.RBucket, idBytes []byte,
 
 // getClientSessionCommits retrieves all committed updates for the session
 // identified by the serialized session id.
-func getClientSessionCommits(cfg *ClientSessionListCfg, sessions kvdb.RBucket,
-	idBytes []byte, s *ClientSession) ([]CommittedUpdate, error) {
+func getClientSessionCommits(sessions kvdb.RBucket, idBytes []byte,
+	s *ClientSession, cb PerCommittedUpdateCB) ([]CommittedUpdate, error) {
 
 	// Can't fail because client session body has already been read.
 	sessionBkt := sessions.NestedReadBucket(idBytes)
@@ -1128,8 +1168,8 @@ func getClientSessionCommits(cfg *ClientSessionListCfg, sessions kvdb.RBucket,
 
 		committedUpdates = append(committedUpdates, committedUpdate)
 
-		if cfg.PerCommittedUpdate != nil {
-			cfg.PerCommittedUpdate(s, &committedUpdate)
+		if cb != nil {
+			cb(s, &committedUpdate)
 		}
 
 		return nil
@@ -1143,12 +1183,8 @@ func getClientSessionCommits(cfg *ClientSessionListCfg, sessions kvdb.RBucket,
 
 // getClientSessionAcks retrieves all acked updates for the session identified
 // by the serialized session id.
-func getClientSessionAcks(cfg *ClientSessionListCfg, sessions kvdb.RBucket,
-	idBytes []byte, s *ClientSession) error {
-
-	if cfg.PerAckedUpdate == nil {
-		return nil
-	}
+func getClientSessionAcks(sessions kvdb.RBucket, idBytes []byte,
+	s *ClientSession, cb PerAckedUpdateCB) error {
 
 	// Can't fail because client session body has already been read.
 	sessionBkt := sessions.NestedReadBucket(idBytes)
@@ -1167,7 +1203,7 @@ func getClientSessionAcks(cfg *ClientSessionListCfg, sessions kvdb.RBucket,
 			return err
 		}
 
-		cfg.PerAckedUpdate(s, seqNum, backupID)
+		cb(s, seqNum, backupID)
 		return nil
 	})
 }
