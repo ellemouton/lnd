@@ -1034,22 +1034,25 @@ func getClientSessionBody(sessions kvdb.RBucket,
 // getClientSession loads the full ClientSession associated with the serialized
 // session id. This method populates the CommittedUpdates and AckUpdates in
 // addition to the ClientSession's body.
-func getClientSession(sessions kvdb.RBucket,
-	idBytes []byte) (*ClientSession, error) {
+func getClientSession(sessions kvdb.RBucket, idBytes []byte) (*ClientSession,
+	error) {
 
 	session, err := getClientSessionBody(sessions, idBytes)
 	if err != nil {
 		return nil, err
 	}
 
+	// Can't fail because client session body has already been read.
+	sessionBkt := sessions.NestedReadBucket(idBytes)
+
 	// Fetch the committed updates for this session.
-	commitedUpdates, err := getClientSessionCommits(sessions, idBytes)
+	commitedUpdates, err := getClientSessionCommits(sessionBkt)
 	if err != nil {
 		return nil, err
 	}
 
 	// Fetch the acked updates for this session.
-	ackedUpdates, err := getClientSessionAcks(sessions, idBytes)
+	ackedUpdates, err := getClientSessionAcks(sessionBkt)
 	if err != nil {
 		return nil, err
 	}
@@ -1062,11 +1065,8 @@ func getClientSession(sessions kvdb.RBucket,
 
 // getClientSessionCommits retrieves all committed updates for the session
 // identified by the serialized session id.
-func getClientSessionCommits(sessions kvdb.RBucket,
-	idBytes []byte) ([]CommittedUpdate, error) {
-
-	// Can't fail because client session body has already been read.
-	sessionBkt := sessions.NestedReadBucket(idBytes)
+func getClientSessionCommits(sessionBkt kvdb.RBucket) ([]CommittedUpdate,
+	error) {
 
 	// Initialize commitedUpdates so that we can return an initialized map
 	// if no committed updates exist.
@@ -1098,11 +1098,8 @@ func getClientSessionCommits(sessions kvdb.RBucket,
 
 // getClientSessionAcks retrieves all acked updates for the session identified
 // by the serialized session id.
-func getClientSessionAcks(sessions kvdb.RBucket,
-	idBytes []byte) (map[uint16]BackupID, error) {
-
-	// Can't fail because client session body has already been read.
-	sessionBkt := sessions.NestedReadBucket(idBytes)
+func getClientSessionAcks(sessionBkt kvdb.RBucket) (map[uint16]BackupID,
+	error) {
 
 	// Initialize ackedUpdates so that we can return an initialized map if
 	// no acked updates exist.
