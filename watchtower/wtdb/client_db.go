@@ -1107,8 +1107,9 @@ func getClientSession(sessions kvdb.RBucket, idBytes []byte,
 		return nil, err
 	}
 
-	// Fetch the acked updates for this session.
-	ackedUpdates, err := getClientSessionAcks(
+	// Pass the session's acked updates through the call-back if one is
+	// provided.
+	err = filterClientSessionAcks(
 		sessionBkt, session, cfg.PerAckedUpdate,
 	)
 	if err != nil {
@@ -1116,7 +1117,6 @@ func getClientSession(sessions kvdb.RBucket, idBytes []byte,
 	}
 
 	session.CommittedUpdates = commitedUpdates
-	session.AckedUpdates = ackedUpdates
 
 	return session, nil
 }
@@ -1159,18 +1159,19 @@ func getClientSessionCommits(sessionBkt kvdb.RBucket, s *ClientSession,
 	return committedUpdates, nil
 }
 
-// getClientSessionAcks retrieves all acked updates for the session identified
-// by the serialized session id.
-func getClientSessionAcks(sessionBkt kvdb.RBucket, s *ClientSession,
-	cb PerAckedUpdateCB) (map[uint16]BackupID, error) {
+// filterClientSessionAcks retrieves all acked updates for the session
+// identified by the serialized session id and passes them to the provided
+// call back if one is provided.
+func filterClientSessionAcks(sessionBkt kvdb.RBucket, s *ClientSession,
+	cb PerAckedUpdateCB) error {
 
-	// Initialize ackedUpdates so that we can return an initialized map if
-	// no acked updates exist.
-	ackedUpdates := make(map[uint16]BackupID)
+	if cb == nil {
+		return nil
+	}
 
 	sessionAcks := sessionBkt.NestedReadBucket(cSessionAcks)
 	if sessionAcks == nil {
-		return ackedUpdates, nil
+		return nil
 	}
 
 	err := sessionAcks.ForEach(func(k, v []byte) error {
@@ -1182,19 +1183,14 @@ func getClientSessionAcks(sessionBkt kvdb.RBucket, s *ClientSession,
 			return err
 		}
 
-		ackedUpdates[seqNum] = backupID
-
-		if cb != nil {
-			cb(s, seqNum, backupID)
-		}
-
+		cb(s, seqNum, backupID)
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return ackedUpdates, nil
+	return nil
 }
 
 // putClientSessionBody stores the body of the ClientSession (everything but the

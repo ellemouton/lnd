@@ -26,6 +26,7 @@ type ClientDB struct {
 	mu             sync.Mutex
 	summaries      map[lnwire.ChannelID]wtdb.ClientChanSummary
 	activeSessions map[wtdb.SessionID]wtdb.ClientSession
+	ackedUpdates   map[wtdb.SessionID]map[uint16]wtdb.BackupID
 	towerIndex     map[towerPK]wtdb.TowerID
 	towers         map[wtdb.TowerID]*wtdb.Tower
 
@@ -39,6 +40,7 @@ func NewClientDB() *ClientDB {
 	return &ClientDB{
 		summaries:      make(map[lnwire.ChannelID]wtdb.ClientChanSummary),
 		activeSessions: make(map[wtdb.SessionID]wtdb.ClientSession),
+		ackedUpdates:   make(map[wtdb.SessionID]map[uint16]wtdb.BackupID),
 		towerIndex:     make(map[towerPK]wtdb.TowerID),
 		towers:         make(map[wtdb.TowerID]*wtdb.Tower),
 		indexes:        make(map[keyIndexKey]uint32),
@@ -75,7 +77,7 @@ func (m *ClientDB) CreateTower(lnAddr *lnwire.NetAddress) (*wtdb.Tower, error) {
 	} else {
 		towerID = wtdb.TowerID(atomic.AddUint64(&m.nextTowerID, 1))
 		tower = &wtdb.Tower{
-			ID:          wtdb.TowerID(towerID),
+			ID:          towerID,
 			IdentityKey: lnAddr.IdentityKey,
 			Addresses:   []net.Addr{lnAddr.Address},
 		}
@@ -193,7 +195,7 @@ func (m *ClientDB) ListTowers() ([]*wtdb.Tower, error) {
 // MarkBackupIneligible records that particular commit height is ineligible for
 // backup. This allows the client to track which updates it should not attempt
 // to retry after startup.
-func (m *ClientDB) MarkBackupIneligible(chanID lnwire.ChannelID, commitHeight uint64) error {
+func (m *ClientDB) MarkBackupIneligible(_ lnwire.ChannelID, _ uint64) error {
 	return nil
 }
 
@@ -212,9 +214,17 @@ func (m *ClientDB) ListClientSessions(tower *wtdb.TowerID,
 // listClientSessions returns the set of all client sessions known to the db. An
 // optional tower ID can be used to filter out any client sessions in the
 // response that do not correspond to this tower.
+//
+// NOTE: this function is not thread safe and so should only ever be called if
+// the ClientDB mutex is being held.
 func (m *ClientDB) listClientSessions(tower *wtdb.TowerID,
-	_ ...wtdb.ClientSessionListOption) (
+	opts ...wtdb.ClientSessionListOption) (
 	map[wtdb.SessionID]*wtdb.ClientSession, error) {
+
+	cfg := wtdb.NewClientSessionCfg()
+	for _, o := range opts {
+		o(cfg)
+	}
 
 	sessions := make(map[wtdb.SessionID]*wtdb.ClientSession)
 	for _, session := range m.activeSessions {
@@ -223,6 +233,12 @@ func (m *ClientDB) listClientSessions(tower *wtdb.TowerID,
 			continue
 		}
 		sessions[session.ID] = &session
+
+		if cfg.PerAckedUpdate != nil {
+			for seq, id := range m.ackedUpdates[session.ID] {
+				cfg.PerAckedUpdate(&session, seq, id)
+			}
+		}
 	}
 
 	return sessions, nil
@@ -273,8 +289,8 @@ func (m *ClientDB) CreateClientSession(session *wtdb.ClientSession) error {
 			RewardPkScript:   cloneBytes(session.RewardPkScript),
 		},
 		CommittedUpdates: make([]wtdb.CommittedUpdate, 0),
-		AckedUpdates:     make(map[uint16]wtdb.BackupID),
 	}
+	m.ackedUpdates[session.ID] = make(map[uint16]wtdb.BackupID)
 
 	return nil
 }
@@ -401,7 +417,7 @@ func (m *ClientDB) AckUpdate(id *wtdb.SessionID, seqNum, lastApplied uint16) err
 		updates[len(updates)-1] = wtdb.CommittedUpdate{}
 		session.CommittedUpdates = updates[:len(updates)-1]
 
-		session.AckedUpdates[seqNum] = update.BackupID
+		m.ackedUpdates[*id][seqNum] = update.BackupID
 		session.TowerLastApplied = lastApplied
 
 		m.activeSessions[*id] = session
