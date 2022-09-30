@@ -107,6 +107,12 @@ minimum version needed to build the project.
 * Updated the github actions to use `make fmt-check` in its [build
   process](https://github.com/lightningnetwork/lnd/pull/6853).
 
+## Watchtowers
+
+* [Remove `AckedUpdates` & `CommittedUpdates` from the `ClientSession` 
+  struct](https://github.com/lightningnetwork/lnd/pull/6928) in order to 
+  improve the performance of fetching a `ClientSession` from the DB. 
+
 # Contributors (Alphabetical Order)
 
 * Carla Kirk-Cohen
