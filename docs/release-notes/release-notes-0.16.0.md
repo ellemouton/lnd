@@ -98,6 +98,14 @@ minimum version needed to build the project.
 * [The `tlv` package now allows decoding records larger than 65535 bytes. The
   caller is expected to know that doing so with untrusted input is
   unsafe.](https://github.com/lightningnetwork/lnd/pull/6779)
+ 
+## Watchtowers
+
+* [Create a towerID-to-sessionID index in the wtclient DB to improve the 
+  speed of listing sessions for a particular tower ID](
+  https://github.com/lightningnetwork/lnd/pull/6972). This PR also ensures a 
+  closer coupling of Towers and Sessions and ensures that a session cannot be
+  added if the tower it is referring to does not exist.
 
 ### Tooling and documentation
 
