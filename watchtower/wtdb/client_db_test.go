@@ -18,6 +18,9 @@ import (
 	"github.com/lightningnetwork/lnd/watchtower/wtpolicy"
 )
 
+// pseudoAddr is a fake network address to be used for testing purposes.
+var pseudoAddr = &net.TCPAddr{IP: []byte{0x01, 0x00, 0x00, 0x00}, Port: 9911}
+
 // clientDBInit is a closure used to initialize a wtclient.DB instance.
 type clientDBInit func(t *testing.T) wtclient.DB
 
@@ -242,10 +245,21 @@ func (h *clientDBHarness) ackUpdate(id *wtdb.SessionID, seqNum uint16,
 func testCreateClientSession(h *clientDBHarness) {
 	const blobType = blob.TypeAltruistAnchorCommit
 
+	pk, err := randPubKey()
+	if err != nil {
+		h.t.Fatalf("unable to generate pubkey: %v", err)
+	}
+
+	// Insert a random tower into the database.
+	tower := h.createTower(&lnwire.NetAddress{
+		IdentityKey: pk,
+		Address:     pseudoAddr,
+	}, nil)
+
 	// Create a test client session to insert.
 	session := &wtdb.ClientSession{
 		ClientSessionBody: wtdb.ClientSessionBody{
-			TowerID: wtdb.TowerID(3),
+			TowerID: tower.ID,
 			Policy: wtpolicy.Policy{
 				TxPolicy: wtpolicy.TxPolicy{
 					BlobType: blobType,
@@ -314,15 +328,21 @@ func testFilterClientSessions(h *clientDBHarness) {
 	const blobType = blob.TypeAltruistCommit
 	towerSessions := make(map[wtdb.TowerID][]wtdb.SessionID)
 	for i := 0; i < numSessions; i++ {
-		towerID := wtdb.TowerID(1)
-		if i == numSessions-1 {
-			towerID = wtdb.TowerID(2)
+		// Insert a random tower into the database.
+		pk, err := randPubKey()
+		if err != nil {
+			h.t.Fatalf("unable to generate pubkey: %v", err)
 		}
-		keyIndex := h.nextKeyIndex(towerID, blobType)
+		tower := h.createTower(&lnwire.NetAddress{
+			IdentityKey: pk,
+			Address:     pseudoAddr,
+		}, nil)
+
+		keyIndex := h.nextKeyIndex(tower.ID, blobType)
 		sessionID := wtdb.SessionID([33]byte{byte(i)})
 		h.insertSession(&wtdb.ClientSession{
 			ClientSessionBody: wtdb.ClientSessionBody{
-				TowerID: towerID,
+				TowerID: tower.ID,
 				Policy: wtpolicy.Policy{
 					TxPolicy: wtpolicy.TxPolicy{
 						BlobType: blobType,
@@ -334,8 +354,8 @@ func testFilterClientSessions(h *clientDBHarness) {
 			},
 			ID: sessionID,
 		}, nil)
-		towerSessions[towerID] = append(
-			towerSessions[towerID], sessionID,
+		towerSessions[tower.ID] = append(
+			towerSessions[tower.ID], sessionID,
 		)
 	}
 
@@ -554,9 +574,20 @@ func testChanSummaries(h *clientDBHarness) {
 // testCommitUpdate tests the behavior of CommitUpdate, ensuring that they can
 func testCommitUpdate(h *clientDBHarness) {
 	const blobType = blob.TypeAltruistCommit
+
+	// Insert a random tower into the database.
+	pk, err := randPubKey()
+	if err != nil {
+		h.t.Fatalf("unable to generate pubkey: %v", err)
+	}
+	tower := h.createTower(&lnwire.NetAddress{
+		IdentityKey: pk,
+		Address:     pseudoAddr,
+	}, nil)
+
 	session := &wtdb.ClientSession{
 		ClientSessionBody: wtdb.ClientSessionBody{
-			TowerID: wtdb.TowerID(3),
+			TowerID: tower.ID,
 			Policy: wtpolicy.Policy{
 				TxPolicy: wtpolicy.TxPolicy{
 					BlobType: blobType,
@@ -654,10 +685,20 @@ func testCommitUpdate(h *clientDBHarness) {
 func testAckUpdate(h *clientDBHarness) {
 	const blobType = blob.TypeAltruistCommit
 
+	// Insert a random tower into the database.
+	pk, err := randPubKey()
+	if err != nil {
+		h.t.Fatalf("unable to generate pubkey: %v", err)
+	}
+	tower := h.createTower(&lnwire.NetAddress{
+		IdentityKey: pk,
+		Address:     pseudoAddr,
+	}, nil)
+
 	// Create a new session that the updates in this will be tied to.
 	session := &wtdb.ClientSession{
 		ClientSessionBody: wtdb.ClientSessionBody{
-			TowerID: wtdb.TowerID(3),
+			TowerID: tower.ID,
 			Policy: wtpolicy.Policy{
 				TxPolicy: wtpolicy.TxPolicy{
 					BlobType: blobType,
