@@ -350,7 +350,7 @@ func (n *sessionNegotiator) createSession(tower *Tower, keyIndex uint32) error {
 		sessionKeyDesc, n.cfg.SecretKeyRing,
 	)
 
-	addr := tower.Addresses.Peek(false)
+	addr := tower.Addresses.Peek(true)
 	for {
 		lnAddr := &lnwire.NetAddress{
 			IdentityKey: tower.IdentityKey,
@@ -358,6 +358,7 @@ func (n *sessionNegotiator) createSession(tower *Tower, keyIndex uint32) error {
 		}
 
 		err = n.tryAddress(sessionKey, keyIndex, tower, lnAddr)
+		tower.Addresses.ReleaseLock(addr)
 		switch {
 		case err == ErrPermanentTowerFailure:
 			// TODO(conner): report to iterator? can then be reset
@@ -370,7 +371,7 @@ func (n *sessionNegotiator) createSession(tower *Tower, keyIndex uint32) error {
 				"%v", lnAddr, err)
 
 			// Get the next tower address of there is one.
-			addr, err = tower.Addresses.Next(false)
+			addr, err = tower.Addresses.Next(true)
 			if err == ErrAddressesExhausted {
 				tower.Addresses.Reset()
 
