@@ -32,7 +32,8 @@ import (
 const (
 	csvDelay uint32 = 144
 
-	towerAddrStr = "18.28.243.2:9911"
+	towerAddrStr  = "18.28.243.2:9911"
+	towerAddr2Str = "19.29.244.3:9912"
 )
 
 var (
@@ -1469,6 +1470,86 @@ var clientTests = []clientTest{
 			// expires, the client should force quite itself and
 			// allow the test to complete.
 			h.stopServer()
+		},
+	},
+	{
+		// Assert that if a client changes the address for a server and
+		// then tries to back up updates then the client will not switch
+		// to the new address. The client will only use the server's new
+		// address after a restart. This is a bug that will be fixed in
+		// a future commit.
+		name: "change address of existing session",
+		cfg: harnessCfg{
+			localBalance:  localBalance,
+			remoteBalance: remoteBalance,
+			policy: wtpolicy.Policy{
+				TxPolicy: wtpolicy.TxPolicy{
+					BlobType:     blob.TypeAltruistCommit,
+					SweepFeeRate: wtpolicy.DefaultSweepFeeRate,
+				},
+				MaxUpdates: 5,
+			},
+		},
+		fn: func(h *testHarness) {
+			const (
+				chanID     = 0
+				numUpdates = 6
+				maxUpdates = 5
+			)
+
+			// Advance the channel to create all states.
+			hints := h.advanceChannelN(chanID, numUpdates)
+
+			h.backupStates(chanID, 0, numUpdates/2, nil)
+
+			// Wait for the first half of the updates to be
+			// populated in the server's database.
+			h.waitServerUpdates(hints[:len(hints)/2], 5*time.Second)
+
+			// Stop the server.
+			h.stopServer()
+
+			// Change the address of the server.
+			towerTCPAddr, err := net.ResolveTCPAddr(
+				"tcp", towerAddr2Str,
+			)
+			require.NoError(h.t, err)
+
+			oldAddr := h.serverAddr.Address
+			towerAddr := &lnwire.NetAddress{
+				IdentityKey: h.serverAddr.IdentityKey,
+				Address:     towerTCPAddr,
+			}
+			h.serverAddr = towerAddr
+
+			// Add the new tower address to the client.
+			err = h.client.AddTower(towerAddr)
+			require.NoError(h.t, err)
+
+			// Remove the old tower address from the client.
+			err = h.client.RemoveTower(
+				towerAddr.IdentityKey, oldAddr,
+			)
+			require.NoError(h.t, err)
+
+			// Restart the server.
+			h.startServer()
+
+			// Now attempt to back up the rest of the updates.
+			h.backupStates(chanID, numUpdates/2, maxUpdates, nil)
+
+			// Assert that the server does not receive the updates.
+			h.waitServerUpdates(nil, time.Second)
+
+			// Assert that the server does not receive the updates.
+			// Restart the client and attempt to back up the updates
+			// again.
+			h.client.Stop()
+			h.startClient()
+			h.backupStates(chanID, numUpdates/2, maxUpdates, nil)
+
+			// The server should now receive the updates.
+			h.waitServerUpdates(hints[:maxUpdates], 5*time.Second)
 		},
 	},
 }
