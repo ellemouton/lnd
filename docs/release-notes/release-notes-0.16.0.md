@@ -113,6 +113,11 @@ minimum version needed to build the project.
   struct](https://github.com/lightningnetwork/lnd/pull/6928) in order to 
   improve the performance of fetching a `ClientSession` from the DB. 
 
+* [Allow user to update tower address without requiring a restart. Also allow
+   the removal of a tower address if the current session negotiation is not 
+  using the address in question](
+  https://github.com/lightningnetwork/lnd/pull/7025)
+
 # Contributors (Alphabetical Order)
 
 * Carla Kirk-Cohen
