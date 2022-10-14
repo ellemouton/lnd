@@ -18,9 +18,13 @@ var (
 	//   tower-id -> reserved-session-key-index (uint32).
 	cSessionKeyIndexBkt = []byte("client-session-key-index-bucket")
 
-	// cChanSummaryBkt is a top-level bucket storing:
-	//   channel-id -> encoded ClientChanSummary.
-	cChanSummaryBkt = []byte("client-channel-summary-bucket")
+	// cChanDetailsBkt is a top-level bucket storing:
+	//   channel-id => cChannelSummary -> encoded ClientChanSummary.
+	cChanDetailsBkt = []byte("client-channel-detail-bucket")
+
+	// cChannelSummary is a sub-bucket of cChanDetailsBkt which stores the
+	// encoded body of ClientChanSummary.
+	cChannelSummary = []byte("client-channel-summary")
 
 	// cSessionBkt is a top-level bucket storing:
 	//   session-id => cSessionBody -> encoded ClientSessionBody
@@ -66,6 +70,10 @@ var (
 	// ErrCorruptClientSession signals that the client session's on-disk
 	// structure deviates from what is expected.
 	ErrCorruptClientSession = errors.New("client session corrupted")
+
+	// ErrCorruptChanDetails signals that the clients channel detail's
+	// on-disk structure deviates from what is expected.
+	ErrCorruptChanDetails = errors.New("channel details corrupted")
 
 	// ErrClientSessionAlreadyExists signals an attempt to reinsert a client
 	// session that has already been created.
@@ -198,7 +206,7 @@ func OpenClientDB(db kvdb.Backend) (*ClientDB, error) {
 func initClientDBBuckets(tx kvdb.RwTx) error {
 	buckets := [][]byte{
 		cSessionKeyIndexBkt,
-		cChanSummaryBkt,
+		cChanDetailsBkt,
 		cSessionBkt,
 		cTowerBkt,
 		cTowerIndexBkt,
@@ -885,17 +893,23 @@ func (c *ClientDB) FetchSessionCommittedUpdates(id *SessionID) (
 // channel summaries.
 func (c *ClientDB) FetchChanSummaries() (ChannelSummaries, error) {
 	var summaries map[lnwire.ChannelID]ClientChanSummary
+
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
-		chanSummaries := tx.ReadBucket(cChanSummaryBkt)
-		if chanSummaries == nil {
+		chanDetailsBkt := tx.ReadBucket(cChanDetailsBkt)
+		if chanDetailsBkt == nil {
 			return ErrUninitializedDB
 		}
 
-		return chanSummaries.ForEach(func(k, v []byte) error {
+		return chanDetailsBkt.ForEach(func(k, _ []byte) error {
+			chanDetails := chanDetailsBkt.NestedReadBucket(k)
+			if chanDetails == nil {
+				return ErrCorruptChanDetails
+			}
+
 			var chanID lnwire.ChannelID
 			copy(chanID[:], k)
 
-			summary, err := getChanSummary(chanSummaries, chanID)
+			summary, err := getChanSummary(chanDetails)
 			if err != nil {
 				return err
 			}
@@ -923,22 +937,27 @@ func (c *ClientDB) RegisterChannel(chanID lnwire.ChannelID,
 	sweepPkScript []byte) error {
 
 	return kvdb.Update(c.db, func(tx kvdb.RwTx) error {
-		chanSummaries := tx.ReadWriteBucket(cChanSummaryBkt)
-		if chanSummaries == nil {
+		chanDetailsBkt := tx.ReadWriteBucket(cChanDetailsBkt)
+		if chanDetailsBkt == nil {
 			return ErrUninitializedDB
 		}
 
-		chanSummaryBytes := chanSummaries.Get(chanID[:])
-		if chanSummaryBytes != nil {
+		chanDetails := chanDetailsBkt.NestedReadWriteBucket(chanID[:])
+		if chanDetails != nil {
 			// Channel is already registered.
 			return ErrChannelAlreadyRegistered
+		}
+
+		chanDetails, err := chanDetailsBkt.CreateBucket(chanID[:])
+		if err != nil {
+			return err
 		}
 
 		summary := ClientChanSummary{
 			SweepPkScript: sweepPkScript,
 		}
 
-		return putChanSummary(chanSummaries, chanID, &summary)
+		return putChanSummary(chanDetails, &summary)
 	}, func() {})
 }
 
@@ -1414,10 +1433,8 @@ func markSessionStatus(sessions kvdb.RwBucket, session *ClientSession,
 }
 
 // getChanSummary loads a ClientChanSummary for the passed chanID.
-func getChanSummary(chanSummaries kvdb.RBucket,
-	chanID lnwire.ChannelID) (*ClientChanSummary, error) {
-
-	chanSummaryBytes := chanSummaries.Get(chanID[:])
+func getChanSummary(chanDetails kvdb.RBucket) (*ClientChanSummary, error) {
+	chanSummaryBytes := chanDetails.Get(cChannelSummary)
 	if chanSummaryBytes == nil {
 		return nil, ErrChannelNotRegistered
 	}
@@ -1432,7 +1449,7 @@ func getChanSummary(chanSummaries kvdb.RBucket,
 }
 
 // putChanSummary stores a ClientChanSummary for the passed chanID.
-func putChanSummary(chanSummaries kvdb.RwBucket, chanID lnwire.ChannelID,
+func putChanSummary(chanDetails kvdb.RwBucket,
 	summary *ClientChanSummary) error {
 
 	var b bytes.Buffer
@@ -1441,7 +1458,7 @@ func putChanSummary(chanSummaries kvdb.RwBucket, chanID lnwire.ChannelID,
 		return err
 	}
 
-	return chanSummaries.Put(chanID[:], b.Bytes())
+	return chanDetails.Put(cChannelSummary, b.Bytes())
 }
 
 // getTower loads a Tower identified by its serialized tower id.
