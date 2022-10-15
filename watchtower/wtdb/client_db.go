@@ -20,7 +20,12 @@ var (
 
 	// cChanDetailsBkt is a top-level bucket storing:
 	//   channel-id => cChannelSummary -> encoded ClientChanSummary.
+	//  		=> cChanDBID -> db-assigned-id
 	cChanDetailsBkt = []byte("client-channel-detail-bucket")
+
+	// cChanDBID is a key used in the cChanDetailsBkt to store the
+	// db-assigned-id of a channel.
+	cChanDBID = []byte("client-channel-db-id")
 
 	// cChannelSummary is a sub-bucket of cChanDetailsBkt which stores the
 	// encoded body of ClientChanSummary.
@@ -43,6 +48,10 @@ var (
 	// cSessionAcks is a sub-bucket of cSessionBkt storing:
 	//    seqnum -> encoded BackupID.
 	cSessionAcks = []byte("client-session-acks")
+
+	// cChanIDIndexBkt is a top-level bucket storing:
+	//    db-assigned-id -> channel-ID
+	cChanIDIndexBkt = []byte("client-channel-id-index")
 
 	// cTowerBkt is a top-level bucket storing:
 	//    tower-id -> encoded Tower.
@@ -211,6 +220,7 @@ func initClientDBBuckets(tx kvdb.RwTx) error {
 		cTowerBkt,
 		cTowerIndexBkt,
 		cTowerToSessionIndexBkt,
+		cChanIDIndexBkt,
 	}
 
 	for _, bucket := range buckets {
@@ -951,6 +961,33 @@ func (c *ClientDB) RegisterChannel(chanID lnwire.ChannelID,
 			return err
 		}
 
+		// Get the channel-id-index bucket.
+		indexBkt := tx.ReadWriteBucket(cChanIDIndexBkt)
+		if indexBkt == nil {
+			return ErrUninitializedDB
+		}
+
+		// Request the next unique id from the bucket.
+		nextSeq, err := indexBkt.NextSequence()
+		if err != nil {
+			return err
+		}
+
+		// Add the new db-assigned ID to channel-ID pair.
+		var newIndex [8]byte
+		byteOrder.PutUint64(newIndex[:], nextSeq)
+		err = indexBkt.Put(newIndex[:], chanID[:])
+		if err != nil {
+			return err
+		}
+
+		// Add the db-assigned ID to the channel's channel details
+		// bucket under the cChanDBID key.
+		err = chanDetails.Put(cChanDBID, newIndex[:])
+		if err != nil {
+			return err
+		}
+
 		summary := ClientChanSummary{
 			SweepPkScript: sweepPkScript,
 		}
@@ -1479,4 +1516,19 @@ func putTower(towers kvdb.RwBucket, tower *Tower) error {
 	}
 
 	return towers.Put(tower.ID.Bytes(), b.Bytes())
+}
+
+// getDBChanID returns the db-assigned channel ID for the given real channel ID.
+// It returns both the uint64 and byte representation.
+func getDBChanID(chanDetailsBkt kvdb.RBucket, chanID lnwire.ChannelID) (uint64,
+	[]byte, error) {
+
+	chanDetails := chanDetailsBkt.NestedReadBucket(chanID[:])
+	if chanDetails == nil {
+		return 0, nil, ErrChannelNotRegistered
+	}
+
+	idBytes := chanDetails.Get(cChanDBID)
+
+	return byteOrder.Uint64(idBytes), idBytes, nil
 }
