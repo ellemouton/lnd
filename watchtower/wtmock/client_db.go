@@ -26,7 +26,7 @@ type ClientDB struct {
 	mu               sync.Mutex
 	summaries        map[lnwire.ChannelID]wtdb.ClientChanSummary
 	activeSessions   map[wtdb.SessionID]wtdb.ClientSession
-	ackedUpdates     map[wtdb.SessionID]map[uint16]wtdb.BackupID
+	ackedUpdates     map[wtdb.SessionID]map[lnwire.ChannelID]*wtdb.RangeIndex
 	committedUpdates map[wtdb.SessionID][]wtdb.CommittedUpdate
 	towerIndex       map[towerPK]wtdb.TowerID
 	towers           map[wtdb.TowerID]*wtdb.Tower
@@ -41,7 +41,7 @@ func NewClientDB() *ClientDB {
 	return &ClientDB{
 		summaries:        make(map[lnwire.ChannelID]wtdb.ClientChanSummary),
 		activeSessions:   make(map[wtdb.SessionID]wtdb.ClientSession),
-		ackedUpdates:     make(map[wtdb.SessionID]map[uint16]wtdb.BackupID),
+		ackedUpdates:     make(map[wtdb.SessionID]map[lnwire.ChannelID]*wtdb.RangeIndex),
 		committedUpdates: make(map[wtdb.SessionID][]wtdb.CommittedUpdate),
 		towerIndex:       make(map[towerPK]wtdb.TowerID),
 		towers:           make(map[wtdb.TowerID]*wtdb.Tower),
@@ -234,9 +234,9 @@ func (m *ClientDB) listClientSessions(tower *wtdb.TowerID,
 		session.Tower = m.towers[session.TowerID]
 		sessions[session.ID] = &session
 
-		if cfg.PerAckedUpdate != nil {
-			for seq, id := range m.ackedUpdates[session.ID] {
-				cfg.PerAckedUpdate(&session, seq, id)
+		if cfg.PerMaxHeight != nil {
+			for chanID, index := range m.ackedUpdates[session.ID] {
+				cfg.PerMaxHeight(&session, chanID, index.MaxHeight())
 			}
 		}
 
@@ -265,6 +265,37 @@ func (m *ClientDB) FetchSessionCommittedUpdates(id *wtdb.SessionID) (
 	}
 
 	return updates, nil
+}
+
+// IsAcked returns true if the given backup has been backed up using the given
+// session.
+func (m *ClientDB) IsAcked(id *wtdb.SessionID, backupID *wtdb.BackupID) (bool,
+	error) {
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	index, ok := m.ackedUpdates[*id][backupID.ChanID]
+	if !ok {
+		return false, nil
+	}
+
+	return index.IsInIndex(backupID.CommitHeight), nil
+}
+
+// NumAckedUpdates returns the number of backups that have been successfully
+// backed up using the given session.
+func (m *ClientDB) NumAckedUpdates(id *wtdb.SessionID) (uint64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var numAcked uint64
+
+	for _, index := range m.ackedUpdates[*id] {
+		numAcked += index.NumInSet()
+	}
+
+	return numAcked, nil
 }
 
 // CreateClientSession records a newly negotiated client session in the set of
@@ -312,7 +343,7 @@ func (m *ClientDB) CreateClientSession(session *wtdb.ClientSession) error {
 			RewardPkScript:   cloneBytes(session.RewardPkScript),
 		},
 	}
-	m.ackedUpdates[session.ID] = make(map[uint16]wtdb.BackupID)
+	m.ackedUpdates[session.ID] = make(map[lnwire.ChannelID]*wtdb.RangeIndex)
 	m.committedUpdates[session.ID] = make([]wtdb.CommittedUpdate, 0)
 
 	return nil
@@ -444,7 +475,10 @@ func (m *ClientDB) AckUpdate(id *wtdb.SessionID, seqNum,
 		updates[len(updates)-1] = wtdb.CommittedUpdate{}
 		m.committedUpdates[session.ID] = updates[:len(updates)-1]
 
-		m.ackedUpdates[*id][seqNum] = update.BackupID
+		if _, ok := m.ackedUpdates[*id][update.BackupID.ChanID]; !ok {
+			m.ackedUpdates[*id][update.BackupID.ChanID] = wtdb.NewRangeIndex()
+		}
+		m.ackedUpdates[*id][update.BackupID.ChanID].Add(update.BackupID.CommitHeight)
 		session.TowerLastApplied = lastApplied
 
 		m.activeSessions[*id] = session
