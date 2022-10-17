@@ -22,7 +22,12 @@ var (
 	// cChanDetailsBkt is a top-level bucket storing:
 	//   channel-id => cChannelSummary -> encoded ClientChanSummary.
 	//  		=> cChanDBID -> db-assigned-id
+	// 		=> cChanSessions => db-session-id -> 1
 	cChanDetailsBkt = []byte("client-channel-detail-bucket")
+
+	// cChanSessions is a sub-bucket of cChanDetailsBkt which stores:
+	//    db-session-id -> 1
+	cChanSessions = []byte("client-channel-sessions")
 
 	// cChanDBID is a key used in the cChanDetailsBkt to store the
 	// db-assigned-id of a channel.
@@ -1357,7 +1362,7 @@ func (c *ClientDB) AckUpdate(id *SessionID, seqNum uint16,
 			return ErrUninitializedDB
 		}
 
-		chanDetailsBkt := tx.ReadBucket(cChanDetailsBkt)
+		chanDetailsBkt := tx.ReadWriteBucket(cChanDetailsBkt)
 		if chanDetailsBkt == nil {
 			return ErrUninitializedDB
 		}
@@ -1458,6 +1463,18 @@ func (c *ClientDB) AckUpdate(id *SessionID, seqNum uint16,
 			return err
 		}
 
+		chanDetails := chanDetailsBkt.NestedReadWriteBucket(
+			committedUpdate.BackupID.ChanID[:],
+		)
+		if chanDetails == nil {
+			return ErrChannelNotRegistered
+		}
+
+		err = putChannelToSessionMapping(chanDetails, dbSessionID)
+		if err != nil {
+			return err
+		}
+
 		// Get the range index for the given session-channel pair.
 		index, err := c.getRangeIndex(rangesBkt, dbSessionID, dbChanID)
 		if err != nil {
@@ -1515,6 +1532,23 @@ func (c *ClientDB) AckUpdate(id *SessionID, seqNum uint16,
 		indexTx.Commit(changes)
 		return nil
 	}, func() {})
+}
+
+// putChannelToSessionMapping adds the given session ID to a channel's
+// cChanSessions bucket.
+func putChannelToSessionMapping(chanDetails kvdb.RwBucket,
+	dbSessID uint64) error {
+
+	chanSessIDsBkt, err := chanDetails.CreateBucketIfNotExists(
+		cChanSessions,
+	)
+	if err != nil {
+		return err
+	}
+
+	var dbSessionIDBytes [8]byte
+	byteOrder.PutUint64(dbSessionIDBytes[:], dbSessID)
+	return chanSessIDsBkt.Put(dbSessionIDBytes[:], []byte{1})
 }
 
 // getClientSessionBody loads the body of a ClientSession from the sessions
