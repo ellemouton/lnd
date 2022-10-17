@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"sync"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/lightningnetwork/lnd/kvdb"
@@ -35,7 +36,7 @@ var (
 	//   session-id => cSessionBody -> encoded ClientSessionBody
 	// 		=> cSessionDBID -> db-assigned-id
 	//              => cSessionCommits => seqnum -> encoded CommittedUpdate
-	//              => cSessionAcks => seqnum -> encoded BackupID
+	//              => cSessionAckRangeIndex => chan-id => start -> end
 	cSessionBkt = []byte("client-session-bucket")
 
 	// cSessionDBID is a key used in the cSessionBkt to store the
@@ -50,9 +51,9 @@ var (
 	//    seqnum -> encoded CommittedUpdate.
 	cSessionCommits = []byte("client-session-commits")
 
-	// cSessionAcks is a sub-bucket of cSessionBkt storing:
-	//    seqnum -> encoded BackupID.
-	cSessionAcks = []byte("client-session-acks")
+	// cSessionAckRangeIndex is a sub-bucket of cSessionBkt storing
+	//    chan-id => start -> end
+	cSessionAckRangeIndex = []byte("client-session-ack-range-index")
 
 	// cChanIDIndexBkt is a top-level bucket storing:
 	//    db-assigned-id -> channel-ID
@@ -180,6 +181,12 @@ func NewBoltBackendCreator(active bool, dbPath,
 // wtclient.
 type ClientDB struct {
 	db kvdb.Backend
+
+	// ackedRangeIndex is a map from session ID to channel ID (using the
+	// db-assigned IDs for both) to a RangeIndex which represents the
+	// backups that have been acked for that channel using that session.
+	ackedRangeIndex   map[uint64]map[uint64]*RangeIndex
+	ackedRangeIndexMu sync.Mutex
 }
 
 // OpenClientDB opens the client database given the path to the database's
@@ -196,7 +203,8 @@ func OpenClientDB(db kvdb.Backend) (*ClientDB, error) {
 	}
 
 	clientDB := &ClientDB{
-		db: db,
+		db:              db,
+		ackedRangeIndex: make(map[uint64]map[uint64]*RangeIndex),
 	}
 
 	err = initOrSyncVersions(clientDB, firstInit, clientDBVersions)
@@ -456,8 +464,8 @@ func (c *ClientDB) RemoveTower(pubKey *btcec.PublicKey, addr net.Addr) error {
 			committedUpdateCount[s.ID]++
 		}
 
-		towerSessions, err := listTowerSessions(
-			towerID, sessions, towers, towersToSessionsIndex,
+		towerSessions, err := c.listTowerSessions(
+			tx, towerID, sessions, towers, towersToSessionsIndex,
 			WithPerCommittedUpdate(perCommittedUpdate),
 		)
 		if err != nil {
@@ -744,9 +752,19 @@ func (c *ClientDB) CreateClientSession(session *ClientSession) error {
 			return err
 		}
 
+		sessionBkt, err := sessions.CreateBucket(session.ID[:])
+		if err != nil {
+			return err
+		}
+
+		err = sessionBkt.Put(cSessionDBID, newIndex[:])
+		if err != nil {
+			return err
+		}
+
 		// Finally, write the client session's body in the sessions
 		// bucket.
-		return putClientSessionBody(sessions, session)
+		return putClientSessionBody(sessionBkt, session)
 	}, func() {})
 }
 
@@ -817,8 +835,8 @@ func (c *ClientDB) ListClientSessions(id *TowerID,
 		// If no tower ID is specified, then fetch all the sessions
 		// known to the db.
 		if id == nil {
-			clientSessions, err = listClientAllSessions(
-				sessions, towers, opts...,
+			clientSessions, err = c.listClientAllSessions(
+				tx, sessions, towers, opts...,
 			)
 			return err
 		}
@@ -829,8 +847,8 @@ func (c *ClientDB) ListClientSessions(id *TowerID,
 			return ErrUninitializedDB
 		}
 
-		clientSessions, err = listTowerSessions(
-			*id, sessions, towers, towerToSessionIndex, opts...,
+		clientSessions, err = c.listTowerSessions(
+			tx, *id, sessions, towers, towerToSessionIndex, opts...,
 		)
 		return err
 	}, func() {
@@ -844,8 +862,9 @@ func (c *ClientDB) ListClientSessions(id *TowerID,
 }
 
 // listClientAllSessions returns the set of all client sessions known to the db.
-func listClientAllSessions(sessions, towers kvdb.RBucket,
-	opts ...ClientSessionListOption) (map[SessionID]*ClientSession, error) {
+func (c *ClientDB) listClientAllSessions(tx kvdb.RTx, sessions,
+	towers kvdb.RBucket, opts ...ClientSessionListOption) (
+	map[SessionID]*ClientSession, error) {
 
 	clientSessions := make(map[SessionID]*ClientSession)
 	err := sessions.ForEach(func(k, _ []byte) error {
@@ -853,7 +872,9 @@ func listClientAllSessions(sessions, towers kvdb.RBucket,
 		// the CommittedUpdates and AckedUpdates on startup to resume
 		// committed updates and compute the highest known commit height
 		// for each channel.
-		session, err := getClientSession(sessions, towers, k, opts...)
+		session, err := c.getClientSession(
+			tx, sessions, towers, k, opts...,
+		)
 		if err != nil {
 			return err
 		}
@@ -871,9 +892,9 @@ func listClientAllSessions(sessions, towers kvdb.RBucket,
 
 // listTowerSessions returns the set of all client sessions known to the db
 // that are associated with the given tower id.
-func listTowerSessions(id TowerID, sessionsBkt, towersBkt,
-	towerToSessionIndex kvdb.RBucket, opts ...ClientSessionListOption) (
-	map[SessionID]*ClientSession, error) {
+func (c *ClientDB) listTowerSessions(tx kvdb.RTx, id TowerID, sessionsBkt,
+	towersBkt, towerToSessionIndex kvdb.RBucket,
+	opts ...ClientSessionListOption) (map[SessionID]*ClientSession, error) {
 
 	towerIndexBkt := towerToSessionIndex.NestedReadBucket(id.Bytes())
 	if towerIndexBkt == nil {
@@ -886,8 +907,8 @@ func listTowerSessions(id TowerID, sessionsBkt, towersBkt,
 		// the CommittedUpdates and AckedUpdates on startup to resume
 		// committed updates and compute the highest known commit height
 		// for each channel.
-		session, err := getClientSession(
-			sessionsBkt, towersBkt, k, opts...,
+		session, err := c.getClientSession(
+			tx, sessionsBkt, towersBkt, k, opts...,
 		)
 		if err != nil {
 			return err
@@ -931,6 +952,115 @@ func (c *ClientDB) FetchSessionCommittedUpdates(id *SessionID) (
 	}
 
 	return committedUpdates, nil
+}
+
+// IsAcked returns true if the given backup has been backed up using the given
+// session.
+func (c *ClientDB) IsAcked(id *SessionID, backupID *BackupID) (bool, error) {
+	var isAcked bool
+	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
+		sessions := tx.ReadBucket(cSessionBkt)
+		if sessions == nil {
+			return ErrUninitializedDB
+		}
+
+		sessionBkt := sessions.NestedReadBucket(id[:])
+		if sessionsBkt == nil {
+			return nil
+		}
+
+		// Get the DB representation of the channel-ID.
+		dbChanID, _, err := getDBChanID(tx, backupID.ChanID)
+		if err != nil {
+			return err
+		}
+
+		// Get the DB representation of the session-ID.
+		dbSessID, dbSessIDBytes, err := getDBSessionID(tx, *id)
+		if err != nil {
+			return err
+		}
+
+		sessionAckRanges := sessionBkt.NestedReadBucket(
+			cSessionAckRangeIndex,
+		)
+		if sessionAckRanges == nil {
+			return nil
+		}
+
+		rangesBkt := sessionAckRanges.NestedReadBucket(dbSessIDBytes)
+		if rangesBkt == nil {
+			return nil
+		}
+
+		index, err := c.getRangeIndex(rangesBkt, dbSessID, dbChanID)
+		if err != nil {
+			return err
+		}
+
+		isAcked = index.IsInIndex(backupID.CommitHeight)
+		return nil
+	}, func() {})
+	if err != nil {
+		return false, err
+	}
+
+	return isAcked, nil
+}
+
+// NumAckedUpdates returns the number of backups that have been successfully
+// backed up using the given session.
+func (c *ClientDB) NumAckedUpdates(id *SessionID) (uint64, error) {
+	var numAcked uint64
+	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
+		sessions := tx.ReadBucket(cSessionBkt)
+		if sessions == nil {
+			return ErrUninitializedDB
+		}
+
+		sessionBkt := sessions.NestedReadBucket(id[:])
+		if sessionsBkt == nil {
+			return nil
+		}
+
+		sessionAckRanges := sessionBkt.NestedReadBucket(
+			cSessionAckRangeIndex,
+		)
+		if sessionAckRanges == nil {
+			return nil
+		}
+
+		dbSessionID, _, err := getDBSessionID(tx, *id)
+		if err != nil {
+			return err
+		}
+
+		// Iterate over the channel ID's in the sessionAckRanges
+		// bucket.
+		return sessionAckRanges.ForEach(func(dbChanID, _ []byte) error {
+			rangesBkt := sessionAckRanges.NestedReadBucket(dbChanID)
+			if rangesBkt == nil {
+				return nil
+			}
+
+			// Get the range index for the session-channel pair.
+			chanID := byteOrder.Uint64(dbChanID)
+			index, err := c.getRangeIndex(
+				rangesBkt, dbSessionID, chanID,
+			)
+			if err != nil {
+				return err
+			}
+
+			numAcked += index.NumInSet()
+			return nil
+		})
+	}, func() {})
+	if err != nil {
+		return 0, err
+	}
+
+	return numAcked, nil
 }
 
 // FetchChanSummaries loads a mapping from all registered channels to their
@@ -1112,7 +1242,7 @@ func (c *ClientDB) CommitUpdate(id *SessionID,
 		// eliminate serialization of full struct during CommitUpdate?
 		// Can also read/write directly to byes [:2] without migration.
 		session.SeqNum++
-		err = putClientSessionBody(sessions, session)
+		err = putClientSessionBody(sessionBkt, session)
 		if err != nil {
 			return err
 		}
@@ -1144,6 +1274,39 @@ func (c *ClientDB) CommitUpdate(id *SessionID,
 	}
 
 	return lastApplied, nil
+}
+
+// getDBChanID returns the db-assigned channel ID for the given real channel ID.
+func getDBChanID(tx kvdb.RTx, chanID lnwire.ChannelID) (uint64, []byte, error) {
+	chanDetailsBkt := tx.ReadBucket(cChanDetailsBkt)
+	if chanDetailsBkt == nil {
+		return 0, nil, ErrUninitializedDB
+	}
+
+	chanDetails := chanDetailsBkt.NestedReadBucket(chanID[:])
+	if chanDetails == nil {
+		return 0, nil, ErrChannelNotRegistered
+	}
+
+	idBytes := chanDetails.Get(cChanDBID)
+	return byteOrder.Uint64(idBytes), idBytes, nil
+}
+
+// getDBSessionID returns the db-assigned session ID for the given real session
+// ID.
+func getDBSessionID(tx kvdb.RTx, sessionID SessionID) (uint64, []byte, error) {
+	sessionsBkt := tx.ReadBucket(cSessionBkt)
+	if sessionsBkt == nil {
+		return 0, nil, ErrUninitializedDB
+	}
+
+	sessionBkt := sessionsBkt.NestedReadBucket(sessionID[:])
+	if sessionBkt == nil {
+		return 0, nil, ErrChannelNotRegistered
+	}
+
+	idBytes := sessionBkt.Get(cSessionDBID)
+	return byteOrder.Uint64(idBytes), idBytes, nil
 }
 
 // AckUpdate persists an acknowledgment for a given (session, seqnum) pair. This
@@ -1184,14 +1347,14 @@ func (c *ClientDB) AckUpdate(id *SessionID, seqNum uint16,
 		// also read/write directly to byes [2:4] without migration.
 		session.TowerLastApplied = lastApplied
 
+		// Can't fail because of getClientSession succeeded.
+		sessionBkt := sessions.NestedReadWriteBucket(id[:])
+
 		// Write the client session with the updated last applied value.
-		err = putClientSessionBody(sessions, session)
+		err = putClientSessionBody(sessionBkt, session)
 		if err != nil {
 			return err
 		}
-
-		// Can't fail because of getClientSession succeeded.
-		sessionBkt := sessions.NestedReadWriteBucket(id[:])
 
 		// If the commits sub-bucket doesn't exist, there can't possibly
 		// be a corresponding committed update to remove.
@@ -1226,25 +1389,90 @@ func (c *ClientDB) AckUpdate(id *SessionID, seqNum uint16,
 			return err
 		}
 
-		// Ensure that the session acks sub-bucket is initialized, so we
-		// can insert an entry.
-		sessionAcks, err := sessionBkt.CreateBucketIfNotExists(
-			cSessionAcks,
+		dbChanID, dbChanIDBytes, err := getDBChanID(
+			tx, committedUpdate.BackupID.ChanID,
 		)
 		if err != nil {
 			return err
 		}
 
-		// The session acks only need to track the backup id of the
-		// update, so we can discard the blob and hint.
-		var b bytes.Buffer
-		err = committedUpdate.BackupID.Encode(&b)
+		// Ensure that the session acks sub-bucket is initialized, so we
+		// can insert an entry.
+		sessionAckRanges, err := sessionBkt.CreateBucketIfNotExists(
+			cSessionAckRangeIndex,
+		)
 		if err != nil {
 			return err
 		}
 
-		// Finally, insert the ack into the sessionAcks sub-bucket.
-		return sessionAcks.Put(seqNumBuf[:], b.Bytes())
+		rangesBkt, err := sessionAckRanges.CreateBucketIfNotExists(
+			dbChanIDBytes,
+		)
+		if err != nil {
+			return err
+		}
+
+		dbSessionID, _, err := getDBSessionID(tx, *id)
+		if err != nil {
+			return err
+		}
+
+		// Get the range index for the given session-channel pair.
+		index, err := c.getRangeIndex(rangesBkt, dbSessionID, dbChanID)
+		if err != nil {
+			return err
+		}
+
+		// Start a transaction on the in-memory range index. This will
+		// allow us to "revert" the changes on the in-memory
+		// representation of the index if there are any issues when
+		// attempting to write the changes to the DB.
+		indexTx := index.StartTx()
+
+		// Calculate the changes that need to made to the persisted DB
+		// in order to take account of the new commit height.
+		changes := indexTx.GetChanges(
+			committedUpdate.BackupID.CommitHeight,
+		)
+
+		// If there are no changes, we can stop now.
+		if changes == nil {
+			indexTx.Revert()
+			return nil
+		}
+
+		// Check if a new range pair needs to be added.
+		if changes.NewIndexKey != nil && changes.NewIndexValue != nil {
+			var (
+				start [8]byte
+				end   [8]byte
+			)
+			byteOrder.PutUint64(start[:], *changes.NewIndexKey)
+			byteOrder.PutUint64(end[:], *changes.NewIndexValue)
+
+			err = rangesBkt.Put(start[:], end[:])
+			if err != nil {
+				indexTx.Revert()
+				return err
+			}
+		}
+
+		// Check if any range pair needs to be deleted.
+		if changes.DeleteIndex != nil {
+			var del [8]byte
+			byteOrder.PutUint64(del[:], *changes.DeleteIndex)
+
+			err = rangesBkt.Delete(del[:])
+			if err != nil {
+				indexTx.Revert()
+				return err
+			}
+		}
+
+		// Since the DB changes were successful, we can now commit the
+		// changes to our in-memory representation of the range set.
+		indexTx.Commit(changes)
+		return nil
 	}, func() {})
 }
 
@@ -1277,9 +1505,9 @@ func getClientSessionBody(sessions kvdb.RBucket,
 	return &session, nil
 }
 
-// PerAckedUpdateCB describes the signature of a callback function that can be
-// called for each of a session's acked updates.
-type PerAckedUpdateCB func(*ClientSession, uint16, BackupID)
+type PerMaxHeightCB func(*ClientSession, lnwire.ChannelID, uint64)
+
+type PerNumAckedUpdatesDB func(*ClientSession, lnwire.ChannelID, uint64)
 
 // PerCommittedUpdateCB describes the signature of a callback function that can
 // be called for each of a session's committed updates (updates that the client
@@ -1294,9 +1522,9 @@ type ClientSessionListOption func(cfg *ClientSessionListCfg)
 // ClientSessionListCfg defines various query parameters that will be used when
 // querying the DB for client sessions.
 type ClientSessionListCfg struct {
-	// PerAckedUpdate will, if set, be called for each of the session's
-	// acked updates.
-	PerAckedUpdate PerAckedUpdateCB
+	PerNumAckedUpdates PerNumAckedUpdatesDB
+
+	PerMaxHeight PerMaxHeightCB
 
 	// PerCommittedUpdate will, if set, be called for each of the session's
 	// committed (un-acked) updates.
@@ -1308,11 +1536,15 @@ func NewClientSessionCfg() *ClientSessionListCfg {
 	return &ClientSessionListCfg{}
 }
 
-// WithPerAckedUpdate constructs a functional option that will set a call-back
-// function to be called for each of a client's acked updates.
-func WithPerAckedUpdate(cb PerAckedUpdateCB) ClientSessionListOption {
+func WithPerMaxHeight(cb PerMaxHeightCB) ClientSessionListOption {
 	return func(cfg *ClientSessionListCfg) {
-		cfg.PerAckedUpdate = cb
+		cfg.PerMaxHeight = cb
+	}
+}
+
+func WithPerNumAckedUpdates(cb PerNumAckedUpdatesDB) ClientSessionListOption {
+	return func(cfg *ClientSessionListCfg) {
+		cfg.PerNumAckedUpdates = cb
 	}
 }
 
@@ -1327,8 +1559,9 @@ func WithPerCommittedUpdate(cb PerCommittedUpdateCB) ClientSessionListOption {
 // getClientSession loads the full ClientSession associated with the serialized
 // session id. This method populates the CommittedUpdates, AckUpdates and Tower
 // in addition to the ClientSession's body.
-func getClientSession(sessions, towers kvdb.RBucket, idBytes []byte,
-	opts ...ClientSessionListOption) (*ClientSession, error) {
+func (c *ClientDB) getClientSession(tx kvdb.RTx, sessions, towers kvdb.RBucket,
+	idBytes []byte, opts ...ClientSessionListOption) (*ClientSession,
+	error) {
 
 	cfg := NewClientSessionCfg()
 	for _, o := range opts {
@@ -1361,7 +1594,10 @@ func getClientSession(sessions, towers kvdb.RBucket, idBytes []byte,
 
 	// Pass the session's acked updates through the call-back if one is
 	// provided.
-	err = filterClientSessionAcks(sessionBkt, session, cfg.PerAckedUpdate)
+	err = c.filterClientSessionAcks(
+		tx, sessionBkt, session, cfg.PerMaxHeight,
+		cfg.PerNumAckedUpdates,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1410,35 +1646,98 @@ func getClientSessionCommits(sessionBkt kvdb.RBucket, s *ClientSession,
 // filterClientSessionAcks retrieves all acked updates for the session
 // identified by the serialized session id and passes them to the provided
 // call back if one is provided.
-func filterClientSessionAcks(sessionBkt kvdb.RBucket, s *ClientSession,
-	cb PerAckedUpdateCB) error {
+func (c *ClientDB) filterClientSessionAcks(tx kvdb.RTx, sessionBkt kvdb.RBucket,
+	s *ClientSession, perMaxCb PerMaxHeightCB,
+	perNumAckedUpdates PerNumAckedUpdatesDB) error {
 
-	if cb == nil {
+	if perMaxCb == nil && perNumAckedUpdates == nil {
 		return nil
 	}
 
-	sessionAcks := sessionBkt.NestedReadBucket(cSessionAcks)
-	if sessionAcks == nil {
+	sessionAcksRanges := sessionBkt.NestedReadBucket(cSessionAckRangeIndex)
+	if sessionAcksRanges == nil {
 		return nil
 	}
 
-	err := sessionAcks.ForEach(func(k, v []byte) error {
-		seqNum := byteOrder.Uint16(k)
+	chanIDIndexBkt := tx.ReadBucket(cChanIDIndexBkt)
+	if chanIDIndexBkt == nil {
+		return ErrUninitializedDB
+	}
 
-		var backupID BackupID
-		err := backupID.Decode(bytes.NewReader(v))
+	return sessionAcksRanges.ForEach(func(dbChanID, _ []byte) error {
+		rangeBkt := sessionAcksRanges.NestedReadBucket(dbChanID)
+		if rangeBkt == nil {
+			return nil
+		}
+
+		index, err := c.readRangeIndex(rangeBkt)
 		if err != nil {
 			return err
 		}
 
-		cb(s, seqNum, backupID)
+		chanIDBytes := chanIDIndexBkt.Get(dbChanID)
+		var chanID lnwire.ChannelID
+		copy(chanID[:], chanIDBytes)
+
+		if perMaxCb != nil {
+			perMaxCb(s, chanID, index.MaxHeight())
+		}
+
+		if perNumAckedUpdates != nil {
+			perNumAckedUpdates(s, chanID, index.NumInSet())
+		}
+		return nil
+	})
+}
+
+// readRangeIndex reads a persisted RangeIndex from the passed bucket and into
+// a new in-memory RangeIndex.
+func (c *ClientDB) readRangeIndex(rangesBkt kvdb.RBucket) (*RangeIndex, error) {
+	index := NewRangeIndex()
+	err := rangesBkt.ForEach(func(k, v []byte) error {
+		start := byteOrder.Uint64(k)
+		end := byteOrder.Uint64(v)
+		index.AddRange(start, end)
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	return index, nil
+}
+
+// getRangeIndex checks the ClientDB's in-memory range index map to see if it
+// has an entry for the given session and channel ID. If it does, this is
+// returned, otherwise the range index is loaded from the DB.
+func (c *ClientDB) getRangeIndex(rangesBkt kvdb.RBucket, sID, chanID uint64) (
+	*RangeIndex, error) {
+
+	c.ackedRangeIndexMu.Lock()
+	defer c.ackedRangeIndexMu.Unlock()
+
+	if _, ok := c.ackedRangeIndex[sID]; !ok {
+		c.ackedRangeIndex[sID] = make(map[uint64]*RangeIndex)
+	}
+
+	// If the in-memory range-index map already includes an entry for this
+	// session ID and channel ID pair, then return it.
+	index, ok := c.ackedRangeIndex[sID][chanID]
+	if ok {
+		return index, nil
+	}
+
+	// Otherwise, create a new in-memory RangeIndex by reading in ranges
+	// from the DB.
+	index, err := c.readRangeIndex(rangesBkt)
+	if err != nil {
+		c.ackedRangeIndex[sID][chanID] = nil
+		return nil, err
+	}
+
+	c.ackedRangeIndex[sID][chanID] = index
+
+	return index, nil
 }
 
 // filterClientSessionCommits retrieves all committed updates for the session
@@ -1476,16 +1775,11 @@ func filterClientSessionCommits(sessionBkt kvdb.RBucket, s *ClientSession,
 
 // putClientSessionBody stores the body of the ClientSession (everything but the
 // CommittedUpdates and AckedUpdates).
-func putClientSessionBody(sessions kvdb.RwBucket,
+func putClientSessionBody(sessionBkt kvdb.RwBucket,
 	session *ClientSession) error {
 
-	sessionBkt, err := sessions.CreateBucketIfNotExists(session.ID[:])
-	if err != nil {
-		return err
-	}
-
 	var b bytes.Buffer
-	err = session.Encode(&b)
+	err := session.Encode(&b)
 	if err != nil {
 		return err
 	}
@@ -1498,8 +1792,13 @@ func putClientSessionBody(sessions kvdb.RwBucket,
 func markSessionStatus(sessions kvdb.RwBucket, session *ClientSession,
 	status CSessionStatus) error {
 
+	sessionBkt, err := sessions.CreateBucketIfNotExists(session.ID[:])
+	if err != nil {
+		return err
+	}
+
 	session.Status = status
-	return putClientSessionBody(sessions, session)
+	return putClientSessionBody(sessionBkt, session)
 }
 
 // getChanSummary loads a ClientChanSummary for the passed chanID.
