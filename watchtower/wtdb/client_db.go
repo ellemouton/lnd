@@ -33,9 +33,14 @@ var (
 
 	// cSessionBkt is a top-level bucket storing:
 	//   session-id => cSessionBody -> encoded ClientSessionBody
+	// 		=> cSessionDBID -> db-assigned-id
 	//              => cSessionCommits => seqnum -> encoded CommittedUpdate
 	//              => cSessionAcks => seqnum -> encoded BackupID
 	cSessionBkt = []byte("client-session-bucket")
+
+	// cSessionDBID is a key used in the cSessionBkt to store the
+	// db-assigned-d of a session.
+	cSessionDBID = []byte("client-session-db-id")
 
 	// cSessionBody is a sub-bucket of cSessionBkt storing only the body of
 	// the ClientSession.
@@ -52,6 +57,10 @@ var (
 	// cChanIDIndexBkt is a top-level bucket storing:
 	//    db-assigned-id -> channel-ID
 	cChanIDIndexBkt = []byte("client-channel-id-index")
+
+	// cSessionIDIndexBkt is a top-level bucket storing:
+	//    db-assigned-id -> session-id
+	cSessionIDIndexBkt = []byte("client-session-id-index")
 
 	// cTowerBkt is a top-level bucket storing:
 	//    tower-id -> encoded Tower.
@@ -221,6 +230,7 @@ func initClientDBBuckets(tx kvdb.RwTx) error {
 		cTowerIndexBkt,
 		cTowerToSessionIndexBkt,
 		cChanIDIndexBkt,
+		cSessionIDIndexBkt,
 	}
 
 	for _, bucket := range buckets {
@@ -697,15 +707,51 @@ func (c *ClientDB) CreateClientSession(session *ClientSession) error {
 			}
 		}
 
+		// Get the session-ID index bucket.
+		dbIDIndex := tx.ReadWriteBucket(cSessionIDIndexBkt)
+		if dbIDIndex == nil {
+			return ErrUninitializedDB
+		}
+
+		// Get a new, unique, ID for this session from the session-ID
+		// index bucket.
+		nextSeq, err := dbIDIndex.NextSequence()
+		if err != nil {
+			return err
+		}
+
+		// Add the new entry to the dbID-to-SessionID index.
+		var newIndex [8]byte
+		byteOrder.PutUint64(newIndex[:], nextSeq)
+		err = dbIDIndex.Put(newIndex[:], session.ID[:])
+		if err != nil {
+			return err
+		}
+
+		// Also add the db-assigned-id to the session bucket under the
+		// cSessionDBID key.
+		sessionBkt, err := sessions.CreateBucket(session.ID[:])
+		if err != nil {
+			return err
+		}
+
+		err = sessionBkt.Put(cSessionDBID, newIndex[:])
+		if err != nil {
+			return err
+		}
+
+		// TODO(elle): migrate the towerID-to-SessionID to use the
+		// new db-assigned sessionID's rather.
+
 		// Add the new entry to the towerID-to-SessionID index.
-		indexBkt := towerToSessionIndex.NestedReadWriteBucket(
+		towerToSessIndex := towerToSessionIndex.NestedReadWriteBucket(
 			towerID.Bytes(),
 		)
-		if indexBkt == nil {
+		if towerToSessIndex == nil {
 			return ErrTowerNotFound
 		}
 
-		err = indexBkt.Put(session.ID[:], []byte{1})
+		err = towerToSessIndex.Put(session.ID[:], []byte{1})
 		if err != nil {
 			return err
 		}
@@ -1529,5 +1575,19 @@ func getDBChanID(chanDetailsBkt kvdb.RBucket, chanID lnwire.ChannelID) (uint64,
 	}
 
 	idBytes := chanDetails.Get(cChanDBID)
+	return byteOrder.Uint64(idBytes), idBytes, nil
+}
+
+// getDBSessionID returns the db-assigned session ID for the given real session
+// ID. It returns both the uint64 and byte representation.
+func getDBSessionID(sessionsBkt kvdb.RBucket, sessionID SessionID) (uint64,
+	[]byte, error) {
+
+	sessionBkt := sessionsBkt.NestedReadBucket(sessionID[:])
+	if sessionBkt == nil {
+		return 0, nil, ErrChannelNotRegistered
+	}
+
+	idBytes := sessionBkt.Get(cSessionDBID)
 	return byteOrder.Uint64(idBytes), idBytes, nil
 }
