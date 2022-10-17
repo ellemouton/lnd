@@ -8,6 +8,7 @@ import (
 	"github.com/lightningnetwork/lnd/watchtower/wtdb/migration3"
 	"github.com/lightningnetwork/lnd/watchtower/wtdb/migration4"
 	"github.com/lightningnetwork/lnd/watchtower/wtdb/migration5"
+	"github.com/lightningnetwork/lnd/watchtower/wtdb/migration6"
 )
 
 // migration is a function which takes a prior outdated version of the database
@@ -44,6 +45,9 @@ var clientDBVersions = []version{
 	},
 	{
 		migration: migration5.MigrateAckedUpdates,
+	},
+	{
+		migration: migration6.MigrateChannelToSessionIndex,
 	},
 }
 
