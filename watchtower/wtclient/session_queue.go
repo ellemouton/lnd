@@ -613,7 +613,6 @@ func (q *sessionQueue) reserveStatus() reserveStatus {
 	}
 
 	return reserveExhausted
-
 }
 
 // resetBackoff returns the connection backoff the minimum configured backoff.

@@ -357,21 +357,12 @@
           },
           "description": "The list of addresses the watchtower is reachable over."
         },
-        "active_session_candidate": {
-          "type": "boolean",
-          "description": "Whether the watchtower is currently a candidate for new sessions."
-        },
-        "num_sessions": {
-          "type": "integer",
-          "format": "int64",
-          "description": "The number of sessions that have been negotiated with the watchtower."
-        },
-        "sessions": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/wtclientrpcTowerSession"
+        "session_info": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/wtclientrpcTowerSessionInfo"
           },
-          "description": "The list of sessions that have been negotiated with the watchtower."
+          "description": "A map of session-type to session info."
         }
       }
     },
@@ -402,6 +393,27 @@
           "type": "integer",
           "format": "int64",
           "description": "The fee rate, in satoshis per vbyte, that will be used by the watchtower for\nthe justice transaction in the event of a channel breach."
+        }
+      }
+    },
+    "wtclientrpcTowerSessionInfo": {
+      "type": "object",
+      "properties": {
+        "active_session_candidate": {
+          "type": "boolean",
+          "description": "Whether the watchtower is currently a candidate for new sessions."
+        },
+        "num_sessions": {
+          "type": "integer",
+          "format": "int64",
+          "description": "The number of sessions that have been negotiated with the watchtower."
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/wtclientrpcTowerSession"
+          },
+          "description": "The list of sessions that have been negotiated with the watchtower."
         }
       }
     }

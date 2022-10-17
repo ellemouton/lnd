@@ -1,6 +1,7 @@
 package wtclientrpc
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -274,30 +275,43 @@ func (c *WatchtowerClient) ListTowers(ctx context.Context,
 		return nil, err
 	}
 
+	rpcTowers := make(map[wtdb.TowerID]*Tower)
+	for _, tower := range anchorTowers {
+		rpcTower := marshallTower(
+			tower, "Anchors", req.IncludeSessions, ackCounts,
+			committedUpdateCounts,
+		)
+		rpcTowers[tower.ID] = rpcTower
+	}
+
 	legacyTowers, err := c.cfg.Client.RegisteredTowers(opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	// Filter duplicates.
-	towers := make(map[wtdb.TowerID]*wtclient.RegisteredTower)
-	for _, tower := range anchorTowers {
-		towers[tower.Tower.ID] = tower
-	}
 	for _, tower := range legacyTowers {
-		towers[tower.Tower.ID] = tower
-	}
-
-	rpcTowers := make([]*Tower, 0, len(towers))
-	for _, tower := range towers {
 		rpcTower := marshallTower(
-			tower, req.IncludeSessions, ackCounts,
+			tower, "Legacy", req.IncludeSessions, ackCounts,
 			committedUpdateCounts,
 		)
-		rpcTowers = append(rpcTowers, rpcTower)
+
+		t, ok := rpcTowers[tower.ID]
+		if !ok {
+			rpcTowers[tower.ID] = rpcTower
+			continue
+		}
+
+		for k, v := range rpcTower.SessionInfo {
+			t.SessionInfo[k] = v
+		}
 	}
 
-	return &ListTowersResponse{Towers: rpcTowers}, nil
+	towers := make([]*Tower, 0, len(rpcTowers))
+	for _, tower := range rpcTowers {
+		towers = append(towers, tower)
+	}
+
+	return &ListTowersResponse{Towers: towers}, nil
 }
 
 // GetTowerInfo retrieves information for a registered watchtower.
@@ -317,18 +331,34 @@ func (c *WatchtowerClient) GetTowerInfo(ctx context.Context,
 		req.IncludeSessions,
 	)
 
-	var tower *wtclient.RegisteredTower
-	tower, err = c.cfg.Client.LookupTower(pubKey, opts...)
-	if err == wtdb.ErrTowerNotFound {
-		tower, err = c.cfg.AnchorClient.LookupTower(pubKey, opts...)
-	}
+	tower, err := c.cfg.Client.LookupTower(pubKey, opts...)
 	if err != nil {
 		return nil, err
 	}
+	rpcTower := marshallTower(
+		tower, "Legacy", req.IncludeSessions, ackCounts,
+		committedUpdateCounts,
+	)
 
-	return marshallTower(
-		tower, req.IncludeSessions, ackCounts, committedUpdateCounts,
-	), nil
+	tower, err = c.cfg.AnchorClient.LookupTower(pubKey, opts...)
+	if err != nil {
+		return nil, err
+	}
+	rpcAnchorsTower := marshallTower(
+		tower, "Anchors", req.IncludeSessions, ackCounts,
+		committedUpdateCounts,
+	)
+
+	if !bytes.Equal(rpcTower.Pubkey, rpcAnchorsTower.Pubkey) {
+		return nil, fmt.Errorf("legacy and anchor clients returned " +
+			"inconsistent results for the given tower")
+	}
+
+	for k, v := range rpcAnchorsTower.SessionInfo {
+		rpcTower.SessionInfo[k] = v
+	}
+
+	return rpcTower, nil
 }
 
 // constructFunctionalOptions is a helper function that constructs a list of
@@ -437,8 +467,8 @@ func (c *WatchtowerClient) Policy(ctx context.Context,
 
 // marshallTower converts a client registered watchtower into its corresponding
 // RPC type.
-func marshallTower(tower *wtclient.RegisteredTower, includeSessions bool,
-	ackCounts map[wtdb.SessionID]uint64,
+func marshallTower(tower *wtclient.RegisteredTower, sessionType string,
+	includeSessions bool, ackCounts map[wtdb.SessionID]uint64,
 	pendingCounts map[wtdb.SessionID]uint16) *Tower {
 
 	rpcAddrs := make([]string, 0, len(tower.Addresses))
@@ -464,10 +494,14 @@ func marshallTower(tower *wtclient.RegisteredTower, includeSessions bool,
 	}
 
 	return &Tower{
-		Pubkey:                 tower.IdentityKey.SerializeCompressed(),
-		Addresses:              rpcAddrs,
-		ActiveSessionCandidate: tower.ActiveSessionCandidate,
-		NumSessions:            uint32(len(tower.Sessions)),
-		Sessions:               rpcSessions,
+		Pubkey:    tower.IdentityKey.SerializeCompressed(),
+		Addresses: rpcAddrs,
+		SessionInfo: map[string]*TowerSessionInfo{
+			sessionType: {
+				ActiveSessionCandidate: tower.ActiveSessionCandidate,
+				NumSessions:            uint32(len(tower.Sessions)),
+				Sessions:               rpcSessions,
+			},
+		},
 	}
 }
