@@ -336,32 +336,32 @@ func (c *WatchtowerClient) GetTowerInfo(ctx context.Context,
 // returns a map of acked-update counts and one for un-acked-update counts that
 // will be populated once the db call has been made.
 func constructFunctionalOptions(includeSessions bool) (
-	[]wtdb.ClientSessionListOption, map[wtdb.SessionID]uint16,
+	[]wtdb.ClientSessionListOption, map[wtdb.SessionID]uint64,
 	map[wtdb.SessionID]uint16) {
 
 	var (
 		opts                  []wtdb.ClientSessionListOption
-		ackCounts             = make(map[wtdb.SessionID]uint16)
 		committedUpdateCounts = make(map[wtdb.SessionID]uint16)
+		ackCounts             = make(map[wtdb.SessionID]uint64)
 	)
 	if !includeSessions {
 		return opts, ackCounts, committedUpdateCounts
 	}
 
-	perAckedUpdate := func(s *wtdb.ClientSession, _ uint16,
-		_ wtdb.BackupID) {
+	perNumAckedUpdates := func(s *wtdb.ClientSession, id lnwire.ChannelID,
+		numUpdates uint64) {
 
-		ackCounts[s.ID]++
+		ackCounts[s.ID] += numUpdates
 	}
 
 	perCommittedUpdate := func(s *wtdb.ClientSession,
-		_ *wtdb.CommittedUpdate) {
+		u *wtdb.CommittedUpdate) {
 
 		committedUpdateCounts[s.ID]++
 	}
 
 	opts = []wtdb.ClientSessionListOption{
-		wtdb.WithPerAckedUpdate(perAckedUpdate),
+		wtdb.WithPerNumAckedUpdates(perNumAckedUpdates),
 		wtdb.WithPerCommittedUpdate(perCommittedUpdate),
 	}
 
@@ -438,7 +438,8 @@ func (c *WatchtowerClient) Policy(ctx context.Context,
 // marshallTower converts a client registered watchtower into its corresponding
 // RPC type.
 func marshallTower(tower *wtclient.RegisteredTower, includeSessions bool,
-	ackCounts, pendingCounts map[wtdb.SessionID]uint16) *Tower {
+	ackCounts map[wtdb.SessionID]uint64,
+	pendingCounts map[wtdb.SessionID]uint16) *Tower {
 
 	rpcAddrs := make([]string, 0, len(tower.Addresses))
 	for _, addr := range tower.Addresses {
