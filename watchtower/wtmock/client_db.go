@@ -68,7 +68,7 @@ func (m *ClientDB) CreateTower(lnAddr *lnwire.NetAddress) (*wtdb.Tower, error) {
 		tower = m.towers[towerID]
 		tower.AddAddress(lnAddr.Address)
 
-		towerSessions, err := m.listClientSessions(&towerID)
+		towerSessions, err := m.listClientSessions(&towerID, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -120,7 +120,7 @@ func (m *ClientDB) RemoveTower(pubKey *btcec.PublicKey, addr net.Addr) error {
 		return nil
 	}
 
-	towerSessions, err := m.listClientSessions(&tower.ID)
+	towerSessions, err := m.listClientSessions(&tower.ID, nil)
 	if err != nil {
 		return err
 	}
@@ -205,18 +205,20 @@ func (m *ClientDB) MarkBackupIneligible(_ lnwire.ChannelID, _ uint64) error {
 // optional tower ID can be used to filter out any client sessions in the
 // response that do not correspond to this tower.
 func (m *ClientDB) ListClientSessions(tower *wtdb.TowerID,
+	filterFn wtdb.ClientSessionFilterFn,
 	opts ...wtdb.ClientSessionListOption) (
 	map[wtdb.SessionID]*wtdb.ClientSession, error) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.listClientSessions(tower, opts...)
+	return m.listClientSessions(tower, filterFn, opts...)
 }
 
 // listClientSessions returns the set of all client sessions known to the db. An
 // optional tower ID can be used to filter out any client sessions in the
 // response that do not correspond to this tower.
 func (m *ClientDB) listClientSessions(tower *wtdb.TowerID,
+	filterFn wtdb.ClientSessionFilterFn,
 	opts ...wtdb.ClientSessionListOption) (
 	map[wtdb.SessionID]*wtdb.ClientSession, error) {
 
@@ -232,6 +234,11 @@ func (m *ClientDB) listClientSessions(tower *wtdb.TowerID,
 			continue
 		}
 		session.Tower = m.towers[session.TowerID]
+
+		if filterFn != nil && !filterFn(&session) {
+			continue
+		}
+
 		sessions[session.ID] = &session
 
 		if cfg.PerMaxHeight != nil {

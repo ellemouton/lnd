@@ -414,7 +414,7 @@ func getTowerAndSessionCandidates(db DB, keyRing ECDHKeyRing,
 
 	candidateSessions := make(map[wtdb.SessionID]*wtdb.ClientSession)
 	for _, tower := range towers {
-		sessions, err := db.ListClientSessions(&tower.ID, opts...)
+		sessions, err := db.ListClientSessions(&tower.ID, nil, opts...)
 		if err != nil {
 			return nil, err
 		}
@@ -458,7 +458,7 @@ func getClientSessions(db DB, keyRing ECDHKeyRing, forTower *wtdb.TowerID,
 	opts ...wtdb.ClientSessionListOption) (
 	map[wtdb.SessionID]*wtdb.ClientSession, error) {
 
-	sessions, err := db.ListClientSessions(forTower, opts...)
+	sessions, err := db.ListClientSessions(forTower, nil, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1241,7 +1241,7 @@ func (c *TowerClient) handleStaleTower(msg *staleTowerMsg) error {
 	// Otherwise, the tower should no longer be used for future session
 	// negotiations and backups.
 	pubKey := msg.pubKey.SerializeCompressed()
-	sessions, err := c.cfg.DB.ListClientSessions(&tower.ID)
+	sessions, err := c.cfg.DB.ListClientSessions(&tower.ID, nil)
 	if err != nil {
 		return fmt.Errorf("unable to retrieve sessions for tower %x: "+
 			"%v", pubKey, err)
@@ -1272,7 +1272,7 @@ func (c *TowerClient) RegisteredTowers(opts ...wtdb.ClientSessionListOption) (
 	if err != nil {
 		return nil, err
 	}
-	clientSessions, err := c.cfg.DB.ListClientSessions(nil, opts...)
+	clientSessions, err := c.cfg.DB.ListClientSessions(nil, nil, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1313,7 +1313,9 @@ func (c *TowerClient) LookupTower(pubKey *btcec.PublicKey,
 		return nil, err
 	}
 
-	towerSessions, err := c.cfg.DB.ListClientSessions(&tower.ID, opts...)
+	towerSessions, err := c.cfg.DB.ListClientSessions(
+		&tower.ID, nil, opts...,
+	)
 	if err != nil {
 		return nil, err
 	}
