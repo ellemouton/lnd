@@ -82,6 +82,9 @@ https://github.com/lightningnetwork/lnd/pull/6963/)
 * [Fixed a flake in the TestBlockCacheMutexes unit
   test](https://github.com/lightningnetwork/lnd/pull/7029).
 
+* [Create a helper function to wait for peer to come
+  online](https://github.com/lightningnetwork/lnd/pull/6931).
+
 ## `lncli`
 * [Add an `insecure` flag to skip tls auth as well as a `metadata` string slice
   flag](https://github.com/lightningnetwork/lnd/pull/6818) that allows the
@@ -111,6 +114,12 @@ https://github.com/lightningnetwork/lnd/pull/6963/)
 * [The `tlv` package now allows decoding records larger than 65535 bytes. The
   caller is expected to know that doing so with untrusted input is
   unsafe.](https://github.com/lightningnetwork/lnd/pull/6779)
+
+* [test: replace defer cleanup with
+  `t.Cleanup`](https://github.com/lightningnetwork/lnd/pull/6864).
+
+* [test: fix loop variables being accessed in
+  closures](https://github.com/lightningnetwork/lnd/pull/7032).
  
 ## Watchtowers
 
@@ -124,14 +133,8 @@ https://github.com/lightningnetwork/lnd/pull/6963/)
   struct](https://github.com/lightningnetwork/lnd/pull/6928) in order to
   improve the performance of fetching a `ClientSession` from the DB.
 
-* [Create a helper function to wait for peer to come
-  online](https://github.com/lightningnetwork/lnd/pull/6931).
-
-* [test: replace defer cleanup with
-  `t.Cleanup`](https://github.com/lightningnetwork/lnd/pull/6864).
-
-* [test: fix loop variables being accessed in
-  closures](https://github.com/lightningnetwork/lnd/pull/7032).
+* [Store AckedUpdates in a more compact 
+  way](https://github.com/lightningnetwork/lnd/pull/7052)
 
 ### Tooling and documentation
 
