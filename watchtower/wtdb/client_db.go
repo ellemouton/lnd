@@ -758,7 +758,7 @@ func (c *ClientDB) CreateClientSession(session *ClientSession) error {
 
 		// Finally, write the client session's body in the sessions
 		// bucket.
-		return putClientSessionBody(sessions, session)
+		return putClientSessionBody(sessionBkt, session)
 	}, func() {})
 }
 
@@ -1125,7 +1125,7 @@ func (c *ClientDB) CommitUpdate(id *SessionID,
 		// eliminate serialization of full struct during CommitUpdate?
 		// Can also read/write directly to byes [:2] without migration.
 		session.SeqNum++
-		err = putClientSessionBody(sessions, session)
+		err = putClientSessionBody(sessionBkt, session)
 		if err != nil {
 			return err
 		}
@@ -1197,14 +1197,14 @@ func (c *ClientDB) AckUpdate(id *SessionID, seqNum uint16,
 		// also read/write directly to byes [2:4] without migration.
 		session.TowerLastApplied = lastApplied
 
+		// Can't fail because of getClientSession succeeded.
+		sessionBkt := sessions.NestedReadWriteBucket(id[:])
+
 		// Write the client session with the updated last applied value.
-		err = putClientSessionBody(sessions, session)
+		err = putClientSessionBody(sessionBkt, session)
 		if err != nil {
 			return err
 		}
-
-		// Can't fail because of getClientSession succeeded.
-		sessionBkt := sessions.NestedReadWriteBucket(id[:])
 
 		// If the commits sub-bucket doesn't exist, there can't possibly
 		// be a corresponding committed update to remove.
@@ -1489,16 +1489,11 @@ func filterClientSessionCommits(sessionBkt kvdb.RBucket, s *ClientSession,
 
 // putClientSessionBody stores the body of the ClientSession (everything but the
 // CommittedUpdates and AckedUpdates).
-func putClientSessionBody(sessions kvdb.RwBucket,
+func putClientSessionBody(sessionBkt kvdb.RwBucket,
 	session *ClientSession) error {
 
-	sessionBkt, err := sessions.CreateBucketIfNotExists(session.ID[:])
-	if err != nil {
-		return err
-	}
-
 	var b bytes.Buffer
-	err = session.Encode(&b)
+	err := session.Encode(&b)
 	if err != nil {
 		return err
 	}
@@ -1511,8 +1506,13 @@ func putClientSessionBody(sessions kvdb.RwBucket,
 func markSessionStatus(sessions kvdb.RwBucket, session *ClientSession,
 	status CSessionStatus) error {
 
+	sessionBkt, err := sessions.CreateBucketIfNotExists(session.ID[:])
+	if err != nil {
+		return err
+	}
+
 	session.Status = status
-	return putClientSessionBody(sessions, session)
+	return putClientSessionBody(sessionBkt, session)
 }
 
 // getChanSummary loads a ClientChanSummary for the passed chanID.
