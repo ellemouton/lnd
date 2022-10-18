@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"sync"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/lightningnetwork/lnd/kvdb"
@@ -180,6 +181,12 @@ func NewBoltBackendCreator(active bool, dbPath,
 // wtclient.
 type ClientDB struct {
 	db kvdb.Backend
+
+	// ackedRangeIndex is a map from session ID to channel ID (using the
+	// db-assigned IDs for both) to a RangeIndex which represents the
+	// backups that have been acked for that channel using that session.
+	ackedRangeIndex   map[uint64]map[uint64]*RangeIndex
+	ackedRangeIndexMu sync.Mutex
 }
 
 // OpenClientDB opens the client database given the path to the database's
@@ -196,7 +203,8 @@ func OpenClientDB(db kvdb.Backend) (*ClientDB, error) {
 	}
 
 	clientDB := &ClientDB{
-		db: db,
+		db:              db,
+		ackedRangeIndex: make(map[uint64]map[uint64]*RangeIndex),
 	}
 
 	err = initOrSyncVersions(clientDB, firstInit, clientDBVersions)
@@ -760,6 +768,56 @@ func (c *ClientDB) CreateClientSession(session *ClientSession) error {
 		// bucket.
 		return putClientSessionBody(sessionBkt, session)
 	}, func() {})
+}
+
+// readRangeIndex reads a persisted RangeIndex from the passed bucket and into
+// a new in-memory RangeIndex.
+func (c *ClientDB) readRangeIndex(rangesBkt kvdb.RBucket) (*RangeIndex, error) {
+	index := NewRangeIndex()
+	err := rangesBkt.ForEach(func(k, v []byte) error {
+		start := byteOrder.Uint64(k)
+		end := byteOrder.Uint64(v)
+		index.AddRange(start, end)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return index, nil
+}
+
+// getRangeIndex checks the ClientDB's in-memory range index map to see if it
+// has an entry for the given session and channel ID. If it does, this is
+// returned, otherwise the range index is loaded from the DB.
+func (c *ClientDB) getRangeIndex(rangesBkt kvdb.RBucket, sID, chanID uint64) (
+	*RangeIndex, error) {
+
+	c.ackedRangeIndexMu.Lock()
+	defer c.ackedRangeIndexMu.Unlock()
+
+	if _, ok := c.ackedRangeIndex[sID]; !ok {
+		c.ackedRangeIndex[sID] = make(map[uint64]*RangeIndex)
+	}
+
+	// If the in-memory range-index map already includes an entry for this
+	// session ID and channel ID pair, then return it.
+	index, ok := c.ackedRangeIndex[sID][chanID]
+	if ok {
+		return index, nil
+	}
+
+	// Otherwise, create a new in-memory RangeIndex by reading in ranges
+	// from the DB.
+	index, err := c.readRangeIndex(rangesBkt)
+	if err != nil {
+		c.ackedRangeIndex[sID][chanID] = nil
+		return nil, err
+	}
+
+	c.ackedRangeIndex[sID][chanID] = index
+
+	return index, nil
 }
 
 // createSessionKeyIndexKey returns the identifier used in the
