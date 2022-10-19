@@ -384,6 +384,9 @@ in the lnwire package](https://github.com/lightningnetwork/lnd/pull/7303)
 
 * [Store AckedUpdates in a more compact
   way](https://github.com/lightningnetwork/lnd/pull/7055)
+ 
+* [Allow caller to filter sessions at the time of reading them from
+  disk](https://github.com/lightningnetwork/lnd/pull/7059)
 
 ## DB
 
@@ -402,7 +405,7 @@ in the lnwire package](https://github.com/lightningnetwork/lnd/pull/7303)
 
 * [Pathfinding takes capacity of edges into account to improve success
   probability estimation.](https://github.com/lightningnetwork/lnd/pull/6857)
-
+ 
 ### Tooling and documentation
 
 * [The `golangci-lint` tool was updated to
