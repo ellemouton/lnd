@@ -148,6 +148,10 @@ https://github.com/lightningnetwork/lnd/pull/6963/)
 * [Store AckedUpdates in a more compact 
   way](https://github.com/lightningnetwork/lnd/pull/7055)
 
+* [Clean up sessions once all channels for which they have updates for are
+  closed. Also start sending the `DeleteSession` message to the 
+  tower.](https://github.com/lightningnetwork/lnd/pull/7069)
+
 ### Tooling and documentation
 
 * [The `golangci-lint` tool was updated to
