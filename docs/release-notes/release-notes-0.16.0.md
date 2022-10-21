@@ -257,6 +257,9 @@ certain large transactions](https://github.com/lightningnetwork/lnd/pull/7100).
   using the address in question](
   https://github.com/lightningnetwork/lnd/pull/7025)
 
+* [Store AckedUpdates in a more compact 
+  way](https://github.com/lightningnetwork/lnd/pull/7055)
+
 ### Tooling and documentation
 
 * [The `golangci-lint` tool was updated to
