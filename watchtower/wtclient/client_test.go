@@ -15,12 +15,14 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/lntest/wait"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/subscribe"
 	"github.com/lightningnetwork/lnd/tor"
 	"github.com/lightningnetwork/lnd/watchtower/blob"
 	"github.com/lightningnetwork/lnd/watchtower/wtclient"
@@ -442,7 +444,15 @@ func newHarness(t *testing.T, cfg harnessCfg) *testHarness {
 	clientDB := wtmock.NewClientDB()
 
 	clientCfg := &wtclient.Config{
-		Signer:        signer,
+		Signer: signer,
+		SubscribeChannelEvents: func() (subscribe.Subscription, error) {
+			return newMockSubscription(t), nil
+		},
+		IsChannelClosed: func(_ lnwire.ChannelID) (bool, uint32,
+			error) {
+
+			return false, 0, nil
+		},
 		Dial:          mockNet.Dial,
 		DB:            clientDB,
 		AuthDial:      mockNet.AuthDial,
@@ -768,6 +778,81 @@ func (h *testHarness) removeTower(pubKey *btcec.PublicKey, addr net.Addr) {
 
 	err := h.client.RemoveTower(pubKey, addr)
 	require.NoError(h.t, err)
+}
+
+// mockSubscription is a mock subscription client that blocks on sends into the
+// updates channel.
+type mockSubscription struct {
+	t       *testing.T
+	updates chan interface{}
+
+	// Embed the subscription interface in this mock so that we satisfy it.
+	subscribe.Subscription
+}
+
+// newMockSubscription creates a mock subscription.
+func newMockSubscription(t *testing.T) *mockSubscription {
+	t.Helper()
+
+	return &mockSubscription{
+		t:       t,
+		updates: make(chan interface{}),
+	}
+}
+
+// sendUpdate sends an update into our updates channel, mocking the dispatch of
+// an update from a subscription server. This call will fail the test if the
+// update is not consumed within our timeout.
+func (m *mockSubscription) sendUpdate(update interface{}) { //nolint:unused
+	select {
+	case m.updates <- update:
+
+	case <-time.After(waitTime):
+		m.t.Fatalf("update: %v timeout", update)
+	}
+}
+
+// Updates returns the updates channel for the mock.
+func (m *mockSubscription) Updates() <-chan interface{} {
+	return m.updates
+}
+
+// mockBlockSub most out the ChainNotifier.
+type mockBlockSub struct {
+	t      *testing.T
+	events chan *chainntnfs.BlockEpoch
+
+	chainntnfs.ChainNotifier
+}
+
+// newMockBlockSub creates a new mockBlockSub.
+func newMockBlockSub(t *testing.T) *mockBlockSub {
+	t.Helper()
+
+	return &mockBlockSub{
+		t:      t,
+		events: make(chan *chainntnfs.BlockEpoch),
+	}
+}
+
+// RegisterBlockEpochNtfn returns a channel that can be used to listen for new
+// blocks.
+func (m *mockBlockSub) RegisterBlockEpochNtfn(_ *chainntnfs.BlockEpoch) (
+	*chainntnfs.BlockEpochEvent, error) {
+
+	return &chainntnfs.BlockEpochEvent{
+		Epochs: m.events,
+	}, nil
+}
+
+// sendNewBlock will send a new block on the notification channel.
+func (m *mockBlockSub) sendNewBlock(height int32) { //nolint:unused
+	select {
+	case m.events <- &chainntnfs.BlockEpoch{Height: height}:
+
+	case <-time.After(waitTime):
+		m.t.Fatalf("timed out sending block: %d", height)
+	}
 }
 
 const (
