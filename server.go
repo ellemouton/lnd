@@ -1482,7 +1482,29 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			)
 		}
 
+		// isChanClosed is a helper func that can be used to determine
+		// if a channel is closed and what block height its closing tx
+		// is in.
+		isChanClosed := func(id lnwire.ChannelID) (bool, uint32,
+			error) {
+
+			chanSum, err := s.chanStateDB.FetchClosedChannelForID(
+				id,
+			)
+			if errors.Is(err, channeldb.ErrClosedChannelNotFound) {
+				return false, 0, nil
+			} else if err != nil {
+				return false, 0, err
+			}
+
+			return true, chanSum.CloseHeight, nil
+		}
+
 		s.towerClient, err = wtclient.New(&wtclient.Config{
+			IsChannelClosed: isChanClosed,
+			SubscribeChannelEvents: func() (subscribe.Subscription, error) {
+				return s.channelNotifier.SubscribeChannelEvents()
+			},
 			Signer:         cc.Wallet.Cfg.Signer,
 			NewAddress:     newSweepPkScriptGen(cc.Wallet),
 			SecretKeyRing:  s.cc.KeyRing,
@@ -1506,6 +1528,10 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			blob.Type(blob.FlagAnchorChannel)
 
 		s.anchorTowerClient, err = wtclient.New(&wtclient.Config{
+			IsChannelClosed: isChanClosed,
+			SubscribeChannelEvents: func() (subscribe.Subscription, error) {
+				return s.channelNotifier.SubscribeChannelEvents()
+			},
 			Signer:         cc.Wallet.Cfg.Signer,
 			NewAddress:     newSweepPkScriptGen(cc.Wallet),
 			SecretKeyRing:  s.cc.KeyRing,

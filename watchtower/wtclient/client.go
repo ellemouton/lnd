@@ -12,10 +12,12 @@ import (
 	"github.com/btcsuite/btclog"
 	"github.com/lightningnetwork/lnd/build"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/channelnotifier"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/subscribe"
 	"github.com/lightningnetwork/lnd/tor"
 	"github.com/lightningnetwork/lnd/watchtower/wtdb"
 	"github.com/lightningnetwork/lnd/watchtower/wtpolicy"
@@ -133,6 +135,15 @@ type Config struct {
 	// justice transactions that spend from a remote party's commitment
 	// transaction.
 	Signer input.Signer
+
+	// SubscribeChannelEvents can be used to subscribe to channel event
+	// notifications.
+	SubscribeChannelEvents func() (subscribe.Subscription, error)
+
+	// IsChanClosed can be used to check if the channel with the given ID
+	// has been closed. If it has been, the block height in which its
+	// closing transaction was mined will also be returned.
+	IsChannelClosed func(lnwire.ChannelID) (bool, uint32, error)
 
 	// NewAddress generates a new on-chain sweep pkscript.
 	NewAddress func() ([]byte, error)
@@ -257,6 +268,7 @@ type TowerClient struct {
 	staleTowers chan *staleTowerMsg
 
 	wg        sync.WaitGroup
+	quit      chan struct{}
 	forceQuit chan struct{}
 }
 
@@ -307,6 +319,7 @@ func New(config *Config) (*TowerClient, error) {
 		newTowers:         make(chan *newTowerMsg),
 		staleTowers:       make(chan *staleTowerMsg),
 		forceQuit:         make(chan struct{}),
+		quit:              make(chan struct{}),
 	}
 
 	// perUpdate is a callback function that will be used to inspect the
@@ -533,10 +546,39 @@ func (c *TowerClient) Start() error {
 			}
 		}
 
+		chanSub, err := c.cfg.SubscribeChannelEvents()
+		if err != nil {
+			returnErr = err
+			return
+		}
+
+		// Iterate over the list of registered channels and check if
+		// any of them can be marked as closed.
+		for id := range c.summaries {
+			isClosed, closedHeight, err := c.cfg.IsChannelClosed(id)
+			if err != nil {
+				returnErr = err
+				return
+			}
+
+			if !isClosed {
+				continue
+			}
+
+			_, err = c.cfg.DB.MarkChannelClosed(id, closedHeight)
+			if err != nil {
+				log.Errorf("could not handle closed "+
+					"channel(%s): %v", id, err)
+			}
+		}
+
+		c.wg.Add(1)
+		go c.handleChannelCloses(chanSub)
+
 		// Now start the session negotiator, which will allow us to
 		// request new session as soon as the backupDispatcher starts
 		// up.
-		err := c.negotiator.Start()
+		err = c.negotiator.Start()
 		if err != nil {
 			returnErr = err
 			return
@@ -584,6 +626,7 @@ func (c *TowerClient) Stop() error {
 		// dispatcher to exit. The backup queue will signal it's
 		// completion to the dispatcher, which releases the wait group
 		// after all tasks have been assigned to session queues.
+		close(c.quit)
 		c.wg.Wait()
 
 		// 4. Since all valid tasks have been assigned to session
@@ -763,6 +806,66 @@ func (c *TowerClient) nextSessionQueue() (*sessionQueue, error) {
 	// updates. If the queue was already made active on startup, this will
 	// simply return the existing session queue from the set.
 	return c.getOrInitActiveQueue(candidateSession, updates), nil
+}
+
+// handleChannelCloses listens for channel close events and marks channels as
+// closed in the DB.
+//
+// NOTE: This method MUST be run as a goroutine.
+func (c *TowerClient) handleChannelCloses(chanSub subscribe.Subscription) {
+	defer c.wg.Done()
+
+	c.log.Tracef("Starting channel close handler")
+	defer c.log.Tracef("Stopping channel close handler")
+
+	for {
+		select {
+		case event, ok := <-chanSub.Updates():
+			if !ok {
+				log.Debugf("channel notifier has exited")
+				return
+			}
+
+			switch event := event.(type) {
+			case channelnotifier.ClosedChannelEvent:
+				closeInfo := event.CloseSummary
+				chanID := lnwire.NewChanIDFromOutPoint(
+					&closeInfo.ChanPoint,
+				)
+
+				// We only care about channels registered with
+				// the tower client.
+				c.backupMu.Lock()
+				_, ok := c.summaries[chanID]
+				c.backupMu.Unlock()
+				if !ok {
+					continue
+				}
+
+				_, err := c.cfg.DB.MarkChannelClosed(
+					chanID, closeInfo.CloseHeight,
+				)
+				if err != nil {
+					log.Errorf("could not handle closed "+
+						"channel(%s): %v", chanID, err)
+					continue
+				}
+
+				c.backupMu.Lock()
+				delete(c.summaries, chanID)
+				delete(c.chanCommitHeights, chanID)
+				c.backupMu.Unlock()
+
+			default:
+			}
+
+		case <-c.forceQuit:
+			return
+
+		case <-c.quit:
+			return
+		}
+	}
 }
 
 // backupDispatcher processes events coming from the taskPipeline and is
