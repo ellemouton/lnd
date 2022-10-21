@@ -161,9 +161,18 @@ var (
 	ErrNoRangeIndexFound = errors.New("no range index found for the " +
 		"given session-channel pair")
 
+	// ErrSessionNotClosable is returned when a session is not found in the
+	// closable list.
+	ErrSessionNotClosable = errors.New("session is not closable")
+
 	// errSessionHasOpenChannels is an error used to indicate that a
 	// session has updates for channels that are still open.
 	errSessionHasOpenChannels = errors.New("session has open channels")
+
+	// errChannelHasMoreSessions is an error used to indicate that a channel
+	// has updates in other non-closed sessions.
+	errChannelHasMoreSessions = errors.New("channel has updates in " +
+		"other sessions")
 )
 
 // NewBoltBackendCreator returns a function that creates a new bbolt backend for
@@ -1030,6 +1039,7 @@ func (c *ClientDB) GetClientSession(id SessionID,
 		}
 
 		sess = session
+
 		return nil
 	}, func() {})
 	if err != nil {
@@ -1384,6 +1394,153 @@ func (c *ClientDB) ListClosableSessions() (map[SessionID]uint32, error) {
 	}
 
 	return sessions, nil
+}
+
+// DeleteSession can be called when a session should be deleted from the DB.
+// All references to the session will also be deleted from the DB.
+func (c *ClientDB) DeleteSession(id SessionID) error {
+	return kvdb.Update(c.db, func(tx kvdb.RwTx) error {
+		// Get some session info: dbID & channel List.
+		sessionsBkt := tx.ReadWriteBucket(cSessionBkt)
+		if sessionsBkt == nil {
+			return ErrUninitializedDB
+		}
+
+		closableBkt := tx.ReadWriteBucket(cClosableSessionsBkt)
+		if closableBkt == nil {
+			return ErrUninitializedDB
+		}
+
+		chanDetailsBkt := tx.ReadWriteBucket(cChanDetailsBkt)
+		if chanDetailsBkt == nil {
+			return ErrUninitializedDB
+		}
+
+		sessIDIndexBkt := tx.ReadWriteBucket(cSessionIDIndexBkt)
+		if sessIDIndexBkt == nil {
+			return ErrUninitializedDB
+		}
+
+		chanIDIndexBkt := tx.ReadWriteBucket(cChanIDIndexBkt)
+		if chanIDIndexBkt == nil {
+			return ErrUninitializedDB
+		}
+
+		towerToSessBkt := tx.ReadWriteBucket(cTowerToSessionIndexBkt)
+		if towerToSessBkt == nil {
+			return ErrUninitializedDB
+		}
+
+		sessionBkt := sessionsBkt.NestedReadBucket(id[:])
+		if sessionBkt == nil {
+			return nil
+		}
+
+		_, dbIDBytes, err := getDBSessionID(sessionsBkt, id)
+		if err != nil {
+			return err
+		}
+
+		// First we check if the session has actually been marked as
+		// closable.
+		if len(closableBkt.Get(dbIDBytes)) == 0 {
+			return ErrSessionNotClosable
+		}
+
+		sess, err := getClientSessionBody(sessionsBkt, id[:])
+		if err != nil {
+			return err
+		}
+
+		// Delete from the tower-to-sessionID index.
+		towerIndexBkt := towerToSessBkt.NestedReadWriteBucket(
+			sess.TowerID.Bytes(),
+		)
+		if towerIndexBkt != nil {
+			err = towerIndexBkt.Delete(id[:])
+			if err != nil {
+				return err
+			}
+		}
+
+		// Delete entry from session ID index.
+		err = sessIDIndexBkt.Delete(dbIDBytes)
+		if err != nil {
+			return err
+		}
+
+		// Delete the entry from closable sessions.
+		err = closableBkt.Delete(dbIDBytes)
+		if err != nil {
+			return err
+		}
+
+		ackRanges := sessionBkt.NestedReadBucket(cSessionAckRangeIndex)
+		if ackRanges == nil {
+			// If the session has no acked updates for any
+			// channels, we can just delete the whole session.
+			return sessionsBkt.DeleteNestedBucket(id[:])
+		}
+
+		// Otherwise, for each of the channels, delete the session ID
+		// entry.
+		err = ackRanges.ForEach(func(chanDBID, _ []byte) error {
+			chanID, err := getRealChannelID(
+				chanIDIndexBkt, byteOrder.Uint64(chanDBID),
+			)
+			if err != nil {
+				return err
+			}
+
+			chanDetails := chanDetailsBkt.NestedReadWriteBucket(
+				chanID[:],
+			)
+			if chanDetails == nil {
+				return ErrChannelNotRegistered
+			}
+
+			chanSessions := chanDetails.NestedReadWriteBucket(
+				cChanSessions,
+			)
+			if chanSessions == nil {
+				return fmt.Errorf("session not found in " +
+					"channel list")
+			}
+
+			err = chanSessions.Delete(dbIDBytes)
+			if err != nil {
+				return err
+			}
+
+			// If this was the last session for this channel, we can
+			// now delete the channel details for this channel
+			// completely.
+			err = chanSessions.ForEach(func(_, _ []byte) error {
+				return errChannelHasMoreSessions
+			})
+			if errors.Is(err, errChannelHasMoreSessions) {
+				return nil
+			} else if err != nil {
+				return err
+			}
+
+			// Delete from channel-id-index bkt.
+			dbID := chanDetails.Get(cChanDBID)
+			err = chanIDIndexBkt.Delete(dbID)
+			if err != nil {
+				return err
+			}
+
+			// Delete the channel details.
+			return chanDetailsBkt.DeleteNestedBucket(chanID[:])
+		})
+		if err != nil {
+			return err
+		}
+
+		// Delete the actual session.
+		return sessionsBkt.DeleteNestedBucket(id[:])
+	}, func() {})
 }
 
 // MarkChannelClosed will mark a registered channel as closed by setting its
