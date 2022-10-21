@@ -2,8 +2,10 @@ package wtclient
 
 import (
 	"bytes"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"sync"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btclog"
 	"github.com/lightningnetwork/lnd/build"
+	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channelnotifier"
 	"github.com/lightningnetwork/lnd/input"
@@ -43,6 +46,11 @@ const (
 	// client should abandon any pending updates or session negotiations
 	// before terminating.
 	DefaultForceQuitDelay = 10 * time.Second
+
+	// DefaultSessionCloseRange is the range over which we will generate a
+	// random number of blocks to delay closing a session after its last
+	// channel has been closed.
+	DefaultSessionCloseRange = 288
 )
 
 // genActiveSessionFilter generates a filter that selects active sessions that
@@ -141,6 +149,9 @@ type Config struct {
 	// notifications.
 	SubscribeChannelEvents func() (subscribe.Subscription, error)
 
+	// ChainNotifier can be used to subscribe to block notifications.
+	ChainNotifier chainntnfs.ChainNotifier
+
 	// IsChanClosed can be used to check if the channel with the given ID
 	// has been closed. If it has been, the block height in which its
 	// closing transaction was mined will also be returned.
@@ -201,6 +212,11 @@ type Config struct {
 	// watchtowers. If the exponential backoff produces a timeout greater
 	// than this value, the backoff will be clamped to MaxBackoff.
 	MaxBackoff time.Duration
+
+	// SessionCloseRange is the range over which we will generate a random
+	// number of blocks to delay closing a session after its last channel
+	// has been closed.
+	SessionCloseRange uint32
 }
 
 // newTowerMsg is an internal message we'll use within the TowerClient to signal
@@ -295,6 +311,10 @@ func New(config *Config) (*TowerClient, error) {
 	// Set the write timeout to the default if none was provided.
 	if cfg.WriteTimeout <= 0 {
 		cfg.WriteTimeout = DefaultWriteTimeout
+	}
+
+	if cfg.SessionCloseRange <= 0 {
+		cfg.SessionCloseRange = 1
 	}
 
 	prefix := "(legacy)"
@@ -579,6 +599,39 @@ func (c *TowerClient) Start() error {
 		c.wg.Add(1)
 		go c.handleChannelCloses(chanSub)
 
+		// Load all closable sessions.
+		sl, err := c.cfg.DB.ListClosableSessions()
+		if err != nil {
+			returnErr = err
+			return
+		}
+
+		for sID, blockHeight := range sl {
+			delay, err := newRandomDelay(c.cfg.SessionCloseRange)
+			if err != nil {
+				returnErr = err
+				return
+			}
+
+			deleteHeight := blockHeight + delay
+
+			c.closableSessionQueue.Push(&sessionCloseItem{
+				sessionID:    sID,
+				deleteHeight: deleteHeight,
+			})
+		}
+
+		blockEvents, err := c.cfg.ChainNotifier.RegisterBlockEpochNtfn(
+			nil,
+		)
+		if err != nil {
+			returnErr = err
+			return
+		}
+
+		c.wg.Add(1)
+		go c.handleClosableSessions(blockEvents)
+
 		// Now start the session negotiator, which will allow us to
 		// request new session as soon as the backupDispatcher starts
 		// up.
@@ -846,7 +899,7 @@ func (c *TowerClient) handleChannelCloses(chanSub subscribe.Subscription) {
 					continue
 				}
 
-				_, err := c.cfg.DB.MarkChannelClosed(
+				sl, err := c.cfg.DB.MarkChannelClosed(
 					chanID, closeInfo.CloseHeight,
 				)
 				if err != nil {
@@ -855,12 +908,106 @@ func (c *TowerClient) handleChannelCloses(chanSub subscribe.Subscription) {
 					continue
 				}
 
+				for _, sID := range sl {
+					delay, err := newRandomDelay(
+						c.cfg.SessionCloseRange,
+					)
+					if err != nil {
+						log.Errorf("could not "+
+							"generate delay: %v",
+							err)
+					}
+
+					deleteHeight := closeInfo.CloseHeight +
+						delay
+
+					item := &sessionCloseItem{
+						sessionID:    sID,
+						deleteHeight: deleteHeight,
+					}
+
+					c.closableSessionQueue.Push(item)
+				}
+
 				c.backupMu.Lock()
 				delete(c.summaries, chanID)
 				delete(c.chanCommitHeights, chanID)
 				c.backupMu.Unlock()
 
 			default:
+			}
+
+		case <-c.forceQuit:
+			return
+
+		case <-c.quit:
+			return
+		}
+	}
+}
+
+// handleClosableSessions listens for new block notifications. For each block,
+// it checks the closableSessionQueue to see if there is a closable session with
+// a delete-height smaller than or equal to the new block, if there is then the
+// tower is informed that it can delete the session and then we also delete it
+// from our DB.
+func (c *TowerClient) handleClosableSessions(
+	blocksChan *chainntnfs.BlockEpochEvent) {
+
+	defer c.wg.Done()
+
+	c.log.Tracef("Starting closable sessions handler")
+	defer c.log.Tracef("Stopping closable sessions handler")
+
+	for {
+		select {
+		case newBlock := <-blocksChan.Epochs:
+			if newBlock == nil {
+				return
+			}
+
+			height := uint32(newBlock.Height)
+			for {
+				select {
+				case <-c.quit:
+					return
+				default:
+				}
+
+				item := c.closableSessionQueue.Top()
+				if item == nil {
+					break
+				}
+
+				if item.deleteHeight > height {
+					break
+				}
+
+				c.closableSessionQueue.Pop()
+
+				// Fetch the session from the DB so that we can
+				// extract the Tower info.
+				sess, err := c.cfg.DB.GetClientSession(
+					item.sessionID,
+				)
+				if err != nil {
+					log.Error("error calling "+
+						"GetClientSession: %v", err)
+					continue
+				}
+
+				err = c.deleteSessionFromTower(sess)
+				if err != nil {
+					log.Error("error deleting session "+
+						"from tower: %v", err)
+					continue
+				}
+
+				err = c.cfg.DB.DeleteSession(item.sessionID)
+				if err != nil {
+					log.Errorf("could not delete "+
+						"session(%s) from DB: %v", err)
+				}
 			}
 
 		case <-c.forceQuit:
@@ -1614,4 +1761,15 @@ func (c *TowerClient) logMessage(
 	c.log.Debugf("%s %s%v %s %x@%s", action, msg.MsgType(), summary,
 		preposition, peer.RemotePub().SerializeCompressed(),
 		peer.RemoteAddr())
+}
+
+func newRandomDelay(max uint32) (uint32, error) {
+	var maxDelay big.Int
+	maxDelay.SetUint64(uint64(max))
+	_, err := rand.Int(rand.Reader, &maxDelay)
+	if err != nil {
+		return 0, err
+	}
+
+	return uint32(maxDelay.Uint64()), nil
 }

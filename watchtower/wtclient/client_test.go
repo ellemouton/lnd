@@ -453,6 +453,7 @@ func newHarness(t *testing.T, cfg harnessCfg) *testHarness {
 
 			return false, 0, nil
 		},
+		ChainNotifier: newMockBlockSub(t),
 		Dial:          mockNet.Dial,
 		DB:            clientDB,
 		AuthDial:      mockNet.AuthDial,
