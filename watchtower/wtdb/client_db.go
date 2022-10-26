@@ -1276,7 +1276,8 @@ func (c *ClientDB) NumAckedUpdates(id *SessionID) (uint64, error) {
 }
 
 // FetchChanSummaries loads a mapping from all registered channels to their
-// channel summaries.
+// channel summaries. Only the channels that have not yet been marked as closed
+// will be loaded.
 func (c *ClientDB) FetchChanSummaries() (ChannelSummaries, error) {
 	var summaries map[lnwire.ChannelID]ClientChanSummary
 
@@ -1290,6 +1291,13 @@ func (c *ClientDB) FetchChanSummaries() (ChannelSummaries, error) {
 			chanDetails := chanDetailsBkt.NestedReadBucket(k)
 			if chanDetails == nil {
 				return ErrCorruptChanDetails
+			}
+
+			// If this channel has already been marked as closed,
+			// then its summary does not need to be loaded.
+			closedHeight := chanDetails.Get(cChanClosedHeight)
+			if len(closedHeight) > 0 {
+				return nil
 			}
 
 			var chanID lnwire.ChannelID
