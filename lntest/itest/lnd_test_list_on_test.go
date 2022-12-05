@@ -5,6 +5,10 @@ package itest
 
 var allTestCases = []*testCase{
 	{
+		name: "create big tower client db",
+		test: createBigTowerClientDB,
+	},
+	{
 		name: "open channel reorg test",
 		test: testOpenChannelAfterReorg,
 	},

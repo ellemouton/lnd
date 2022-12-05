@@ -412,6 +412,8 @@ func newNode(cfg *BaseNodeConfig) (*HarnessNode, error) {
 			return nil, err
 		}
 	}
+
+	fmt.Printf("ELLE, base dir for %s is %s\n", cfg.Name, cfg.BaseDir)
 	cfg.DataDir = filepath.Join(cfg.BaseDir, "data")
 	cfg.LogDir = filepath.Join(cfg.BaseDir, "logs")
 	cfg.TLSCertPath = filepath.Join(cfg.BaseDir, "tls.cert")
@@ -1211,6 +1213,9 @@ func (hn *HarnessNode) shutdown() error {
 	if err := hn.stop(); err != nil {
 		return err
 	}
+
+	return nil
+
 	if err := hn.cleanup(); err != nil {
 		return err
 	}

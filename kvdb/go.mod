@@ -35,4 +35,6 @@ replace github.com/ulikunitz/xz => github.com/ulikunitz/xz v0.5.8
 // https://deps.dev/advisory/OSV/GO-2021-0053?from=%2Fgo%2Fgithub.com%252Fgogo%252Fprotobuf%2Fv1.3.1
 replace github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
 
+replace github.com/btcsuite/btcwallet/walletdb => /Users/elle/ll/btcwallet/walletdb
+
 go 1.16

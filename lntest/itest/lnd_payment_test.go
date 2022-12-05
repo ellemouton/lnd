@@ -280,7 +280,7 @@ func runAsyncPayments(net *lntest.NetworkHarness, t *harnessTest, alice,
 		return true
 	}, defaultTimeout)
 	if err != nil {
-		t.Fatalf("failed to assert alice's pending htlcs and/or remote/local balance")
+		t.Fatalf("failed to assert alice's pending htlcs and/or remote/local balance: %v", err)
 	}
 
 	// Wait for Bob to receive revocation from Alice.
