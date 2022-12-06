@@ -103,6 +103,10 @@ var allTestCases = []*testCase{
 		test: testRevokedCloseRetributionAltruistWatchtower,
 	},
 	{
+		name: "watchtower session management",
+		test: testWatchtowerSessionManagement,
+	},
+	{
 		name: "query routes",
 		test: testQueryRoutes,
 	},
