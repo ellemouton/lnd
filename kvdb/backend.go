@@ -273,7 +273,6 @@ func GetTestBackend(path, name string) (Backend, func(), error) {
 	case SqlBackend:
 		key := filepath.Join(path, name)
 		keyHash := sha256.Sum256([]byte(key))
-
 		sqliteDb, err := StartSqliteTestBackend(
 			path, name, "test_"+hex.EncodeToString(keyHash[:]),
 		)

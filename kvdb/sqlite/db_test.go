@@ -20,7 +20,10 @@ func TestInterface(t *testing.T) {
 
 	common_sql.Init(1)
 
-	sqlDB, err := NewSqliteBackend(ctx, &Config{}, dir, "tmp.db", "temp")
+	sqlDB, err := NewSqliteBackend(ctx, &Config{
+		DBPath:     dir,
+		DBFileName: "tmp.db",
+	}, "temp")
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -28,7 +31,10 @@ func TestInterface(t *testing.T) {
 	})
 
 	walletdbtest.TestInterface(
-		t, dbType, ctx, &Config{}, dir, "tmp.db", "temp",
+		t, dbType, ctx, &Config{
+			DBPath:     dir,
+			DBFileName: "tmp.db",
+		}, "temp",
 	)
 }
 
