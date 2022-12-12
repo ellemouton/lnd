@@ -260,7 +260,27 @@ func GetTestBackend(path, name string) (Backend, func(), error) {
 			_ = f.DB().Close()
 		}, nil
 
-	case TestBackend == BoltBackendName:
+	case EtcdBackend:
+		etcdConfig, cancel, err := StartEtcdTestBackend(path, 0, 0, "")
+		if err != nil {
+			return nil, empty, err
+		}
+		backend, err := Open(
+			EtcdBackendName, context.TODO(), etcdConfig,
+		)
+		return backend, cancel, err
+
+	case SqlBackend:
+		sqliteDb, err := StartSqliteTestBackend(path, name)
+		if err != nil {
+			return nil, empty, err
+		}
+
+		return sqliteDb, func() {
+			_ = sqliteDb.Close()
+		}, nil
+
+	default:
 		db, err := GetBoltBackend(&BoltBackendConfig{
 			DBPath:         path,
 			DBFileName:     name,
@@ -271,17 +291,6 @@ func GetTestBackend(path, name string) (Backend, func(), error) {
 			return nil, nil, err
 		}
 		return db, empty, nil
-
-	case TestBackend == EtcdBackendName:
-		etcdConfig, cancel, err := StartEtcdTestBackend(path, 0, 0, "")
-		if err != nil {
-			return nil, empty, err
-		}
-		backend, err := Open(
-			EtcdBackendName, context.TODO(), etcdConfig,
-		)
-		return backend, cancel, err
-
 	}
 
 	return nil, nil, fmt.Errorf("unknown backend")
