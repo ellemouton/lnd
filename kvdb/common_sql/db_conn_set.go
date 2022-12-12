@@ -1,4 +1,7 @@
-package postgres
+//go:build kvdb_postgres || kvdb_sqlite
+// +build kvdb_postgres kvdb_sqlite
+
+package common_sql
 
 import (
 	"database/sql"
@@ -14,8 +17,8 @@ type dbConn struct {
 	count int
 }
 
-// dbConnSet stores a set of connections.
-type dbConnSet struct {
+// dBConnSet stores a set of connections.
+type dBConnSet struct {
 	dbConn         map[string]*dbConn
 	maxConnections int
 
@@ -23,8 +26,8 @@ type dbConnSet struct {
 }
 
 // newDbConnSet initializes a new set of connections.
-func newDbConnSet(maxConnections int) *dbConnSet {
-	return &dbConnSet{
+func newDbConnSet(maxConnections int) *dBConnSet {
+	return &dBConnSet{
 		dbConn:         make(map[string]*dbConn),
 		maxConnections: maxConnections,
 	}
@@ -32,7 +35,7 @@ func newDbConnSet(maxConnections int) *dbConnSet {
 
 // Open opens a new database connection. If a connection already exists for the
 // given dsn, the existing connection is returned.
-func (d *dbConnSet) Open(dsn string) (*sql.DB, error) {
+func (d *dBConnSet) Open(driver, dsn string) (*sql.DB, error) {
 	d.Lock()
 	defer d.Unlock()
 
@@ -42,7 +45,7 @@ func (d *dbConnSet) Open(dsn string) (*sql.DB, error) {
 		return dbConn.db, nil
 	}
 
-	db, err := sql.Open("pgx", dsn)
+	db, err := sql.Open(driver, dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +68,7 @@ func (d *dbConnSet) Open(dsn string) (*sql.DB, error) {
 
 // Close closes the connection with the given dsn. If there are still other
 // users of the same connection, this function does nothing.
-func (d *dbConnSet) Close(dsn string) error {
+func (d *dBConnSet) Close(dsn string) error {
 	d.Lock()
 	defer d.Unlock()
 

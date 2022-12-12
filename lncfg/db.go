@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/lightningnetwork/lnd/kvdb"
+	"github.com/lightningnetwork/lnd/kvdb/common_sql"
 	"github.com/lightningnetwork/lnd/kvdb/etcd"
 	"github.com/lightningnetwork/lnd/kvdb/postgres"
 	"github.com/lightningnetwork/lnd/kvdb/sqlite"
@@ -89,7 +90,9 @@ func DefaultDB() *DB {
 		Postgres: &postgres.Config{
 			MaxConnections: defaultPostgresMaxConnections,
 		},
-		Sqlite: &sqlite.Config{},
+		Sqlite: &sqlite.Config{
+			MaxConnections: defaultPostgresMaxConnections,
+		},
 	}
 }
 
@@ -148,7 +151,10 @@ func (db *DB) Init(ctx context.Context, dbPath string) error {
 		db.Etcd = cfg
 
 	case db.Backend == PostgresBackend:
-		postgres.Init(db.Postgres.MaxConnections)
+		common_sql.Init(db.Postgres.MaxConnections)
+
+	case db.Backend == SqliteBackend:
+		common_sql.Init(db.Sqlite.MaxConnections)
 	}
 
 	return nil
@@ -401,7 +407,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 	case SqliteBackend:
 		sqliteBackend, err := kvdb.Open(
 			kvdb.SqliteBackendName, ctx, db.Sqlite, chanDBPath,
-			ChannelDBName,
+			ChannelDBName, NSChannelDB,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("error opening sqlite graph "+
@@ -411,7 +417,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 
 		sqliteMacaroonBackend, err := kvdb.Open(
 			kvdb.SqliteBackendName, ctx, db.Sqlite, walletDBPath,
-			MacaroonDBName,
+			MacaroonDBName, NSMacaroonDB,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("error opening sqlite "+
@@ -421,7 +427,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 
 		sqliteDecayedLogBackend, err := kvdb.Open(
 			kvdb.SqliteBackendName, ctx, db.Sqlite, chanDBPath,
-			DecayedLogDbName,
+			DecayedLogDbName, NSDecayedLogDB,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("error opening sqlite decayed "+
@@ -431,7 +437,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 
 		sqliteTowerClientBackend, err := kvdb.Open(
 			kvdb.SqliteBackendName, ctx, db.Sqlite,
-			chanDBPath, TowerClientDBName,
+			chanDBPath, TowerClientDBName, NSTowerClientDB,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("error opening sqlite tower "+
@@ -441,7 +447,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 
 		sqliteTowerServerBackend, err := kvdb.Open(
 			kvdb.SqliteBackendName, ctx, db.Sqlite,
-			towerServerDBPath, TowerServerDBName,
+			towerServerDBPath, TowerServerDBName, NSTowerServerDB,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("error opening sqlite tower "+
@@ -451,7 +457,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 
 		sqliteWalletBackend, err := kvdb.Open(
 			kvdb.SqliteBackendName, ctx, db.Sqlite,
-			walletDBPath, WalletDBName,
+			walletDBPath, WalletDBName, NSWalletDB,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("error opening sqlite macaroon "+
@@ -564,6 +570,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 	}
 
 	returnEarly = false
+
 	return &DatabaseBackends{
 		GraphDB:       boltBackend,
 		ChanStateDB:   boltBackend,

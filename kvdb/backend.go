@@ -271,7 +271,12 @@ func GetTestBackend(path, name string) (Backend, func(), error) {
 		return backend, cancel, err
 
 	case SqlBackend:
-		sqliteDb, err := StartSqliteTestBackend(path, name)
+		key := filepath.Join(path, name)
+		keyHash := sha256.Sum256([]byte(key))
+
+		sqliteDb, err := StartSqliteTestBackend(
+			path, name, "test_"+hex.EncodeToString(keyHash[:]),
+		)
 		if err != nil {
 			return nil, empty, err
 		}

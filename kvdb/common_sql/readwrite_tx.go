@@ -1,7 +1,7 @@
-//go:build kvdb_sqlite
-// +build kvdb_sqlite
+//go:build kvdb_postgres || kvdb_sqlite
+// +build kvdb_postgres kvdb_sqlite
 
-package sqlite
+package common_sql
 
 import (
 	"context"
@@ -34,9 +34,9 @@ func newReadWriteTx(db *db, readOnly bool) (*readWriteTx, error) {
 	// lock in Postgres, meaning that each table would need to be locked
 	// individually. Perhaps an advisory lock could perform this function
 	// too.
-	var locker sync.Locker = &db.mu
+	var locker sync.Locker = &db.lock
 	if readOnly {
-		locker = db.mu.RLocker()
+		locker = db.lock.RLocker()
 	}
 	locker.Lock()
 
@@ -44,7 +44,7 @@ func newReadWriteTx(db *db, readOnly bool) (*readWriteTx, error) {
 	// be applied to the transaction as a whole. If possible, mark the
 	// transaction as read-only to make sure that potential programming
 	// errors cannot cause changes to the database.
-	tx, err := db.conn.BeginTx(
+	tx, err := db.db.BeginTx(
 		context.Background(),
 		&sql.TxOptions{
 			ReadOnly: readOnly,
@@ -108,7 +108,9 @@ func (tx *readWriteTx) ReadWriteBucket(key []byte) walletdb.ReadWriteBucket {
 
 // CreateTopLevelBucket creates the top level bucket for a key if it
 // does not exist.  The newly-created bucket it returned.
-func (tx *readWriteTx) CreateTopLevelBucket(key []byte) (walletdb.ReadWriteBucket, error) {
+func (tx *readWriteTx) CreateTopLevelBucket(key []byte) (
+	walletdb.ReadWriteBucket, error) {
+
 	if len(key) == 0 {
 		return nil, walletdb.ErrBucketNameRequired
 	}

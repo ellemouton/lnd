@@ -1,7 +1,7 @@
-//go:build kvdb_sqlite
-// +build kvdb_sqlite
+//go:build kvdb_postgres || kvdb_sqlite
+// +build kvdb_postgres kvdb_sqlite
 
-package sqlite
+package common_sql
 
 import (
 	"database/sql"

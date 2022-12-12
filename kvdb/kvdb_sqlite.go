@@ -13,10 +13,10 @@ import (
 
 const SqlBackend = true
 
-func StartSqliteTestBackend(path, name string) (walletdb.DB, error) {
+func StartSqliteTestBackend(path, name, table string) (walletdb.DB, error) {
 	return sqlite.NewSqliteBackend(
 		context.Background(), &sqlite.Config{
 			Timeout: time.Second * 30,
-		}, path, name,
+		}, path, name, table,
 	)
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/btcsuite/btcwallet/walletdb/walletdbtest"
+	"github.com/lightningnetwork/lnd/kvdb/common_sql"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/context"
 )
@@ -17,14 +18,18 @@ func TestInterface(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 
-	sqlDB, err := NewSqliteBackend(ctx, &Config{}, dir, "tmp.db")
+	common_sql.Init(1)
+
+	sqlDB, err := NewSqliteBackend(ctx, &Config{}, dir, "tmp.db", "temp")
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
 		require.NoError(t, sqlDB.Close())
 	})
 
-	walletdbtest.TestInterface(t, dbType, ctx, &Config{}, dir, "tmp.db")
+	walletdbtest.TestInterface(
+		t, dbType, ctx, &Config{}, dir, "tmp.db", "temp",
+	)
 }
 
 //

@@ -15,6 +15,6 @@ const SqlBackend = false
 
 // StartSqliteTestBackend is a stub returning nil, and errSqliteNotAvailable
 // error.
-func StartSqliteTestBackend(path, name string) (walletdb.DB, error) {
+func StartSqliteTestBackend(path, name, table string) (walletdb.DB, error) {
 	return nil, errSqliteNotAvailable
 }

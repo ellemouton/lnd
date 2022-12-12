@@ -6,5 +6,7 @@ import "time"
 //
 //nolint:lll
 type Config struct {
-	Timeout time.Duration `long:"timeout" description:"Database connection timeout. Set to zero to disable."`
+	FilePath       string
+	Timeout        time.Duration `long:"timeout" description:"Database connection timeout. Set to zero to disable."`
+	MaxConnections int           `long:"maxconnections" description:"The maximum number of open connections to the database. Set to zero for unlimited."`
 }

@@ -5,59 +5,23 @@ package sqlite
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
-	"sync"
-	"testing"
-	"time"
 
 	"github.com/btcsuite/btcwallet/walletdb"
-	"github.com/stretchr/testify/require"
+	"github.com/lightningnetwork/lnd/kvdb/common_sql"
 	_ "modernc.org/sqlite" // Register relevant drivers.
 )
 
 const (
-	kvTableName = "kv"
-
 	// sqliteOptionPrefix is the string prefix sqlite uses to set various
 	// options. This is used in the following format:
 	//   * sqliteOptionPrefix || option_name = option_value.
 	sqliteOptionPrefix = "_pragma"
 )
-
-type db struct {
-	// cfg is the sqlite connection config.
-	cfg *Config
-
-	// ctx is the overall context for the database driver.
-	//
-	// TODO: This is an anti-pattern that is in place until the kvdb
-	// interface supports a context.
-	ctx context.Context
-
-	// conn is the underlying database connection instance.
-	conn *sql.DB
-
-	// name is the name of the db that the connection is made to.
-	name string
-
-	// table is the name of the table that contains the data for all
-	// top-level buckets that have keys that cannot be mapped to a distinct
-	// sql table.
-	table string
-
-	// mu is the global write lock that ensures single writer.
-	mu sync.RWMutex
-}
-
-// Assert that db implements walletdb.DB.
-var _ walletdb.DB = (*db)(nil)
 
 // fileExists returns true if the file exists, and false otherwise.
 func fileExists(path string) bool {
@@ -73,8 +37,10 @@ func fileExists(path string) bool {
 // NewSqliteBackend returns a db object initialized with the passed backend
 // config. If a sqlite connection cannot be estabished, then an error is
 // returned.
-func NewSqliteBackend(ctx context.Context, cfg *Config, path, name string) (
-	*db, error) {
+func NewSqliteBackend(ctx context.Context, cfg *Config, path, name,
+	prefix string) (
+
+	walletdb.DB, error) {
 
 	if path == "" {
 		return nil, errors.New("a path to the sqlite db must be " +
@@ -128,18 +94,6 @@ func NewSqliteBackend(ctx context.Context, cfg *Config, path, name string) (
 	dsn := fmt.Sprintf(
 		"%v?%v", filepath.Join(path, name), sqliteOptions.Encode(),
 	)
-	//dsn := fmt.Sprintf(
-	//	"%v?%v", name, sqliteOptions.Encode(),
-	//)
-	//fmt.Println(dsn)
-	dbConn, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return nil, err
-	}
-
-	// Compose system table names.
-	table := strings.TrimSuffix(fmt.Sprintf("%s_%s", kvTableName, name), ".db")
-	fmt.Println(table)
 
 	// Execute the create statements to set up a kv table in sqlite. Every
 	// row points to the bucket that it is one via its parent_id field. A
@@ -155,179 +109,35 @@ func NewSqliteBackend(ctx context.Context, cfg *Config, path, name string) (
 	// <table>_unp). In postgres, a single index wouldn't enforce the unique
 	// constraint on rows with a NULL parent_id. Therefore two indices are
 	// defined.
-	_, err = dbConn.ExecContext(ctx, `
-CREATE TABLE IF NOT EXISTS `+table+` (
+	s := `
+CREATE TABLE IF NOT EXISTS TABLE_NAME (
     key BLOB NOT NULL,
     value BLOB,
     parent_id BIGINT,
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     sequence BIGINT,
-    CONSTRAINT `+table+`_parent FOREIGN KEY (parent_id)
-	REFERENCES `+table+` (id) 
+    CONSTRAINT TABLE_NAME_parent FOREIGN KEY (parent_id)
+	REFERENCES TABLE_NAME (id) 
 	ON UPDATE NO ACTION
 	ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS `+table+`_p
-    ON `+table+` (parent_id);
+CREATE INDEX IF NOT EXISTS TABLE_NAME_p
+    ON TABLE_NAME (parent_id);
 
-CREATE UNIQUE INDEX IF NOT EXISTS `+table+`_up
-    ON `+table+`
+CREATE UNIQUE INDEX IF NOT EXISTS TABLE_NAME_up
+    ON TABLE_NAME
     (parent_id, key) WHERE parent_id IS NOT NULL;
 
-CREATE UNIQUE INDEX IF NOT EXISTS `+table+`_unp
-    ON `+table+` (key) WHERE parent_id IS NULL;
-`)
-	if err != nil {
-		_ = dbConn.Close()
-
-		return nil, err
+CREATE UNIQUE INDEX IF NOT EXISTS TABLE_NAME_unp
+    ON TABLE_NAME (key) WHERE parent_id IS NULL;
+`
+	// Compose system table names.
+	config := &common_sql.Config{
+		DriverName: "sqlite",
+		Dsn:        dsn,
+		Timeout:    cfg.Timeout,
+		SchemaStr:  s,
 	}
 
-	return &db{
-		ctx:   ctx,
-		cfg:   cfg,
-		conn:  dbConn,
-		name:  table,
-		table: table,
-	}, nil
-}
-
-// getTimeoutCtx gets a timeout context for database requests.
-func (db *db) getTimeoutCtx() (context.Context, func()) {
-	if db.cfg.Timeout == time.Duration(0) {
-		return db.ctx, func() {}
-	}
-
-	return context.WithTimeout(db.ctx, db.cfg.Timeout)
-}
-
-// BeginReadTx opens a database read transaction.
-//
-// NOTE: this is part of the walletdb.DB interface.
-func (db *db) BeginReadTx() (walletdb.ReadTx, error) {
-	return newReadWriteTx(db, true)
-}
-
-// BeginReadWriteTx opens a database read+write transaction.
-//
-// NOTE: this is part of the walletdb.DB interface.
-func (db *db) BeginReadWriteTx() (walletdb.ReadWriteTx, error) {
-	return newReadWriteTx(db, false)
-}
-
-// View opens a database read transaction and executes the function f with the
-// transaction passed as a parameter. After f exits, the transaction is rolled
-// back. If f errors, its error is returned, not a rollback error (if any
-// occur). The passed reset function is called before the start of the
-// transaction and can be used to reset intermediate state. As callers may
-// expect retries of the f closure (depending on the database backend used), the
-// reset function will be called before each retry respectively.
-//
-// NOTE: this is part of the walletdb.DB interface.
-func (db *db) View(f func(tx walletdb.ReadTx) error, reset func()) error {
-	return db.executeTransaction(
-		func(tx walletdb.ReadWriteTx) error {
-			return f(tx.(walletdb.ReadTx))
-		},
-		reset, true,
-	)
-}
-
-// executeTransaction creates a new read-only or read-write transaction and
-// executes the given function within it.
-func (db *db) executeTransaction(f func(tx walletdb.ReadWriteTx) error,
-	reset func(), readOnly bool) error {
-
-	reset()
-
-	tx, err := newReadWriteTx(db, readOnly)
-	if err != nil {
-		return err
-	}
-
-	err = catchPanic(func() error { return f(tx) })
-	if err != nil {
-		if rollbackErr := tx.Rollback(); rollbackErr != nil {
-			log.Errorf("Error rolling back tx: %v", rollbackErr)
-		}
-
-		return err
-	}
-
-	return tx.Commit()
-}
-
-// catchPanic executes the specified function. If a panic occurs, it is returned
-// as an error value.
-func catchPanic(f func() error) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Criticalf("Caught unhandled error: %v", r)
-
-			switch data := r.(type) {
-			case error:
-				err = data
-
-			default:
-				err = errors.New(fmt.Sprintf("%v", data))
-			}
-		}
-	}()
-
-	err = f()
-
-	return
-}
-
-// Update opens a database read/write transaction and executes the function f
-// with the transaction passed as a parameter. After f exits, if f did not
-// error, the transaction is committed. Otherwise, if f did error, the
-// transaction is rolled back. If the rollback fails, the original error
-// returned by f is still returned. If the commit fails, the commit error is
-// returned. As callers may expect retries of the f closure, the reset function
-// will be called before each retry respectively.
-//
-// NOTE: this is part of the walletdb.DB interface.
-func (db *db) Update(f func(tx walletdb.ReadWriteTx) error, reset func()) error {
-	return db.executeTransaction(f, reset, false)
-}
-
-// Copy writes a copy of the database to the provided writer. This call will
-// start a read-only transaction to perform all operations.
-//
-// NOTE: this is part of the walletdb.DB interface.
-func (db *db) Copy(w io.Writer) error {
-	return errors.New("not implemented")
-}
-
-// Close cleanly shuts down the database and syncs all data.
-//
-// NOTE: this is part of the walletdb.DB interface.
-func (db *db) Close() error {
-	log.Infof("Closing database %v", db.name)
-
-	return db.conn.Close()
-}
-
-// PrintStats returns all collected stats pretty printed into a string.
-//
-// NOTE: this is part of the walletdb.DB interface.
-func (db *db) PrintStats() string {
-	return "stats not supported by sqlite driver"
-}
-
-// newTestSqliteDB is a helper function that creates an SQLite database for
-// testing.
-func newTestSqliteDB(t *testing.T) *db {
-	t.Helper()
-
-	t.Logf("Creating new SQLite DB for testing")
-
-	// TODO(roasbeef): if we pass :memory: for the file name, then we get
-	// an in mem version to speed up tests
-	ctx := context.Background()
-	sqlDB, err := NewSqliteBackend(ctx, &Config{}, t.TempDir(), "tmp.db")
-	require.NoError(t, err)
-
-	return sqlDB
+	return common_sql.NewSqlBackend(ctx, config, prefix)
 }
