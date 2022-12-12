@@ -5,7 +5,6 @@ package sqlite
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -37,25 +36,13 @@ func fileExists(path string) bool {
 // NewSqliteBackend returns a db object initialized with the passed backend
 // config. If a sqlite connection cannot be estabished, then an error is
 // returned.
-func NewSqliteBackend(ctx context.Context, cfg *Config, path, name,
-	prefix string) (
-
+func NewSqliteBackend(ctx context.Context, cfg *Config, prefix string) (
 	walletdb.DB, error) {
 
-	if path == "" {
-		return nil, errors.New("a path to the sqlite db must be " +
-			"specified")
-	}
-
-	if name == "" {
-		return nil, errors.New("a name for the sqlite db must be " +
-			"specified")
-	}
-
-	dbFilePath := filepath.Join(path, name)
+	dbFilePath := filepath.Join(cfg.DBPath, cfg.DBFileName)
 	if !fileExists(dbFilePath) {
-		if !fileExists(path) {
-			if err := os.MkdirAll(path, 0700); err != nil {
+		if !fileExists(cfg.DBPath) {
+			if err := os.MkdirAll(cfg.DBPath, 0700); err != nil {
 				return nil, err
 			}
 		}
@@ -67,16 +54,16 @@ func NewSqliteBackend(ctx context.Context, cfg *Config, path, name,
 		value string
 	}{
 		{
+			name:  "busy_timeout",
+			value: "5000",
+		},
+		{
 			name:  "foreign_keys",
 			value: "on",
 		},
 		{
 			name:  "journal_mode",
 			value: "WAL",
-		},
-		{
-			name:  "busy_timeout",
-			value: "5000",
 		},
 	}
 	sqliteOptions := make(url.Values)
@@ -91,9 +78,7 @@ func NewSqliteBackend(ctx context.Context, cfg *Config, path, name,
 	// with the series of pragma options as a query URL string. For more
 	// details on the formatting here, see the modernc.org/sqlite docs:
 	// https://pkg.go.dev/modernc.org/sqlite#Driver.Open.
-	dsn := fmt.Sprintf(
-		"%v?%v", filepath.Join(path, name), sqliteOptions.Encode(),
-	)
+	dsn := fmt.Sprintf("%v?%v", dbFilePath, sqliteOptions.Encode())
 
 	// Execute the create statements to set up a kv table in sqlite. Every
 	// row points to the bucket that it is one via its parent_id field. A

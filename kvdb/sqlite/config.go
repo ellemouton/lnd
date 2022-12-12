@@ -6,7 +6,8 @@ import "time"
 //
 //nolint:lll
 type Config struct {
-	FilePath       string
+	DBPath         string        `long:"dbpath" description:"The path to the sqlite database file."`
+	DBFileName     string        `long:"dbfilename" description:"The name of the sqlite database file."`
 	Timeout        time.Duration `long:"timeout" description:"Database connection timeout. Set to zero to disable."`
 	MaxConnections int           `long:"maxconnections" description:"The maximum number of open connections to the database. Set to zero for unlimited."`
 }

@@ -29,6 +29,8 @@ const (
 
 	defaultPostgresMaxConnections = 50
 
+	defaultSqliteDBName = "lnd.db"
+
 	// NSChannelDB is the namespace name that we use for the combined graph
 	// and channel state DB.
 	NSChannelDB = "channeldb"
@@ -91,7 +93,8 @@ func DefaultDB() *DB {
 			MaxConnections: defaultPostgresMaxConnections,
 		},
 		Sqlite: &sqlite.Config{
-			MaxConnections: defaultPostgresMaxConnections,
+			DBFileName:     defaultSqliteDBName,
+			MaxConnections: 0,
 		},
 	}
 }
@@ -207,7 +210,7 @@ type DatabaseBackends struct {
 }
 
 // GetBackends returns a set of kvdb.Backends as set in the DB config.
-func (db *DB) GetBackends(ctx context.Context, chanDBPath,
+func (db *DB) GetBackends(ctx context.Context, networkDirPath,
 	walletDBPath, towerServerDBPath string, towerClientEnabled,
 	towerServerEnabled bool) (*DatabaseBackends, error) {
 
@@ -405,9 +408,14 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 		}, nil
 
 	case SqliteBackend:
+		cfg := db.Sqlite
+
+		if cfg.DBPath == "" {
+			cfg.DBPath = networkDirPath
+		}
+
 		sqliteBackend, err := kvdb.Open(
-			kvdb.SqliteBackendName, ctx, db.Sqlite, chanDBPath,
-			ChannelDBName, NSChannelDB,
+			kvdb.SqliteBackendName, ctx, cfg, NSChannelDB,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("error opening sqlite graph "+
@@ -416,8 +424,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 		closeFuncs[NSChannelDB] = sqliteBackend.Close
 
 		sqliteMacaroonBackend, err := kvdb.Open(
-			kvdb.SqliteBackendName, ctx, db.Sqlite, walletDBPath,
-			MacaroonDBName, NSMacaroonDB,
+			kvdb.SqliteBackendName, ctx, cfg, NSMacaroonDB,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("error opening sqlite "+
@@ -426,8 +433,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 		closeFuncs[NSMacaroonDB] = sqliteMacaroonBackend.Close
 
 		sqliteDecayedLogBackend, err := kvdb.Open(
-			kvdb.SqliteBackendName, ctx, db.Sqlite, chanDBPath,
-			DecayedLogDbName, NSDecayedLogDB,
+			kvdb.SqliteBackendName, ctx, cfg, NSDecayedLogDB,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("error opening sqlite decayed "+
@@ -436,8 +442,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 		closeFuncs[NSDecayedLogDB] = sqliteDecayedLogBackend.Close
 
 		sqliteTowerClientBackend, err := kvdb.Open(
-			kvdb.SqliteBackendName, ctx, db.Sqlite,
-			chanDBPath, TowerClientDBName, NSTowerClientDB,
+			kvdb.SqliteBackendName, ctx, cfg, NSTowerClientDB,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("error opening sqlite tower "+
@@ -446,8 +451,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 		closeFuncs[NSTowerClientDB] = sqliteTowerClientBackend.Close
 
 		sqliteTowerServerBackend, err := kvdb.Open(
-			kvdb.SqliteBackendName, ctx, db.Sqlite,
-			towerServerDBPath, TowerServerDBName, NSTowerServerDB,
+			kvdb.SqliteBackendName, ctx, cfg, NSTowerServerDB,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("error opening sqlite tower "+
@@ -456,8 +460,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 		closeFuncs[NSTowerServerDB] = sqliteTowerServerBackend.Close
 
 		sqliteWalletBackend, err := kvdb.Open(
-			kvdb.SqliteBackendName, ctx, db.Sqlite,
-			walletDBPath, WalletDBName, NSWalletDB,
+			kvdb.SqliteBackendName, ctx, cfg, NSWalletDB,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("error opening sqlite macaroon "+
@@ -489,7 +492,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 
 	// We're using all bbolt based databases by default.
 	boltBackend, err := kvdb.GetBoltBackend(&kvdb.BoltBackendConfig{
-		DBPath:            chanDBPath,
+		DBPath:            networkDirPath,
 		DBFileName:        ChannelDBName,
 		DBTimeout:         db.Bolt.DBTimeout,
 		NoFreelistSync:    db.Bolt.NoFreelistSync,
@@ -515,7 +518,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 	closeFuncs[NSMacaroonDB] = macaroonBackend.Close
 
 	decayedLogBackend, err := kvdb.GetBoltBackend(&kvdb.BoltBackendConfig{
-		DBPath:            chanDBPath,
+		DBPath:            networkDirPath,
 		DBFileName:        DecayedLogDbName,
 		DBTimeout:         db.Bolt.DBTimeout,
 		NoFreelistSync:    db.Bolt.NoFreelistSync,
@@ -533,7 +536,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 	if towerClientEnabled {
 		towerClientBackend, err = kvdb.GetBoltBackend(
 			&kvdb.BoltBackendConfig{
-				DBPath:            chanDBPath,
+				DBPath:            networkDirPath,
 				DBFileName:        TowerClientDBName,
 				DBTimeout:         db.Bolt.DBTimeout,
 				NoFreelistSync:    db.Bolt.NoFreelistSync,

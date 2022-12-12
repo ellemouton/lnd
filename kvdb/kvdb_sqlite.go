@@ -16,7 +16,9 @@ const SqlBackend = true
 func StartSqliteTestBackend(path, name, table string) (walletdb.DB, error) {
 	return sqlite.NewSqliteBackend(
 		context.Background(), &sqlite.Config{
-			Timeout: time.Second * 30,
-		}, path, name, table,
+			DBPath:     path,
+			DBFileName: name,
+			Timeout:    time.Second * 30,
+		}, table,
 	)
 }
