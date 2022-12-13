@@ -387,6 +387,7 @@ func (db *DB) GetBackends(ctx context.Context, networkDirPath,
 		closeFuncs[NSWalletDB] = postgresWalletBackend.Close
 
 		returnEarly = false
+
 		return &DatabaseBackends{
 			GraphDB:       postgresBackend,
 			ChanStateDB:   postgresBackend,
@@ -469,6 +470,7 @@ func (db *DB) GetBackends(ctx context.Context, networkDirPath,
 		closeFuncs[NSWalletDB] = sqliteWalletBackend.Close
 
 		returnEarly = false
+
 		return &DatabaseBackends{
 			GraphDB:       sqliteBackend,
 			ChanStateDB:   sqliteBackend,

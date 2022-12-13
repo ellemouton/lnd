@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"sync"
 	"time"
 
@@ -60,62 +59,51 @@ func Init(maxConnections int) {
 	dbConns = newDbConnSet(maxConnections)
 }
 
+type Config struct {
+	DriverName              string
+	Dsn                     string
+	Timeout                 time.Duration
+	Schema                  string
+	TableNamePrefix         string
+	PostgresCmdReplacements PostgresCmdReplacements
+}
+
 // NewSqlBackend returns a db object initialized with the passed backend
-// config. If database connection cannot be estabished, then returns error.
-func NewSqlBackend(ctx context.Context, config *Config, prefix string) (
-	*db, error) {
-
-	if prefix == "" {
-		return nil, errors.New("empty postgres prefix")
-	}
-
+// config. If database connection cannot be established, then returns error.
+func NewSqlBackend(ctx context.Context, cfg *Config) (*db, error) {
 	if dbConns == nil {
 		return nil, errors.New("db connection set not initialized")
 	}
 
-	dbConn, err := dbConns.Open(config.DriverName, config.Dsn)
+	if cfg.TableNamePrefix == "" {
+		return nil, errors.New("empty table name prefix")
+	}
+
+	table := fmt.Sprintf("%s_%s", cfg.TableNamePrefix, kvTableName)
+
+	query := newKVSchemaCreationCmd(
+		table, cfg.Schema, cfg.PostgresCmdReplacements,
+	)
+
+	dbConn, err := dbConns.Open(cfg.DriverName, cfg.Dsn)
 	if err != nil {
 		return nil, err
 	}
 
-	// Compose system table names.
-	table := fmt.Sprintf(
-		"%s_%s", prefix, kvTableName,
-	)
-
-	fmt.Println(table, config.DriverName)
-
-	// Execute the create statements to set up a kv table in postgres. Every
-	// row points to the bucket that it is one via its parent_id field. A
-	// NULL parent_id means that the key belongs to the upper-most bucket in
-	// this table. A constraint on parent_id is enforcing referential
-	// integrity.
-	//
-	// Furthermore there is a <table>_p index on parent_id that is required
-	// for the foreign key constraint.
-	//
-	// Finally there are unique indices on (parent_id, key) to prevent the
-	// same key being present in a bucket more than once (<table>_up and
-	// <table>_unp). In postgres, a single index wouldn't enforce the unique
-	// constraint on rows with a NULL parent_id. Therefore two indices are
-	// defined.
-	cmd := strings.Replace(config.SchemaStr, "TABLE_NAME", table, -1)
-	_, err = dbConn.ExecContext(ctx, cmd)
+	_, err = dbConn.ExecContext(ctx, query)
 	if err != nil {
 		_ = dbConn.Close()
 
 		return nil, err
 	}
 
-	backend := &db{
-		cfg:    config,
-		prefix: prefix,
+	return &db{
+		cfg:    cfg,
 		ctx:    ctx,
 		db:     dbConn,
 		table:  table,
-	}
-
-	return backend, nil
+		prefix: cfg.TableNamePrefix,
+	}, nil
 }
 
 // getTimeoutCtx gets a timeout context for database requests.

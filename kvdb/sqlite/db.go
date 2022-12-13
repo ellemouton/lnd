@@ -22,6 +22,11 @@ const (
 	sqliteOptionPrefix = "_pragma"
 )
 
+var postgresReplacements = common_sql.PostgresCmdReplacements{
+	"BYTEA":                 "BLOB",
+	"BIGSERIAL PRIMARY KEY": "INTEGER PRIMARY KEY AUTOINCREMENT",
+}
+
 // fileExists returns true if the file exists, and false otherwise.
 func fileExists(path string) bool {
 	if _, err := os.Stat(path); err != nil {
@@ -80,49 +85,14 @@ func NewSqliteBackend(ctx context.Context, cfg *Config, prefix string) (
 	// https://pkg.go.dev/modernc.org/sqlite#Driver.Open.
 	dsn := fmt.Sprintf("%v?%v", dbFilePath, sqliteOptions.Encode())
 
-	// Execute the create statements to set up a kv table in sqlite. Every
-	// row points to the bucket that it is one via its parent_id field. A
-	// NULL parent_id means that the key belongs to the upper-most bucket in
-	// this table. A constraint on parent_id is enforcing referential
-	// integrity.
-	//
-	// Furthermore there is a <table>_p index on parent_id that is required
-	// for the foreign key constraint.
-	//
-	// Finally there are unique indices on (parent_id, key) to prevent the
-	// same key being present in a bucket more than once (<table>_up and
-	// <table>_unp). In postgres, a single index wouldn't enforce the unique
-	// constraint on rows with a NULL parent_id. Therefore two indices are
-	// defined.
-	s := `
-CREATE TABLE IF NOT EXISTS TABLE_NAME (
-    key BLOB NOT NULL,
-    value BLOB,
-    parent_id BIGINT,
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    sequence BIGINT,
-    CONSTRAINT TABLE_NAME_parent FOREIGN KEY (parent_id)
-	REFERENCES TABLE_NAME (id) 
-	ON UPDATE NO ACTION
-	ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS TABLE_NAME_p
-    ON TABLE_NAME (parent_id);
-
-CREATE UNIQUE INDEX IF NOT EXISTS TABLE_NAME_up
-    ON TABLE_NAME
-    (parent_id, key) WHERE parent_id IS NOT NULL;
-
-CREATE UNIQUE INDEX IF NOT EXISTS TABLE_NAME_unp
-    ON TABLE_NAME (key) WHERE parent_id IS NULL;
-`
 	// Compose system table names.
 	config := &common_sql.Config{
-		DriverName: "sqlite",
-		Dsn:        dsn,
-		Timeout:    cfg.Timeout,
-		SchemaStr:  s,
+		DriverName:              "sqlite",
+		Dsn:                     dsn,
+		Timeout:                 cfg.Timeout,
+		TableNamePrefix:         prefix,
+		PostgresCmdReplacements: postgresReplacements,
 	}
 
-	return common_sql.NewSqlBackend(ctx, config, prefix)
+	return common_sql.NewSqlBackend(ctx, config)
 }
