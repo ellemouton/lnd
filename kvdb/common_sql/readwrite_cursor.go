@@ -1,7 +1,7 @@
 //go:build kvdb_postgres
 // +build kvdb_postgres
 
-package postgres
+package common_sql
 
 import (
 	"database/sql"

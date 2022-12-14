@@ -1,4 +1,4 @@
-package postgres
+package common_sql
 
 import "github.com/btcsuite/btclog"
 

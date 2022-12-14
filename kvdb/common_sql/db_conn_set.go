@@ -1,4 +1,4 @@
-package postgres
+package common_sql
 
 import (
 	"database/sql"
@@ -32,7 +32,7 @@ func newDbConnSet(maxConnections int) *dbConnSet {
 
 // Open opens a new database connection. If a connection already exists for the
 // given dsn, the existing connection is returned.
-func (d *dbConnSet) Open(dsn string) (*sql.DB, error) {
+func (d *dbConnSet) Open(driver, dsn string) (*sql.DB, error) {
 	d.Lock()
 	defer d.Unlock()
 
@@ -42,7 +42,7 @@ func (d *dbConnSet) Open(dsn string) (*sql.DB, error) {
 		return dbConn.db, nil
 	}
 
-	db, err := sql.Open("pgx", dsn)
+	db, err := sql.Open(driver, dsn)
 	if err != nil {
 		return nil, err
 	}
