@@ -270,7 +270,8 @@ certain large transactions](https://github.com/lightningnetwork/lnd/pull/7100).
 
 * [Add a sqlite backend 
   option](https://github.com/lightningnetwork/lnd/pull/7251) to the kvdb 
-  package.
+  package, and add it as a [backend option to 
+  LND](https://github.com/lightningnetwork/lnd/pull/7252). 
  
 ## Pathfinding
 
