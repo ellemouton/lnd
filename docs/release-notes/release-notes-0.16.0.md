@@ -266,6 +266,10 @@ certain large transactions](https://github.com/lightningnetwork/lnd/pull/7100).
   using the address in question](
   https://github.com/lightningnetwork/lnd/pull/7025)
 
+## DB
+
+* Add [sqlite]() support. 
+
 ## Pathfinding
 
 * [Pathfinding takes capacity of edges into account to improve success
