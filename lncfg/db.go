@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/lightningnetwork/lnd/kvdb"
+	"github.com/lightningnetwork/lnd/kvdb/common_sql"
 	"github.com/lightningnetwork/lnd/kvdb/etcd"
 	"github.com/lightningnetwork/lnd/kvdb/postgres"
 	"github.com/lightningnetwork/lnd/lnwallet/btcwallet"
@@ -142,7 +143,7 @@ func (db *DB) Init(ctx context.Context, dbPath string) error {
 		db.Etcd = cfg
 
 	case db.Backend == PostgresBackend:
-		postgres.Init(db.Postgres.MaxConnections)
+		common_sql.Init(db.Postgres.MaxConnections)
 	}
 
 	return nil
