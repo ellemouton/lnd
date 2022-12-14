@@ -1,5 +1,5 @@
-//go:build kvdb_postgres
-// +build kvdb_postgres
+//go:build kvdb_postgres || kvdb_sqlite
+// +build kvdb_postgres kvdb_sqlite
 
 package common_sql
 
@@ -88,6 +88,10 @@ func (b *readWriteBucket) Get(key []byte) []byte {
 
 	case err != nil:
 		panic(err)
+	}
+
+	if len(*value) == 0 {
+		return []byte{}
 	}
 
 	return *value
