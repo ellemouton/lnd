@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sync"
 	"time"
 
 	"github.com/btcsuite/btcwallet/walletdb"
@@ -68,9 +67,6 @@ type db struct {
 
 	// db is the underlying database connection instance.
 	db *sql.DB
-
-	// lock is the global write lock that ensures single writer.
-	lock sync.RWMutex
 
 	// table is the name of the table that contains the data for all
 	// top-level buckets that have keys that cannot be mapped to a distinct

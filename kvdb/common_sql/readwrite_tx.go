@@ -6,7 +6,6 @@ package common_sql
 import (
 	"context"
 	"database/sql"
-	"sync"
 
 	"github.com/btcsuite/btcwallet/walletdb"
 )
@@ -18,28 +17,11 @@ type readWriteTx struct {
 
 	// onCommit gets called upon commit.
 	onCommit func()
-
-	// active is true if the transaction hasn't been committed yet.
-	active bool
-
-	// locker is a pointer to the global db lock.
-	locker sync.Locker
 }
 
 // newReadWriteTx creates an rw transaction using a connection from the
 // specified pool.
 func newReadWriteTx(db *db, readOnly bool) (*readWriteTx, error) {
-	// Obtain the global lock instance. An alternative here is to obtain a
-	// database lock from Postgres. Unfortunately there is no database-level
-	// lock in Postgres, meaning that each table would need to be locked
-	// individually. Perhaps an advisory lock could perform this function
-	// too.
-	var locker sync.Locker = &db.lock
-	if readOnly {
-		locker = db.lock.RLocker()
-	}
-	locker.Lock()
-
 	// Start the transaction. Don't use the timeout context because it would
 	// be applied to the transaction as a whole. If possible, mark the
 	// transaction as read-only to make sure that potential programming
@@ -51,15 +33,12 @@ func newReadWriteTx(db *db, readOnly bool) (*readWriteTx, error) {
 		},
 	)
 	if err != nil {
-		locker.Unlock()
 		return nil, err
 	}
 
 	return &readWriteTx{
-		db:     db,
-		tx:     tx,
-		active: true,
-		locker: locker,
+		db: db,
+		tx: tx,
 	}, nil
 }
 
@@ -82,17 +61,7 @@ func (tx *readWriteTx) ForEachBucket(fn func(key []byte) error) error {
 // Rollback closes the transaction, discarding changes (if any) if the
 // database was modified by a write transaction.
 func (tx *readWriteTx) Rollback() error {
-	// If the transaction has been closed roolback will fail.
-	if !tx.active {
-		return walletdb.ErrTxClosed
-	}
-
-	err := tx.tx.Rollback()
-
-	// Unlock the transaction regardless of the error result.
-	tx.active = false
-	tx.locker.Unlock()
-	return err
+	return tx.tx.Rollback()
 }
 
 // ReadWriteBucket opens the root bucket for read/write access.  If the
@@ -144,20 +113,11 @@ func (tx *readWriteTx) DeleteTopLevelBucket(key []byte) error {
 
 // Commit commits the transaction if not already committed.
 func (tx *readWriteTx) Commit() error {
-	// Commit will fail if the transaction is already committed.
-	if !tx.active {
-		return walletdb.ErrTxClosed
-	}
-
 	// Try committing the transaction.
 	err := tx.tx.Commit()
 	if err == nil && tx.onCommit != nil {
 		tx.onCommit()
 	}
-
-	// Unlock the transaction regardless of the error result.
-	tx.active = false
-	tx.locker.Unlock()
 
 	return err
 }
