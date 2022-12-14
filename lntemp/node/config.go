@@ -104,7 +104,12 @@ func (cfg BaseNodeConfig) RESTAddr() string {
 
 // DBDir returns the holding directory path of the graph database.
 func (cfg BaseNodeConfig) DBDir() string {
-	return filepath.Join(cfg.DataDir, "graph", cfg.NetParams.Name)
+	subdir := "graph"
+	if cfg.DbBackend == lntest.BackendSqlite {
+		subdir = filepath.Join("sqlite", "bitcoin")
+	}
+
+	return filepath.Join(cfg.DataDir, subdir, cfg.NetParams.Name)
 }
 
 func (cfg BaseNodeConfig) DBPath() string {
