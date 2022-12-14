@@ -266,6 +266,12 @@ certain large transactions](https://github.com/lightningnetwork/lnd/pull/7100).
   using the address in question](
   https://github.com/lightningnetwork/lnd/pull/7025)
 
+## DB
+
+* [Add a sqlite backend 
+  option](https://github.com/lightningnetwork/lnd/pull/7251) to the kvdb 
+  package.
+ 
 ## Pathfinding
 
 * [Pathfinding takes capacity of edges into account to improve success
@@ -315,6 +321,7 @@ refactor the itest for code health and maintenance.
 * andreihod
 * Antoni Spaanderman
 * Carla Kirk-Cohen
+* Chris Geihsler
 * Conner Babinchak
 * cutiful
 * Daniel McNally
