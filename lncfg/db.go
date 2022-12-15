@@ -9,6 +9,7 @@ import (
 	"github.com/lightningnetwork/lnd/kvdb/etcd"
 	"github.com/lightningnetwork/lnd/kvdb/postgres"
 	"github.com/lightningnetwork/lnd/kvdb/sqlbase"
+	"github.com/lightningnetwork/lnd/kvdb/sqlite"
 	"github.com/lightningnetwork/lnd/lnwallet/btcwallet"
 )
 
@@ -23,9 +24,11 @@ const (
 	BoltBackend                = "bolt"
 	EtcdBackend                = "etcd"
 	PostgresBackend            = "postgres"
+	SqliteBackend              = "sqlite"
 	DefaultBatchCommitInterval = 500 * time.Millisecond
 
 	defaultPostgresMaxConnections = 50
+	defaultSqliteMaxConnections   = 50
 
 	// NSChannelDB is the namespace name that we use for the combined graph
 	// and channel state DB.
@@ -64,13 +67,15 @@ type DB struct {
 
 	Postgres *postgres.Config `group:"postgres" namespace:"postgres" description:"Postgres settings."`
 
+	Sqlite *sqlite.Config `group:"sqlite" namespace:"sqlite" description:"Sqlite settings."`
+
 	NoGraphCache bool `long:"no-graph-cache" description:"Don't use the in-memory graph cache for path finding. Much slower but uses less RAM. Can only be used with a bolt database backend."`
 
 	PruneRevocation bool `long:"prune-revocation" description:"Run the optional migration that prunes the revocation logs to save disk space."`
 }
 
 // DefaultDB creates and returns a new default DB config.
-func DefaultDB() *DB {
+func DefaultDB(sqlitePath string) *DB {
 	return &DB{
 		Backend:             BoltBackend,
 		BatchCommitInterval: DefaultBatchCommitInterval,
@@ -86,13 +91,17 @@ func DefaultDB() *DB {
 		Postgres: &postgres.Config{
 			MaxConnections: defaultPostgresMaxConnections,
 		},
+		Sqlite: &sqlite.Config{
+			DBPath:         sqlitePath,
+			MaxConnections: defaultSqliteMaxConnections,
+		},
 	}
 }
 
 // Validate validates the DB config.
 func (db *DB) Validate() error {
 	switch db.Backend {
-	case BoltBackend:
+	case BoltBackend, SqliteBackend:
 	case PostgresBackend:
 		if db.Postgres.Dsn == "" {
 			return fmt.Errorf("postgres dsn must be set")
@@ -104,8 +113,9 @@ func (db *DB) Validate() error {
 		}
 
 	default:
-		return fmt.Errorf("unknown backend, must be either '%v' or "+
-			"'%v'", BoltBackend, EtcdBackend)
+		return fmt.Errorf("unknown backend, must be either '%v', "+
+			"'%v', '%v' or '%v'", BoltBackend, EtcdBackend,
+			PostgresBackend, SqliteBackend)
 	}
 
 	// The path finding uses a manual read transaction that's open for a
@@ -144,6 +154,9 @@ func (db *DB) Init(ctx context.Context, dbPath string) error {
 
 	case db.Backend == PostgresBackend:
 		sqlbase.Init(db.Postgres.MaxConnections)
+
+	case db.Backend == SqliteBackend:
+		sqlbase.Init(db.Sqlite.MaxConnections)
 	}
 
 	return nil
@@ -291,6 +304,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 		closeFuncs[NSWalletDB] = etcdWalletBackend.Close
 
 		returnEarly = false
+
 		return &DatabaseBackends{
 			GraphDB:       etcdBackend,
 			ChanStateDB:   etcdBackend,
@@ -373,6 +387,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 		closeFuncs[NSWalletDB] = postgresWalletBackend.Close
 
 		returnEarly = false
+
 		return &DatabaseBackends{
 			GraphDB:       postgresBackend,
 			ChanStateDB:   postgresBackend,
@@ -388,6 +403,89 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 			// state.
 			WalletDB: btcwallet.LoaderWithExternalWalletDB(
 				postgresWalletBackend,
+			),
+			Remote:     true,
+			CloseFuncs: closeFuncs,
+		}, nil
+
+	case SqliteBackend:
+		sqliteBackend, err := kvdb.Open(
+			kvdb.SqliteBackendName, ctx, db.Sqlite, ChannelDBName,
+			NSChannelDB,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error opening sqlite graph "+
+				"DB: %v", err)
+		}
+		closeFuncs[NSChannelDB] = sqliteBackend.Close
+
+		sqliteMacaroonBackend, err := kvdb.Open(
+			kvdb.SqliteBackendName, ctx, db.Sqlite, MacaroonDBName,
+			NSMacaroonDB,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error opening sqlite "+
+				"macaroon DB: %v", err)
+		}
+		closeFuncs[NSMacaroonDB] = sqliteMacaroonBackend.Close
+
+		sqliteDecayedLogBackend, err := kvdb.Open(
+			kvdb.SqliteBackendName, ctx, db.Sqlite,
+			DecayedLogDbName, NSDecayedLogDB,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error opening sqlite decayed "+
+				"log DB: %v", err)
+		}
+		closeFuncs[NSDecayedLogDB] = sqliteDecayedLogBackend.Close
+
+		sqliteTowerClientBackend, err := kvdb.Open(
+			kvdb.SqliteBackendName, ctx, db.Sqlite,
+			TowerClientDBName, NSTowerClientDB,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error opening sqlite tower "+
+				"client DB: %v", err)
+		}
+		closeFuncs[NSTowerClientDB] = sqliteTowerClientBackend.Close
+
+		sqliteTowerServerBackend, err := kvdb.Open(
+			kvdb.SqliteBackendName, ctx, db.Sqlite,
+			TowerServerDBName, NSTowerServerDB,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error opening sqlite tower "+
+				"server DB: %v", err)
+		}
+		closeFuncs[NSTowerServerDB] = sqliteTowerServerBackend.Close
+
+		sqliteWalletBackend, err := kvdb.Open(
+			kvdb.SqliteBackendName, ctx, db.Sqlite, WalletDBName,
+			NSWalletDB,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error opening sqlite macaroon "+
+				"DB: %v", err)
+		}
+		closeFuncs[NSWalletDB] = sqliteWalletBackend.Close
+
+		returnEarly = false
+
+		return &DatabaseBackends{
+			GraphDB:       sqliteBackend,
+			ChanStateDB:   sqliteBackend,
+			HeightHintDB:  sqliteBackend,
+			MacaroonDB:    sqliteMacaroonBackend,
+			DecayedLogDB:  sqliteDecayedLogBackend,
+			TowerClientDB: sqliteTowerClientBackend,
+			TowerServerDB: sqliteTowerServerBackend,
+			// The wallet loader will attempt to use/create the
+			// wallet in the replicated remote DB if we're running
+			// in a clustered environment. This will ensure that all
+			// members of the cluster have access to the same wallet
+			// state.
+			WalletDB: btcwallet.LoaderWithExternalWalletDB(
+				sqliteWalletBackend,
 			),
 			Remote:     true,
 			CloseFuncs: closeFuncs,
@@ -477,6 +575,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 	}
 
 	returnEarly = false
+
 	return &DatabaseBackends{
 		GraphDB:       boltBackend,
 		ChanStateDB:   boltBackend,

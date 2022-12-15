@@ -50,6 +50,7 @@ const (
 	defaultChainSubDirname    = "chain"
 	defaultGraphSubDirname    = "graph"
 	defaultTowerSubDirname    = "watchtower"
+	defaultSqliteSubDirname   = "sqlite"
 	defaultTLSCertFilename    = "tls.cert"
 	defaultTLSKeyFilename     = "tls.key"
 	defaultAdminMacFilename   = "admin.macaroon"
@@ -223,6 +224,10 @@ var (
 	defaultLogDir  = filepath.Join(DefaultLndDir, defaultLogDirname)
 
 	defaultTowerDir = filepath.Join(defaultDataDir, defaultTowerSubDirname)
+
+	defaultSqliteDir = filepath.Join(
+		defaultDataDir, defaultSqliteSubDirname,
+	)
 
 	defaultTLSCertPath    = filepath.Join(DefaultLndDir, defaultTLSCertFilename)
 	defaultTLSKeyPath     = filepath.Join(DefaultLndDir, defaultTLSKeyFilename)
@@ -631,7 +636,7 @@ func DefaultConfig() Config {
 		MaxCommitFeeRateAnchors:   lnwallet.DefaultAnchorsCommitMaxFeeRateSatPerVByte,
 		DustThreshold:             uint64(htlcswitch.DefaultDustThreshold.ToSatoshis()),
 		LogWriter:                 build.NewRotatingLogWriter(),
-		DB:                        lncfg.DefaultDB(),
+		DB:                        lncfg.DefaultDB(defaultSqliteDir),
 		Cluster:                   lncfg.DefaultCluster(),
 		RPCMiddleware:             lncfg.DefaultRPCMiddleware(),
 		registeredChains:          chainreg.NewChainRegistry(),
@@ -801,6 +806,12 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 				cfg.DataDir, defaultTowerSubDirname,
 			)
 		}
+
+		if cfg.DB.Sqlite.DBPath == defaultSqliteDir {
+			cfg.DB.Sqlite.DBPath = filepath.Join(
+				cfg.DataDir, defaultSqliteSubDirname,
+			)
+		}
 	}
 
 	funcName := "ValidateConfig"
@@ -895,6 +906,7 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 	cfg.Tor.PrivateKeyPath = CleanAndExpandPath(cfg.Tor.PrivateKeyPath)
 	cfg.Tor.WatchtowerKeyPath = CleanAndExpandPath(cfg.Tor.WatchtowerKeyPath)
 	cfg.Watchtower.TowerDir = CleanAndExpandPath(cfg.Watchtower.TowerDir)
+	cfg.DB.Sqlite.DBPath = CleanAndExpandPath(cfg.DB.Sqlite.DBPath)
 	cfg.BackupFilePath = CleanAndExpandPath(cfg.BackupFilePath)
 	cfg.WalletUnlockPasswordFile = CleanAndExpandPath(
 		cfg.WalletUnlockPasswordFile,
@@ -1403,6 +1415,14 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 		)
 	}
 
+	// Append the network type to the sqlite directory so that it is
+	// "namespaced" per network in the same fashion as the data directory.
+	cfg.DB.Sqlite.DBPath = filepath.Join(
+		cfg.DB.Sqlite.DBPath,
+		cfg.registeredChains.PrimaryChain().String(),
+		lncfg.NormalizeNetwork(cfg.ActiveNetParams.Name),
+	)
+
 	// Create the lnd directory and all other sub-directories if they don't
 	// already exist. This makes sure that directory trees are also created
 	// for files that point to outside the lnddir.
@@ -1413,7 +1433,7 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 		filepath.Dir(cfg.AdminMacPath), filepath.Dir(cfg.ReadMacPath),
 		filepath.Dir(cfg.InvoiceMacPath),
 		filepath.Dir(cfg.Tor.PrivateKeyPath),
-		filepath.Dir(cfg.Tor.WatchtowerKeyPath),
+		filepath.Dir(cfg.Tor.WatchtowerKeyPath), cfg.DB.Sqlite.DBPath,
 	}
 	for _, dir := range dirs {
 		if err := makeDirectory(dir); err != nil {
