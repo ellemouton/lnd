@@ -50,6 +50,7 @@ const (
 	defaultChainSubDirname    = "chain"
 	defaultGraphSubDirname    = "graph"
 	defaultTowerSubDirname    = "watchtower"
+	defaultSqliteSubDirname   = "sqlite"
 	defaultTLSCertFilename    = "tls.cert"
 	defaultTLSKeyFilename     = "tls.key"
 	defaultAdminMacFilename   = "admin.macaroon"
@@ -223,6 +224,8 @@ var (
 	defaultLogDir  = filepath.Join(DefaultLndDir, defaultLogDirname)
 
 	defaultTowerDir = filepath.Join(defaultDataDir, defaultTowerSubDirname)
+
+	defaultSqliteDir = filepath.Join(defaultDataDir, defaultSqliteSubDirname)
 
 	defaultTLSCertPath    = filepath.Join(DefaultLndDir, defaultTLSCertFilename)
 	defaultTLSKeyPath     = filepath.Join(DefaultLndDir, defaultTLSKeyFilename)
@@ -631,7 +634,7 @@ func DefaultConfig() Config {
 		MaxCommitFeeRateAnchors:   lnwallet.DefaultAnchorsCommitMaxFeeRateSatPerVByte,
 		DustThreshold:             uint64(htlcswitch.DefaultDustThreshold.ToSatoshis()),
 		LogWriter:                 build.NewRotatingLogWriter(),
-		DB:                        lncfg.DefaultDB(),
+		DB:                        lncfg.DefaultDB(defaultSqliteDir),
 		Cluster:                   lncfg.DefaultCluster(),
 		RPCMiddleware:             lncfg.DefaultRPCMiddleware(),
 		registeredChains:          chainreg.NewChainRegistry(),
@@ -799,6 +802,12 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 		if cfg.Watchtower.TowerDir == defaultTowerDir {
 			cfg.Watchtower.TowerDir = filepath.Join(
 				cfg.DataDir, defaultTowerSubDirname,
+			)
+		}
+
+		if cfg.DB.Sqlite.DBPath == defaultSqliteDir {
+			cfg.DB.Sqlite.DBPath = filepath.Join(
+				cfg.DataDir, defaultSqliteSubDirname,
 			)
 		}
 	}

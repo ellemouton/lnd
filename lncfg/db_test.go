@@ -10,7 +10,7 @@ import (
 
 // TestDBDefaultConfig tests that the default DB config is created as expected.
 func TestDBDefaultConfig(t *testing.T) {
-	defaultConfig := lncfg.DefaultDB()
+	defaultConfig := lncfg.DefaultDB("")
 
 	require.Equal(t, lncfg.BoltBackend, defaultConfig.Backend)
 	require.Equal(
