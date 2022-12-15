@@ -1,7 +1,7 @@
 //go:build kvdb_postgres
 // +build kvdb_postgres
 
-package postgres
+package sqlbase
 
 import (
 	"context"
@@ -29,16 +29,19 @@ type readWriteTx struct {
 // newReadWriteTx creates an rw transaction using a connection from the
 // specified pool.
 func newReadWriteTx(db *db, readOnly bool) (*readWriteTx, error) {
-	// Obtain the global lock instance. An alternative here is to obtain a
-	// database lock from Postgres. Unfortunately there is no database-level
-	// lock in Postgres, meaning that each table would need to be locked
-	// individually. Perhaps an advisory lock could perform this function
-	// too.
-	var locker sync.Locker = &db.lock
-	if readOnly {
-		locker = db.lock.RLocker()
+	locker := newNoopLocker()
+	if db.cfg.WithTxLevelLock {
+		// Obtain the global lock instance. An alternative here is to
+		// obtain a database lock from Postgres. Unfortunately there is
+		// no database-level lock in Postgres, meaning that each table
+		// would need to be locked individually. Perhaps an advisory
+		// lock could perform this function too.
+		locker = &db.lock
+		if readOnly {
+			locker = db.lock.RLocker()
+		}
+		locker.Lock()
 	}
-	locker.Lock()
 
 	// Start the transaction. Don't use the timeout context because it would
 	// be applied to the transaction as a whole. If possible, mark the
@@ -199,3 +202,25 @@ func (tx *readWriteTx) Exec(query string, args ...interface{}) (sql.Result,
 
 	return tx.tx.ExecContext(ctx, query, args...)
 }
+
+// noopLocker is an implementation of a no-op sync.Locker.
+type noopLocker struct{}
+
+// newNoopLocker creates a new noopLocker.
+func newNoopLocker() sync.Locker {
+	return &noopLocker{}
+}
+
+// Lock is a noop.
+//
+// NOTE: this is part of the sync.Locker interface.
+func (n *noopLocker) Lock() {
+}
+
+// Unlock is a noop.
+//
+// NOTE: this is part of the sync.Locker interface.
+func (n *noopLocker) Unlock() {
+}
+
+var _ sync.Locker = (*noopLocker)(nil)
