@@ -21,6 +21,8 @@ const (
 	TowerServerDBName = "watchtower.db"
 	WalletDBName      = "wallet.db"
 
+	LndDBName = "lnd.db"
+
 	BoltBackend                = "bolt"
 	EtcdBackend                = "etcd"
 	PostgresBackend            = "postgres"
@@ -410,7 +412,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 
 	case SqliteBackend:
 		sqliteBackend, err := kvdb.Open(
-			kvdb.SqliteBackendName, ctx, db.Sqlite, ChannelDBName,
+			kvdb.SqliteBackendName, ctx, db.Sqlite, LndDBName,
 			NSChannelDB,
 		)
 		if err != nil {
@@ -441,7 +443,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 
 		sqliteTowerClientBackend, err := kvdb.Open(
 			kvdb.SqliteBackendName, ctx, db.Sqlite,
-			TowerClientDBName, NSTowerClientDB,
+			LndDBName, NSTowerClientDB,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("error opening sqlite tower "+
@@ -451,7 +453,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 
 		sqliteTowerServerBackend, err := kvdb.Open(
 			kvdb.SqliteBackendName, ctx, db.Sqlite,
-			TowerServerDBName, NSTowerServerDB,
+			LndDBName, NSTowerServerDB,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("error opening sqlite tower "+
