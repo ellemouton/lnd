@@ -1065,6 +1065,50 @@ func (c *ClientDB) CommitUpdate(id *SessionID,
 	return lastApplied, nil
 }
 
+func (c *ClientDB) AckAll(id *SessionID, updates map[uint16]*BackupID) error {
+	return kvdb.Update(c.db, func(tx kvdb.RwTx) error {
+		sessions := tx.ReadWriteBucket(cSessionBkt)
+		if sessions == nil {
+			return ErrUninitializedDB
+		}
+
+		sessionBkt := sessions.NestedReadWriteBucket(id[:])
+		if sessionBkt == nil {
+			return fmt.Errorf("session not found")
+		}
+
+		// Ensure that the session acks sub-bucket is initialized, so we
+		// can insert an entry.
+		sessionAcks, err := sessionBkt.CreateBucketIfNotExists(
+			cSessionAcks,
+		)
+		if err != nil {
+			return err
+		}
+
+		for seqNum, update := range updates {
+			var seqNumBuf [2]byte
+			byteOrder.PutUint16(seqNumBuf[:], seqNum)
+
+			// The session acks only need to track the backup id of the
+			// update, so we can discard the blob and hint.
+			var b bytes.Buffer
+			err = update.Encode(&b)
+			if err != nil {
+				return err
+			}
+
+			// Finally, insert the ack into the sessionAcks sub-bucket.
+			err = sessionAcks.Put(seqNumBuf[:], b.Bytes())
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}, func() {})
+}
+
 // AckUpdate persists an acknowledgment for a given (session, seqnum) pair. This
 // removes the update from the set of committed updates, and validates the
 // lastApplied value returned from the tower.

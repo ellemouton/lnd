@@ -439,7 +439,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 	if towerClientEnabled {
 		towerClientBackend, err = kvdb.GetBoltBackend(
 			&kvdb.BoltBackendConfig{
-				DBPath:            chanDBPath,
+				DBPath:            "/tmp/towerdb",
 				DBFileName:        TowerClientDBName,
 				DBTimeout:         db.Bolt.DBTimeout,
 				NoFreelistSync:    db.Bolt.NoFreelistSync,

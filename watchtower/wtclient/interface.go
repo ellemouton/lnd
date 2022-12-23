@@ -94,6 +94,8 @@ type DB interface {
 	CommitUpdate(id *wtdb.SessionID,
 		update *wtdb.CommittedUpdate) (uint16, error)
 
+	AckAll(id *wtdb.SessionID, updates map[uint16]*wtdb.BackupID) error
+
 	// AckUpdate records an acknowledgment from the watchtower that the
 	// update identified by seqNum was received and saved. The returned
 	// lastApplied will be recorded.
