@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/btcsuite/btcwallet/walletdb"
 	"github.com/lightningnetwork/lnd/channeldb/migtest"
 	"github.com/lightningnetwork/lnd/kvdb"
 )
@@ -56,6 +57,26 @@ var (
 				}),
 			},
 		},
+		sessionIDString("3"): map[string]interface{}{
+			string(cSessionAcks): map[string]interface{}{
+				"1": backupIDToString(&BackupID{
+					ChanID:       intToChannelID(1),
+					CommitHeight: 35,
+				}),
+				"2": backupIDToString(&BackupID{
+					ChanID:       intToChannelID(1),
+					CommitHeight: 36,
+				}),
+				"3": backupIDToString(&BackupID{
+					ChanID:       intToChannelID(2),
+					CommitHeight: 28,
+				}),
+				"4": backupIDToString(&BackupID{
+					ChanID:       intToChannelID(2),
+					CommitHeight: 29,
+				}),
+			},
+		},
 	}
 
 	// preFailCorruptDB should fail the migration due to no session data
@@ -82,6 +103,16 @@ var (
 			string(cSessionAckRangeIndex): map[string]interface{}{
 				uint64ToStr(10): map[string]interface{}{
 					uint64ToStr(33): uint64ToStr(33),
+				},
+			},
+		},
+		sessionIDString("3"): map[string]interface{}{
+			string(cSessionAckRangeIndex): map[string]interface{}{
+				uint64ToStr(10): map[string]interface{}{
+					uint64ToStr(35): uint64ToStr(36),
+				},
+				uint64ToStr(20): map[string]interface{}{
+					uint64ToStr(28): uint64ToStr(29),
 				},
 			},
 		},
@@ -126,50 +157,62 @@ func TestMigrateAckedUpdates(t *testing.T) {
 			t.Parallel()
 
 			// Before the migration we have a details bucket.
-			before := func(tx kvdb.RwTx) error {
-				err := migtest.RestoreDB(
-					tx, cChanDetailsBkt, details,
-				)
-				if err != nil {
-					return err
-				}
+			before := func(db kvdb.Backend) error {
+				return db.Update(
+					func(tx walletdb.ReadWriteTx) error {
 
-				return migtest.RestoreDB(
-					tx, cSessionBkt, test.pre,
-				)
+						err := migtest.RestoreDB(
+							tx, cChanDetailsBkt,
+							details,
+						)
+						if err != nil {
+							return err
+						}
+
+						return migtest.RestoreDB(
+							tx, cSessionBkt,
+							test.pre,
+						)
+					}, func() {})
 			}
 
 			// After the migration, we should have an untouched
 			// summary bucket and a new index bucket.
-			after := func(tx kvdb.RwTx) error {
-				// The channel details bucket should remain
-				// untouched.
-				err := migtest.VerifyDB(
-					tx, cChanDetailsBkt, details,
-				)
-				if err != nil {
-					return err
-				}
+			after := func(db kvdb.Backend) error {
+				return db.Update(
+					func(tx walletdb.ReadWriteTx) error {
 
-				// If the migration fails, the sessions bucket
-				// should be untouched.
-				if test.shouldFail {
-					if err := migtest.VerifyDB(
-						tx, cSessionBkt, test.pre,
-					); err != nil {
-						return err
-					}
+						// The channel details bucket
+						// should remain untouched.
+						err := migtest.VerifyDB(
+							tx, cChanDetailsBkt,
+							details,
+						)
+						if err != nil {
+							return err
+						}
 
-					return nil
-				}
+						// If the migration fails, the
+						// sessions bucket should be
+						// untouched.
+						if test.shouldFail {
+							if err := migtest.VerifyDB(
+								tx, cSessionBkt, test.pre,
+							); err != nil {
+								return err
+							}
 
-				return migtest.VerifyDB(
-					tx, cSessionBkt, test.post,
-				)
+							return nil
+						}
+
+						return migtest.VerifyDB(
+							tx, cSessionBkt, test.post,
+						)
+					}, func() {})
 			}
 
-			migtest.ApplyMigration(
-				t, before, after, MigrateAckedUpdates,
+			migtest.ApplyMigrationWithDb(
+				t, before, after, MigrateAckedUpdates(2),
 				test.shouldFail,
 			)
 		})
@@ -195,7 +238,7 @@ func channelIDString(id uint64) string {
 }
 
 func uint64ToStr(id uint64) string {
-	b, err := writeUint64(id)
+	b, err := writeBigSize(id)
 	if err != nil {
 		panic(err)
 	}

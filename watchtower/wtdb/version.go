@@ -9,15 +9,20 @@ import (
 	"github.com/lightningnetwork/lnd/watchtower/wtdb/migration4"
 )
 
-// migration is a function which takes a prior outdated version of the database
+// txMigration is a function which takes a prior outdated version of the database
 // instances and mutates the key/bucket structure to arrive at a more
 // up-to-date version of the database.
-type migration func(tx kvdb.RwTx) error
+type txMigration func(tx kvdb.RwTx) error
 
-// version pairs a version number with the migration that would need to be
-// applied from the prior version to upgrade.
+type dbMigration func(db kvdb.Backend) error
+
+// version pairs a version number with the txMigration or dbMigration that would
+// need to be applied from the prior version to upgrade.
 type version struct {
-	migration migration
+	txMigration txMigration
+
+	dbMigration   dbMigration
+	isDBMigration bool
 }
 
 // towerDBVersions stores all versions and migrations of the tower database.
@@ -30,16 +35,19 @@ var towerDBVersions = []version{}
 // migrations must be applied.
 var clientDBVersions = []version{
 	{
-		migration: migration1.MigrateTowerToSessionIndex,
+		txMigration: migration1.MigrateTowerToSessionIndex,
 	},
 	{
-		migration: migration2.MigrateClientChannelDetails,
+		txMigration: migration2.MigrateClientChannelDetails,
 	},
 	{
-		migration: migration3.MigrateChannelIDIndex,
+		txMigration: migration3.MigrateChannelIDIndex,
 	},
 	{
-		migration: migration4.MigrateAckedUpdates,
+		dbMigration: migration4.MigrateAckedUpdates(
+			migration4.DefaultSessionsPerTx,
+		),
+		isDBMigration: true,
 	},
 }
 
@@ -158,23 +166,43 @@ func syncVersions(db versionedDB, versions []version) error {
 	// Otherwise, apply any migrations in order to bring the database
 	// version up to the highest known version.
 	updates := getMigrations(versions, curVersion)
-	return kvdb.Update(db.bdb(), func(tx kvdb.RwTx) error {
-		for i, update := range updates {
-			if update.migration == nil {
-				continue
-			}
+	for i, update := range updates {
+		version := curVersion + uint32(i) + 1
+		log.Infof("Applying migration #%d", version)
 
-			version := curVersion + uint32(i) + 1
-			log.Infof("Applying migration #%d", version)
-
-			err := update.migration(tx)
+		// DB migrations.
+		if update.isDBMigration {
+			err = update.dbMigration(db.bdb())
 			if err != nil {
 				log.Errorf("Unable to apply migration #%d: %v",
 					version, err)
 				return err
 			}
+
+			return kvdb.Update(db.bdb(), func(tx kvdb.RwTx) error {
+				return putDBVersion(tx, version)
+			}, func() {})
 		}
 
-		return putDBVersion(tx, latestVersion)
-	}, func() {})
+		// Transaction migrations.
+		err = kvdb.Update(db.bdb(), func(tx kvdb.RwTx) error {
+			if update.txMigration == nil {
+				return nil
+			}
+
+			err := update.txMigration(tx)
+			if err != nil {
+				log.Errorf("Unable to apply migration #%d: %v",
+					version, err)
+				return err
+			}
+
+			return putDBVersion(tx, version)
+		}, func() {})
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

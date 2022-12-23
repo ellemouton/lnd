@@ -1352,7 +1352,7 @@ func (c *ClientDB) CommitUpdate(id *SessionID,
 		//
 		// TODO(conner): split out seqnum and last applied own bucket to
 		// eliminate serialization of full struct during CommitUpdate?
-		// Can also read/write directly to byes [:2] without migration.
+		// Can also read/write directly to byes [:2] without txMigration.
 		session.SeqNum++
 		err = putClientSessionBody(sessionBkt, session)
 		if err != nil {
@@ -1428,7 +1428,7 @@ func (c *ClientDB) AckUpdate(id *SessionID, seqNum uint16,
 
 		// TODO(conner): split out seqnum and last applied own bucket to
 		// eliminate serialization of full struct during AckUpdate?  Can
-		// also read/write directly to byes [2:4] without migration.
+		// also read/write directly to byes [2:4] without txMigration.
 		session.TowerLastApplied = lastApplied
 
 		// Can't fail because of getClientSession succeeded.

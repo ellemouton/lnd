@@ -108,6 +108,7 @@ func TestMigrateRevocationLog(t *testing.T) {
 				beforeMigration,
 				afterMigration,
 				MigrateRevocationLog,
+				false,
 			)
 		})
 		if !success {
@@ -568,6 +569,6 @@ func BenchmarkMigration(b *testing.B) {
 			defer b.StopTimer()
 
 			return MigrateRevocationLog(db)
-		},
+		}, false,
 	)
 }
