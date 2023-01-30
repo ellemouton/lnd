@@ -137,9 +137,11 @@ func genTaskTest(
 				PubKey:     revPK,
 			},
 			Output: &wire.TxOut{
-				Value: toLocalAmt,
+				Value:    toLocalAmt,
+				PkScript: []byte{},
 			},
-			HashType: txscript.SigHashAll,
+			HashType:      txscript.SigHashAll,
+			WitnessScript: []byte{},
 		}
 		breachInfo.RemoteOutputSignDesc = toLocalSignDesc
 		breachTxn.AddTxOut(toLocalSignDesc.Output)
@@ -151,9 +153,11 @@ func genTaskTest(
 				PubKey:     toRemotePK,
 			},
 			Output: &wire.TxOut{
-				Value: toRemoteAmt,
+				Value:    toRemoteAmt,
+				PkScript: []byte{},
 			},
-			HashType: txscript.SigHashAll,
+			HashType:      txscript.SigHashAll,
+			WitnessScript: []byte{},
 		}
 		breachInfo.LocalOutputSignDesc = toRemoteSignDesc
 		breachTxn.AddTxOut(toRemoteSignDesc.Output)
@@ -474,7 +478,7 @@ func TestBackupTask(t *testing.T) {
 		test := test
 
 		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
+			//t.Parallel()
 
 			testBackupTask(t, test)
 		})
@@ -493,9 +497,25 @@ func testBackupTask(t *testing.T, test backupTaskTest) {
 	require.Equal(t, test.chanID, task.id.ChanID)
 	require.Equal(t, test.breachInfo.RevokedStateNum, task.id.CommitHeight)
 	require.Equal(t, test.expTotalAmt, task.totalAmt)
-	require.Equal(t, test.breachInfo, task.breachInfo)
+	require.Equal(t, getBreachInfoSummary(test.breachInfo), task.breachInfo)
 	require.Equal(t, test.expToLocalInput, task.toLocalInput)
 	require.Equal(t, test.expToRemoteInput, task.toRemoteInput)
+
+	b := bytes.NewBuffer(nil)
+	require.NoError(t, serialiseBackupTask(b, task))
+
+	serializedTask := make([]byte, len(b.Bytes()))
+	copy(serializedTask, b.Bytes())
+
+	task2, err := deserialiseBackupTask(b)
+	require.NoError(t, err)
+
+	require.Equal(t, task.breachInfo, task2.breachInfo)
+
+	b2 := bytes.NewBuffer(nil)
+	require.NoError(t, serialiseBackupTask(b2, task2))
+
+	require.True(t, bytes.Equal(serializedTask, b2.Bytes()))
 
 	// Reconstruct the expected input.Inputs that will be returned by the
 	// task's inputs() method.
@@ -515,7 +535,7 @@ func testBackupTask(t *testing.T, test backupTaskTest) {
 	// Now, bind the session to the task. If successful, this locks in the
 	// session's negotiated parameters and allows the backup task to derive
 	// the final free variables in the justice transaction.
-	err := task.bindSession(test.session)
+	err = task.bindSession(test.session)
 	require.ErrorIs(t, err, test.bindErr)
 
 	// Exit early if the bind was supposed to fail. But first, we check that

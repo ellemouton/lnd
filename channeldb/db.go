@@ -607,7 +607,7 @@ func (c *ChannelStateDB) fetchNodeChannels(chainBucket kvdb.RBucket) (
 		chanBucket := chainBucket.NestedReadBucket(chanPoint)
 
 		var outPoint wire.OutPoint
-		err := readOutpoint(bytes.NewReader(chanPoint), &outPoint)
+		err := ReadOutpoint(bytes.NewReader(chanPoint), &outPoint)
 		if err != nil {
 			return err
 		}
@@ -641,7 +641,7 @@ func (c *ChannelStateDB) FetchChannel(tx kvdb.RTx, chanPoint wire.OutPoint) (
 		targetChanPoint bytes.Buffer
 	)
 
-	if err := writeOutpoint(&targetChanPoint, &chanPoint); err != nil {
+	if err := WriteOutpoint(&targetChanPoint, &chanPoint); err != nil {
 		return nil, err
 	}
 
@@ -964,7 +964,7 @@ func (c *ChannelStateDB) FetchClosedChannel(chanID *wire.OutPoint) (
 
 		var b bytes.Buffer
 		var err error
-		if err = writeOutpoint(&b, chanID); err != nil {
+		if err = WriteOutpoint(&b, chanID); err != nil {
 			return err
 		}
 
@@ -1006,7 +1006,7 @@ func (c *ChannelStateDB) FetchClosedChannelForID(cid lnwire.ChannelID) (
 		// We scan over all possible candidates for this channel ID.
 		for ; op != nil && bytes.Compare(cid[:30], op[:30]) <= 0; op, c = cursor.Next() {
 			var outPoint wire.OutPoint
-			err := readOutpoint(bytes.NewReader(op), &outPoint)
+			err := ReadOutpoint(bytes.NewReader(op), &outPoint)
 			if err != nil {
 				return err
 			}
@@ -1048,7 +1048,7 @@ func (c *ChannelStateDB) MarkChanFullyClosed(chanPoint *wire.OutPoint) error {
 	)
 	err := kvdb.Update(c.backend, func(tx kvdb.RwTx) error {
 		var b bytes.Buffer
-		if err := writeOutpoint(&b, chanPoint); err != nil {
+		if err := WriteOutpoint(&b, chanPoint); err != nil {
 			return err
 		}
 
@@ -1620,7 +1620,7 @@ func fetchHistoricalChanBucket(tx kvdb.RTx,
 	// With the bucket for the node and chain fetched, we can now go down
 	// another level, for the channel itself.
 	var chanPointBuf bytes.Buffer
-	if err := writeOutpoint(&chanPointBuf, outPoint); err != nil {
+	if err := WriteOutpoint(&chanPointBuf, outPoint); err != nil {
 		return nil, err
 	}
 	chanBucket := historicalChanBucket.NestedReadBucket(

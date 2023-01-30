@@ -1395,11 +1395,12 @@ func (k *kidOutput) Decode(r io.Reader) error {
 	}
 	k.amt = btcutil.Amount(byteOrder.Uint64(scratch[:]))
 
-	if err := readOutpoint(io.LimitReader(r, 40), &k.outpoint); err != nil {
+	err := channeldb.ReadOutpoint(io.LimitReader(r, 40), &k.outpoint)
+	if err != nil {
 		return err
 	}
 
-	err := readOutpoint(io.LimitReader(r, 40), &k.originChanPoint)
+	err = channeldb.ReadOutpoint(io.LimitReader(r, 40), &k.originChanPoint)
 	if err != nil {
 		return err
 	}
@@ -1445,24 +1446,6 @@ func writeOutpoint(w io.Writer, o *wire.OutPoint) error {
 	byteOrder.PutUint32(scratch, o.Index)
 	_, err := w.Write(scratch)
 	return err
-}
-
-// TODO(bvu): copied from channeldb, remove repetition
-func readOutpoint(r io.Reader, o *wire.OutPoint) error {
-	scratch := make([]byte, 4)
-
-	txid, err := wire.ReadVarBytes(r, 0, 32, "prevout")
-	if err != nil {
-		return err
-	}
-	copy(o.Hash[:], txid)
-
-	if _, err := r.Read(scratch); err != nil {
-		return err
-	}
-	o.Index = byteOrder.Uint32(scratch)
-
-	return nil
 }
 
 // Compile-time constraint to ensure kidOutput implements the

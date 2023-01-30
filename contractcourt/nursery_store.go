@@ -738,7 +738,9 @@ func (ns *NurseryStore) ListChannels() ([]wire.OutPoint, error) {
 
 		return chanIndex.ForEach(func(chanBytes, _ []byte) error {
 			var chanPoint wire.OutPoint
-			err := readOutpoint(bytes.NewReader(chanBytes), &chanPoint)
+			err := channeldb.ReadOutpoint(
+				bytes.NewReader(chanBytes), &chanPoint,
+			)
 			if err != nil {
 				return err
 			}

@@ -134,6 +134,10 @@ func (b *BackupID) Decode(r io.Reader) error {
 	)
 }
 
+func (b *BackupID) EncodedSize() uint64 {
+	return 32 + 8
+}
+
 // String returns a human-readable encoding of a BackupID.
 func (b BackupID) String() string {
 	return fmt.Sprintf("backup(%v, %d)", b.ChanID, b.CommitHeight)

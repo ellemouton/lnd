@@ -1653,7 +1653,7 @@ func (ret *retributionInfo) Decode(r io.Reader) error {
 	}
 	ret.commitHash = *hash
 
-	if err := readOutpoint(r, &ret.chanPoint); err != nil {
+	if err := channeldb.ReadOutpoint(r, &ret.chanPoint); err != nil {
 		return err
 	}
 
@@ -1727,7 +1727,7 @@ func (bo *breachedOutput) Decode(r io.Reader) error {
 	}
 	bo.amt = btcutil.Amount(binary.BigEndian.Uint64(scratch[:8]))
 
-	if err := readOutpoint(r, &bo.outpoint); err != nil {
+	if err := channeldb.ReadOutpoint(r, &bo.outpoint); err != nil {
 		return err
 	}
 
