@@ -1463,6 +1463,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	if cfg.WtClient.Active {
 		policy := wtpolicy.DefaultPolicy()
+		genisisHash := *s.cfg.ActiveNetParams.GenesisHash
 
 		if cfg.WtClient.SweepFeeRate != 0 {
 			// We expose the sweep fee rate in sat/vbyte, but the
@@ -1488,18 +1489,43 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			)
 		}
 
+		// buildBreachRetribution is a call-back that can be used to
+		// query the BreachRetribution info and channel type given a
+		// channel ID and commitment height.
+		buildBreachRetribution := func(chanID lnwire.ChannelID,
+			commitHeight uint64) (*lnwallet.BreachRetribution,
+			channeldb.ChannelType, error) {
+
+			channel, err := s.chanStateDB.FetchChannelByID(
+				nil, chanID,
+			)
+			if err != nil {
+				return nil, 0, err
+			}
+
+			br, err := lnwallet.NewBreachRetribution(
+				channel, commitHeight, 0, nil,
+			)
+			if err != nil {
+				return nil, 0, err
+			}
+
+			return br, channel.ChanType, nil
+		}
+
 		s.towerClient, err = wtclient.New(&wtclient.Config{
-			Signer:         cc.Wallet.Cfg.Signer,
-			NewAddress:     newSweepPkScriptGen(cc.Wallet),
-			SecretKeyRing:  s.cc.KeyRing,
-			Dial:           cfg.net.Dial,
-			AuthDial:       authDial,
-			DB:             dbs.TowerClientDB,
-			Policy:         policy,
-			ChainHash:      *s.cfg.ActiveNetParams.GenesisHash,
-			MinBackoff:     10 * time.Second,
-			MaxBackoff:     5 * time.Minute,
-			ForceQuitDelay: wtclient.DefaultForceQuitDelay,
+			Signer:                 cc.Wallet.Cfg.Signer,
+			NewAddress:             newSweepPkScriptGen(cc.Wallet),
+			SecretKeyRing:          s.cc.KeyRing,
+			Dial:                   cfg.net.Dial,
+			AuthDial:               authDial,
+			DB:                     dbs.TowerClientDB,
+			Policy:                 policy,
+			ChainHash:              genisisHash,
+			MinBackoff:             10 * time.Second,
+			MaxBackoff:             5 * time.Minute,
+			ForceQuitDelay:         wtclient.DefaultForceQuitDelay,
+			BuildBreachRetribution: buildBreachRetribution,
 		})
 		if err != nil {
 			return nil, err
@@ -1512,17 +1538,18 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			blob.Type(blob.FlagAnchorChannel)
 
 		s.anchorTowerClient, err = wtclient.New(&wtclient.Config{
-			Signer:         cc.Wallet.Cfg.Signer,
-			NewAddress:     newSweepPkScriptGen(cc.Wallet),
-			SecretKeyRing:  s.cc.KeyRing,
-			Dial:           cfg.net.Dial,
-			AuthDial:       authDial,
-			DB:             dbs.TowerClientDB,
-			Policy:         anchorPolicy,
-			ChainHash:      *s.cfg.ActiveNetParams.GenesisHash,
-			MinBackoff:     10 * time.Second,
-			MaxBackoff:     5 * time.Minute,
-			ForceQuitDelay: wtclient.DefaultForceQuitDelay,
+			Signer:                 cc.Wallet.Cfg.Signer,
+			NewAddress:             newSweepPkScriptGen(cc.Wallet),
+			SecretKeyRing:          s.cc.KeyRing,
+			Dial:                   cfg.net.Dial,
+			AuthDial:               authDial,
+			DB:                     dbs.TowerClientDB,
+			Policy:                 anchorPolicy,
+			ChainHash:              genisisHash,
+			MinBackoff:             10 * time.Second,
+			MaxBackoff:             5 * time.Minute,
+			ForceQuitDelay:         wtclient.DefaultForceQuitDelay,
+			BuildBreachRetribution: buildBreachRetribution,
 		})
 		if err != nil {
 			return nil, err

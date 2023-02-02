@@ -189,7 +189,18 @@ type Config struct {
 	// watchtowers. If the exponential backoff produces a timeout greater
 	// than this value, the backoff will be clamped to MaxBackoff.
 	MaxBackoff time.Duration
+
+	// BuildTowerClient is a function closure that allows the client to
+	// fetch the breach retribution info for a certain channel at a certain
+	// revoked commitment height.
+	BuildBreachRetribution BreachRetributionConstructor
 }
+
+// BreachRetributionConstructor is a function that can be used to construct a
+// BreachRetribution from a channel ID and a commitment height.
+type BreachRetributionConstructor func(id lnwire.ChannelID,
+	commitHeight uint64) (*lnwallet.BreachRetribution,
+	channeldb.ChannelType, error)
 
 // newTowerMsg is an internal message we'll use within the TowerClient to signal
 // that a new tower can be considered.
