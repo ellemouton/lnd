@@ -9725,6 +9725,13 @@ func testNewBreachRetribution(t *testing.T, chanType channeldb.ChannelType) {
 	)
 	require.ErrorIs(t, err, channeldb.ErrNoPastDeltas)
 
+	// We also check that the same error is returned if no breach tx is
+	// provided.
+	_, err = NewBreachRetribution(
+		aliceChannel.channelState, stateNum, breachHeight, nil,
+	)
+	require.ErrorIs(t, err, channeldb.ErrNoPastDeltas)
+
 	// We now force a state transition which will give us a revocation log
 	// at height 0.
 	txid := aliceChannel.channelState.RemoteCommitment.CommitTx.TxHash()
@@ -9774,10 +9781,25 @@ func testNewBreachRetribution(t *testing.T, chanType channeldb.ChannelType) {
 	t.Log(spew.Sdump(breachTx))
 	assertRetribution(br, 1, 0)
 
+	// Repeat the check but with the breach tx set to nil. This should work
+	// since the necessary info should now be found in the revocation log.
+	br, err = NewBreachRetribution(
+		aliceChannel.channelState, stateNum, breachHeight, nil,
+	)
+	require.NoError(t, err)
+	assertRetribution(br, 1, 0)
+
 	// Create the retribution using a stateNum+1 and we should expect an
 	// error.
 	_, err = NewBreachRetribution(
 		aliceChannel.channelState, stateNum+1, breachHeight, breachTx,
+	)
+	require.ErrorIs(t, err, channeldb.ErrLogEntryNotFound)
+
+	// Once again, repeat the check for the case when no breach tx is
+	// provided.
+	_, err = NewBreachRetribution(
+		aliceChannel.channelState, stateNum+1, breachHeight, nil,
 	)
 	require.ErrorIs(t, err, channeldb.ErrLogEntryNotFound)
 }
