@@ -1526,6 +1526,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			MaxBackoff:             5 * time.Minute,
 			ForceQuitDelay:         wtclient.DefaultForceQuitDelay,
 			BuildBreachRetribution: buildBreachRetribution,
+			MaxTasksInMemQueue:     wtclient.DefaultMaxTasksInMemQueue,
 		})
 		if err != nil {
 			return nil, err
@@ -1550,6 +1551,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			MaxBackoff:             5 * time.Minute,
 			ForceQuitDelay:         wtclient.DefaultForceQuitDelay,
 			BuildBreachRetribution: buildBreachRetribution,
+			MaxTasksInMemQueue:     wtclient.DefaultMaxTasksInMemQueue,
 		})
 		if err != nil {
 			return nil, err

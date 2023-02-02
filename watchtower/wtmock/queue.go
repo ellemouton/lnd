@@ -2,7 +2,6 @@ package wtmock
 
 import (
 	"container/list"
-	"errors"
 	"sync"
 
 	"github.com/lightningnetwork/lnd/watchtower/wtdb"
@@ -54,7 +53,7 @@ func (d *DiskOverflowDB) NextTask(namespace string) (*wtdb.BackupID, error) {
 
 	l, ok := d.disk[namespace]
 	if !ok {
-		return nil, errors.New("no such db")
+		return nil, nil
 	}
 
 	if l.Len() == 0 {

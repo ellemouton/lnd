@@ -121,7 +121,7 @@ type DiskOverflowQueue struct {
 
 // NewDiskOverflowQueue constructs a new DiskOverflowQueue.
 func NewDiskOverflowQueue(db DiskOverflowQueueDB,
-	maxQueueSize int) *DiskOverflowQueue {
+	maxQueueSize uint64) *DiskOverflowQueue {
 
 	q := &DiskOverflowQueue{
 		mode:              modeMem,
@@ -265,7 +265,9 @@ func (q *DiskOverflowQueue) stop() error {
 	for {
 		memTask, err := q.db.NextTask(prevMemNamespace)
 		if err != nil {
-			log.Error("could not fetch next memory task from disk")
+			log.Error("could not fetch next memory task from "+
+				"disk: %v", err)
+
 			continue
 		}
 

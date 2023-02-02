@@ -40,6 +40,8 @@ const (
 	// client should abandon any pending updates or session negotiations
 	// before terminating.
 	DefaultForceQuitDelay = 10 * time.Second
+
+	DefaultMaxTasksInMemQueue = 1000
 )
 
 // genActiveSessionFilter generates a filter that selects active sessions that
@@ -191,6 +193,8 @@ type Config struct {
 	// fetch the breach retribution info for a certain channel at a certain
 	// revoked commitment height.
 	BuildBreachRetribution BreachRetributionConstructor
+
+	MaxTasksInMemQueue uint64
 }
 
 // BreachRetributionConstructor is a function that can be used to construct a
@@ -244,7 +248,7 @@ type TowerClient struct {
 
 	log btclog.Logger
 
-	pipeline *taskPipeline
+	pipeline *DiskOverflowQueue
 
 	negotiator        SessionNegotiator
 	candidateTowers   TowerCandidateIterator
@@ -304,9 +308,11 @@ func New(config *Config) (*TowerClient, error) {
 	}
 
 	c := &TowerClient{
-		cfg:               cfg,
-		log:               plog,
-		pipeline:          newTaskPipeline(plog),
+		cfg: cfg,
+		log: plog,
+		pipeline: NewDiskOverflowQueue(
+			cfg.DB, cfg.MaxTasksInMemQueue,
+		),
 		chanCommitHeights: make(map[lnwire.ChannelID]uint64),
 		activeSessions:    make(sessionQueueSet),
 		summaries:         chanSummaries,
@@ -581,6 +587,7 @@ func (c *TowerClient) Start() error {
 
 // Stop idempotently initiates a graceful shutdown of the watchtower client.
 func (c *TowerClient) Stop() error {
+	var returnErr error
 	c.stopped.Do(func() {
 		c.log.Debugf("Stopping watchtower client")
 
@@ -603,7 +610,10 @@ func (c *TowerClient) Stop() error {
 		// updates from being accepted. In practice, the links should be
 		// shutdown before the client has been stopped, so all updates
 		// would have been added prior.
-		c.pipeline.Stop()
+		err := c.pipeline.Stop()
+		if err != nil {
+			returnErr = err
+		}
 
 		// 3. Once the backup queue has shutdown, wait for the main
 		// dispatcher to exit. The backup queue will signal it's
@@ -633,7 +643,7 @@ func (c *TowerClient) Stop() error {
 
 		c.log.Debugf("Client successfully stopped, stats: %s", c.stats)
 	})
-	return nil
+	return returnErr
 }
 
 // ForceQuit idempotently initiates an unclean shutdown of the watchtower
@@ -646,7 +656,10 @@ func (c *TowerClient) ForceQuit() {
 		// updates from being accepted. In practice, the links should be
 		// shutdown before the client has been stopped, so all updates
 		// would have been added prior.
-		c.pipeline.ForceQuit()
+		err := c.pipeline.Stop()
+		if err != nil {
+			log.Errorf("could not stop backup queue: %v", err)
+		}
 
 		// 2. Once the backup queue has shutdown, wait for the main
 		// dispatcher to exit. The backup queue will signal it's
@@ -745,7 +758,7 @@ func (c *TowerClient) BackupState(chanID *lnwire.ChannelID,
 		CommitHeight: stateNum,
 	}
 
-	return c.pipeline.QueueBackupTask(id)
+	return c.pipeline.QueueBackupID(id)
 }
 
 // nextSessionQueue attempts to fetch an active session from our set of
@@ -903,7 +916,7 @@ func (c *TowerClient) backupDispatcher() {
 
 			// Process each backup task serially from the queue of
 			// revoked states.
-			case task, ok := <-c.pipeline.NewBackupTasks():
+			case task, ok := <-c.pipeline.NextBackupID():
 				// All backups in the pipeline have been
 				// processed, it is now safe to exit.
 				if !ok {
@@ -1199,16 +1212,12 @@ func (c *TowerClient) AddTower(addr *lnwire.NetAddress) error {
 	}:
 	case <-c.pipeline.quit:
 		return ErrClientExiting
-	case <-c.pipeline.forceQuit:
-		return ErrClientExiting
 	}
 
 	select {
 	case err := <-errChan:
 		return err
 	case <-c.pipeline.quit:
-		return ErrClientExiting
-	case <-c.pipeline.forceQuit:
 		return ErrClientExiting
 	}
 }
@@ -1266,16 +1275,12 @@ func (c *TowerClient) RemoveTower(pubKey *btcec.PublicKey,
 	}:
 	case <-c.pipeline.quit:
 		return ErrClientExiting
-	case <-c.pipeline.forceQuit:
-		return ErrClientExiting
 	}
 
 	select {
 	case err := <-errChan:
 		return err
 	case <-c.pipeline.quit:
-		return ErrClientExiting
-	case <-c.pipeline.forceQuit:
 		return ErrClientExiting
 	}
 }
