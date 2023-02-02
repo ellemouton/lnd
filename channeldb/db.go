@@ -360,7 +360,8 @@ func CreateWithBackend(backend kvdb.Backend,
 			linkNodeDB: &LinkNodeDB{
 				backend: backend,
 			},
-			backend: backend,
+			backend:         backend,
+			noRevLogAmtData: opts.NoRevLogAmtData,
 		},
 		clock:                     opts.clock,
 		dryRun:                    opts.dryRun,
@@ -501,6 +502,10 @@ type ChannelStateDB struct {
 	// backend points to the actual backend holding the channel state
 	// database. This may be a real backend or a cache middleware.
 	backend kvdb.Backend
+
+	// noRevLogAmtData if true, means that commitment transaction amount
+	// data should not be stored in the revocation log.
+	noRevLogAmtData bool
 }
 
 // GetParentDB returns the "main" channeldb.DB object that is the owner of this
@@ -1546,7 +1551,7 @@ func (d *DB) applyOptionalVersions(cfg OptionalMiragtionConfig) error {
 	log.Infof("Performing database optional migration: %s", version.name)
 
 	migRevLogCfg := &migration30.MigrateRevLogConfig{
-		NoAmountData: true,
+		NoAmountData: d.channelStateDB.noRevLogAmtData,
 	}
 
 	// Migrate the data.

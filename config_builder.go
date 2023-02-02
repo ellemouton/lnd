@@ -888,6 +888,12 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		)
 	}
 
+	// If the user has specified that they don't want to store amount data
+	// in the revocation log, then we apply this DB option.
+	if cfg.NoRevLogAmtData {
+		dbOptions = append(dbOptions, channeldb.OptionNoRevLogAmtData())
+	}
+
 	// Otherwise, we'll open two instances, one for the state we only need
 	// locally, and the other for things we want to ensure are replicated.
 	dbs.GraphDB, err = channeldb.CreateWithBackend(

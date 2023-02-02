@@ -365,6 +365,8 @@ type Config struct {
 	MaxChanSize                   int64         `long:"maxchansize" description:"The largest channel size (in satoshis) that we should accept. Incoming channels larger than this will be rejected"`
 	CoopCloseTargetConfs          uint32        `long:"coop-close-target-confs" description:"The target number of blocks that a cooperative channel close transaction should confirm in. This is used to estimate the fee to use as the lower bound during fee negotiation for the channel closure."`
 
+	NoRevLogAmtData bool `long:"no-rev-log-amt-data" description:"If set, the to-local and to-remote output amounts of revoked commitment transactions will not be stored in the revocation log. Note that once this data is lost, a watchtower client will not be able to back up the revoked state."`
+
 	ChannelCommitInterval time.Duration `long:"channel-commit-interval" description:"The maximum time that is allowed to pass between receiving a channel state update and signing the next commitment. Setting this to a longer duration allows for more efficient channel operations at the cost of latency."`
 
 	PendingCommitInterval time.Duration `long:"pending-commit-interval" description:"The maximum time that is allowed to pass while waiting for the remote party to revoke a locally initiated commitment state. Setting this to a longer duration if a slow response is expected from the remote party or large number of payments are attempted at the same time."`
@@ -976,6 +978,13 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 			"non-wumbo channel size %v", cfg.MaxChanSize,
 			MaxFundingAmount,
 		)
+	}
+
+	// Ensure that the amount data for revoked commitment transactions is
+	// stored if the watchtower client is active.
+	if cfg.NoRevLogAmtData && cfg.WtClient.Active {
+		return nil, mkErr("revocation log amount data must be stored " +
+			"if the watchtower client is active")
 	}
 
 	// Ensure a valid max channel fee allocation was set.
