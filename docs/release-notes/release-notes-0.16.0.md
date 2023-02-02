@@ -388,6 +388,9 @@ in the lnwire package](https://github.com/lightningnetwork/lnd/pull/7303)
   3.5.7](https://github.com/lightningnetwork/lnd/pull/7353) to resolve linking
   issues with outdated dependencies.
 
+* [Re-add local and remote output amounts to the revocation 
+  log](https://github.com/lightningnetwork/lnd/pull/7379)
+
 ## Pathfinding
 
 * [Pathfinding takes capacity of edges into account to improve success
