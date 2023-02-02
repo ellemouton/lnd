@@ -647,9 +647,7 @@ func (h *testHarness) backupState(id, i uint64, expErr error) {
 	_, retribution := h.channel(id).getState(i)
 
 	chanID := chanIDFromInt(id)
-	err := h.client.BackupState(
-		&chanID, retribution, channeldb.SingleFunderBit,
-	)
+	err := h.client.BackupState(&chanID, retribution.RevokedStateNum)
 	require.ErrorIs(h.t, expErr, err)
 }
 
