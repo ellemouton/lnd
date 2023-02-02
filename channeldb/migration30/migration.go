@@ -553,6 +553,11 @@ func convertRevocationLog(commit *mig.ChannelCommitment,
 		HTLCEntries:      make([]*HTLCEntry, 0, len(commit.Htlcs)),
 	}
 
+	if !noAmtData {
+		rl.TheirBalance = &commit.RemoteBalance
+		rl.OurBalance = &commit.LocalBalance
+	}
+
 	for _, htlc := range commit.Htlcs {
 		// Skip dust HTLCs.
 		if htlc.OutputIndex < 0 {
