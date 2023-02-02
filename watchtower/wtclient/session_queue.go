@@ -76,6 +76,11 @@ type sessionQueueConfig struct {
 	// Log specifies the desired log output, which should be prefixed by the
 	// client type, e.g. anchor or legacy.
 	Log btclog.Logger
+
+	// BuildTowerClient is a function closure that allows the client to
+	// fetch the breach retribution info for a certain channel at a certain
+	// revoked commitment height.
+	BuildBreachRetribution BreachRetributionConstructor
 }
 
 // sessionQueue implements a reliable queue that will encrypt and send accepted
@@ -220,7 +225,10 @@ func (q *sessionQueue) AcceptTask(task *backupTask) (reserveStatus, bool) {
 	//
 	// TODO(conner): queue backups and retry with different session params.
 	case reserveAvailable:
-		err := task.bindSession(&q.cfg.ClientSession.ClientSessionBody)
+		err := task.bindSession(
+			&q.cfg.ClientSession.ClientSessionBody,
+			q.cfg.BuildBreachRetribution,
+		)
 		if err != nil {
 			q.queueCond.L.Unlock()
 			q.log.Debugf("SessionQueue(%s) rejected %v: %v ",
