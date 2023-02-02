@@ -631,8 +631,7 @@ func (c *ChannelStateDB) fetchNodeChannels(chainBucket kvdb.RBucket) (
 
 // FetchChannel attempts to locate a channel specified by the passed channel
 // point. If the channel cannot be found, then an error will be returned.
-// Optionally an existing db tx can be supplied. Optionally an existing db tx
-// can be supplied.
+// Optionally an existing db tx can be supplied.
 func (c *ChannelStateDB) FetchChannel(tx kvdb.RTx, chanPoint wire.OutPoint) (
 	*OpenChannel, error) {
 
@@ -671,7 +670,9 @@ func (c *ChannelStateDB) FetchChannel(tx kvdb.RTx, chanPoint wire.OutPoint) (
 				return nil
 			}
 
-			nodeChanBucket := openChanBucket.NestedReadBucket(nodePub)
+			nodeChanBucket := openChanBucket.NestedReadBucket(
+				nodePub,
+			)
 			if nodeChanBucket == nil {
 				return nil
 			}
@@ -692,10 +693,11 @@ func (c *ChannelStateDB) FetchChannel(tx kvdb.RTx, chanPoint wire.OutPoint) (
 				)
 				if chainBucket == nil {
 					return fmt.Errorf("unable to read "+
-						"bucket for chain=%x", chainHash[:])
+						"bucket for chain=%x",
+						chainHash[:])
 				}
 
-				// Finally we reach the leaf bucket that stores
+				// Finally, we reach the leaf bucket that stores
 				// all the chanPoints for this node.
 				chanBucket := chainBucket.NestedReadBucket(
 					targetChanPoint.Bytes(),
@@ -734,7 +736,7 @@ func (c *ChannelStateDB) FetchChannel(tx kvdb.RTx, chanPoint wire.OutPoint) (
 	}
 
 	// If we can't find the channel, then we return with an error, as we
-	// have nothing to  backup.
+	// have nothing to back up.
 	return nil, ErrChannelNotFound
 }
 
