@@ -10,6 +10,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcwallet/walletdb"
 	"github.com/go-errors/errors"
 	mig "github.com/lightningnetwork/lnd/channeldb/migration"
 	"github.com/lightningnetwork/lnd/channeldb/migration12"
@@ -658,18 +659,34 @@ func (c *ChannelStateDB) fetchNodeChannels(chainBucket kvdb.RBucket) (
 func (c *ChannelStateDB) FetchChannel(tx kvdb.RTx, chanPoint wire.OutPoint) (
 	*OpenChannel, error) {
 
+	selector := func(chainBkt walletdb.ReadBucket) (
+		[]byte, *wire.OutPoint, error) {
+
+		var targetChanPoint bytes.Buffer
+		err := writeOutpoint(&targetChanPoint, &chanPoint)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		return targetChanPoint.Bytes(), &chanPoint, nil
+	}
+
+	return c.channelScanner(tx, selector)
+}
+
+type channelSelector func(chainBkt walletdb.ReadBucket) ([]byte, *wire.OutPoint,
+	error)
+
+func (c *ChannelStateDB) channelScanner(tx kvdb.RTx,
+	chanSelect channelSelector) (*OpenChannel, error) {
+
 	var (
-		targetChan      *OpenChannel
-		targetChanPoint bytes.Buffer
+		targetChan *OpenChannel
 
 		// errChanFound is used to signal that the channel has been
 		// found so that iteration through the DB buckets can stop.
 		errChanFound = errors.New("channel found")
 	)
-
-	if err := writeOutpoint(&targetChanPoint, &chanPoint); err != nil {
-		return nil, err
-	}
 
 	// chanScan will traverse the following bucket structure:
 	//  * nodePub => chainHash => chanPoint
@@ -688,8 +705,8 @@ func (c *ChannelStateDB) FetchChannel(tx kvdb.RTx, chanPoint wire.OutPoint) (
 		}
 
 		// Within the node channel bucket, are the set of node pubkeys
-		// we have channels with, we don't know the entire set, so
-		// we'll check them all.
+		// we have channels with, we don't know the entire set, so we'll
+		// check them all.
 		return openChanBucket.ForEach(func(nodePub, v []byte) error {
 			// Ensure that this is a key the same size as a pubkey,
 			// and also that it leads directly to a bucket.
@@ -726,15 +743,22 @@ func (c *ChannelStateDB) FetchChannel(tx kvdb.RTx, chanPoint wire.OutPoint) (
 
 				// Finally, we reach the leaf bucket that stores
 				// all the chanPoints for this node.
+				targetChanBytes, chanPoint, err := chanSelect(
+					chainBucket,
+				)
+				if err != nil {
+					return err
+				}
+
 				chanBucket := chainBucket.NestedReadBucket(
-					targetChanPoint.Bytes(),
+					targetChanBytes,
 				)
 				if chanBucket == nil {
 					return nil
 				}
 
 				channel, err := fetchOpenChannel(
-					chanBucket, &chanPoint,
+					chanBucket, chanPoint,
 				)
 				if err != nil {
 					return err
@@ -765,6 +789,55 @@ func (c *ChannelStateDB) FetchChannel(tx kvdb.RTx, chanPoint wire.OutPoint) (
 	// If we can't find the channel, then we return with an error, as we
 	// have nothing to back up.
 	return nil, ErrChannelNotFound
+}
+
+// FetchChannelByID attempts to locate a channel specified by the passed channel
+// ID. If the channel cannot be found, then an error will be returned.
+// Optionally an existing db tx can be supplied.
+func (c *ChannelStateDB) FetchChannelByID(tx kvdb.RTx, id lnwire.ChannelID) (
+	*OpenChannel, error) {
+
+	selector := func(chainBkt walletdb.ReadBucket) (
+		[]byte, *wire.OutPoint, error) {
+
+		var (
+			targetChanPointBytes []byte
+			targetChanPoint      *wire.OutPoint
+
+			// errChanFound is used to signal that the channel has
+			// been found so that iteration through the DB buckets
+			// can stop.
+			errChanFound = errors.New("channel found")
+		)
+		err := chainBkt.ForEach(func(k, _ []byte) error {
+
+			var outPoint wire.OutPoint
+			err := readOutpoint(bytes.NewReader(k), &outPoint)
+			if err != nil {
+				return err
+			}
+
+			chanID := lnwire.NewChanIDFromOutPoint(&outPoint)
+			if !bytes.Equal(chanID[:], id[:]) {
+				return nil
+			}
+
+			targetChanPoint = &outPoint
+			targetChanPointBytes = k
+
+			return errChanFound
+		})
+		if err != nil && !errors.Is(err, errChanFound) {
+			return nil, nil, err
+		}
+		if targetChanPoint == nil {
+			return nil, nil, ErrChannelNotFound
+		}
+
+		return targetChanPointBytes, targetChanPoint, nil
+	}
+
+	return c.channelScanner(tx, selector)
 }
 
 // FetchAllChannels attempts to retrieve all open channels currently stored
