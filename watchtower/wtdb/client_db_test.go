@@ -838,6 +838,68 @@ func TestClientDB(t *testing.T) {
 	}
 }
 
+func TestTaskDB(t *testing.T) {
+	const ns = "namespace 1"
+
+	dbCfg := &kvdb.BoltConfig{DBTimeout: kvdb.DefaultDBTimeout}
+	bdb, err := wtdb.NewBoltBackendCreator(
+		true, t.TempDir(), "wtclient.db",
+	)(dbCfg)
+	if err != nil {
+		t.Fatalf("unable to open db: %v", err)
+	}
+
+	db, err := wtdb.OpenClientDB(bdb)
+	if err != nil {
+		t.Fatalf("unable to open db: %v", err)
+	}
+
+	t.Cleanup(func() {
+		db.Close()
+	})
+
+	task1 := &wtdb.BackupID{CommitHeight: 1}
+	task2 := &wtdb.BackupID{CommitHeight: 2}
+	task3 := &wtdb.BackupID{CommitHeight: 3}
+
+	num, err := db.NumTasks(ns)
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), num)
+
+	err = db.AddTask(ns, task1)
+	require.NoError(t, err)
+
+	err = db.AddTask(ns, task2)
+	require.NoError(t, err)
+
+	num, err = db.NumTasks(ns)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), num)
+
+	t1, err := db.NextTask(ns)
+	require.NoError(t, err)
+	require.Equal(t, t1.String(), task1.String())
+
+	num, err = db.NumTasks(ns)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), num)
+
+	t2, err := db.NextTask(ns)
+	require.NoError(t, err)
+	require.Equal(t, t2.String(), task2.String())
+
+	num, err = db.NumTasks(ns)
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), num)
+
+	err = db.AddTask(ns, task3)
+	require.NoError(t, err)
+
+	t3, err := db.NextTask(ns)
+	require.NoError(t, err)
+	require.Equal(t, t3.String(), task3.String())
+}
+
 // randCommittedUpdate generates a random committed update.
 func randCommittedUpdate(t *testing.T, seqNum uint16) *wtdb.CommittedUpdate {
 	var chanID lnwire.ChannelID

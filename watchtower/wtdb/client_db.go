@@ -69,6 +69,25 @@ var (
 		"client-tower-to-session-index-bucket",
 	)
 
+	// cTaskQueue is a top-level bucket storing:
+	// cTaskQueue => <namespace> => cTaskOldestIndex => oldest index
+	//                           => cTaskNextIndex => newest index
+	//			     => cTasks => index -> encoded backupID
+	cTaskQueue = []byte("client-task-queue")
+
+	// cTasks is a sub-bucket of cTaskQueue storing:
+	// 	index -> encoded backup ID.
+	cTasks = []byte("client-tasks")
+
+	// cTaskOldestIndex is a key used in cTasksQueue to store the index of
+	// the cTasks bucket storing the head of the queue.
+	cTaskOldestIndex = []byte("client-task-oldest-index")
+
+	// cTaskNextIndex is a key used in cTasksQueue to store the index of the
+	// cTasks bucket to be used for storing the next item added to the
+	// queue.
+	cTaskNextIndex = []byte("client-task-next-index")
+
 	// ErrTowerNotFound signals that the target tower was not found in the
 	// database.
 	ErrTowerNotFound = errors.New("tower not found")
@@ -237,6 +256,7 @@ func initClientDBBuckets(tx kvdb.RwTx) error {
 		cTowerIndexBkt,
 		cTowerToSessionIndexBkt,
 		cChanIDIndexBkt,
+		cTaskQueue,
 	}
 
 	for _, bucket := range buckets {
@@ -1880,4 +1900,222 @@ func readBigSize(b []byte) (uint64, error) {
 	}
 
 	return i, nil
+}
+
+// AddTask adds the given backup ID to the back of a queue identified by the
+// given namespace.
+func (c *ClientDB) AddTask(namespace string, id *BackupID) error {
+	idBytes := bytes.NewBuffer(nil)
+	err := id.Encode(idBytes)
+	if err != nil {
+		return err
+	}
+
+	return kvdb.Update(c.db, func(tx kvdb.RwTx) error {
+		mainTasksBucket := tx.ReadWriteBucket(cTaskQueue)
+		if mainTasksBucket == nil {
+			return ErrUninitializedDB
+		}
+
+		bucket, err := mainTasksBucket.CreateBucketIfNotExists(
+			[]byte(namespace),
+		)
+		if err != nil {
+			return err
+		}
+
+		// Find the index to use for placing this new item at the back
+		// of the queue.
+		var nextIndex uint64
+		nextIndexB := bucket.Get(cTaskNextIndex)
+		if nextIndexB != nil {
+			nextIndex, err = readBigSize(nextIndexB)
+			if err != nil {
+				return err
+			}
+		} else {
+			nextIndexB, err = writeBigSize(0)
+			if err != nil {
+				return err
+			}
+		}
+
+		tasksBucket, err := bucket.CreateBucketIfNotExists(cTasks)
+		if err != nil {
+			return err
+		}
+
+		// Put the new task in the assigned index.
+		err = tasksBucket.Put(nextIndexB, idBytes.Bytes())
+		if err != nil {
+			return err
+		}
+
+		// Increment the next-index counter.
+		nextIndex++
+		nextIndexB, err = writeBigSize(nextIndex)
+		if err != nil {
+			return err
+		}
+
+		return bucket.Put(cTaskNextIndex, nextIndexB)
+
+	}, func() {})
+}
+
+// NextTask pops an item of the queue identified by the given namespace. If
+// there are no items on the queue then nil is returned.
+func (c *ClientDB) NextTask(namespace string) (*BackupID, error) {
+	var (
+		id BackupID
+
+		// errNoTask is an error used to signal that there are no items
+		// in the queue.
+		errNoTask = errors.New("no task")
+	)
+
+	err := kvdb.Update(c.db, func(tx kvdb.RwTx) error {
+		mainTasksBucket := tx.ReadWriteBucket(cTaskQueue)
+		if mainTasksBucket == nil {
+			return ErrUninitializedDB
+		}
+
+		bucket, err := mainTasksBucket.CreateBucketIfNotExists(
+			[]byte(namespace),
+		)
+		if err != nil {
+			return err
+		}
+
+		// Get the index of the tail of the queue.
+		var nextIndex uint64
+		nextIndexB := bucket.Get(cTaskNextIndex)
+		if nextIndexB != nil {
+			nextIndex, err = readBigSize(nextIndexB)
+			if err != nil {
+				return err
+			}
+		}
+
+		// Get the index of the head of the queue.
+		var oldestIndex uint64
+		oldestIndexB := bucket.Get(cTaskOldestIndex)
+		if oldestIndexB != nil {
+			oldestIndex, err = readBigSize(oldestIndexB)
+			if err != nil {
+				return err
+			}
+		} else {
+			oldestIndexB, err = writeBigSize(0)
+			if err != nil {
+				return err
+			}
+		}
+
+		// If the head and tail are equal, then there are no items in
+		// the queue.
+		if oldestIndex == nextIndex {
+			// Take this opportunity to reset both indexes.
+			zeroIndexB, err := writeBigSize(0)
+			if err != nil {
+				return err
+			}
+
+			err = bucket.Put(cTaskOldestIndex, zeroIndexB)
+			if err != nil {
+				return err
+			}
+
+			err = bucket.Put(cTaskNextIndex, zeroIndexB)
+			if err != nil {
+				return err
+			}
+
+			return errNoTask
+		}
+
+		tasksBucket := bucket.NestedReadWriteBucket(cTasks)
+		if tasksBucket == nil {
+			return fmt.Errorf("client-tasks bucket not found")
+		}
+
+		item := tasksBucket.Get(oldestIndexB)
+		if item == nil {
+			return fmt.Errorf("no task found under index")
+		}
+
+		err = tasksBucket.Delete(oldestIndexB)
+		if err != nil {
+			return err
+		}
+
+		oldestIndex++
+		oldestIndexB, err = writeBigSize(oldestIndex)
+		if err != nil {
+			return err
+		}
+
+		err = bucket.Put(cTaskOldestIndex, oldestIndexB)
+		if err != nil {
+			return err
+		}
+
+		idBytes := bytes.NewBuffer(item)
+
+		return id.Decode(idBytes)
+	}, func() {})
+	if errors.Is(err, errNoTask) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &id, nil
+}
+
+// NumTasks returns the number of items in the queue of the given namespace.
+func (c *ClientDB) NumTasks(namespace string) (uint64, error) {
+	var res uint64
+	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
+		mainTasksBucket := tx.ReadBucket(cTaskQueue)
+		if mainTasksBucket == nil {
+			return ErrUninitializedDB
+		}
+
+		bucket := mainTasksBucket.NestedReadBucket([]byte(namespace))
+		if bucket == nil {
+			return nil
+		}
+
+		var (
+			nextIndex uint64
+			err       error
+		)
+
+		nextIndexB := bucket.Get(cTaskNextIndex)
+		if nextIndexB != nil {
+			nextIndex, err = readBigSize(nextIndexB)
+			if err != nil {
+				return err
+			}
+		}
+
+		var oldestIndex uint64
+		oldestIndexB := bucket.Get(cTaskOldestIndex)
+		if oldestIndexB != nil {
+			oldestIndex, err = readBigSize(oldestIndexB)
+			if err != nil {
+				return err
+			}
+		}
+
+		res = nextIndex - oldestIndex
+		return nil
+	}, func() {})
+	if err != nil {
+		return 0, err
+	}
+
+	return res, nil
 }

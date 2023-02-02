@@ -42,6 +42,8 @@ type ClientDB struct {
 	nextIndex     uint32
 	indexes       map[keyIndexKey]uint32
 	legacyIndexes map[wtdb.TowerID]uint32
+
+	*DiskOverflowDB
 }
 
 // NewClientDB initializes a new mock ClientDB.
@@ -58,10 +60,11 @@ func NewClientDB() *ClientDB {
 		committedUpdates: make(
 			map[wtdb.SessionID][]wtdb.CommittedUpdate,
 		),
-		towerIndex:    make(map[towerPK]wtdb.TowerID),
-		towers:        make(map[wtdb.TowerID]*wtdb.Tower),
-		indexes:       make(map[keyIndexKey]uint32),
-		legacyIndexes: make(map[wtdb.TowerID]uint32),
+		towerIndex:     make(map[towerPK]wtdb.TowerID),
+		towers:         make(map[wtdb.TowerID]*wtdb.Tower),
+		indexes:        make(map[keyIndexKey]uint32),
+		legacyIndexes:  make(map[wtdb.TowerID]uint32),
+		DiskOverflowDB: NewQueueDB(),
 	}
 }
 
