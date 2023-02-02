@@ -56,10 +56,13 @@ var (
 		0x4, 0x5, 0xfe, 0x0, 0xf, 0x42, 0x40,
 	}
 
+	localBalance  = lnwire.MilliSatoshi(9000)
+	remoteBalance = lnwire.MilliSatoshi(3000)
+
 	testChannelCommit = ChannelCommitment{
 		CommitHeight:  999,
-		LocalBalance:  lnwire.MilliSatoshi(9000),
-		RemoteBalance: lnwire.MilliSatoshi(3000),
+		LocalBalance:  localBalance,
+		RemoteBalance: remoteBalance,
 		CommitFee:     btcutil.Amount(rand.Int63()),
 		FeePerKw:      btcutil.Amount(5000),
 		CommitTx:      channels.TestFundingTx,
@@ -79,10 +82,12 @@ var (
 		TheirOutputIndex: 1,
 		CommitTxHash:     testChannelCommit.CommitTx.TxHash(),
 		HTLCEntries:      []*HTLCEntry{&testHTLCEntry},
+		LocalBalance:     &localBalance,
+		RemoteBalance:    &remoteBalance,
 	}
 	testRevocationLogBytes = []byte{
-		// Body length 42.
-		0x2a,
+		// Body length 52.
+		0x34,
 		// OurOutputIndex tlv.
 		0x0, 0x2, 0x0, 0x0,
 		// TheirOutputIndex tlv.
@@ -93,6 +98,10 @@ var (
 		0x6e, 0x60, 0x29, 0x23, 0x1d, 0x5e, 0xc5, 0xe6,
 		0xbd, 0xf7, 0xd3, 0x9b, 0x16, 0x7d, 0x0, 0xff,
 		0xc8, 0x22, 0x51, 0xb1, 0x5b, 0xa0, 0xbf, 0xd,
+		// LocalBalance.
+		0x3, 0x3, 0xfd, 0x23, 0x28,
+		// Remote Balance.
+		0x4, 0x3, 0xfd, 0x0b, 0xb8,
 	}
 )
 
@@ -127,7 +136,7 @@ func TestReadTLVStream(t *testing.T) {
 
 	// Read the tlv stream.
 	buf := bytes.NewBuffer(testValueBytes)
-	err = readTlvStream(buf, ts)
+	_, err = readTlvStream(buf, ts)
 	require.NoError(t, err)
 
 	// Check the bytes are read as expected.
@@ -150,7 +159,7 @@ func TestReadTLVStreamErr(t *testing.T) {
 
 	// Read the tlv stream.
 	buf := bytes.NewBuffer(b)
-	err = readTlvStream(buf, ts)
+	_, err = readTlvStream(buf, ts)
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 
 	// Check the bytes are not read.
