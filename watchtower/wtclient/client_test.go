@@ -2016,6 +2016,63 @@ var clientTests = []clientTest{
 			require.NoError(h.t, err)
 		},
 	},
+	{
+		// This test demonstrates that if there is no active session,
+		// the updates are queued in memory and then lost on restart.
+		// This behaviour will be fixed in upcoming commits.
+		name: "lose updates in task pipeline on restart",
+		cfg: harnessCfg{
+			localBalance:  localBalance,
+			remoteBalance: remoteBalance,
+			policy: wtpolicy.Policy{
+				TxPolicy:   defaultTxPolicy,
+				MaxUpdates: 5,
+			},
+			// noServerStart ensures that the server does not
+			// automatically start on creation of the test harness.
+			// This ensures that the client does not initially have
+			// any active sessions.
+			noServerStart: true,
+		},
+		fn: func(h *testHarness) {
+			const (
+				chanID     = 0
+				numUpdates = 6
+				maxUpdates = 5
+			)
+
+			// Advance the channel to create all states.
+			hints := h.advanceChannelN(chanID, numUpdates)
+			firstBatch := hints[:numUpdates/2]
+			secondBatch := hints[numUpdates/2 : maxUpdates]
+
+			// Attempt to back up the first batch of states of the
+			// client's channel. Since the server has not yet
+			// started, the client should have no active session
+			// yet and so these updates will just be kept in an
+			// in-memory queue.
+			h.backupStates(chanID, 0, numUpdates/2, nil)
+
+			// Restart the Client (force quit). And also now start
+			// the server. The client should now be able to create
+			// a session with the server.
+			h.client.ForceQuit()
+			h.startServer()
+			h.startClient()
+
+			// Attempt to now back up the second batch of states.
+			h.backupStates(chanID, numUpdates/2, maxUpdates, nil)
+
+			// Assert that the server does receive the updates.
+			h.waitServerUpdates(secondBatch, waitTime)
+
+			// Assert that the server definitely still has not
+			// received the initial set of updates.
+			matches, err := h.serverDB.QueryMatches(firstBatch)
+			require.NoError(h.t, err)
+			require.Empty(h.t, matches)
+		},
+	},
 }
 
 // TestClient executes the client test suite, asserting the ability to backup
