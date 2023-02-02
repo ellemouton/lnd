@@ -366,6 +366,8 @@ Keysend](https://github.com/lightningnetwork/lnd/pull/7334).
   3.5.7](https://github.com/lightningnetwork/lnd/pull/7353) to resolve linking
   issues with outdated dependencies.
 
+* [Re-add local and remote output amounts to the revocation log]()
+
 ## Pathfinding
 
 * [Pathfinding takes capacity of edges into account to improve success
