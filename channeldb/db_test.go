@@ -243,6 +243,18 @@ func TestFetchChannel(t *testing.T) {
 			spew.Sdump(channelState), spew.Sdump(dbChannel))
 	}
 
+	// Next, attempt to fetch the channel by its chan point.
+	chanID := lnwire.NewChanIDFromOutPoint(&channelState.FundingOutpoint)
+	dbChannel, err = cdb.FetchChannelByID(nil, chanID)
+	require.NoError(t, err, "unable to fetch channel")
+
+	// The decoded channel state should be identical to what we stored
+	// above.
+	if !reflect.DeepEqual(channelState, dbChannel) {
+		t.Fatalf("channel state doesn't match:: %v vs %v",
+			spew.Sdump(channelState), spew.Sdump(dbChannel))
+	}
+
 	// If we attempt to query for a non-exist ante channel, then we should
 	// get an error.
 	channelState2 := createTestChannelState(t, cdb)
@@ -250,9 +262,11 @@ func TestFetchChannel(t *testing.T) {
 	channelState2.FundingOutpoint.Index ^= 1
 
 	_, err = cdb.FetchChannel(nil, channelState2.FundingOutpoint)
-	if err == nil {
-		t.Fatalf("expected query to fail")
-	}
+	require.Error(t, err)
+
+	chanID2 := lnwire.NewChanIDFromOutPoint(&channelState2.FundingOutpoint)
+	_, err = cdb.FetchChannelByID(nil, chanID2)
+	require.Error(t, err)
 }
 
 func genRandomChannelShell() (*ChannelShell, error) {

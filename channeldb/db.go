@@ -745,6 +745,148 @@ func (c *ChannelStateDB) FetchChannel(tx kvdb.RTx, chanPoint wire.OutPoint) (
 	return nil, ErrChannelNotFound
 }
 
+// FetchChannelByID attempts to locate a channel specified by the passed channel
+// ID. If the channel cannot be found, then an error will be returned.
+// Optionally an existing db tx can be supplied.
+func (c *ChannelStateDB) FetchChannelByID(tx kvdb.RTx, id lnwire.ChannelID) (
+	*OpenChannel, error) {
+
+	var (
+		targetChan      *OpenChannel
+		targetChanPoint *wire.OutPoint
+
+		// errChanFound is used to signal that the channel has been
+		// found so that iteration through the DB buckets can stop as
+		// soon as the channel is found.
+		errChanFound = errors.New("channel found")
+	)
+
+	// chanScan will traverse the following bucket structure:
+	//  * nodePub => chainHash => chanPoint
+	//
+	// At each level we go one further, ensuring that we're traversing the
+	// proper key (that's actually a bucket). By only reading the bucket
+	// structure and skipping fully decoding each channel, we save a good
+	// bit of CPU as we don't need to do things like decompress public
+	// keys.
+	chanScan := func(tx kvdb.RTx) error {
+		// Get the bucket dedicated to storing the metadata for open
+		// channels.
+		openChanBucket := tx.ReadBucket(openChannelBucket)
+		if openChanBucket == nil {
+			return ErrNoActiveChannels
+		}
+
+		// Within the node channel bucket, are the set of node pubkeys
+		// we have channels with, we don't know the entire set, so
+		// we'll check them all.
+		return openChanBucket.ForEach(func(nodePub, v []byte) error {
+			// Ensure that this is a key the same size as a pubkey,
+			// and also that it leads directly to a bucket.
+			if len(nodePub) != 33 || v != nil {
+				return nil
+			}
+
+			nodeChanBucket := openChanBucket.NestedReadBucket(
+				nodePub,
+			)
+			if nodeChanBucket == nil {
+				return nil
+			}
+
+			// The next layer down is all the chains that this node
+			// has channels on with us.
+			return nodeChanBucket.ForEach(func(chainHash,
+				v []byte) error {
+
+				// If there's a value, it's not a bucket so
+				// ignore it.
+				if v != nil {
+					return nil
+				}
+
+				chainBucket := nodeChanBucket.NestedReadBucket(
+					chainHash,
+				)
+				if chainBucket == nil {
+					return fmt.Errorf("unable to read "+
+						"bucket for chain=%x",
+						chainHash[:])
+				}
+
+				var targetChanPointBytes []byte
+				err := chainBucket.ForEach(func(k,
+					_ []byte) error {
+
+					var outPoint wire.OutPoint
+					err := readOutpoint(
+						bytes.NewReader(k), &outPoint,
+					)
+					if err != nil {
+						return err
+					}
+
+					chanID := lnwire.NewChanIDFromOutPoint(
+						&outPoint,
+					)
+
+					if !bytes.Equal(chanID[:], id[:]) {
+						return nil
+					}
+
+					targetChanPoint = &outPoint
+					targetChanPointBytes = k
+
+					return errChanFound
+				})
+				if err != nil && !errors.Is(err, errChanFound) {
+					return err
+				}
+				if targetChanPoint == nil {
+					return ErrChannelNotFound
+				}
+
+				chanBucket := chainBucket.NestedReadBucket(
+					targetChanPointBytes,
+				)
+				if chanBucket == nil {
+					return ErrChannelNotFound
+				}
+
+				channel, err := fetchOpenChannel(
+					chanBucket, targetChanPoint,
+				)
+				if err != nil {
+					return err
+				}
+
+				targetChan = channel
+				targetChan.Db = c
+
+				return errChanFound
+			})
+		})
+	}
+
+	var err error
+	if tx == nil {
+		err = kvdb.View(c.backend, chanScan, func() {})
+	} else {
+		err = chanScan(tx)
+	}
+	if err != nil && !errors.Is(err, errChanFound) {
+		return nil, err
+	}
+
+	if targetChan != nil {
+		return targetChan, nil
+	}
+
+	// If we can't find the channel, then we return with an error, as we
+	// have nothing to back up.
+	return nil, ErrChannelNotFound
+}
+
 // FetchAllChannels attempts to retrieve all open channels currently stored
 // within the database, including pending open, fully open and channels waiting
 // for a closing transaction to confirm.
