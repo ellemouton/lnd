@@ -2161,6 +2161,65 @@ var clientTests = []clientTest{
 			server2.waitForUpdates(hints[numUpdates/2:], waitTime)
 		},
 	},
+	{
+		// Show that if a client switches to a new tower _after_ backup
+		// tasks have been bound to the session with the first old tower
+		// then these updates are _not_ replayed onto the new tower.
+		// This is a bug that will be fixed in a future commit.
+		name: "switch to new tower after tasks are bound",
+		cfg: harnessCfg{
+			localBalance:  localBalance,
+			remoteBalance: remoteBalance,
+			policy: wtpolicy.Policy{
+				TxPolicy:   defaultTxPolicy,
+				MaxUpdates: 5,
+			},
+		},
+		fn: func(h *testHarness) {
+			const (
+				numUpdates = 5
+				chanID     = 0
+			)
+
+			// Generate numUpdates retributions and back a few of
+			// them up to the main tower.
+			hints := h.advanceChannelN(chanID, numUpdates)
+			h.backupStates(chanID, 0, numUpdates/2, nil)
+
+			// Wait for all these updates to be populated in the
+			// server's database.
+			h.server.waitForUpdates(hints[:numUpdates/2], waitTime)
+
+			// Now stop the server.
+			h.server.stop()
+
+			// Back up the remaining tasks. This will bind the
+			// backup tasks to the session with the old server.
+			h.backupStates(chanID, numUpdates/2, numUpdates, nil)
+
+			// Now we add a new tower.
+			server2 := newServerHarness(
+				h.t, h.net, towerAddr2Str, nil,
+			)
+			server2.start()
+			h.addTower(server2.addr)
+
+			// Now we can remove the old one.
+			err := wait.Predicate(func() bool {
+				err := h.client.RemoveTower(
+					h.server.addr.IdentityKey, nil,
+				)
+
+				return err == nil
+			}, waitTime)
+			require.NoError(h.t, err)
+
+			// Now we assert that the backups are _not_ backed up
+			// to the new tower. This is a bug that will be fixed
+			// in a future commit.
+			server2.waitForUpdates(nil, time.Second)
+		},
+	},
 }
 
 // TestClient executes the client test suite, asserting the ability to backup
