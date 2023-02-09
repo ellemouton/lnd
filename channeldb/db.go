@@ -68,7 +68,7 @@ type mandatoryVersion struct {
 // millions of keys. Due to OOM concern, the update cannot be safely done
 // within one db transaction. Thus, for optional migrations, they must take the
 // db backend and construct transactions as needed.
-type optionalMigration func(db kvdb.Backend) error
+type optionalMigration func(db kvdb.Backend, cfg any) error
 
 // optionalVersion defines a db version that can be optionally applied. When
 // applying migrations, we must apply all the mandatory migrations first before
@@ -1546,7 +1546,7 @@ func (d *DB) applyOptionalVersions(cfg OptionalMiragtionConfig) error {
 	log.Infof("Performing database optional migration: %s", version.name)
 
 	// Migrate the data.
-	if err := version.migration(d); err != nil {
+	if err := version.migration(d, nil); err != nil {
 		log.Errorf("Unable to apply optional migration: %s, error: %v",
 			version.name, err)
 		return err
