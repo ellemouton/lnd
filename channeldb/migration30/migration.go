@@ -26,7 +26,7 @@ const recordsPerTx = 20_000
 // MigrateRevocationLog migrates the old revocation logs into the newer format
 // and deletes them once finished, with the deletion only happens once ALL the
 // old logs have been migrates.
-func MigrateRevocationLog(db kvdb.Backend) error {
+func MigrateRevocationLog(db kvdb.Backend, _ any) error {
 	log.Infof("Migrating revocation logs, might take a while...")
 
 	var (

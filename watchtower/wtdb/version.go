@@ -51,9 +51,11 @@ var clientDBVersions = []version{
 		txMigration: migration3.MigrateChannelIDIndex,
 	},
 	{
-		dbMigration: migration4.MigrateAckedUpdates(
-			migration4.DefaultSessionsPerTx,
-		),
+		dbMigration: func(db kvdb.Backend) error {
+			return migration4.MigrateAckedUpdates(
+				migration4.DefaultSessionsPerTx,
+			)(db, nil)
+		},
 	},
 }
 

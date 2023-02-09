@@ -108,6 +108,7 @@ func TestMigrateRevocationLog(t *testing.T) {
 				beforeMigration,
 				afterMigration,
 				MigrateRevocationLog,
+				nil,
 				false,
 			)
 		})
@@ -564,12 +565,13 @@ func BenchmarkMigration(b *testing.B) {
 		b,
 		beforeMigration,
 		nil,
-		func(db kvdb.Backend) error {
+		func(db kvdb.Backend, cfg any) error {
 			b.StartTimer()
 			defer b.StopTimer()
 
-			return MigrateRevocationLog(db)
+			return MigrateRevocationLog(db, cfg)
 		},
+		nil,
 		false,
 	)
 }
