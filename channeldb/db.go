@@ -63,6 +63,11 @@ type mandatoryVersion struct {
 	migration migration
 }
 
+// MigrationConfig is a super set of all the various migration configs.
+type MigrationConfig struct {
+	migration30.MigrateRevLogConfig
+}
+
 // optionalMigration defines an optional migration function. When a migration
 // is optional, it usually involves a large scale of changes that might touch
 // millions of keys. Due to OOM concern, the update cannot be safely done
@@ -1545,8 +1550,14 @@ func (d *DB) applyOptionalVersions(cfg OptionalMiragtionConfig) error {
 	version := optionalVersions[0]
 	log.Infof("Performing database optional migration: %s", version.name)
 
+	migrationCfg := &MigrationConfig{
+		migration30.MigrateRevLogConfig{
+			NoAmountData: true,
+		},
+	}
+
 	// Migrate the data.
-	if err := version.migration(d, nil); err != nil {
+	if err := version.migration(d, migrationCfg); err != nil {
 		log.Errorf("Unable to apply optional migration: %s, error: %v",
 			version.name, err)
 		return err
