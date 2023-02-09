@@ -1545,8 +1545,12 @@ func (d *DB) applyOptionalVersions(cfg OptionalMiragtionConfig) error {
 	version := optionalVersions[0]
 	log.Infof("Performing database optional migration: %s", version.name)
 
+	migRevLogCfg := &migration30.MigrateRevLogConfig{
+		NoAmountData: true,
+	}
+
 	// Migrate the data.
-	if err := version.migration(d, nil); err != nil {
+	if err := version.migration(d, migRevLogCfg); err != nil {
 		log.Errorf("Unable to apply optional migration: %s, error: %v",
 			version.name, err)
 		return err
