@@ -94,6 +94,10 @@ var (
 	// 	db-session-id -> last-channel-close-height
 	cClosableSessionsBkt = []byte("client-closable-sessions-bucket")
 
+	// cTaskQueue is a top-level bucket where the disk queue may store its
+	// content.
+	cTaskQueue = []byte("client-task-queue")
+
 	// ErrTowerNotFound signals that the target tower was not found in the
 	// database.
 	ErrTowerNotFound = errors.New("tower not found")
@@ -230,6 +234,8 @@ type ClientDB struct {
 	// channel using that session.
 	ackedRangeIndex   map[SessionID]map[lnwire.ChannelID]*RangeIndex
 	ackedRangeIndexMu sync.Mutex
+
+	Queue[*BackupID]
 }
 
 // OpenClientDB opens the client database given the path to the database's
@@ -249,6 +255,11 @@ func OpenClientDB(db kvdb.Backend) (*ClientDB, error) {
 		db: db,
 		ackedRangeIndex: make(
 			map[SessionID]map[lnwire.ChannelID]*RangeIndex,
+		),
+		Queue: NewQueueDB[*BackupID](
+			db, cTaskQueue, func() *BackupID {
+				return &BackupID{}
+			},
 		),
 	}
 
@@ -285,6 +296,7 @@ func initClientDBBuckets(tx kvdb.RwTx) error {
 		cChanIDIndexBkt,
 		cSessionIDIndexBkt,
 		cClosableSessionsBkt,
+		cTaskQueue,
 	}
 
 	for _, bucket := range buckets {
