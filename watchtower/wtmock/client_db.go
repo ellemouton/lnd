@@ -49,6 +49,8 @@ type ClientDB struct {
 	nextIndex     uint32
 	indexes       map[keyIndexKey]uint32
 	legacyIndexes map[wtdb.TowerID]uint32
+
+	wtdb.Queue[*wtdb.BackupID]
 }
 
 // NewClientDB initializes a new mock ClientDB.
@@ -68,6 +70,7 @@ func NewClientDB() *ClientDB {
 		indexes:          make(map[keyIndexKey]uint32),
 		legacyIndexes:    make(map[wtdb.TowerID]uint32),
 		closableSessions: make(map[wtdb.SessionID]uint32),
+		Queue:            NewQueueDB[*wtdb.BackupID](),
 	}
 }
 
