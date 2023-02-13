@@ -473,7 +473,7 @@ func (c *ClientDB) RemoveTower(pubKey *btcec.PublicKey, addr net.Addr) error {
 
 		towerSessions, err := c.listTowerSessions(
 			towerID, sessions, chanIDIndexBkt,
-			towersToSessionsIndex, nil,
+			towersToSessionsIndex,
 			WithPerCommittedUpdate(perCommittedUpdate),
 		)
 		if err != nil {
@@ -964,8 +964,7 @@ func getSessionKeyIndex(keyIndexes kvdb.RwBucket, towerID TowerID,
 // optional tower ID can be used to filter out any client sessions in the
 // response that do not correspond to this tower.
 func (c *ClientDB) ListClientSessions(id *TowerID,
-	filterFn ClientSessionFilterFn, opts ...ClientSessionListOption) (
-	map[SessionID]*ClientSession, error) {
+	opts ...ClientSessionListOption) (map[SessionID]*ClientSession, error) {
 
 	var clientSessions map[SessionID]*ClientSession
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
@@ -990,7 +989,7 @@ func (c *ClientDB) ListClientSessions(id *TowerID,
 		// known to the db.
 		if id == nil {
 			clientSessions, err = c.listClientAllSessions(
-				sessions, chanIDIndexBkt, filterFn, opts...,
+				sessions, chanIDIndexBkt, opts...,
 			)
 			return err
 		}
@@ -1003,7 +1002,7 @@ func (c *ClientDB) ListClientSessions(id *TowerID,
 
 		clientSessions, err = c.listTowerSessions(
 			*id, sessions, chanIDIndexBkt, towerToSessionIndex,
-			filterFn, opts...,
+			opts...,
 		)
 		return err
 	}, func() {
@@ -1018,8 +1017,7 @@ func (c *ClientDB) ListClientSessions(id *TowerID,
 
 // listClientAllSessions returns the set of all client sessions known to the db.
 func (c *ClientDB) listClientAllSessions(sessions, chanIDIndexBkt kvdb.RBucket,
-	filterFn ClientSessionFilterFn, opts ...ClientSessionListOption) (
-	map[SessionID]*ClientSession, error) {
+	opts ...ClientSessionListOption) (map[SessionID]*ClientSession, error) {
 
 	clientSessions := make(map[SessionID]*ClientSession)
 	err := sessions.ForEach(func(k, _ []byte) error {
@@ -1028,7 +1026,7 @@ func (c *ClientDB) listClientAllSessions(sessions, chanIDIndexBkt kvdb.RBucket,
 		// committed updates and compute the highest known commit height
 		// for each channel.
 		session, err := c.getClientSession(
-			sessions, chanIDIndexBkt, k, filterFn, opts...,
+			sessions, chanIDIndexBkt, k, opts...,
 		)
 		if errors.Is(err, ErrSessionFailedFilterFn) {
 			return nil
@@ -1050,8 +1048,8 @@ func (c *ClientDB) listClientAllSessions(sessions, chanIDIndexBkt kvdb.RBucket,
 // listTowerSessions returns the set of all client sessions known to the db
 // that are associated with the given tower id.
 func (c *ClientDB) listTowerSessions(id TowerID, sessionsBkt, chanIDIndexBkt,
-	towerToSessionIndex kvdb.RBucket, filterFn ClientSessionFilterFn,
-	opts ...ClientSessionListOption) (map[SessionID]*ClientSession, error) {
+	towerToSessionIndex kvdb.RBucket, opts ...ClientSessionListOption) (
+	map[SessionID]*ClientSession, error) {
 
 	towerIndexBkt := towerToSessionIndex.NestedReadBucket(id.Bytes())
 	if towerIndexBkt == nil {
@@ -1065,7 +1063,7 @@ func (c *ClientDB) listTowerSessions(id TowerID, sessionsBkt, chanIDIndexBkt,
 		// committed updates and compute the highest known commit height
 		// for each channel.
 		session, err := c.getClientSession(
-			sessionsBkt, chanIDIndexBkt, k, filterFn, opts...,
+			sessionsBkt, chanIDIndexBkt, k, opts...,
 		)
 		if errors.Is(err, ErrSessionFailedFilterFn) {
 			return nil
@@ -1578,6 +1576,9 @@ type ClientSessionListCfg struct {
 	// PerCommittedUpdate will, if set, be called for each of the session's
 	// committed (un-acked) updates.
 	PerCommittedUpdate PerCommittedUpdateCB
+
+	PreEvaluateFilter  ClientSessionFilterFn
+	PostEvaluateFilter ClientSessionFilterFn
 }
 
 // NewClientSessionCfg constructs a new ClientSessionListCfg.
@@ -1612,12 +1613,24 @@ func WithPerCommittedUpdate(cb PerCommittedUpdateCB) ClientSessionListOption {
 	}
 }
 
+func WithPreEvalFilterFn(fn ClientSessionFilterFn) ClientSessionListOption {
+	return func(cfg *ClientSessionListCfg) {
+		cfg.PreEvaluateFilter = fn
+	}
+}
+
+func WithPostEvalFilterFn(fn ClientSessionFilterFn) ClientSessionListOption {
+	return func(cfg *ClientSessionListCfg) {
+		cfg.PostEvaluateFilter = fn
+	}
+}
+
 // getClientSession loads the full ClientSession associated with the serialized
 // session id. This method populates the CommittedUpdates, AckUpdates and Tower
 // in addition to the ClientSession's body.
 func (c *ClientDB) getClientSession(sessionsBkt, chanIDIndexBkt kvdb.RBucket,
-	idBytes []byte, filterFn ClientSessionFilterFn,
-	opts ...ClientSessionListOption) (*ClientSession, error) {
+	idBytes []byte, opts ...ClientSessionListOption) (*ClientSession,
+	error) {
 
 	cfg := NewClientSessionCfg()
 	for _, o := range opts {
@@ -1629,7 +1642,7 @@ func (c *ClientDB) getClientSession(sessionsBkt, chanIDIndexBkt kvdb.RBucket,
 		return nil, err
 	}
 
-	if filterFn != nil && !filterFn(session) {
+	if cfg.PreEvaluateFilter != nil && !cfg.PreEvaluateFilter(session) {
 		return nil, ErrSessionFailedFilterFn
 	}
 
@@ -1653,6 +1666,10 @@ func (c *ClientDB) getClientSession(sessionsBkt, chanIDIndexBkt kvdb.RBucket,
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	if cfg.PostEvaluateFilter != nil && !cfg.PreEvaluateFilter(session) {
+		return nil, ErrSessionFailedFilterFn
 	}
 
 	return session, nil
