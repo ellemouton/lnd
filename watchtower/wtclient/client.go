@@ -44,13 +44,20 @@ const (
 
 // genSessionFilter constructs a filter that can be used to select sessions only
 // if they match the policy of the client (namely anchor vs legacy). If
-// activeOnly is set, then only active sessions will be returned.
-func (c *TowerClient) genSessionFilter(
-	activeOnly bool) wtdb.ClientSessionFilterFn {
+// activeOnly is set, then only active sessions will be returned. Only
+// non-exhausted sessions will ever be loaded.
+func (c *TowerClient) genSessionFilter(activeOnly,
+	includeExhausted bool) wtdb.ClientSessionFilterFn {
 
 	return func(session *wtdb.ClientSession) bool {
 		if c.cfg.Policy.IsAnchorChannel() !=
 			session.Policy.IsAnchorChannel() {
+
+			return false
+		}
+
+		if !includeExhausted &&
+			(session.SeqNum >= session.Policy.MaxUpdates) {
 
 			return false
 		}
@@ -376,7 +383,7 @@ func New(config *Config) (*TowerClient, error) {
 	// current policy of the client, otherwise they will be ignored and new
 	// sessions will be requested.
 	candidateSessions, err := getTowerAndSessionCandidates(
-		cfg.DB, cfg.SecretKeyRing, c.genSessionFilter(true),
+		cfg.DB, cfg.SecretKeyRing, c.genSessionFilter(true, false),
 		perActiveTower, wtdb.WithPerMaxHeight(perMaxHeight),
 		wtdb.WithPerCommittedUpdate(perCommittedUpdate),
 	)
@@ -1203,7 +1210,7 @@ func (c *TowerClient) handleNewTower(msg *newTowerMsg) error {
 	// Include all of its corresponding sessions to our set of candidates.
 	sessions, err := getClientSessions(
 		c.cfg.DB, c.cfg.SecretKeyRing, &tower.ID,
-		c.genSessionFilter(true),
+		c.genSessionFilter(true, false),
 	)
 	if err != nil {
 		return fmt.Errorf("unable to determine sessions for tower %x: "+
@@ -1321,7 +1328,7 @@ func (c *TowerClient) RegisteredTowers(opts ...wtdb.ClientSessionListOption) (
 		return nil, err
 	}
 	clientSessions, err := c.cfg.DB.ListClientSessions(
-		nil, c.genSessionFilter(false), opts...,
+		nil, c.genSessionFilter(false, true), opts...,
 	)
 	if err != nil {
 		return nil, err
@@ -1364,7 +1371,7 @@ func (c *TowerClient) LookupTower(pubKey *btcec.PublicKey,
 	}
 
 	towerSessions, err := c.cfg.DB.ListClientSessions(
-		&tower.ID, c.genSessionFilter(false), opts...,
+		&tower.ID, c.genSessionFilter(false, true), opts...,
 	)
 	if err != nil {
 		return nil, err
