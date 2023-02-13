@@ -101,11 +101,11 @@ type Client interface {
 
 	// RegisteredTowers retrieves the list of watchtowers registered with
 	// the client.
-	RegisteredTowers(...wtdb.ClientSessionListOption) ([]*RegisteredTower,
-		error)
+	RegisteredTowers(bool, ...wtdb.ClientSessionListOption) (
+		[]*RegisteredTower, error)
 
 	// LookupTower retrieves a registered watchtower through its public key.
-	LookupTower(*btcec.PublicKey,
+	LookupTower(*btcec.PublicKey, bool,
 		...wtdb.ClientSessionListOption) (*RegisteredTower, error)
 
 	// Stats returns the in-memory statistics of the client since startup.
@@ -1319,8 +1319,8 @@ func (c *TowerClient) handleStaleTower(msg *staleTowerMsg) error {
 
 // RegisteredTowers retrieves the list of watchtowers registered with the
 // client.
-func (c *TowerClient) RegisteredTowers(opts ...wtdb.ClientSessionListOption) (
-	[]*RegisteredTower, error) {
+func (c *TowerClient) RegisteredTowers(includeExhaustedSessions bool,
+	opts ...wtdb.ClientSessionListOption) ([]*RegisteredTower, error) {
 
 	// Retrieve all of our towers along with all of our sessions.
 	towers, err := c.cfg.DB.ListTowers()
@@ -1328,7 +1328,8 @@ func (c *TowerClient) RegisteredTowers(opts ...wtdb.ClientSessionListOption) (
 		return nil, err
 	}
 	clientSessions, err := c.cfg.DB.ListClientSessions(
-		nil, c.genSessionFilter(false, true), opts...,
+		nil, c.genSessionFilter(false, includeExhaustedSessions),
+		opts...,
 	)
 	if err != nil {
 		return nil, err
@@ -1363,6 +1364,7 @@ func (c *TowerClient) RegisteredTowers(opts ...wtdb.ClientSessionListOption) (
 
 // LookupTower retrieves a registered watchtower through its public key.
 func (c *TowerClient) LookupTower(pubKey *btcec.PublicKey,
+	includeExhaustedSessions bool,
 	opts ...wtdb.ClientSessionListOption) (*RegisteredTower, error) {
 
 	tower, err := c.cfg.DB.LoadTower(pubKey)
@@ -1371,7 +1373,8 @@ func (c *TowerClient) LookupTower(pubKey *btcec.PublicKey,
 	}
 
 	towerSessions, err := c.cfg.DB.ListClientSessions(
-		&tower.ID, c.genSessionFilter(false, true), opts...,
+		&tower.ID, c.genSessionFilter(false, includeExhaustedSessions),
+		opts...,
 	)
 	if err != nil {
 		return nil, err

@@ -272,7 +272,9 @@ func (c *WatchtowerClient) ListTowers(ctx context.Context,
 		req.IncludeSessions,
 	)
 
-	anchorTowers, err := c.cfg.AnchorClient.RegisteredTowers(opts...)
+	anchorTowers, err := c.cfg.AnchorClient.RegisteredTowers(
+		!req.ExcludeExhaustedSessions, opts...,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +290,9 @@ func (c *WatchtowerClient) ListTowers(ctx context.Context,
 		rpcTowers[tower.ID] = rpcTower
 	}
 
-	legacyTowers, err := c.cfg.Client.RegisteredTowers(opts...)
+	legacyTowers, err := c.cfg.Client.RegisteredTowers(
+		!req.ExcludeExhaustedSessions, opts...,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -337,7 +341,9 @@ func (c *WatchtowerClient) GetTowerInfo(ctx context.Context,
 	)
 
 	// Get the tower and its sessions from anchors client.
-	tower, err := c.cfg.AnchorClient.LookupTower(pubKey, opts...)
+	tower, err := c.cfg.AnchorClient.LookupTower(
+		pubKey, !req.ExcludeExhaustedSessions, opts...,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +353,9 @@ func (c *WatchtowerClient) GetTowerInfo(ctx context.Context,
 	)
 
 	// Get the tower and its sessions from legacy client.
-	tower, err = c.cfg.Client.LookupTower(pubKey, opts...)
+	tower, err = c.cfg.Client.LookupTower(
+		pubKey, !req.ExcludeExhaustedSessions, opts...,
+	)
 	if err != nil {
 		return nil, err
 	}
