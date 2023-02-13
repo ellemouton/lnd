@@ -388,6 +388,11 @@ in the lnwire package](https://github.com/lightningnetwork/lnd/pull/7303)
 * [Allow caller to filter sessions at the time of reading them from
   disk](https://github.com/lightningnetwork/lnd/pull/7059)
 
+* [Don't load exhausted sessions when not 
+  needed](https://github.com/lightningnetwork/lnd/pull/7404). Also add a new
+  `exclude_exhausted_sessions` boolean flag to the relevant lncli wtclient
+  commands.
+
 ## DB
 
 * [Add a sqlite backend 
