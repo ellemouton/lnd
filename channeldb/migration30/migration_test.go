@@ -104,13 +104,16 @@ func TestMigrateRevocationLog(t *testing.T) {
 				return nil
 			}
 
+			cfg := &MigrateRevLogConfigImpl{
+				NoAmountData: !withAmtData,
+			}
+
 			migtest.ApplyMigrationWithDB(
 				t,
 				beforeMigration,
 				afterMigration,
-				MigrateRevocationLog,
-				&MigrateRevLogConfig{
-					NoAmountData: !withAmtData,
+				func(db kvdb.Backend) error {
+					return MigrateRevocationLog(db, cfg)
 				},
 				false,
 			)
@@ -567,19 +570,20 @@ func BenchmarkMigration(b *testing.B) {
 		return setupTestLogs(db, c, oldLogs, nil)
 	}
 
+	cfg := &MigrateRevLogConfigImpl{
+		NoAmountData: !withAmtData,
+	}
+
 	// Run the migration test.
 	migtest.ApplyMigrationWithDB(
 		b,
 		beforeMigration,
 		nil,
-		func(db kvdb.Backend, cfg any) error {
+		func(db kvdb.Backend) error {
 			b.StartTimer()
 			defer b.StopTimer()
 
 			return MigrateRevocationLog(db, cfg)
-		},
-		&MigrateRevLogConfig{
-			NoAmountData: !withAmtData,
 		},
 		false,
 	)

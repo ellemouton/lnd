@@ -239,7 +239,7 @@ func TestMigrateAckedUpdates(t *testing.T) {
 
 			migtest.ApplyMigrationWithDB(
 				t, before, after, MigrateAckedUpdates(2),
-				nil, test.shouldFail,
+				test.shouldFail,
 			)
 		})
 	}

@@ -65,8 +65,8 @@ const DefaultSessionsPerTx = 5000
 // MigrateAckedUpdates migrates the tower client DB. It takes the individual
 // Acked Updates that are stored for each session and re-stores them using the
 // RangeIndex representation.
-func MigrateAckedUpdates(sessionsPerTx int) func(kvdb.Backend, any) error {
-	return func(db kvdb.Backend, _ any) error {
+func MigrateAckedUpdates(sessionsPerTx int) func(kvdb.Backend) error {
+	return func(db kvdb.Backend) error {
 		log.Infof("Migrating the tower client db to move all Acked " +
 			"Updates to the new Range Index representation.")
 

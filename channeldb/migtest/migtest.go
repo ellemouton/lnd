@@ -91,8 +91,7 @@ func ApplyMigration(t *testing.T,
 // database transactions.
 func ApplyMigrationWithDB(t testing.TB, beforeMigration,
 	afterMigration func(db kvdb.Backend) error,
-	migrationFunc func(db kvdb.Backend, cfg any) error, cfg any,
-	shouldFail bool) {
+	migrationFunc func(db kvdb.Backend) error, shouldFail bool) {
 
 	t.Helper()
 
@@ -108,7 +107,7 @@ func ApplyMigrationWithDB(t testing.TB, beforeMigration,
 	}
 
 	// Apply migration.
-	err = migrationFunc(cdb, cfg)
+	err = migrationFunc(cdb)
 	if shouldFail {
 		require.Error(t, err)
 	} else {

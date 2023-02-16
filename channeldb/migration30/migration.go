@@ -23,25 +23,32 @@ import (
 // indexes.
 const recordsPerTx = 20_000
 
-// MigrateRevLogConfig can be used to configure the MigrateRevocationLog
-// migration function.
-type MigrateRevLogConfig struct {
+// MigrateRevLogConfig is an interface that defines the config that should be
+// passed to the MigrateRevocationLog function.
+type MigrateRevLogConfig interface {
+	// GetNoAmountData returns true if the amount data of revoked commitment
+	// transactions should not be stored in the revocation log.
+	GetNoAmountData() bool
+}
+
+// MigrateRevLogConfigImpl implements the MigrationRevLogConfig interface.
+type MigrateRevLogConfigImpl struct {
 	// NoAmountData if set to true will result in the amount data of revoked
 	// commitment transactions not being stored in the revocation log.
 	NoAmountData bool
 }
 
+// GetNoAmountData returns true if the amount data of revoked commitment
+// transactions should not be stored in the revocation log.
+func (c *MigrateRevLogConfigImpl) GetNoAmountData() bool {
+	return c.NoAmountData
+}
+
 // MigrateRevocationLog migrates the old revocation logs into the newer format
 // and deletes them once finished, with the deletion only happens once ALL the
 // old logs have been migrates.
-func MigrateRevocationLog(db kvdb.Backend, config any) error {
+func MigrateRevocationLog(db kvdb.Backend, cfg MigrateRevLogConfig) error {
 	log.Infof("Migrating revocation logs, might take a while...")
-
-	cfg, ok := config.(*MigrateRevLogConfig)
-	if !ok {
-		return fmt.Errorf("expected config of type "+
-			"*MigrationRevLogConfig, got: %T", config)
-	}
 
 	var (
 		err error
@@ -128,7 +135,7 @@ func MigrateRevocationLog(db kvdb.Backend, config any) error {
 // processMigration finds the next un-migrated revocation logs, reads a max
 // number of `recordsPerTx` records, converts them into the new revocation logs
 // and save them to disk.
-func processMigration(tx kvdb.RwTx, cfg *MigrateRevLogConfig) (bool, error) {
+func processMigration(tx kvdb.RwTx, cfg MigrateRevLogConfig) (bool, error) {
 	openChanBucket := tx.ReadWriteBucket(openChannelBucket)
 
 	// If no bucket is found, we can exit early.
@@ -382,7 +389,7 @@ type result struct {
 // readOldRevocationLogs finds a list of old revocation logs and converts them
 // into the new revocation logs.
 func readOldRevocationLogs(openChanBucket kvdb.RwBucket,
-	locator *updateLocator, cfg *MigrateRevLogConfig) (logEntries, error) {
+	locator *updateLocator, cfg MigrateRevLogConfig) (logEntries, error) {
 
 	entries := make(logEntries)
 	results := make([]*result, 0)
@@ -430,7 +437,7 @@ func readOldRevocationLogs(openChanBucket kvdb.RwBucket,
 		// the read tx so the old large revocation log can be set to
 		// nil here so save us some memory space.
 		newLog, err := convertRevocationLog(
-			&c, ourIndex, theirIndex, cfg.NoAmountData,
+			&c, ourIndex, theirIndex, cfg.GetNoAmountData(),
 		)
 		if err != nil {
 			r.errChan <- err
