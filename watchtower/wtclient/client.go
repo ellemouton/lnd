@@ -1828,10 +1828,11 @@ func (c *TowerClient) logMessage(
 func newRandomDelay(max uint32) (uint32, error) {
 	var maxDelay big.Int
 	maxDelay.SetUint64(uint64(max))
-	_, err := rand.Int(rand.Reader, &maxDelay)
+
+	randDelay, err := rand.Int(rand.Reader, &maxDelay)
 	if err != nil {
 		return 0, err
 	}
 
-	return uint32(maxDelay.Uint64()), nil
+	return uint32(randDelay.Uint64()), nil
 }
