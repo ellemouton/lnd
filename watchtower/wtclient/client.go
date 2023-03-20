@@ -891,46 +891,16 @@ func (c *TowerClient) handleChannelCloses(chanSub subscribe.Subscription) {
 				continue
 			}
 
-			closeInfo := event.CloseSummary
-			chanID := lnwire.NewChanIDFromOutPoint(
-				&closeInfo.ChanPoint,
-			)
-
-			// We only care about channels registered with the tower
-			// client.
-			c.backupMu.Lock()
-			_, ok = c.summaries[chanID]
-			c.backupMu.Unlock()
-			if !ok {
-				continue
-			}
-
-			sessions, err := c.cfg.DB.MarkChannelClosed(
-				chanID, closeInfo.CloseHeight,
-			)
+			err := c.handleClosedChannel(event.CloseSummary)
 			if err != nil {
-				log.Errorf("could not mark channel(%s) as "+
-					"closed: %v", chanID, err)
-			}
+				chanID := lnwire.NewChanIDFromOutPoint(
+					&event.CloseSummary.ChanPoint,
+				)
 
-			closableSessions := make(
-				map[wtdb.SessionID]uint32, len(sessions),
-			)
-			for _, sess := range sessions {
-				closableSessions[sess] = closeInfo.CloseHeight
+				log.Errorf("could not handle channel close "+
+					"event for channel(%s): %v", chanID,
+					err)
 			}
-
-			err = c.trackClosableSessions(closableSessions)
-			if err != nil {
-				log.Errorf("could not track closable "+
-					"sessions: %w", err)
-				continue
-			}
-
-			c.backupMu.Lock()
-			delete(c.summaries, chanID)
-			delete(c.chanCommitHeights, chanID)
-			c.backupMu.Unlock()
 
 		case <-c.forceQuit:
 			return
@@ -939,6 +909,46 @@ func (c *TowerClient) handleChannelCloses(chanSub subscribe.Subscription) {
 			return
 		}
 	}
+}
+
+// handleClosedChannel handles the closure of a single channel. It will mark the
+// channel as closed in the DB, then it will handle all the sessions that are
+// now closable due to the channel closure.
+func (c *TowerClient) handleClosedChannel(
+	closeInfo *channeldb.ChannelCloseSummary) error {
+
+	c.backupMu.Lock()
+	defer c.backupMu.Unlock()
+
+	chanID := lnwire.NewChanIDFromOutPoint(&closeInfo.ChanPoint)
+
+	// We only care about channels registered with the tower client.
+	if _, ok := c.summaries[chanID]; !ok {
+		return nil
+	}
+
+	sessions, err := c.cfg.DB.MarkChannelClosed(
+		chanID, closeInfo.CloseHeight,
+	)
+	if err != nil {
+		return fmt.Errorf("could not mark channel(%s) as closed: %w",
+			chanID, err)
+	}
+
+	closableSessions := make(map[wtdb.SessionID]uint32, len(sessions))
+	for _, sess := range sessions {
+		closableSessions[sess] = closeInfo.CloseHeight
+	}
+
+	err = c.trackClosableSessions(closableSessions)
+	if err != nil {
+		return fmt.Errorf("could not track closable sessions: %w", err)
+	}
+
+	delete(c.summaries, chanID)
+	delete(c.chanCommitHeights, chanID)
+
+	return nil
 }
 
 // handleClosableSessions listens for new block notifications. For each block,
