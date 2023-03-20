@@ -1006,7 +1006,7 @@ func (c *TowerClient) handleClosableSessions(
 				if err != nil {
 					log.Errorf("error calling "+
 						"GetClientSession for "+
-						"session %s: %w",
+						"session %s: %v",
 						item.sessionID, err)
 
 					continue
@@ -1015,7 +1015,7 @@ func (c *TowerClient) handleClosableSessions(
 				err = c.deleteSessionFromTower(sess)
 				if err != nil {
 					log.Errorf("error deleting session %s"+
-						"from tower: %w", sess.ID, err)
+						"from tower: %v", sess.ID, err)
 
 					continue
 				}
