@@ -20,6 +20,8 @@
   needed](https://github.com/lightningnetwork/lnd/pull/7405). Also add a new
   `exclude_exhausted_sessions` boolean flag to the relevant lncli wtclient
   commands.
+* [Replace in-mem task pipeline with a disk-overflow
+  queue](https://github.com/lightningnetwork/lnd/pull/7380)
 
 ## Misc
 
