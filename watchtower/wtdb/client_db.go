@@ -657,7 +657,7 @@ func (c *ClientDB) ListTowers() ([]*Tower, error) {
 // index for that tower can be reserved. Multiple calls to this method before
 // CreateClientSession is invoked should return the same index.
 func (c *ClientDB) NextSessionKeyIndex(towerID TowerID,
-	blobType blob.Type) (uint32, error) {
+	blobType blob.Type, forceNext bool) (uint32, error) {
 
 	var index uint32
 	err := kvdb.Update(c.db, func(tx kvdb.RwTx) error {
@@ -669,10 +669,14 @@ func (c *ClientDB) NextSessionKeyIndex(towerID TowerID,
 		// Check the session key index to see if a key has already been
 		// reserved for this tower. If so, we'll deserialize and return
 		// the index directly.
-		var err error
-		index, err = getSessionKeyIndex(keyIndex, towerID, blobType)
-		if err == nil {
-			return nil
+		if !forceNext {
+			var err error
+			index, err = getSessionKeyIndex(
+				keyIndex, towerID, blobType,
+			)
+			if err == nil {
+				return nil
+			}
 		}
 
 		// Otherwise, generate a new session key index since the node

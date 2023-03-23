@@ -1,6 +1,7 @@
 package wtclient
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -273,6 +274,7 @@ retryWithBackoff:
 	}
 
 	for {
+	outerLoop:
 		select {
 		case <-n.quit:
 			return
@@ -302,21 +304,35 @@ retryWithBackoff:
 		n.log.Debugf("Attempting session negotiation with tower=%x",
 			towerPub)
 
-		// Before proceeding, we will reserve a session key index to use
-		// with this specific tower. If one is already reserved, the
-		// existing index will be returned.
-		keyIndex, err := n.cfg.DB.NextSessionKeyIndex(
-			tower.ID, n.cfg.Policy.BlobType,
+		var (
+			forceNextKey bool
+			keyIndex     uint32
 		)
-		if err != nil {
-			n.log.Debugf("Unable to reserve session key index "+
-				"for tower=%x: %v", towerPub, err)
-			continue
-		}
+		for {
+			// Before proceeding, we will reserve a session key index to use
+			// with this specific tower. If forceNext not true & if
+			// one is already reserved, the existing index will be
+			// returned.
+			keyIndex, err = n.cfg.DB.NextSessionKeyIndex(
+				tower.ID, n.cfg.Policy.BlobType, forceNextKey,
+			)
+			if err != nil {
+				n.log.Debugf("Unable to reserve session key index "+
+					"for tower=%x: %v", towerPub, err)
 
-		// We'll now attempt the CreateSession dance with the tower to
-		// get a new session, trying all addresses if necessary.
-		err = n.createSession(tower, keyIndex)
+				goto outerLoop
+			}
+
+			// We'll now attempt the CreateSession dance with the tower to
+			// get a new session, trying all addresses if necessary.
+			err = n.createSession(tower, keyIndex)
+			if errors.Is(err, ErrSessionKeyAlreadyUsed) {
+				forceNextKey = true
+				continue
+			}
+
+			break
+		}
 		if err != nil {
 			// An unexpected error occurred, updpate our backoff.
 			updateBackoff()
@@ -360,6 +376,9 @@ func (n *sessionNegotiator) createSession(tower *Tower, keyIndex uint32) error {
 		err = n.tryAddress(sessionKey, keyIndex, tower, lnAddr)
 		tower.Addresses.ReleaseLock(addr)
 		switch {
+		case err == ErrSessionKeyAlreadyUsed:
+			return err
+
 		case err == ErrPermanentTowerFailure:
 			// TODO(conner): report to iterator? can then be reset
 			// with restart
@@ -454,12 +473,7 @@ func (n *sessionNegotiator) tryAddress(sessionKey keychain.SingleKeyECDH,
 	}
 
 	switch createSessionReply.Code {
-	case wtwire.CodeOK, wtwire.CreateSessionCodeAlreadyExists:
-
-		// TODO(conner): add last-applied to create session reply to
-		// handle case where we lose state, session already exists, and
-		// we want to possibly resume using the session
-
+	case wtwire.CodeOK:
 		// TODO(conner): validate reward address
 		rewardPkScript := createSessionReply.Data
 
@@ -499,6 +513,17 @@ func (n *sessionNegotiator) tryAddress(sessionKey keychain.SingleKeyECDH,
 		case <-n.quit:
 			return ErrNegotiatorExiting
 		}
+
+	case wtwire.CreateSessionCodeAlreadyExists:
+		// TODO(conner): add last-applied to create session reply to
+		// handle case where we lose state, session already exists, and
+		// we want to possibly resume using the session
+
+		// This likely means that we lost some data and are trying to
+		// re-using the same session key for a session we created in the
+		// past before db corruption. So, we will now cycle-through
+		// keys in the key index until we dont get this error.
+		return ErrSessionKeyAlreadyUsed
 
 	// TODO(conner): handle error codes properly
 	case wtwire.CreateSessionCodeRejectBlobType:

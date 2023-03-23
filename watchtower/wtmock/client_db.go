@@ -406,7 +406,7 @@ func (m *ClientDB) CreateClientSession(session *wtdb.ClientSession) error {
 // index for that tower can be reserved. Multiple calls to this method before
 // CreateClientSession is invoked should return the same index.
 func (m *ClientDB) NextSessionKeyIndex(towerID wtdb.TowerID,
-	blobType blob.Type) (uint32, error) {
+	blobType blob.Type, forceNext bool) (uint32, error) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -416,8 +416,10 @@ func (m *ClientDB) NextSessionKeyIndex(towerID wtdb.TowerID,
 		blobType: blobType,
 	}
 
-	if index, err := m.getSessionKeyIndex(key); err == nil {
-		return index, nil
+	if !forceNext {
+		if index, err := m.getSessionKeyIndex(key); err == nil {
+			return index, nil
+		}
 	}
 
 	m.nextIndex++

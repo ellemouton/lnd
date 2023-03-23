@@ -2391,12 +2391,7 @@ var clientTests = []clientTest{
 		},
 	},
 	{
-		// Demonstrate that the client gets the
-		// StateUpdateCodeClientBehind error if the client deletes its
-		// database after already having created and started to use a
-		// session with a tower. This happens because the session key
-		// is generated deterministically and will only be unique for
-		// new sessions if the same DB is used.
+		// Fix le bug!
 		name: "demonstrate the StateUpdateCodeClientBehind error",
 		cfg: harnessCfg{
 			localBalance:  localBalance,
@@ -2441,7 +2436,7 @@ var clientTests = []clientTest{
 
 			// Show that the server does not get the remaining
 			// updates. This is beca
-			h.server.waitForUpdates(nil, time.Second)
+			h.server.waitForUpdates(hints[numUpdates/2:], waitTime)
 		},
 	},
 }

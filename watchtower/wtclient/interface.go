@@ -50,7 +50,7 @@ type DB interface {
 	// tower and index, at which point a new index for that tower can be
 	// reserved. Multiple calls to this method before CreateClientSession is
 	// invoked should return the same index.
-	NextSessionKeyIndex(wtdb.TowerID, blob.Type) (uint32, error)
+	NextSessionKeyIndex(wtdb.TowerID, blob.Type, bool) (uint32, error)
 
 	// CreateClientSession saves a newly negotiated client session to the
 	// client's database. This enables the session to be used across

@@ -628,6 +628,23 @@ func (q *sessionQueue) sendStateUpdate(conn wtserver.Peer,
 	// record the last applied returned.
 	case wtwire.CodeOK:
 
+	case wtwire.StateUpdateCodeClientBehind:
+		/*
+					1. check how far the client is behind. If last applied
+					is the max num of updates, then there was probably a data loss,
+					and so we need to cycle through our key index until we find
+					and unused one.
+
+			    		once we get to one that has some (non-full) capacity left: use last applied
+			 		to update our stored state so that we can still make use of the rest of the
+				 	session. Although, with this we are trusting the tower a lot
+					(like, how do we know there aren't just lying to us?)
+					OR: at this point we just through an error and wait for the user to remove
+					the session? or we just do it ourselves - mark the session as borked.
+					The problem is: for paid towers, we will pay for the session _before_ we get to this point
+					actually - wrong. we get a SessionAlreadyExists error back in session negotiation - see you there!
+		*/
+
 	// TODO(conner): handle other error cases properly, ban towers, etc.
 	default:
 		err := fmt.Errorf("received error code %v in "+
