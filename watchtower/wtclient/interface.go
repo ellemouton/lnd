@@ -132,6 +132,10 @@ type DB interface {
 	// lastApplied will be recorded.
 	AckUpdate(id *wtdb.SessionID, seqNum, lastApplied uint16) error
 
+	// DeleteCommittedUpdate deletes the committed update belonging to the
+	// given session and with the given sequence number from the db.
+	DeleteCommittedUpdate(id *wtdb.SessionID, seqNum uint16) error
+
 	wtdb.Queue[*wtdb.BackupID]
 }
 
