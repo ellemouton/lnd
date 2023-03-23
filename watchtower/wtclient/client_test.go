@@ -488,7 +488,6 @@ func newHarness(t *testing.T, cfg harnessCfg) *testHarness {
 		WriteTimeout:       timeout,
 		MinBackoff:         time.Millisecond,
 		MaxBackoff:         time.Second,
-		ForceQuitDelay:     10 * time.Second,
 		SessionCloseRange:  1,
 		MaxTasksInMemQueue: 2,
 	}
@@ -508,7 +507,9 @@ func newHarness(t *testing.T, cfg harnessCfg) *testHarness {
 	}
 
 	h.startClient()
-	t.Cleanup(h.client.ForceQuit)
+	t.Cleanup(func() {
+		require.NoError(t, h.client.Stop())
+	})
 
 	h.makeChannel(0, h.cfg.localBalance, h.cfg.remoteBalance)
 	if !cfg.noRegisterChan0 {
@@ -1214,12 +1215,9 @@ var clientTests = []clientTest{
 			h.backupState(chanID, numSent, nil)
 			numSent++
 
-			// Force quit the client to abort the state updates it
-			// has queued. The sleep ensures that the session queues
-			// have enough time to commit the state updates before
-			// the client is killed.
-			time.Sleep(time.Second)
-			h.client.ForceQuit()
+			// Stop the client to abort the state updates it has
+			// queued.
+			require.NoError(h.t, h.client.Stop())
 
 			// Restart the server and allow it to ack the updates
 			// after the client retransmits the unacked update.
@@ -1413,8 +1411,8 @@ var clientTests = []clientTest{
 			// server should have no updates.
 			h.server.waitForUpdates(nil, time.Second)
 
-			// Force quit the client since it has queued backups.
-			h.client.ForceQuit()
+			// Stop the client since it has queued backups.
+			require.NoError(h.t, h.client.Stop())
 
 			// Restart the server and allow it to ack session
 			// creation.
@@ -1465,8 +1463,8 @@ var clientTests = []clientTest{
 			// server should have no updates.
 			h.server.waitForUpdates(nil, time.Second)
 
-			// Force quit the client since it has queued backups.
-			h.client.ForceQuit()
+			// Stop client since it has queued backups.
+			require.NoError(h.t, h.client.Stop())
 
 			// Restart the server and allow it to ack session
 			// creation.
@@ -1915,7 +1913,7 @@ var clientTests = []clientTest{
 			require.False(h.t, h.isSessionClosable(sessionIDs[0]))
 
 			// Restart the client.
-			h.client.ForceQuit()
+			require.NoError(h.t, h.client.Stop())
 			h.startClient()
 
 			// The session should now have been marked as closable.
@@ -2103,9 +2101,8 @@ var clientTests = []clientTest{
 
 			h.backupStates(chanID, 0, numUpdates/2, nil)
 
-			// Restart the Client (force quit). And also now start
-			// the server.
-			h.client.ForceQuit()
+			// Restart the Client. And also now start the server.
+			require.NoError(h.t, h.client.Stop())
 			h.server.start()
 			h.startClient()
 
@@ -2164,8 +2161,7 @@ var clientTests = []clientTest{
 	{
 		// Show that if a client switches to a new tower _after_ backup
 		// tasks have been bound to the session with the first old tower
-		// then these updates are _not_ replayed onto the new tower.
-		// This is a bug that will be fixed in a future commit.
+		// then these updates are replayed onto the new tower.
 		name: "switch to new tower after tasks are bound",
 		cfg: harnessCfg{
 			localBalance:  localBalance,
@@ -2214,10 +2210,9 @@ var clientTests = []clientTest{
 			}, waitTime)
 			require.NoError(h.t, err)
 
-			// Now we assert that the backups are _not_ backed up
-			// to the new tower. This is a bug that will be fixed
-			// in a future commit.
-			server2.waitForUpdates(nil, time.Second)
+			// Now we assert that the backups are backed up to the
+			// new tower.
+			server2.waitForUpdates(hints[numUpdates/2:], waitTime)
 		},
 	},
 }

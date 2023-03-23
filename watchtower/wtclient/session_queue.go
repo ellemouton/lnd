@@ -62,6 +62,10 @@ type sessionQueueConfig struct {
 	// certain revoked commitment height.
 	BuildBreachRetribution BreachRetributionBuilder
 
+	// TaskPipeline is a pipeline which the sessionQueue should use to send
+	// any unhandled tasks on shutdown of the queue.
+	TaskPipeline *DiskOverflowQueue[*wtdb.BackupID]
+
 	// DB provides access to the client's stable storage.
 	DB DB
 
@@ -109,9 +113,8 @@ type sessionQueue struct {
 
 	retryBackoff time.Duration
 
-	quit      chan struct{}
-	forceQuit chan struct{}
-	shutdown  chan struct{}
+	quit chan struct{}
+	wg   sync.WaitGroup
 }
 
 // newSessionQueue initializes a fresh sessionQueue.
@@ -133,8 +136,6 @@ func newSessionQueue(cfg *sessionQueueConfig,
 		seqNum:       cfg.ClientSession.SeqNum,
 		retryBackoff: cfg.MinBackoff,
 		quit:         make(chan struct{}),
-		forceQuit:    make(chan struct{}),
-		shutdown:     make(chan struct{}),
 	}
 	sq.queueCond = sync.NewCond(&sq.queueMtx)
 
@@ -151,41 +152,74 @@ func newSessionQueue(cfg *sessionQueueConfig,
 // backups.
 func (q *sessionQueue) Start() {
 	q.started.Do(func() {
+		q.wg.Add(1)
 		go q.sessionManager()
 	})
 }
 
 // Stop idempotently stops the sessionQueue by initiating a clean shutdown that
 // will clear all pending tasks in the queue before returning to the caller.
-func (q *sessionQueue) Stop() {
+func (q *sessionQueue) Stop() error {
+	var returnErr error
+
 	q.stopped.Do(func() {
 		q.log.Debugf("SessionQueue(%s) stopping ...", q.ID())
 
-		close(q.quit)
-		q.signalUntilShutdown()
+		shutdown := make(chan struct{})
+		go func() {
+			for {
+				select {
+				case <-time.After(time.Millisecond):
+					q.queueCond.Signal()
+				case <-shutdown:
+					return
+				}
+			}
+		}()
 
-		// Skip log if we also force quit.
-		select {
-		case <-q.forceQuit:
+		close(q.quit)
+		q.wg.Wait()
+		close(shutdown)
+
+		// Now, for any task in the pending queue that we have not yet
+		// created a CommittedUpdate for, re-add the task the main
+		// task pipeline.
+		updates, err := q.cfg.DB.FetchSessionCommittedUpdates(q.ID())
+		if err != nil {
+			returnErr = err
 			return
-		default:
+		}
+
+		unAckedUpdates := make(map[wtdb.BackupID]bool)
+		for _, update := range updates {
+			unAckedUpdates[update.BackupID] = true
+		}
+
+		// of each session onto the task pipeline.
+		q.queueCond.L.Lock()
+		for q.pendingQueue.Len() > 0 {
+			next := q.pendingQueue.Front()
+			q.pendingQueue.Remove(next)
+
+			//nolint:forcetypeassert
+			task := next.Value.(*backupTask)
+
+			if unAckedUpdates[task.id] {
+				continue
+			}
+
+			err := q.cfg.TaskPipeline.QueueBackupID(&task.id)
+			if err != nil {
+				log.Errorf("could not re-queue backup task: "+
+					"%v", err)
+				continue
+			}
 		}
 
 		q.log.Debugf("SessionQueue(%s) stopped", q.ID())
 	})
-}
 
-// ForceQuit idempotently aborts any clean shutdown in progress and returns to
-// he caller after all lingering goroutines have spun down.
-func (q *sessionQueue) ForceQuit() {
-	q.forced.Do(func() {
-		q.log.Infof("SessionQueue(%s) force quitting...", q.ID())
-
-		close(q.forceQuit)
-		q.signalUntilShutdown()
-
-		q.log.Infof("SessionQueue(%s) force quit", q.ID())
-	})
+	return returnErr
 }
 
 // ID returns the wtdb.SessionID for the queue, which can be used to uniquely
@@ -255,7 +289,7 @@ func (q *sessionQueue) AcceptTask(task *backupTask) (reserveStatus, bool) {
 // sessionManager is the primary event loop for the sessionQueue, and is
 // responsible for encrypting and sending accepted tasks to the tower.
 func (q *sessionQueue) sessionManager() {
-	defer close(q.shutdown)
+	defer q.wg.Done()
 
 	for {
 		q.queueCond.L.Lock()
@@ -266,12 +300,6 @@ func (q *sessionQueue) sessionManager() {
 
 			select {
 			case <-q.quit:
-				if q.commitQueue.Len() == 0 &&
-					q.pendingQueue.Len() == 0 {
-					q.queueCond.L.Unlock()
-					return
-				}
-			case <-q.forceQuit:
 				q.queueCond.L.Unlock()
 				return
 			default:
@@ -279,12 +307,9 @@ func (q *sessionQueue) sessionManager() {
 		}
 		q.queueCond.L.Unlock()
 
-		// Exit immediately if a force quit has been requested.  If
-		// either of the queues still has state updates to send to the
-		// tower, we may never exit in the above case if we are unable
-		// to reach the tower for some reason.
+		// Exit immediately if the sessionQueue has been stopped.
 		select {
-		case <-q.forceQuit:
+		case <-q.quit:
 			return
 		default:
 		}
@@ -333,7 +358,7 @@ func (q *sessionQueue) drainBackups() {
 			q.increaseBackoff()
 			select {
 			case <-time.After(q.retryBackoff):
-			case <-q.forceQuit:
+			case <-q.quit:
 			}
 			return
 		}
@@ -366,7 +391,7 @@ func (q *sessionQueue) drainBackups() {
 			q.increaseBackoff()
 			select {
 			case <-time.After(q.retryBackoff):
-			case <-q.forceQuit:
+			case <-q.quit:
 			}
 			return
 		}
@@ -388,7 +413,7 @@ func (q *sessionQueue) drainBackups() {
 		// when we will do so.
 		select {
 		case <-time.After(time.Millisecond):
-		case <-q.forceQuit:
+		case <-q.quit:
 			return
 		}
 	}
@@ -667,19 +692,6 @@ func (q *sessionQueue) increaseBackoff() {
 	}
 }
 
-// signalUntilShutdown strobes the sessionQueue's condition variable until the
-// main event loop exits.
-func (q *sessionQueue) signalUntilShutdown() {
-	for {
-		select {
-		case <-time.After(time.Millisecond):
-			q.queueCond.Signal()
-		case <-q.shutdown:
-			return
-		}
-	}
-}
-
 // sessionQueueSet maintains a mapping of SessionIDs to their corresponding
 // sessionQueue.
 type sessionQueueSet struct {
@@ -706,18 +718,18 @@ func (s *sessionQueueSet) AddAndStart(sessionQueue *sessionQueue) {
 
 // StopAndRemove stops the given session queue and removes it from the
 // sessionQueueSet.
-func (s *sessionQueueSet) StopAndRemove(id wtdb.SessionID) {
+func (s *sessionQueueSet) StopAndRemove(id wtdb.SessionID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	queue, ok := s.queues[id]
 	if !ok {
-		return
+		return nil
 	}
 
-	queue.Stop()
-
 	delete(s.queues, id)
+
+	return queue.Stop()
 }
 
 // Get fetches and returns the sessionQueue with the given ID.
