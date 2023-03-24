@@ -2439,6 +2439,56 @@ var clientTests = []clientTest{
 			h.server.waitForUpdates(hints[numUpdates/2:], waitTime)
 		},
 	},
+	{
+		// demo le bug!
+		name: "demonstrate the StateUpdateCodeSeqNumOutOfOrder error",
+		cfg: harnessCfg{
+			localBalance:  localBalance,
+			remoteBalance: remoteBalance,
+			policy: wtpolicy.Policy{
+				TxPolicy:   defaultTxPolicy,
+				MaxUpdates: 5,
+			},
+		},
+		fn: func(h *testHarness) {
+			const (
+				numUpdates = 5
+				chanID     = 0
+			)
+
+			// Generate numUpdates retributions.
+			hints := h.advanceChannelN(chanID, numUpdates)
+
+			// Back half of the states up.
+			h.backupStates(chanID, 0, numUpdates/2, nil)
+
+			// Wait for the updates to be populated in the server's
+			// database.
+			h.server.waitForUpdates(hints[:numUpdates/2], waitTime)
+
+			// Now stop the server and reset its database.
+			h.server.stop()
+
+			db := wtmock.NewTowerDB()
+
+			h.server.db = db
+			h.server.cfg.DB = db
+
+			// Restart the server.
+			h.server.start()
+
+			// We need to re-register the channel due to the client
+			// db being reset.
+			h.registerChannel(0)
+
+			// Attempt to back up the remaining tasks.
+			h.backupStates(chanID, numUpdates/2, numUpdates, nil)
+
+			// Show that the server does not get the remaining
+			// updates.
+			h.server.waitForUpdates(nil, time.Second)
+		},
+	},
 }
 
 // TestClient executes the client test suite, asserting the ability to backup
