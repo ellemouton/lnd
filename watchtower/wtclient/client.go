@@ -1245,6 +1245,15 @@ func (c *TowerClient) backupDispatcher() {
 			// Normal operation where new tasks are read from the
 			// pipeline.
 			select {
+			case <-c.sessionQueue.Borked():
+				err := c.activeSessions.StopAndRemove(
+					*c.sessionQueue.ID(),
+				)
+				if err != nil {
+					log.Error(err)
+				}
+
+				c.sessionQueue = nil
 
 			// If any sessions are negotiated while we have an
 			// active session queue, queue them for future use.
@@ -1289,6 +1298,9 @@ func (c *TowerClient) backupDispatcher() {
 			// of its corresponding candidate sessions as inactive.
 			case msg := <-c.staleTowers:
 				msg.errChan <- c.handleStaleTower(msg)
+
+			case <-c.quit:
+				return
 			}
 		}
 	}
@@ -1370,6 +1382,8 @@ func (c *TowerClient) taskRejected(task *wtdb.BackupID,
 	curStatus reserveStatus) {
 
 	switch curStatus {
+
+	case sessionBorked:
 
 	// The sessionQueue has available capacity but the task was rejected,
 	// this indicates that the task was ineligible for backup.

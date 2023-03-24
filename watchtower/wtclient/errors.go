@@ -27,6 +27,7 @@ var (
 	ErrNegotiatorExiting = errors.New("negotiator exiting")
 
 	ErrSessionKeyAlreadyUsed = errors.New("session key already used")
+	ErrSessionBorked         = errors.New("session borked")
 
 	// ErrFailedNegotiation signals that the session negotiator could not
 	// acquire a new session as requested.

@@ -2,6 +2,7 @@ package wtclient
 
 import (
 	"container/list"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -27,6 +28,8 @@ const (
 	// reserveExhausted indicates that all slots in the session have been
 	// allocated.
 	reserveExhausted
+
+	sessionBorked
 )
 
 // sessionQueueConfig bundles the resources required by the sessionQueue to
@@ -113,8 +116,9 @@ type sessionQueue struct {
 
 	retryBackoff time.Duration
 
-	quit chan struct{}
-	wg   sync.WaitGroup
+	quit   chan struct{}
+	borked chan struct{}
+	wg     sync.WaitGroup
 }
 
 // newSessionQueue initializes a fresh sessionQueue.
@@ -135,6 +139,7 @@ func newSessionQueue(cfg *sessionQueueConfig,
 		tower:        cfg.ClientSession.Tower,
 		seqNum:       cfg.ClientSession.SeqNum,
 		retryBackoff: cfg.MinBackoff,
+		borked:       make(chan struct{}),
 		quit:         make(chan struct{}),
 	}
 	sq.queueCond = sync.NewCond(&sq.queueMtx)
@@ -155,6 +160,10 @@ func (q *sessionQueue) Start() {
 		q.wg.Add(1)
 		go q.sessionManager()
 	})
+}
+
+func (q *sessionQueue) Borked() chan struct{} {
+	return q.borked
 }
 
 // Stop idempotently stops the sessionQueue by initiating a clean shutdown that
@@ -257,6 +266,12 @@ func (q *sessionQueue) ID() *wtdb.SessionID {
 // tower. The session will only be accepted if the queue is not already
 // exhausted and the task is successfully bound to the ClientSession.
 func (q *sessionQueue) AcceptTask(task *backupTask) (reserveStatus, bool) {
+	select {
+	case <-q.borked:
+		return sessionBorked, false
+	default:
+	}
+
 	q.queueCond.L.Lock()
 
 	numPending := uint32(q.pendingQueue.Len())
@@ -341,12 +356,23 @@ func (q *sessionQueue) sessionManager() {
 
 		// Initiate a new connection to the watchtower and attempt to
 		// drain all pending tasks.
-		q.drainBackups()
+		err := q.drainBackups()
+		if errors.Is(err, ErrSessionBorked) {
+			close(q.borked)
+			go func() {
+				err = q.Stop(true)
+				if err != nil {
+					q.log.Error(err)
+				}
+			}()
+
+			return
+		}
 	}
 }
 
 // drainBackups attempts to send all pending updates in the queue to the tower.
-func (q *sessionQueue) drainBackups() {
+func (q *sessionQueue) drainBackups() error {
 	var (
 		conn      wtserver.Peer
 		err       error
@@ -385,7 +411,7 @@ func (q *sessionQueue) drainBackups() {
 			case <-time.After(q.retryBackoff):
 			case <-q.quit:
 			}
-			return
+			return nil
 		}
 
 		break
@@ -404,11 +430,16 @@ func (q *sessionQueue) drainBackups() {
 		if err != nil {
 			q.log.Errorf("SessionQueue(%v) unable to get next "+
 				"state update: %v", q.ID(), err)
-			return
+			return nil
 		}
 
 		// Now, send the state update to the tower and wait for a reply.
 		err = q.sendStateUpdate(conn, stateUpdate, sendInit, isPending)
+		if errors.Is(err, ErrSessionBorked) {
+			// TODO(elle): if temp bored, just do the backoff.
+			// only return on perm bork.
+			return err
+		}
 		if err != nil {
 			q.log.Errorf("SessionQueue(%s) unable to send state "+
 				"update: %v", q.ID(), err)
@@ -418,7 +449,7 @@ func (q *sessionQueue) drainBackups() {
 			case <-time.After(q.retryBackoff):
 			case <-q.quit:
 			}
-			return
+			return nil
 		}
 
 		q.log.Infof("SessionQueue(%s) uploaded %v seqnum=%d",
@@ -430,7 +461,7 @@ func (q *sessionQueue) drainBackups() {
 		// sent reliably.
 		if stateUpdate.IsComplete == 1 {
 			q.resetBackoff()
-			return
+			return nil
 		}
 
 		// Always apply a small delay between sends, which makes the
@@ -439,7 +470,7 @@ func (q *sessionQueue) drainBackups() {
 		select {
 		case <-time.After(time.Millisecond):
 		case <-q.quit:
-			return
+			return nil
 		}
 	}
 }
@@ -628,23 +659,6 @@ func (q *sessionQueue) sendStateUpdate(conn wtserver.Peer,
 	// record the last applied returned.
 	case wtwire.CodeOK:
 
-	case wtwire.StateUpdateCodeClientBehind:
-		/*
-					1. check how far the client is behind. If last applied
-					is the max num of updates, then there was probably a data loss,
-					and so we need to cycle through our key index until we find
-					and unused one.
-
-			    		once we get to one that has some (non-full) capacity left: use last applied
-			 		to update our stored state so that we can still make use of the rest of the
-				 	session. Although, with this we are trusting the tower a lot
-					(like, how do we know there aren't just lying to us?)
-					OR: at this point we just through an error and wait for the user to remove
-					the session? or we just do it ourselves - mark the session as borked.
-					The problem is: for paid towers, we will pay for the session _before_ we get to this point
-					actually - wrong. we get a SessionAlreadyExists error back in session negotiation - see you there!
-		*/
-
 	// TODO(conner): handle other error cases properly, ban towers, etc.
 	default:
 		err := fmt.Errorf("received error code %v in "+
@@ -652,7 +666,8 @@ func (q *sessionQueue) sendStateUpdate(conn wtserver.Peer,
 			stateUpdateReply.Code, stateUpdate.SeqNum)
 		q.log.Warnf("SessionQueue(%s) unable to upload state update "+
 			"to tower=%s: %v", q.ID(), towerAddr, err)
-		return err
+
+		return ErrSessionBorked
 	}
 
 	lastApplied := stateUpdateReply.LastApplied

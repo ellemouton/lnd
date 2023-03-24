@@ -2444,6 +2444,12 @@ func putClientSessionBody(sessionBkt kvdb.RwBucket,
 func markSessionStatus(sessions kvdb.RwBucket, session *ClientSession,
 	status CSessionStatus) error {
 
+	// Don't change the session status if it has previously been marked as
+	// borked.
+	if session.Status == CSessionBorked {
+		return nil
+	}
+
 	sessionBkt, err := sessions.CreateBucketIfNotExists(session.ID[:])
 	if err != nil {
 		return err

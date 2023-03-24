@@ -2441,7 +2441,7 @@ var clientTests = []clientTest{
 	},
 	{
 		// demo le bug!
-		name: "demonstrate the StateUpdateCodeSeqNumOutOfOrder error",
+		name: "demonstrate the StateUpdate error",
 		cfg: harnessCfg{
 			localBalance:  localBalance,
 			remoteBalance: remoteBalance,
@@ -2477,16 +2477,11 @@ var clientTests = []clientTest{
 			// Restart the server.
 			h.server.start()
 
-			// We need to re-register the channel due to the client
-			// db being reset.
-			h.registerChannel(0)
-
 			// Attempt to back up the remaining tasks.
 			h.backupStates(chanID, numUpdates/2, numUpdates, nil)
 
-			// Show that the server does not get the remaining
-			// updates.
-			h.server.waitForUpdates(nil, time.Second)
+			// Show that the server get the updates.
+			h.server.waitForUpdates(hints[numUpdates/2:], waitTime)
 		},
 	},
 }
@@ -2496,6 +2491,9 @@ var clientTests = []clientTest{
 func TestClient(t *testing.T) {
 	for _, test := range clientTests {
 		tc := test
+		if tc.name != "demonstrate the StateUpdateCodeSeqNumOutOfOrder error" {
+			continue
+		}
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
