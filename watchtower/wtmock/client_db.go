@@ -97,6 +97,10 @@ func (m *ClientDB) CreateTower(lnAddr *lnwire.NetAddress) (*wtdb.Tower, error) {
 			return nil, err
 		}
 		for id, session := range towerSessions {
+			if session.Status == wtdb.CSessionBorked {
+				continue
+			}
+
 			session.Status = wtdb.CSessionActive
 			m.activeSessions[id] = *session
 		}
@@ -160,9 +164,28 @@ func (m *ClientDB) RemoveTower(pubKey *btcec.PublicKey, addr net.Addr) error {
 		if len(m.committedUpdates[session.ID]) > 0 {
 			return wtdb.ErrTowerUnackedUpdates
 		}
+
+		if session.Status == wtdb.CSessionBorked {
+			continue
+		}
+
 		session.Status = wtdb.CSessionInactive
 		m.activeSessions[id] = *session
 	}
+
+	return nil
+}
+
+func (m *ClientDB) MarkSessionBorked(id *wtdb.SessionID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	session, ok := m.activeSessions[*id]
+	if !ok {
+		return wtdb.ErrClientSessionNotFound
+	}
+
+	session.Status = wtdb.CSessionBorked
 
 	return nil
 }

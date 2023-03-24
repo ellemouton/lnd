@@ -95,6 +95,8 @@ type DB interface {
 	MarkChannelClosed(chanID lnwire.ChannelID, blockHeight uint32) (
 		[]wtdb.SessionID, error)
 
+	MarkSessionBorked(id *wtdb.SessionID) error
+
 	// ListClosableSessions fetches and returns the IDs for all sessions
 	// marked as closable.
 	ListClosableSessions() (map[wtdb.SessionID]uint32, error)

@@ -1628,6 +1628,22 @@ func (c *ClientDB) DeleteSession(id SessionID) error {
 	}, func() {})
 }
 
+func (c *ClientDB) MarkSessionBorked(id *SessionID) error {
+	return kvdb.Update(c.db, func(tx kvdb.RwTx) error {
+		sessions := tx.ReadWriteBucket(cSessionBkt)
+		if sessions == nil {
+			return ErrUninitializedDB
+		}
+
+		session, err := getClientSessionBody(sessions, id[:])
+		if err != nil {
+			return err
+		}
+
+		return markSessionStatus(sessions, session, CSessionBorked)
+	}, func() {})
+}
+
 // MarkChannelClosed will mark a registered channel as closed by setting its
 // closed-height as the given block height. It returns a list of session IDs for
 // sessions that are now considered closable due to the close of this channel.
@@ -1742,12 +1758,22 @@ func (c *ClientDB) MarkChannelClosed(chanID lnwire.ChannelID,
 // 1) It has no un-acked updates.
 // 2) It is exhausted (ie it can't accept any more updates)
 // 3) All the channels that it has acked updates for are closed.
+// 4) OR (instead of points 1, 2, 3) the session has been marked as bored.
 func isSessionClosable(sessionsBkt, chanDetailsBkt, chanIDIndexBkt kvdb.RBucket,
 	id *SessionID) (bool, error) {
 
 	sessBkt := sessionsBkt.NestedReadBucket(id[:])
 	if sessBkt == nil {
 		return false, ErrSessionNotFound
+	}
+
+	session, err := getClientSessionBody(sessionsBkt, id[:])
+	if err != nil {
+		return false, err
+	}
+
+	if session.Status == CSessionBorked {
+		return true, nil
 	}
 
 	commitsBkt := sessBkt.NestedReadBucket(cSessionCommits)
@@ -1759,17 +1785,12 @@ func isSessionClosable(sessionsBkt, chanDetailsBkt, chanIDIndexBkt kvdb.RBucket,
 	}
 
 	// If the session has any un-acked updates, then it is not yet closable.
-	err := commitsBkt.ForEach(func(_, _ []byte) error {
+	err = commitsBkt.ForEach(func(_, _ []byte) error {
 		return errSessionHasUnackedUpdates
 	})
 	if errors.Is(err, errSessionHasUnackedUpdates) {
 		return false, nil
 	} else if err != nil {
-		return false, err
-	}
-
-	session, err := getClientSessionBody(sessionsBkt, id[:])
-	if err != nil {
 		return false, err
 	}
 
