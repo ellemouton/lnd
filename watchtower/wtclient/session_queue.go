@@ -166,6 +166,10 @@ func (q *sessionQueue) Borked() chan struct{} {
 	return q.borked
 }
 
+func (q *sessionQueue) Stopped() chan struct{} {
+	return q.quit
+}
+
 // Stop idempotently stops the sessionQueue by initiating a clean shutdown that
 // will clear all pending tasks in the queue before returning to the caller.
 // The final param should only be set to true if this is the last time that
@@ -267,6 +271,8 @@ func (q *sessionQueue) ID() *wtdb.SessionID {
 // exhausted and the task is successfully bound to the ClientSession.
 func (q *sessionQueue) AcceptTask(task *backupTask) (reserveStatus, bool) {
 	select {
+	case <-q.quit:
+		return sessionBorked, false
 	case <-q.borked:
 		return sessionBorked, false
 	default:
@@ -768,6 +774,7 @@ func (s *sessionQueueSet) AddAndStart(sessionQueue *sessionQueue) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	fmt.Println("ELLE: starting and adding session", *sessionQueue.ID())
 	s.queues[*sessionQueue.ID()] = sessionQueue
 
 	sessionQueue.Start()
@@ -779,8 +786,15 @@ func (s *sessionQueueSet) StopAndRemove(id wtdb.SessionID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	fmt.Println("ELLE: ", id.String())
+	for d, _ := range s.queues {
+		fmt.Println("ELLE: ", d.String())
+	}
+
 	queue, ok := s.queues[id]
 	if !ok {
+		log.Infof("ELLE: session not found!!!!!")
+
 		return nil
 	}
 

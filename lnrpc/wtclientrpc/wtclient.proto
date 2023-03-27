@@ -23,6 +23,9 @@ service WatchtowerClient {
     */
     rpc RemoveTower (RemoveTowerRequest) returns (RemoveTowerResponse);
 
+    rpc MarkSessionBorked (MarkSessionBorkedRequest)
+        returns (MarkSessionBorkedResponse);
+
     // ListTowers returns the list of watchtowers registered with the client.
     rpc ListTowers (ListTowersRequest) returns (ListTowersResponse);
 
@@ -34,6 +37,13 @@ service WatchtowerClient {
 
     // Policy returns the active watchtower client policy configuration.
     rpc Policy (PolicyRequest) returns (PolicyResponse);
+}
+
+message MarkSessionBorkedRequest {
+    bytes session_id = 1;
+}
+
+message MarkSessionBorkedResponse {
 }
 
 message AddTowerRequest {

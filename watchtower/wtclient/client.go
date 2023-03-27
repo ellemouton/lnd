@@ -119,6 +119,8 @@ type Client interface {
 	LookupTower(*btcec.PublicKey,
 		...wtdb.ClientSessionListOption) (*RegisteredTower, error)
 
+	MarkSessionBorked(id *wtdb.SessionID) error
+
 	// Stats returns the in-memory statistics of the client since startup.
 	Stats() ClientStats
 
@@ -1245,6 +1247,9 @@ func (c *TowerClient) backupDispatcher() {
 			// Normal operation where new tasks are read from the
 			// pipeline.
 			select {
+			case <-c.sessionQueue.Stopped():
+				c.sessionQueue = nil
+
 			case <-c.sessionQueue.Borked():
 				err := c.activeSessions.StopAndRemove(
 					*c.sessionQueue.ID(),
@@ -1601,6 +1606,36 @@ func (c *TowerClient) AddTower(addr *lnwire.NetAddress) error {
 	case <-c.pipeline.quit:
 		return ErrClientExiting
 	}
+}
+
+func (c *TowerClient) MarkSessionBorked(id *wtdb.SessionID) error {
+	c.log.Infof("ELLE: MarkSessionBored: StopAndRemove being called")
+	err := c.activeSessions.StopAndRemove(*id)
+	if err != nil {
+		return err
+	}
+
+	updates, err := c.cfg.DB.FetchSessionCommittedUpdates(id)
+	if err != nil {
+		return err
+	}
+
+	for _, update := range updates {
+		err := c.pipeline.QueueBackupID(&update.BackupID)
+		if err != nil {
+			return fmt.Errorf("could not re-queue %s: %v",
+				update.BackupID, err)
+		}
+
+		err = c.cfg.DB.DeleteCommittedUpdate(id, update.SeqNum)
+		if err != nil {
+			return fmt.Errorf("could not delete committed "+
+				"update %d for session %s",
+				update.SeqNum, id)
+		}
+	}
+
+	return c.cfg.DB.MarkSessionBorked(id)
 }
 
 // handleNewTower handles a request for a new tower to be added. If the tower

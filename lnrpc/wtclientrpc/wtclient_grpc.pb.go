@@ -28,6 +28,7 @@ type WatchtowerClientClient interface {
 	// again. If an address is provided, then this RPC only serves as a way of
 	// removing the address from the watchtower instead.
 	RemoveTower(ctx context.Context, in *RemoveTowerRequest, opts ...grpc.CallOption) (*RemoveTowerResponse, error)
+	MarkSessionBorked(ctx context.Context, in *MarkSessionBorkedRequest, opts ...grpc.CallOption) (*MarkSessionBorkedResponse, error)
 	// ListTowers returns the list of watchtowers registered with the client.
 	ListTowers(ctx context.Context, in *ListTowersRequest, opts ...grpc.CallOption) (*ListTowersResponse, error)
 	// GetTowerInfo retrieves information for a registered watchtower.
@@ -58,6 +59,15 @@ func (c *watchtowerClientClient) AddTower(ctx context.Context, in *AddTowerReque
 func (c *watchtowerClientClient) RemoveTower(ctx context.Context, in *RemoveTowerRequest, opts ...grpc.CallOption) (*RemoveTowerResponse, error) {
 	out := new(RemoveTowerResponse)
 	err := c.cc.Invoke(ctx, "/wtclientrpc.WatchtowerClient/RemoveTower", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *watchtowerClientClient) MarkSessionBorked(ctx context.Context, in *MarkSessionBorkedRequest, opts ...grpc.CallOption) (*MarkSessionBorkedResponse, error) {
+	out := new(MarkSessionBorkedResponse)
+	err := c.cc.Invoke(ctx, "/wtclientrpc.WatchtowerClient/MarkSessionBorked", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -114,6 +124,7 @@ type WatchtowerClientServer interface {
 	// again. If an address is provided, then this RPC only serves as a way of
 	// removing the address from the watchtower instead.
 	RemoveTower(context.Context, *RemoveTowerRequest) (*RemoveTowerResponse, error)
+	MarkSessionBorked(context.Context, *MarkSessionBorkedRequest) (*MarkSessionBorkedResponse, error)
 	// ListTowers returns the list of watchtowers registered with the client.
 	ListTowers(context.Context, *ListTowersRequest) (*ListTowersResponse, error)
 	// GetTowerInfo retrieves information for a registered watchtower.
@@ -134,6 +145,9 @@ func (UnimplementedWatchtowerClientServer) AddTower(context.Context, *AddTowerRe
 }
 func (UnimplementedWatchtowerClientServer) RemoveTower(context.Context, *RemoveTowerRequest) (*RemoveTowerResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RemoveTower not implemented")
+}
+func (UnimplementedWatchtowerClientServer) MarkSessionBorked(context.Context, *MarkSessionBorkedRequest) (*MarkSessionBorkedResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MarkSessionBorked not implemented")
 }
 func (UnimplementedWatchtowerClientServer) ListTowers(context.Context, *ListTowersRequest) (*ListTowersResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListTowers not implemented")
@@ -192,6 +206,24 @@ func _WatchtowerClient_RemoveTower_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(WatchtowerClientServer).RemoveTower(ctx, req.(*RemoveTowerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WatchtowerClient_MarkSessionBorked_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MarkSessionBorkedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WatchtowerClientServer).MarkSessionBorked(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/wtclientrpc.WatchtowerClient/MarkSessionBorked",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WatchtowerClientServer).MarkSessionBorked(ctx, req.(*MarkSessionBorkedRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -282,6 +314,10 @@ var WatchtowerClient_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RemoveTower",
 			Handler:    _WatchtowerClient_RemoveTower_Handler,
+		},
+		{
+			MethodName: "MarkSessionBorked",
+			Handler:    _WatchtowerClient_MarkSessionBorked_Handler,
 		},
 		{
 			MethodName: "ListTowers",

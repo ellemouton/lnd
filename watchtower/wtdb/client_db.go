@@ -1640,6 +1640,9 @@ func (c *ClientDB) MarkSessionBorked(id *SessionID) error {
 			return err
 		}
 
+		// TODO(elle): dont allow if it has un-acked updates? ie, these
+		// should first be replayed onto task pipeline.
+
 		return markSessionStatus(sessions, session, CSessionBorked)
 	}, func() {})
 }
@@ -1756,24 +1759,14 @@ func (c *ClientDB) MarkChannelClosed(chanID lnwire.ChannelID,
 // isSessionClosable returns true if a session is considered closable. A session
 // is considered closable only if all the following points are true:
 // 1) It has no un-acked updates.
-// 2) It is exhausted (ie it can't accept any more updates)
+// 2) It is exhausted (ie it can't accept any more updates) OR borked
 // 3) All the channels that it has acked updates for are closed.
-// 4) OR (instead of points 1, 2, 3) the session has been marked as bored.
 func isSessionClosable(sessionsBkt, chanDetailsBkt, chanIDIndexBkt kvdb.RBucket,
 	id *SessionID) (bool, error) {
 
 	sessBkt := sessionsBkt.NestedReadBucket(id[:])
 	if sessBkt == nil {
 		return false, ErrSessionNotFound
-	}
-
-	session, err := getClientSessionBody(sessionsBkt, id[:])
-	if err != nil {
-		return false, err
-	}
-
-	if session.Status == CSessionBorked {
-		return true, nil
 	}
 
 	commitsBkt := sessBkt.NestedReadBucket(cSessionCommits)
@@ -1785,7 +1778,7 @@ func isSessionClosable(sessionsBkt, chanDetailsBkt, chanIDIndexBkt kvdb.RBucket,
 	}
 
 	// If the session has any un-acked updates, then it is not yet closable.
-	err = commitsBkt.ForEach(func(_, _ []byte) error {
+	err := commitsBkt.ForEach(func(_, _ []byte) error {
 		return errSessionHasUnackedUpdates
 	})
 	if errors.Is(err, errSessionHasUnackedUpdates) {
@@ -1794,20 +1787,30 @@ func isSessionClosable(sessionsBkt, chanDetailsBkt, chanIDIndexBkt kvdb.RBucket,
 		return false, err
 	}
 
+	session, err := getClientSessionBody(sessionsBkt, id[:])
+	if err != nil {
+		return false, err
+	}
+
+	borked := session.Status == CSessionBorked
+
 	// We have already checked that the session has no more committed
-	// updates. So now we can check if the session is exhausted.
-	if session.SeqNum < session.Policy.MaxUpdates {
+	// updates. So now we can check if the session is exhausted or borked.
+	if !borked && session.SeqNum < session.Policy.MaxUpdates {
 		// If the session is not yet exhausted, it is not yet closable.
 		return false, nil
 	}
 
 	// If the session has no acked-updates, then something is wrong since
 	// the above check ensures that this session has been exhausted meaning
-	// that it should have MaxUpdates acked updates.
+	// that it should have MaxUpdates acked updates. unless borked! -
+	// although.. would it be associated with a channel if this is the case?
 	ackedRangeBkt := sessBkt.NestedReadBucket(cSessionAckRangeIndex)
-	if ackedRangeBkt == nil {
+	if !borked && ackedRangeBkt == nil {
 		return false, fmt.Errorf("no acked-updates found for "+
 			"exhausted session %s", id)
+	} else if borked {
+		return true, nil
 	}
 
 	// Iterate over each of the channels that the session has acked-updates
