@@ -1561,10 +1561,6 @@ func (c *TowerClient) initActiveQueue(s *ClientSession,
 	// previously committed updates.
 	c.activeSessions.AddAndStart(sq)
 
-	// Start the queue so that it can be active in processing newly assigned
-	// tasks or to upload previously committed updates.
-	sq.Start()
-
 	return sq
 }
 

@@ -774,7 +774,6 @@ func (s *sessionQueueSet) AddAndStart(sessionQueue *sessionQueue) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	fmt.Println("ELLE: starting and adding session", *sessionQueue.ID())
 	s.queues[*sessionQueue.ID()] = sessionQueue
 
 	sessionQueue.Start()
@@ -786,15 +785,8 @@ func (s *sessionQueueSet) StopAndRemove(id wtdb.SessionID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	fmt.Println("ELLE: ", id.String())
-	for d, _ := range s.queues {
-		fmt.Println("ELLE: ", d.String())
-	}
-
 	queue, ok := s.queues[id]
 	if !ok {
-		log.Infof("ELLE: session not found!!!!!")
-
 		return nil
 	}
 

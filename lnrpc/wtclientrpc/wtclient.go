@@ -343,6 +343,11 @@ func (c *WatchtowerClient) MarkSessionBorked(ctx context.Context,
 		return nil, err
 	}
 
+	err = c.cfg.AnchorClient.MarkSessionBorked(&sessionID)
+	if err != nil {
+		return nil, err
+	}
+
 	return &MarkSessionBorkedResponse{}, nil
 }
 
