@@ -107,6 +107,11 @@ var (
 	// updates.
 	ErrTowerUnackedUpdates = errors.New("tower has unacked updates")
 
+	// ErrSessionUnackedUpdates is an error returned when there is an
+	// attempt to mark a session as borked before its un-acked updates have
+	// been removed.
+	ErrSessionUnackedUpdates = errors.New("session has unacked updates")
+
 	// ErrCorruptClientSession signals that the client session's on-disk
 	// structure deviates from what is expected.
 	ErrCorruptClientSession = errors.New("client session corrupted")
@@ -180,9 +185,9 @@ var (
 	// session has updates for channels that are still open.
 	errSessionHasOpenChannels = errors.New("session has open channels")
 
-	// errSessionHasUnackedUpdates is an error used to indicate that a
+	// ErrSessionHasUnackedUpdates is an error used to indicate that a
 	// session has un-acked updates.
-	errSessionHasUnackedUpdates = errors.New("session has un-acked updates")
+	ErrSessionHasUnackedUpdates = errors.New("session has un-acked updates")
 
 	// errChannelHasMoreSessions is an error used to indicate that a channel
 	// has updates in other non-closed sessions.
@@ -1735,9 +1740,10 @@ func (c *ClientDB) MarkChannelClosed(chanID lnwire.ChannelID,
 
 // isSessionClosable returns true if a session is considered closable. A session
 // is considered closable only if all the following points are true:
-// 1) It has no un-acked updates.
-// 2) It is exhausted (ie it can't accept any more updates)
-// 3) All the channels that it has acked updates for are closed.
+//  1. It has no un-acked updates.
+//  2. It is exhausted (ie it can't accept any more updates) OR it has been
+//     marked as borked.
+//  3. All the channels that it has acked updates for are closed.
 func isSessionClosable(sessionsBkt, chanDetailsBkt, chanIDIndexBkt kvdb.RBucket,
 	id *SessionID) (bool, error) {
 
@@ -1756,9 +1762,9 @@ func isSessionClosable(sessionsBkt, chanDetailsBkt, chanIDIndexBkt kvdb.RBucket,
 
 	// If the session has any un-acked updates, then it is not yet closable.
 	err := commitsBkt.ForEach(func(_, _ []byte) error {
-		return errSessionHasUnackedUpdates
+		return ErrSessionHasUnackedUpdates
 	})
-	if errors.Is(err, errSessionHasUnackedUpdates) {
+	if errors.Is(err, ErrSessionHasUnackedUpdates) {
 		return false, nil
 	} else if err != nil {
 		return false, err
@@ -1770,19 +1776,23 @@ func isSessionClosable(sessionsBkt, chanDetailsBkt, chanIDIndexBkt kvdb.RBucket,
 	}
 
 	// We have already checked that the session has no more committed
-	// updates. So now we can check if the session is exhausted.
-	if session.SeqNum < session.Policy.MaxUpdates {
+	// updates. So now we can check if the session is exhausted or borked.
+	borked := session.Status == CSessionBorked
+	if !borked && session.SeqNum < session.Policy.MaxUpdates {
 		// If the session is not yet exhausted, it is not yet closable.
 		return false, nil
 	}
 
-	// If the session has no acked-updates, then something is wrong since
-	// the above check ensures that this session has been exhausted meaning
-	// that it should have MaxUpdates acked updates.
+	// If the session has no acked-updates, then unless it is borked,
+	// something is wrong since the above check ensures that this session
+	// has been exhausted meaning that it should have MaxUpdates acked
+	// updates.
 	ackedRangeBkt := sessBkt.NestedReadBucket(cSessionAckRangeIndex)
-	if ackedRangeBkt == nil {
+	if !borked && ackedRangeBkt == nil {
 		return false, fmt.Errorf("no acked-updates found for "+
 			"exhausted session %s", id)
+	} else if ackedRangeBkt == nil {
+		return true, nil
 	}
 
 	// Iterate over each of the channels that the session has acked-updates
@@ -2053,6 +2063,49 @@ func (c *ClientDB) AckUpdate(id *SessionID, seqNum uint16,
 		}
 
 		return index.Add(height, rangesBkt)
+	}, func() {})
+}
+
+// MarkSessionBorked will set the status of the given session to Borked so that
+// the session is not used for any future updates. This method must not be
+// called if the session has un-acked updates.
+func (c *ClientDB) MarkSessionBorked(id *SessionID) error {
+	return kvdb.Update(c.db, func(tx kvdb.RwTx) error {
+		sessions := tx.ReadWriteBucket(cSessionBkt)
+		if sessions == nil {
+			return ErrUninitializedDB
+		}
+
+		sessionsBkt := tx.ReadBucket(cSessionBkt)
+		if sessionsBkt == nil {
+			return ErrUninitializedDB
+		}
+
+		chanIDIndexBkt := tx.ReadBucket(cChanIDIndexBkt)
+		if chanIDIndexBkt == nil {
+			return ErrUninitializedDB
+		}
+
+		committedUpdateCount := make(map[SessionID]uint16)
+		perCommittedUpdate := func(s *ClientSession,
+			_ *CommittedUpdate) {
+
+			committedUpdateCount[s.ID]++
+		}
+
+		session, err := c.getClientSession(
+			sessionsBkt, chanIDIndexBkt, id[:],
+			WithPerCommittedUpdate(perCommittedUpdate),
+		)
+		if err != nil {
+			return err
+		}
+
+		if committedUpdateCount[*id] > 0 {
+			return ErrSessionHasUnackedUpdates
+		}
+
+		return markSessionStatus(sessions, session, CSessionBorked)
 	}, func() {})
 }
 
@@ -2403,6 +2456,12 @@ func putClientSessionBody(sessionBkt kvdb.RwBucket,
 // status.
 func markSessionStatus(sessions kvdb.RwBucket, session *ClientSession,
 	status CSessionStatus) error {
+
+	// Don't change the session status if it has previously been marked as
+	// borked.
+	if session.Status == CSessionBorked {
+		return nil
+	}
 
 	sessionBkt, err := sessions.CreateBucketIfNotExists(session.ID[:])
 	if err != nil {

@@ -132,6 +132,11 @@ type DB interface {
 	// lastApplied will be recorded.
 	AckUpdate(id *wtdb.SessionID, seqNum, lastApplied uint16) error
 
+	// MarkSessionBorked will set the status of the given session to Borked
+	// so that the session is not used for any future updates. This method
+	// must not be called if the session has un-acked updates.
+	MarkSessionBorked(id *wtdb.SessionID) error
+
 	wtdb.Queue[*wtdb.BackupID]
 }
 
