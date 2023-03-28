@@ -582,8 +582,8 @@ func (m *ClientDB) MarkSessionBorked(id *wtdb.SessionID) error {
 		return wtdb.ErrClientSessionNotFound
 	}
 
-	if _, ok := m.committedUpdates[*id]; ok {
-		return wtdb.ErrTowerUnackedUpdates
+	if len(m.committedUpdates[*id]) != 0 {
+		return wtdb.ErrSessionHasUnackedUpdates
 	}
 
 	session.Status = wtdb.CSessionBorked

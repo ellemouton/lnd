@@ -247,6 +247,10 @@ func (q *sessionQueue) Stop(final bool) error {
 	return returnErr
 }
 
+func (q *sessionQueue) Stopped() chan struct{} {
+	return q.quit
+}
+
 // ID returns the wtdb.SessionID for the queue, which can be used to uniquely
 // identify this a particular queue.
 func (q *sessionQueue) ID() *wtdb.SessionID {

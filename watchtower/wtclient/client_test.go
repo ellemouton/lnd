@@ -2390,6 +2390,80 @@ var clientTests = []clientTest{
 			server2.waitForUpdates(hints[numUpdates/2:], waitTime)
 		},
 	},
+	{
+		name: "derror",
+		cfg: harnessCfg{
+			localBalance:  localBalance,
+			remoteBalance: remoteBalance,
+			policy: wtpolicy.Policy{
+				TxPolicy:   defaultTxPolicy,
+				MaxUpdates: 5,
+			},
+		},
+		fn: func(h *testHarness) {
+			const (
+				numUpdates = 5
+				chanID     = 0
+			)
+
+			// Generate numUpdates retributions.
+			hints := h.advanceChannelN(chanID, numUpdates)
+
+			// Back half of the states up.
+			h.backupStates(chanID, 0, numUpdates/2, nil)
+
+			// Wait for the updates to be populated in the server's
+			// database.
+			h.server.waitForUpdates(hints[:numUpdates/2], waitTime)
+
+			// Now stop the client and reset its database.
+			require.NoError(h.t, h.client.Stop())
+
+			db := wtmock.NewClientDB()
+			h.clientDB = db
+			h.clientCfg.DB = db
+
+			// Restart the client.
+			h.startClient()
+
+			// We need to re-register the channel due to the client
+			// db being reset.
+			h.registerChannel(0)
+
+			// Attempt to back up the remaining tasks.
+			h.backupStates(chanID, numUpdates/2, numUpdates, nil)
+
+			// Show that the server does not get the remaining
+			// updates.
+			h.server.waitForUpdates(nil, waitTime)
+
+			// Get all the sessions.
+			towers, err := h.clientDB.ListTowers()
+			require.NoError(h.t, err)
+			require.Len(h.t, towers, 1)
+
+			sessions, err := h.clientDB.ListClientSessions(
+				&towers[0].ID,
+			)
+			require.NoError(h.t, err)
+			require.Len(h.t, sessions, 1)
+
+			var sessID wtdb.SessionID
+			for id := range sessions {
+				sessID = id
+			}
+
+			// Mark the client session as borked.
+			err = h.client.MarkSessionBorked(&sessID)
+			require.NoError(h.t, err)
+
+			// Since the problem session has been marked as borked,
+			// the client should have negotiated a new session with
+			// the server and so we now assert that the latest
+			// updates have been backed up to the server.
+			h.server.waitForUpdates(hints[numUpdates/2:], waitTime)
+		},
+	},
 }
 
 // TestClient executes the client test suite, asserting the ability to backup

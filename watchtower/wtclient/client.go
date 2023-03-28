@@ -138,6 +138,10 @@ type Client interface {
 	// negotiated policy.
 	BackupState(chanID *lnwire.ChannelID, stateNum uint64) error
 
+	// MarkSessionBorked will set the status of the given session to Borked
+	// so that the session is not used for any future updates.
+	MarkSessionBorked(id *wtdb.SessionID) error
+
 	// Start initializes the watchtower client, allowing it process requests
 	// to backup revoked channel states.
 	Start() error
@@ -786,6 +790,17 @@ func (c *TowerClient) BackupState(chanID *lnwire.ChannelID,
 	return c.pipeline.QueueBackupID(id)
 }
 
+// MarkSessionBorked will set the status of the given session to Borked so that
+// the session is not used for any future updates.
+func (c *TowerClient) MarkSessionBorked(id *wtdb.SessionID) error {
+	err := c.activeSessions.StopAndRemove(*id)
+	if err != nil {
+		return err
+	}
+
+	return c.cfg.DB.MarkSessionBorked(id)
+}
+
 // nextSessionQueue attempts to fetch an active session from our set of
 // candidate sessions. Candidate sessions with a differing policy from the
 // active client's advertised policy will be ignored, but may be resumed if the
@@ -1246,6 +1261,10 @@ func (c *TowerClient) backupDispatcher() {
 			// pipeline.
 			select {
 
+			case <-c.sessionQueue.Stopped():
+				c.log.Debugf("Session stopped! Next pls")
+				c.sessionQueue = nil
+
 			// If any sessions are negotiated while we have an
 			// active session queue, queue them for future use.
 			// This shouldn't happen with the current design, so
@@ -1289,6 +1308,9 @@ func (c *TowerClient) backupDispatcher() {
 			// of its corresponding candidate sessions as inactive.
 			case msg := <-c.staleTowers:
 				msg.errChan <- c.handleStaleTower(msg)
+
+			case <-c.quit:
+				return
 			}
 		}
 	}
