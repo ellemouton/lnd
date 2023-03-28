@@ -294,6 +294,9 @@
         }
       }
     },
+    "wtclientrpcMarkSessionBorkedResponse": {
+      "type": "object"
+    },
     "wtclientrpcPolicyResponse": {
       "type": "object",
       "properties": {

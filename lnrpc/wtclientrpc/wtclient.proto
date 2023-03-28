@@ -34,6 +34,9 @@ service WatchtowerClient {
 
     // Policy returns the active watchtower client policy configuration.
     rpc Policy (PolicyRequest) returns (PolicyResponse);
+
+    rpc MarkSessionBorked (MarkSessionBorkedRequest)
+        returns (MarkSessionBorkedResponse);
 }
 
 message AddTowerRequest {
@@ -221,4 +224,12 @@ message PolicyResponse {
     justice transactions in response to channel breaches.
     */
     uint32 sweep_sat_per_vbyte = 3;
+}
+
+message MarkSessionBorkedRequest {
+    // The ID of the session that should be marked as borked.
+    bytes session_id = 1;
+}
+
+message MarkSessionBorkedResponse {
 }
