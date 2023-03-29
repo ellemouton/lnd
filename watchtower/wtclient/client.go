@@ -74,10 +74,12 @@ func (c *TowerClient) genSessionFilter(
 }
 
 // ExhaustedSessionFilter constructs a wtdb.ClientSessionFilterFn filter
-// function that will filter out any sessions that have been exhausted.
+// function that will filter out any sessions that have been exhausted or the
+// session has been marked as borked.
 func ExhaustedSessionFilter() wtdb.ClientSessionFilterFn {
 	return func(session *wtdb.ClientSession) bool {
-		return session.SeqNum < session.Policy.MaxUpdates
+		return session.SeqNum < session.Policy.MaxUpdates &&
+			session.Status != wtdb.CSessionBorked
 	}
 }
 
@@ -793,8 +795,8 @@ func (c *TowerClient) BackupState(chanID *lnwire.ChannelID,
 // MarkSessionBorked will set the status of the given session to Borked so that
 // the session is not used for any future updates.
 func (c *TowerClient) MarkSessionBorked(id *wtdb.SessionID) error {
-	err := c.activeSessions.StopAndRemove(*id)
-	if err != nil {
+	ok, err := c.activeSessions.StopAndRemove(*id)
+	if !ok || err != nil {
 		return err
 	}
 
@@ -1705,7 +1707,7 @@ func (c *TowerClient) handleStaleTower(msg *staleTowerMsg) error {
 	for sessionID := range sessions {
 		delete(c.candidateSessions, sessionID)
 
-		err = c.activeSessions.StopAndRemove(sessionID)
+		_, err := c.activeSessions.StopAndRemove(sessionID)
 		if err != nil {
 			c.log.Errorf("could not stop session %s: %w", sessionID,
 				err)
