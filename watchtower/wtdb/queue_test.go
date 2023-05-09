@@ -82,9 +82,10 @@ func testQueue(t *testing.T, db wtclient.DB) {
 	}
 
 	popAndAssert := func(expTask *wtdb.BackupID) {
-		task, err := queue.Pop()
+		tasks, err := queue.PopUpTo(1)
 		require.NoError(t, err)
-		require.EqualValues(t, expTask, task)
+		require.Len(t, tasks, 1)
+		require.EqualValues(t, expTask, tasks[0])
 	}
 
 	// Create a few tasks that we use throughout the test.

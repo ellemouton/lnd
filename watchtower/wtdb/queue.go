@@ -57,9 +57,9 @@ type Queue[T any] interface {
 	// Push pushes new T items to the tail of the queue.
 	Push(items ...T) error
 
-	// Pop pops the next T from the head of the queue. If no more items are
-	// in the queue then ErrEmptyQueue is returned.
-	Pop() (T, error)
+	// PopUpTo attempts to pop up to n items from the head of the queue. If
+	// no more items are in the queue then ErrEmptyQueue is returned.
+	PopUpTo(n int) ([]T, error)
 
 	// PushHead pushes new T items to the head of the queue.
 	PushHead(items ...T) error
@@ -101,19 +101,10 @@ func NewQueueDB[T Serializable](db kvdb.Backend, queueBktName []byte,
 func (d *DiskQueueDB[T]) Len() (uint64, error) {
 	var res uint64
 	err := kvdb.View(d.db, func(tx kvdb.RTx) error {
-		numMain, err := d.numTasks(tx, queueMainBkt)
-		if err != nil {
-			return err
-		}
+		var err error
+		res, err = d.len(tx)
 
-		numHead, err := d.numTasks(tx, queueHeadBkt)
-		if err != nil {
-			return err
-		}
-
-		res = numMain + numHead
-
-		return nil
+		return err
 	}, func() {
 		res = 0
 	})
@@ -140,33 +131,66 @@ func (d *DiskQueueDB[T]) Push(items ...T) error {
 	}, func() {})
 }
 
-// Pop pops the next T from the head of the queue. If no more items
-// are in the queue then nil is returned.
+// PopUpTo attempts to pop up to n items from the queue. If the queue is empty,
+// then ErrEmptyQueue is returned.
 //
 // NOTE: This is part of the Queue interface.
-func (d *DiskQueueDB[T]) Pop() (T, error) {
-	item := d.constructor()
+func (d *DiskQueueDB[T]) PopUpTo(n int) ([]T, error) {
+	var items []T
+
 	err := d.db.Update(func(tx walletdb.ReadWriteTx) error {
-		var err error
-		item, err = d.nextTask(tx, queueHeadBkt)
-		// No error means that an item was found.
-		if err == nil {
-			return nil
-		} else if !errors.Is(err, ErrEmptyQueue) {
+		l, err := d.len(tx)
+		if err != nil {
 			return err
 		}
 
-		item, err = d.nextTask(tx, queueMainBkt)
+		if l == 0 {
+			return ErrEmptyQueue
+		}
+
+		num := n
+		if l < uint64(n) {
+			num = int(l)
+		}
+
+		items = make([]T, 0, num)
+		for i := 0; i < num; i++ {
+			item, err := d.pop(tx)
+			if err != nil {
+				return err
+			}
+
+			items = append(items, item)
+		}
 
 		return err
 	}, func() {
-		item = d.constructor()
+		items = nil
 	})
 	if err != nil {
+		return nil, err
+	}
+
+	return items, nil
+}
+
+// pop gets the next T from the head of the queue. If no more items are in the
+// queue then ErrEmptyQueue is returned.
+func (d *DiskQueueDB[T]) pop(tx walletdb.ReadWriteTx) (T, error) {
+	var (
+		item = d.constructor()
+		err  error
+	)
+
+	item, err = d.nextTask(tx, queueHeadBkt)
+	// No error means that an item was found in the head queue.
+	if err == nil {
+		return item, nil
+	} else if !errors.Is(err, ErrEmptyQueue) {
 		return item, err
 	}
 
-	return item, nil
+	return d.nextTask(tx, queueMainBkt)
 }
 
 // PushHead pushes new T items to the head of the queue.
@@ -354,6 +378,21 @@ func (d *DiskQueueDB[T]) nextTask(tx kvdb.RwTx, queueName []byte) (T, error) {
 	}
 
 	return task, nil
+}
+
+// len returns the number of tasks in the queue.
+func (d *DiskQueueDB[T]) len(tx kvdb.RTx) (uint64, error) {
+	numMain, err := d.numTasks(tx, queueMainBkt)
+	if err != nil {
+		return 0, err
+	}
+
+	numHead, err := d.numTasks(tx, queueHeadBkt)
+	if err != nil {
+		return 0, err
+	}
+
+	return numMain + numHead, nil
 }
 
 // numTasks returns the number of items in the given queue.

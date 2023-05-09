@@ -80,11 +80,11 @@ type DiskOverflowQueue[T any] struct {
 	// item should be the first to be reloaded on restart.
 	leftOverItem1 *T
 
-	// leftOverItem2 will be non-nil on shutdown if the feedMemQueue
-	// method was holding an unhandled task at shutdown time. Since
-	// feedMemQueue manages the input to the queue, this task should
-	// be pushed to the head of the disk queue.
-	leftOverItem2 *T
+	// leftOverItems2 will be non-empty on shutdown if the feedMemQueue
+	// method was holding any unhandled tasks at shutdown time. Since
+	// feedMemQueue manages the input to the queue, the tasks should be
+	// pushed to the head of the disk queue.
+	leftOverItems2 []T
 
 	// leftOverItem3 will be non-nil on shutdown if drainInputList was
 	// holding an unhandled task at shutdown time. This task should be put
@@ -223,10 +223,10 @@ func (q *DiskOverflowQueue[T]) stop() error {
 		queueHead = append(queueHead, task)
 	}
 
-	// Then, any item held in leftOverItem2 would have been next to join the
-	// memQueue. So that gets added next.
-	if q.leftOverItem2 != nil {
-		queueHead = append(queueHead, *q.leftOverItem2)
+	// Then, any items held in leftOverItems2 would have been next to join
+	// the memQueue. So those gets added next.
+	if len(q.leftOverItems2) != 0 {
+		queueHead = append(queueHead, q.leftOverItems2...)
 	}
 
 	// Now, push these items to the head of the queue.
@@ -444,7 +444,17 @@ func (q *DiskOverflowQueue[T]) feedMemQueue() {
 		}
 
 		for {
-			task, err := q.db.Pop()
+			// Ideally, we want to do batch reads from the DB. So
+			// we check how much capacity there is in the memQueue
+			// and fetch enough tasks to fill that capacity. If
+			// there is no capacity, however, then we at least want
+			// to fetch one task.
+			numToPop := cap(q.memQueue) - len(q.memQueue)
+			if numToPop == 0 {
+				numToPop = 1
+			}
+
+			tasks, err := q.db.PopUpTo(numToPop)
 			if errors.Is(err, wtdb.ErrEmptyQueue) {
 				q.toDisk.Store(false)
 
@@ -461,15 +471,18 @@ func (q *DiskOverflowQueue[T]) feedMemQueue() {
 				}
 			}
 
-			select {
-			case q.memQueue <- task:
+			for i, task := range tasks {
+				select {
+				case q.memQueue <- task:
 
-			// If the queue is quit at this moment, then the
-			// unhandled task is assigned to leftOverItem2 so that
-			// it can be handled by the stop method.
-			case <-q.quit:
-				q.leftOverItem2 = &task
-				return
+				// If the queue is quit at this moment, then the
+				// unhandled tasks are assigned to
+				// leftOverItems2 so that they can be handled
+				// by the stop method.
+				case <-q.quit:
+					q.leftOverItems2 = tasks[i:]
+					return
+				}
 			}
 		}
 	}

@@ -54,7 +54,7 @@ const (
 
 	// DefaultMaxTasksInMemQueue is the maximum number of items to be held
 	// in the in-memory queue.
-	DefaultMaxTasksInMemQueue = 1000
+	DefaultMaxTasksInMemQueue = 2000
 )
 
 // genSessionFilter constructs a filter that can be used to select sessions only
