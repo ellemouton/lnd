@@ -1506,6 +1506,11 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			sessionCloseRange = cfg.WtClient.SessionCloseRange
 		}
 
+		maxTasksInMemQueue := uint64(wtclient.DefaultMaxTasksInMemQueue)
+		if cfg.WtClient.MaxTasksInMemQueue != 0 {
+			maxTasksInMemQueue = cfg.WtClient.MaxTasksInMemQueue
+		}
+
 		if err := policy.Validate(); err != nil {
 			return nil, err
 		}
@@ -1569,7 +1574,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			MinBackoff:         10 * time.Second,
 			MaxBackoff:         5 * time.Minute,
 			ForceQuitDelay:     wtclient.DefaultForceQuitDelay,
-			MaxTasksInMemQueue: wtclient.DefaultMaxTasksInMemQueue,
+			MaxTasksInMemQueue: maxTasksInMemQueue,
 		})
 		if err != nil {
 			return nil, err
@@ -1603,7 +1608,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			MinBackoff:         10 * time.Second,
 			MaxBackoff:         5 * time.Minute,
 			ForceQuitDelay:     wtclient.DefaultForceQuitDelay,
-			MaxTasksInMemQueue: wtclient.DefaultMaxTasksInMemQueue,
+			MaxTasksInMemQueue: maxTasksInMemQueue,
 		})
 		if err != nil {
 			return nil, err
