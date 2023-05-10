@@ -64,14 +64,14 @@ func TestDiskOverflowQueue(t *testing.T) {
 		name string
 		run  func(*testing.T, initQueue)
 	}{
-		//{
-		//	name: "overflow to disk",
-		//	run:  testOverflowToDisk,
-		//},
-		//{
-		//	name: "startup with smaller buffer size",
-		//	run:  testRestartWithSmallerBufferSize,
-		//},
+		{
+			name: "overflow to disk",
+			run:  testOverflowToDisk,
+		},
+		{
+			name: "startup with smaller buffer size",
+			run:  testRestartWithSmallerBufferSize,
+		},
 		{
 			name: "start stop queue",
 			run:  testStartStopQueue,
@@ -195,8 +195,16 @@ func testRestartWithSmallerBufferSize(t *testing.T, newQueue initQueue) {
 	require.NoError(t, err)
 	require.NoError(t, q.Start())
 
-	// Now there should be a few items left in the disk queue since
-	// the in-memory buffer is now smaller.
+	// Once more we shall repeat the above restart process just to ensure
+	// that in-memory items are correctly re-written and read from the DB.
+	waitForNumDisk(t, db, 5)
+	require.NoError(t, q.Stop())
+	waitForNumDisk(t, db, 7)
+	q, err = NewDiskOverflowQueue[*wtdb.BackupID](
+		db, secondMaxInMemItems, log,
+	)
+	require.NoError(t, err)
+	require.NoError(t, q.Start())
 	waitForNumDisk(t, db, 5)
 
 	// Make sure that items are popped off the queue in the correct

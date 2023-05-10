@@ -198,8 +198,33 @@ func (d *DiskQueueDB[T]) pop(tx walletdb.ReadWriteTx) (T, error) {
 // NOTE: This is part of the Queue interface.
 func (d *DiskQueueDB[T]) PushHead(items ...T) error {
 	return d.db.Update(func(tx walletdb.ReadWriteTx) error {
-		for i := 0; i < len(items); i++ {
-			err := d.addTask(tx, queueHeadBkt, items[i])
+		// push head must first read out _all_ items currently in the
+		// head, add those to the end of the passed in list, and then
+		// write.
+		numHead, err := d.numTasks(tx, queueHeadBkt)
+		if err != nil {
+			return err
+		}
+
+		itemList := make([]T, 0, int(numHead)+len(items))
+		for _, item := range items {
+			itemList = append(itemList, item)
+		}
+
+		for {
+			t, err := d.nextTask(tx, queueHeadBkt)
+			if errors.Is(err, ErrEmptyQueue) {
+				break
+			}
+			if err != nil {
+				return err
+			}
+
+			itemList = append(itemList, t)
+		}
+
+		for _, item := range itemList {
+			err := d.addTask(tx, queueHeadBkt, item)
 			if err != nil {
 				return err
 			}
