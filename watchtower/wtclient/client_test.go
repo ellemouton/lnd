@@ -392,18 +392,19 @@ func (c *mockChannel) getState(
 }
 
 type testHarness struct {
-	t          *testing.T
-	cfg        harnessCfg
-	signer     *wtmock.MockSigner
-	capacity   lnwire.MilliSatoshi
-	clientDB   *wtmock.ClientDB
-	clientCfg  *wtclient.Config
-	client     wtclient.Client
-	serverAddr *lnwire.NetAddress
-	serverDB   *wtmock.TowerDB
-	serverCfg  *wtserver.Config
-	server     *wtserver.Server
-	net        *mockNet
+	t            *testing.T
+	cfg          harnessCfg
+	signer       *wtmock.MockSigner
+	capacity     lnwire.MilliSatoshi
+	clientDB     *wtmock.ClientDB
+	clientCfg    *wtclient.Config
+	clientPolicy wtpolicy.Policy
+	client       wtclient.Client
+	serverAddr   *lnwire.NetAddress
+	serverDB     *wtmock.TowerDB
+	serverCfg    *wtserver.Config
+	server       *wtserver.Server
+	net          *mockNet
 
 	blockEvents *mockBlockSub
 	height      int32
@@ -505,7 +506,6 @@ func newHarness(t *testing.T, cfg harnessCfg) *testHarness {
 		DB:                 clientDB,
 		AuthDial:           mockNet.AuthDial,
 		SecretKeyRing:      wtmock.NewSecretKeyRing(),
-		Policy:             cfg.policy,
 		NewAddress: func() ([]byte, error) {
 			return addrScript, nil
 		},
@@ -516,6 +516,7 @@ func newHarness(t *testing.T, cfg harnessCfg) *testHarness {
 		ForceQuitDelay:    10 * time.Second,
 		SessionCloseRange: 1,
 	}
+	h.clientPolicy = cfg.policy
 
 	h.clientCfg.BuildBreachRetribution = func(id lnwire.ChannelID,
 		commitHeight uint64) (*lnwallet.BreachRetribution,
@@ -587,7 +588,7 @@ func (h *testHarness) startClient() {
 		Address:     towerTCPAddr,
 	}
 
-	h.client, err = wtclient.New(h.clientCfg)
+	h.client, err = wtclient.NewTowerClient(h.clientCfg, h.clientPolicy)
 	require.NoError(h.t, err)
 	require.NoError(h.t, h.client.Start())
 	require.NoError(h.t, h.client.AddTower(towerAddr))
@@ -691,7 +692,7 @@ func (h *testHarness) registerChannel(id uint64) {
 	h.t.Helper()
 
 	chanID := chanIDFromInt(id)
-	err := h.client.RegisterChannel(chanID)
+	err := h.client.RegisterChannel(chanID, channeldb.SingleFunderTweaklessBit)
 	require.NoError(h.t, err)
 }
 
@@ -733,7 +734,7 @@ func (h *testHarness) backupState(id, i uint64, expErr error) {
 	chanID := chanIDFromInt(id)
 
 	err := h.client.BackupState(&chanID, retribution.RevokedStateNum)
-	require.ErrorIs(h.t, expErr, err)
+	require.ErrorIs(h.t, err, expErr)
 }
 
 // sendPayments instructs the channel identified by id to send amt to the remote
@@ -857,6 +858,7 @@ func (h *testHarness) assertUpdatesForPolicy(hints []blob.BreachHint,
 	// Assert that all the matches correspond to a session with the
 	// expected policy.
 	for _, match := range matches {
+		h.t.Logf("%d", match.SeqNum)
 		matchPolicy := match.SessionInfo.Policy
 		require.Equal(h.t, expPolicy, matchPolicy)
 	}
@@ -1191,6 +1193,7 @@ var clientTests = []clientTest{
 			// Restart the client and allow it to process the
 			// committed update.
 			h.startClient()
+			h.registerChannel(0)
 
 			// Wait for the committed update to be accepted by the
 			// tower.
@@ -1394,6 +1397,7 @@ var clientTests = []clientTest{
 			// immediately try to overwrite the old session with an
 			// identical one.
 			h.startClient()
+			h.registerChannel(0)
 
 			// Now, queue the retributions for backup.
 			h.backupStates(chanID, 0, numUpdates, nil)
@@ -1404,7 +1408,7 @@ var clientTests = []clientTest{
 
 			// Assert that the server has updates for the clients
 			// most recent policy.
-			h.assertUpdatesForPolicy(hints, h.clientCfg.Policy)
+			h.assertUpdatesForPolicy(hints, h.clientPolicy)
 		},
 	},
 	{
@@ -1446,8 +1450,9 @@ var clientTests = []clientTest{
 			// Restart the client with a new policy, which will
 			// immediately try to overwrite the prior session with
 			// the old policy.
-			h.clientCfg.Policy.SweepFeeRate *= 2
+			h.clientPolicy.SweepFeeRate *= 2
 			h.startClient()
+			h.registerChannel(0)
 
 			// Now, queue the retributions for backup.
 			h.backupStates(chanID, 0, numUpdates, nil)
@@ -1458,7 +1463,7 @@ var clientTests = []clientTest{
 
 			// Assert that the server has updates for the clients
 			// most recent policy.
-			h.assertUpdatesForPolicy(hints, h.clientCfg.Policy)
+			h.assertUpdatesForPolicy(hints, h.clientPolicy)
 		},
 	},
 	{
@@ -1500,11 +1505,12 @@ var clientTests = []clientTest{
 			// adjusting the MaxUpdates. The client should detect
 			// that the two policies have equivalent TxPolicies and
 			// continue using the first.
-			expPolicy := h.clientCfg.Policy
+			expPolicy := h.clientPolicy
 
 			// Restart the client with a new policy.
-			h.clientCfg.Policy.MaxUpdates = 20
+			h.clientPolicy.MaxUpdates = 20
 			h.startClient()
+			h.registerChannel(0)
 
 			// Now, queue the second half of the retributions.
 			h.backupStates(chanID, numUpdates/2, numUpdates, nil)
@@ -1555,6 +1561,7 @@ var clientTests = []clientTest{
 			// maintained across restarts.
 			require.NoError(h.t, h.client.Stop())
 			h.startClient()
+			h.registerChannel(0)
 
 			// Try to back up the full range of retributions. Only
 			// the second half should actually be sent.

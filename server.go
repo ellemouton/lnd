@@ -283,8 +283,6 @@ type server struct {
 
 	towerClient wtclient.Client
 
-	anchorTowerClient wtclient.Client
-
 	connMgr *connmgr.ConnManager
 
 	sigPool *lnwallet.SigPool
@@ -1516,9 +1514,11 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			sessionCloseRange = cfg.WtClient.SessionCloseRange
 		}
 
-		if err := policy.Validate(); err != nil {
-			return nil, err
-		}
+		// Copy the policy for legacy channels and set the blob flag
+		// signalling support for anchor channels.
+		anchorPolicy := policy
+		anchorPolicy.TxPolicy.BlobType |=
+			blob.Type(blob.FlagAnchorChannel)
 
 		// authDial is the wrapper around the btrontide.Dial for the
 		// watchtower.
@@ -1557,7 +1557,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 		fetchClosedChannel := s.chanStateDB.FetchClosedChannelForID
 
-		s.towerClient, err = wtclient.New(&wtclient.Config{
+		s.towerClient, err = wtclient.NewTowerClient(&wtclient.Config{
 			FetchClosedChannel:     fetchClosedChannel,
 			BuildBreachRetribution: buildBreachRetribution,
 			SessionCloseRange:      sessionCloseRange,
@@ -1574,45 +1574,11 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			Dial:           cfg.net.Dial,
 			AuthDial:       authDial,
 			DB:             dbs.TowerClientDB,
-			Policy:         policy,
 			ChainHash:      *s.cfg.ActiveNetParams.GenesisHash,
 			MinBackoff:     10 * time.Second,
 			MaxBackoff:     5 * time.Minute,
 			ForceQuitDelay: wtclient.DefaultForceQuitDelay,
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		// Copy the policy for legacy channels and set the blob flag
-		// signalling support for anchor channels.
-		anchorPolicy := policy
-		anchorPolicy.TxPolicy.BlobType |=
-			blob.Type(blob.FlagAnchorChannel)
-
-		s.anchorTowerClient, err = wtclient.New(&wtclient.Config{
-			FetchClosedChannel:     fetchClosedChannel,
-			BuildBreachRetribution: buildBreachRetribution,
-			SessionCloseRange:      sessionCloseRange,
-			ChainNotifier:          s.cc.ChainNotifier,
-			SubscribeChannelEvents: func() (subscribe.Subscription,
-				error) {
-
-				return s.channelNotifier.
-					SubscribeChannelEvents()
-			},
-			Signer:         cc.Wallet.Cfg.Signer,
-			NewAddress:     newSweepPkScriptGen(cc.Wallet),
-			SecretKeyRing:  s.cc.KeyRing,
-			Dial:           cfg.net.Dial,
-			AuthDial:       authDial,
-			DB:             dbs.TowerClientDB,
-			Policy:         anchorPolicy,
-			ChainHash:      *s.cfg.ActiveNetParams.GenesisHash,
-			MinBackoff:     10 * time.Second,
-			MaxBackoff:     5 * time.Minute,
-			ForceQuitDelay: wtclient.DefaultForceQuitDelay,
-		})
+		}, policy, anchorPolicy)
 		if err != nil {
 			return nil, err
 		}
@@ -1934,13 +1900,6 @@ func (s *server) Start() error {
 				return
 			}
 			cleanup = cleanup.add(s.towerClient.Stop)
-		}
-		if s.anchorTowerClient != nil {
-			if err := s.anchorTowerClient.Start(); err != nil {
-				startErr = err
-				return
-			}
-			cleanup = cleanup.add(s.anchorTowerClient.Stop)
 		}
 
 		if err := s.sweeper.Start(); err != nil {
@@ -2320,12 +2279,6 @@ func (s *server) Stop() error {
 			if err := s.towerClient.Stop(); err != nil {
 				srvrLog.Warnf("Unable to shut down tower "+
 					"client: %v", err)
-			}
-		}
-		if s.anchorTowerClient != nil {
-			if err := s.anchorTowerClient.Stop(); err != nil {
-				srvrLog.Warnf("Unable to shut down anchor "+
-					"tower client: %v", err)
 			}
 		}
 
@@ -3847,7 +3800,6 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 		ChannelNotifier:         s.channelNotifier,
 		HtlcNotifier:            s.htlcNotifier,
 		TowerClient:             s.towerClient,
-		AnchorTowerClient:       s.anchorTowerClient,
 		DisconnectPeer:          s.DisconnectPeer,
 		GenNodeAnnouncement: func(...netann.NodeAnnModifier) (
 			lnwire.NodeAnnouncement, error) {

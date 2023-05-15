@@ -67,6 +67,22 @@ const (
 	TypeRewardCommit = Type(FlagCommitOutputs | FlagReward)
 )
 
+func (t Type) LogPrefix() string {
+	var policy string
+	switch t {
+	case TypeAltruistCommit:
+		policy = "legacy"
+	case TypeAltruistAnchorCommit:
+		policy = "anchor"
+	case TypeRewardCommit:
+		policy = "reward"
+	default:
+		policy = "unknown"
+	}
+
+	return fmt.Sprintf("(%s)", policy)
+}
+
 // Has returns true if the Type has the passed flag enabled.
 func (t Type) Has(flag Flag) bool {
 	return Flag(t)&flag == flag
