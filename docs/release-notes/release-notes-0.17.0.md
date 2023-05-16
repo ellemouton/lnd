@@ -14,6 +14,7 @@
   be held in memory. 
 * [Replace in-mem task pipeline with a disk-overflow
   queue](https://github.com/lightningnetwork/lnd/pull/7380)
+* [Add a tower client multiplexer] to manage tower clients of different types.
  
 ## Misc
 
