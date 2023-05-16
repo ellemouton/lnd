@@ -250,12 +250,8 @@ type Config struct {
 	// HtlcNotifier is used when creating a ChannelLink.
 	HtlcNotifier *htlcswitch.HtlcNotifier
 
-	// TowerClient is used by legacy channels to backup revoked states.
-	TowerClient wtclient.Client
-
-	// AnchorTowerClient is used by anchor channels to backup revoked
-	// states.
-	AnchorTowerClient wtclient.Client
+	// TowerClient is used to backup revoked states.
+	TowerClient wtclient.TowerClientManager
 
 	// DisconnectPeer is used to disconnect this peer if the cooperative close
 	// process fails.
@@ -950,18 +946,6 @@ func (p *Brontide) addLink(chanPoint *wire.OutPoint,
 		return p.cfg.ChainArb.NotifyContractUpdate(*chanPoint, update)
 	}
 
-	chanType := lnChan.State().ChanType
-
-	// Select the appropriate tower client based on the channel type. It's
-	// okay if the clients are disabled altogether and these values are nil,
-	// as the link will check for nilness before using either.
-	var towerClient htlcswitch.TowerClient
-	if chanType.HasAnchors() {
-		towerClient = p.cfg.AnchorTowerClient
-	} else {
-		towerClient = p.cfg.TowerClient
-	}
-
 	//nolint:lll
 	linkCfg := htlcswitch.ChannelLinkConfig{
 		Peer:                   p,
@@ -991,7 +975,7 @@ func (p *Brontide) addLink(chanPoint *wire.OutPoint,
 		MinFeeUpdateTimeout:     htlcswitch.DefaultMinLinkFeeUpdateTimeout,
 		MaxFeeUpdateTimeout:     htlcswitch.DefaultMaxLinkFeeUpdateTimeout,
 		OutgoingCltvRejectDelta: p.cfg.OutgoingCltvRejectDelta,
-		TowerClient:             towerClient,
+		TowerClient:             p.cfg.TowerClient,
 		MaxOutgoingCltvExpiry:   p.cfg.MaxOutgoingCltvExpiry,
 		MaxFeeAllocation:        p.cfg.MaxChannelFeeAllocation,
 		MaxAnchorsCommitFeeRate: p.cfg.MaxAnchorsCommitFeeRate,
