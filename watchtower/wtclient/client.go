@@ -150,6 +150,8 @@ type towerClientCfg struct {
 // non-blocking, reliable subsystem for backing up revoked states to a specified
 // private tower.
 type TowerClient struct {
+	forced sync.Once
+
 	cfg *towerClientCfg
 
 	log btclog.Logger
@@ -406,7 +408,10 @@ func (c *TowerClient) start() error {
 
 	// Start the task pipeline to which new backup tasks will be submitted
 	// from active links.
-	c.pipeline.Start()
+	err = c.pipeline.Start()
+	if err != nil {
+		return err
+	}
 
 	c.wg.Add(1)
 	go c.backupDispatcher()
@@ -451,7 +456,10 @@ func (c *TowerClient) stop() error {
 
 	// 4. Since all valid tasks have been assigned to session queues, we no
 	// longer need to negotiate sessions.
-	c.negotiator.Stop()
+	err = c.negotiator.Stop()
+	if err != nil {
+		returnErr = err
+	}
 
 	c.log.Debugf("Waiting for active session queues to finish "+
 		"draining, clientStats: %s", c.clientStats)
@@ -478,36 +486,41 @@ func (c *TowerClient) stop() error {
 // forceQuit idempotently initiates an unclean shutdown of the watchtower
 // client. This should only be executed if Stop is unable to exit cleanly.
 func (c *TowerClient) forceQuit() {
-	c.log.Infof("Force quitting watchtower client")
+	c.forced.Do(func() {
+		c.log.Infof("Force quitting watchtower client")
 
-	// 1. Shutdown the backup queue, which will prevent any further updates
-	// from being accepted. In practice, the links should be shutdown before
-	// the client has been stopped, so all updates would have been added
-	// prior.
-	err := c.pipeline.Stop()
-	if err != nil {
-		c.log.Errorf("could not stop backup queue: %v", err)
-	}
+		// 1. Shutdown the backup queue, which will prevent any further
+		// updates from being accepted. In practice, the links should be
+		// shutdown before the client has been stopped, so all updates
+		// would have been added prior.
+		err := c.pipeline.Stop()
+		if err != nil {
+			c.log.Errorf("could not stop backup queue: %v", err)
+		}
 
-	// 2. Once the backup queue has shutdown, wait for the main dispatcher
-	// to exit. The backup queue will signal its completion to the
-	// dispatcher, which releases the wait group after all tasks have been
-	// assigned to session queues.
-	close(c.forceQuitChan)
-	c.wg.Wait()
+		// 2. Once the backup queue has shutdown, wait for the main
+		// dispatcher to exit. The backup queue will signal its
+		// completion to the dispatcher, which releases the wait group
+		// after all tasks have been assigned to session queues.
+		close(c.forceQuitChan)
+		c.wg.Wait()
 
-	// 3. Since all valid tasks have been assigned to session queues, we no
-	// longer need to negotiate sessions.
-	c.negotiator.Stop()
+		// 3. Since all valid tasks have been assigned to session
+		// queues, we no longer need to negotiate sessions.
+		err = c.negotiator.Stop()
+		if err != nil {
+			c.log.Errorf("could not stop negotiator: %v", err)
+		}
 
-	// 4. Force quit all active session queues in parallel. These will exit
-	// once all updates have been acked by the watchtower.
-	c.activeSessions.ApplyAndWait(func(s *sessionQueue) func() {
-		return s.ForceQuit
+		// 4. Force quit all active session queues in parallel. These
+		// will exit once all updates have been acked by the watchtower.
+		c.activeSessions.ApplyAndWait(func(s *sessionQueue) func() {
+			return s.ForceQuit
+		})
+
+		c.log.Infof("Watchtower client unclean shutdown complete, "+
+			"clientStats: %s", c.clientStats)
 	})
-
-	c.log.Infof("Watchtower client unclean shutdown complete, "+
-		"clientStats: %s", c.clientStats)
 }
 
 // backupState initiates a request to back up a particular revoked state. If the

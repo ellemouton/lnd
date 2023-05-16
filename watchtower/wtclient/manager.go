@@ -468,11 +468,16 @@ func (m *Manager) Stats() ClientStats {
 	var resp ClientStats
 	for _, client := range m.clients {
 		stats := client.stats()
-		resp.NumTasksAccepted += stats.NumTasksAccepted
-		resp.NumTasksIneligible += stats.NumTasksIneligible
-		resp.NumTasksPending += stats.NumTasksPending
-		resp.NumSessionsAcquired += stats.NumSessionsAcquired
-		resp.NumSessionsExhausted += stats.NumSessionsExhausted
+
+		// Grab a reference rather than copying bc ClientStats contains
+		// a lock which cannot be copied by value.
+		stat := &stats
+
+		resp.NumTasksAccepted += stat.NumTasksAccepted
+		resp.NumTasksIneligible += stat.NumTasksIneligible
+		resp.NumTasksPending += stat.NumTasksPending
+		resp.NumSessionsAcquired += stat.NumSessionsAcquired
+		resp.NumSessionsExhausted += stat.NumSessionsExhausted
 	}
 
 	return resp
