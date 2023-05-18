@@ -129,6 +129,12 @@ func TestSupportedTypes(t *testing.T) {
 			blob.TypeAltruistAnchorCommit)
 	}
 
+	// Assert that the altruist taproot commit types are supported.
+	if !blob.IsSupportedType(blob.TypeAltruistTaprootCommit) {
+		t.Fatalf("taproot commit type %s is not supported",
+			blob.TypeAltruistTaprootCommit)
+	}
+
 	// Assert that all claimed supported types are actually supported.
 	for _, supType := range blob.SupportedTypes() {
 		if blob.IsSupportedType(supType) {
