@@ -2027,6 +2027,7 @@ func testSignOutputUsingTweaks(r *rpctest.Harness,
 func testReorgWalletBalance(r *rpctest.Harness, w *lnwallet.LightningWallet,
 	_ *lnwallet.LightningWallet, t *testing.T) {
 
+	fmt.Println("starting re-org test")
 	// We first mine a few blocks to ensure any transactions still in the
 	// mempool confirm, and then get the original balance, before a
 	// reorganization that doesn't invalidate any existing transactions or
