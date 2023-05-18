@@ -182,13 +182,13 @@ type TowerClient struct {
 func newTowerClient(cfg *towerClientCfg, perUpdate func(policy wtpolicy.Policy,
 	chanID lnwire.ChannelID, commitHeight uint64)) (*TowerClient, error) {
 
-	prefix := cfg.Policy.TxPolicy.BlobType.LogPrefix()
+	identifier := cfg.Policy.TxPolicy.BlobType.Identifier()
+
+	prefix := fmt.Sprintf("(%s)", identifier)
 	plog := build.NewPrefixLog(prefix, log)
 
-	var (
-		policy  = cfg.Policy.BlobType.String()
-		queueDB = cfg.DB.GetDBQueue([]byte(policy))
-	)
+	queueDB := cfg.DB.GetDBQueue([]byte(identifier))
+
 	queue, err := NewDiskOverflowQueue[*wtdb.BackupID](
 		queueDB, cfg.MaxTasksInMemQueue, plog,
 	)

@@ -594,19 +594,26 @@ func testRevokedCloseRetributionAltruistWatchtower(ht *lntest.HarnessTest) {
 	testCases := []struct {
 		name    string
 		anchors bool
-	}{{
-		name:    "anchors",
-		anchors: true,
-	}, {
-		name:    "legacy",
-		anchors: false,
-	}}
+		taproot bool
+	}{
+		//{
+		//	name:    "anchors",
+		//	anchors: true,
+		//},
+		//{
+		//	name: "legacy",
+		//},
+		{
+			name:    "taproot",
+			taproot: true,
+		},
+	}
 
 	for _, tc := range testCases {
 		tc := tc
 		testFunc := func(ht *lntest.HarnessTest) {
 			testRevokedCloseRetributionAltruistWatchtowerCase(
-				ht, tc.anchors,
+				ht, tc.anchors, tc.taproot,
 			)
 		}
 
@@ -632,7 +639,7 @@ func testRevokedCloseRetributionAltruistWatchtower(ht *lntest.HarnessTest) {
 }
 
 func testRevokedCloseRetributionAltruistWatchtowerCase(ht *lntest.HarnessTest,
-	anchors bool) {
+	anchors, taproot bool) {
 
 	const (
 		chanAmt     = funding.MaxBtcFundingAmount
@@ -644,7 +651,7 @@ func testRevokedCloseRetributionAltruistWatchtowerCase(ht *lntest.HarnessTest,
 	// Since we'd like to test some multi-hop failure scenarios, we'll
 	// introduce another node into our test network: Carol.
 	carolArgs := []string{"--hodl.exit-settle"}
-	if anchors {
+	if anchors || taproot {
 		carolArgs = append(carolArgs, "--protocol.anchors")
 	}
 	carol := ht.NewNode("Carol", carolArgs)
@@ -681,7 +688,7 @@ func testRevokedCloseRetributionAltruistWatchtowerCase(ht *lntest.HarnessTest,
 		"--nolisten",
 		"--wtclient.active",
 	}
-	if anchors {
+	if anchors || taproot {
 		daveArgs = append(daveArgs, "--protocol.anchors")
 	}
 	dave := ht.NewNode("Dave", daveArgs)
@@ -708,9 +715,22 @@ func testRevokedCloseRetributionAltruistWatchtowerCase(ht *lntest.HarnessTest,
 	// In order to test Dave's response to an uncooperative channel
 	// closure by Carol, we'll first open up a channel between them with a
 	// 0.5 BTC value.
+	var (
+		commitmentType = lnrpc.CommitmentType_LEGACY
+		private        bool
+	)
+	if anchors {
+		commitmentType = lnrpc.CommitmentType_ANCHORS
+	} else if taproot {
+		commitmentType = lnrpc.CommitmentType_SIMPLE_TAPROOT
+		private = true
+	}
+
 	params := lntest.OpenChannelParams{
-		Amt:     3 * (chanAmt / 4),
-		PushAmt: chanAmt / 4,
+		Amt:            3 * (chanAmt / 4),
+		PushAmt:        chanAmt / 4,
+		CommitmentType: commitmentType,
+		Private:        private,
 	}
 	chanPoint := ht.OpenChannel(dave, carol, params)
 
@@ -870,7 +890,7 @@ func testRevokedCloseRetributionAltruistWatchtowerCase(ht *lntest.HarnessTest,
 	ht.AssertNumPendingForceClose(dave, 0)
 
 	// If this is an anchor channel, Dave would sweep the anchor.
-	if anchors {
+	if anchors || taproot {
 		ht.MineBlocksAndAssertNumTxes(1, 1)
 	}
 

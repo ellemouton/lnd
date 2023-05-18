@@ -98,24 +98,21 @@ func (t Type) IsTaprootChannel() bool {
 	return t.Has(FlagTaprootChannel)
 }
 
-// LogPrefix returns the prefix to be used for any log lines for the client
+// Identifier returns the prefix to be used for any log lines for the client
 // managing the blob type.
-func (t Type) LogPrefix() string {
-	var prefix string
+func (t Type) Identifier() string {
 	switch t {
 	case TypeRewardCommit:
-		prefix = "reward"
+		return "reward"
 	case TypeAltruistCommit:
-		prefix = "legacy"
+		return "legacy"
 	case TypeAltruistAnchorCommit:
-		prefix = "anchor"
+		return "anchor"
 	case TypeAltruistTaprootCommit:
-		prefix = "taproot"
+		return "taproot"
 	default:
-		prefix = "unknown"
+		return "unknown"
 	}
-
-	return fmt.Sprintf("(%s)", prefix)
 }
 
 // knownFlags maps the supported flags to their name.

@@ -89,6 +89,9 @@ func genTaskTest(
 	if chanType.HasAnchors() {
 		blobType |= blob.Type(blob.FlagAnchorChannel)
 	}
+	if chanType.IsTaproot() {
+		blobType |= blob.Type(blob.FlagTaprootChannel)
+	}
 
 	// Parse the key pairs for all keys used in the test.
 	revSK, revPK := btcec.PrivKeyFromBytes(
@@ -141,6 +144,17 @@ func genTaskTest(
 			},
 			HashType: txscript.SigHashAll,
 		}
+
+		if chanType.IsTaproot() {
+			toLocalSignDesc.SignMethod = input.TaprootKeySpendSignMethod
+
+			scriptTree, _ := input.NewLocalCommitScriptTree(
+				csvDelay, toLocalPK, revPK,
+			)
+
+			toLocalSignDesc.TapTweak = scriptTree.TapscriptRoot
+		}
+
 		breachInfo.RemoteOutputSignDesc = toLocalSignDesc
 		breachTxn.AddTxOut(toLocalSignDesc.Output)
 	}
@@ -155,6 +169,25 @@ func genTaskTest(
 			},
 			HashType: txscript.SigHashAll,
 		}
+
+		if chanType.IsTaproot() {
+			toRemoteSignDesc.SignMethod = input.TaprootScriptSpendSignMethod
+
+			commitScriptTree, _ := input.NewRemoteCommitScriptTree(
+				toLocalPK, toLocalPK,
+			)
+
+			toRemoteSignDesc.WitnessScript = commitScriptTree.SettleLeaf.Script
+
+			settleControlBlock := input.MakeTaprootSuccessCtrlBlock(
+				commitScriptTree.SettleLeaf.Script, toLocalPK, commitScriptTree.TapscriptTree,
+			)
+
+			ctrlBytes, _ := settleControlBlock.ToBytes()
+
+			toRemoteSignDesc.ControlBlock = ctrlBytes
+		}
+
 		breachInfo.LocalOutputSignDesc = toRemoteSignDesc
 		breachTxn.AddTxOut(toRemoteSignDesc.Output)
 	}
@@ -174,9 +207,14 @@ func genTaskTest(
 			Hash:  txid,
 			Index: index,
 		}
+		inputType := input.CommitmentRevoke
+		if chanType.IsTaproot() {
+			inputType = input.TaprootCommitmentRevoke
+		}
+
 		toLocalInput = input.NewBaseInput(
 			&breachInfo.RemoteOutpoint,
-			input.CommitmentRevoke,
+			inputType,
 			breachInfo.RemoteOutputSignDesc,
 			0,
 		)
@@ -190,6 +228,8 @@ func genTaskTest(
 
 		var witnessType input.WitnessType
 		switch {
+		case chanType.IsTaproot():
+			witnessType = input.TaprootRemoteCommitSpend
 		case chanType.HasAnchors():
 			witnessType = input.CommitmentToRemoteConfirmed
 		case chanType.IsTweakless():
@@ -198,7 +238,7 @@ func genTaskTest(
 			witnessType = input.CommitmentNoDelay
 		}
 
-		if chanType.HasAnchors() {
+		if chanType.HasAnchors() || chanType.IsTaproot() {
 			toRemoteInput = input.NewCsvInput(
 				&breachInfo.LocalOutpoint,
 				witnessType,
@@ -275,17 +315,20 @@ func TestBackupTask(t *testing.T) {
 		channeldb.SingleFunderBit,
 		channeldb.SingleFunderTweaklessBit,
 		channeldb.AnchorOutputsBit,
+		channeldb.SimpleTaprootFeatureBit,
 	}
 
 	var backupTaskTests []backupTaskTest
 	for _, chanType := range chanTypes {
-		// Depending on whether the test is for anchor channels or
+		// Depending on whether the test is for taproot, anchor or
 		// legacy (tweaked and non-tweaked) channels, adjust the
 		// expected sweep amount to accommodate. These are different for
 		// several reasons:
 		//   - anchor to-remote outputs require a P2WSH sweep rather
 		//     than a P2WKH sweep.
 		//   - the to-local weight estimate fixes an off-by-one.
+		//   - taproot to-remote outputs require a P2TR script path
+		//     spend.
 		// In tests related to the dust threshold, the size difference
 		// between the channel types makes it so that the threshold fee
 		// rate is slightly lower (since the transactions are heavier).
@@ -308,6 +351,15 @@ func TestBackupTask(t *testing.T) {
 			expSweepCommitRewardRemote = 98385
 			sweepFeeRateNoRewardRemoteDust = 225400
 			sweepFeeRateRewardRemoteDust = 174100
+		} else if chanType.IsTaproot() {
+			expSweepCommitNoRewardBoth = 299404
+			expSweepCommitNoRewardLocal = 199603
+			expSweepCommitNoRewardRemote = 99635
+			expSweepCommitRewardBoth = 296232
+			expSweepCommitRewardLocal = 197431
+			expSweepCommitRewardRemote = 98463
+			sweepFeeRateNoRewardRemoteDust = 273200
+			sweepFeeRateRewardRemoteDust = 199000
 		}
 
 		backupTaskTests = append(backupTaskTests, []backupTaskTest{

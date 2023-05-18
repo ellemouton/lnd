@@ -147,9 +147,14 @@ func (t *backupTask) bindSession(session *wtdb.ClientSessionBody,
 	// to that output as local, though relative to their commitment, it is
 	// paying to-the-remote party (which is us).
 	if breachInfo.RemoteOutputSignDesc != nil {
+		inputType := input.CommitmentRevoke
+		if chanType.IsTaproot() {
+			inputType = input.TaprootCommitmentRevoke
+		}
+
 		toLocalInput = input.NewBaseInput(
 			&breachInfo.RemoteOutpoint,
-			input.CommitmentRevoke,
+			inputType,
 			breachInfo.RemoteOutputSignDesc,
 			0,
 		)
@@ -158,6 +163,8 @@ func (t *backupTask) bindSession(session *wtdb.ClientSessionBody,
 	if breachInfo.LocalOutputSignDesc != nil {
 		var witnessType input.WitnessType
 		switch {
+		case chanType.IsTaproot():
+			witnessType = input.TaprootRemoteCommitSpend
 		case chanType.HasAnchors():
 			witnessType = input.CommitmentToRemoteConfirmed
 		case chanType.IsTweakless():
@@ -166,11 +173,12 @@ func (t *backupTask) bindSession(session *wtdb.ClientSessionBody,
 			witnessType = input.CommitmentNoDelay
 		}
 
-		// Anchor channels have a CSV-encumbered to-remote output. We'll
-		// construct a CSV input in that case and assign the proper CSV
-		// delay of 1, otherwise we fallback to the a regular P2WKH
-		// to-remote output for tweaked or tweakless channels.
-		if chanType.HasAnchors() {
+		// Anchor channels and taproot channels have a CSV-encumbered
+		// to-remote output. We'll construct a CSV input in that case
+		// and assign the proper CSV delay of 1, otherwise we fallback
+		// to the a regular P2WKH to-remote output for tweaked or
+		// tweakless channels.
+		if chanType.HasAnchors() || chanType.IsTaproot() {
 			toRemoteInput = input.NewCsvInput(
 				&breachInfo.LocalOutpoint,
 				witnessType,
@@ -202,32 +210,44 @@ func (t *backupTask) bindSession(session *wtdb.ClientSessionBody,
 	// Next, add the contribution from the inputs that are present on this
 	// breach transaction.
 	if t.toLocalInput != nil {
-		// An older ToLocalPenaltyWitnessSize constant used to
-		// underestimate the size by one byte. The diferrence in weight
-		// can cause different output values on the sweep transaction,
-		// so we mimic the original bug and create signatures using the
-		// original weight estimate. For anchor channels we'll go ahead
-		// an use the correct penalty witness when signing our justice
-		// transactions.
-		if chanType.HasAnchors() {
+		switch {
+		case chanType.IsTaproot():
+			weightEstimate.AddWitnessInput(
+				input.TaprootKeyPathCustomSighashWitnessSize,
+			)
+
+		case chanType.HasAnchors():
 			weightEstimate.AddWitnessInput(
 				input.ToLocalPenaltyWitnessSize,
 			)
-		} else {
+
+		// An older ToLocalPenaltyWitnessSize constant used to
+		// underestimate the size by one byte. The difference in weight
+		// can cause different output values on the sweep transaction,
+		// so we mimic the original bug and create signatures using the
+		// original weight estimate.
+		default:
 			weightEstimate.AddWitnessInput(
 				input.ToLocalPenaltyWitnessSize - 1,
 			)
 		}
 	}
 	if t.toRemoteInput != nil {
-		// Legacy channels (both tweaked and non-tweaked) spend from
-		// P2WKH output. Anchor channels spend a to-remote confirmed
-		// P2WSH  output.
-		if chanType.HasAnchors() {
+		switch {
+		case chanType.IsTaproot():
+			weightEstimate.AddWitnessInput(
+				input.TaprootToRemoteScriptSize,
+			)
+
+		// Anchor channels spend a to-remote confirmed P2WSH  output.
+		case chanType.HasAnchors():
 			weightEstimate.AddWitnessInput(
 				input.ToRemoteConfirmedWitnessSize,
 			)
-		} else {
+
+		// Legacy channels (both tweaked and non-tweaked) spend from
+		// P2WKH output.
+		default:
 			weightEstimate.AddWitnessInput(input.P2WKHWitnessSize)
 		}
 	}
@@ -252,6 +272,12 @@ func (t *backupTask) bindSession(session *wtdb.ClientSessionBody,
 		log.Criticalf("Invalid task (has_anchors=%t) for session "+
 			"(has_anchors=%t)", chanType.HasAnchors(),
 			session.Policy.IsAnchorChannel())
+	}
+
+	if chanType.IsTaproot() != session.Policy.IsTaprootChannel() {
+		log.Criticalf("Invalid task (is_taproot=%t) for session "+
+			"(is_taproot=%t)", chanType.IsTaproot(),
+			session.Policy.IsTaprootChannel())
 	}
 
 	// Now, compute the output values depending on whether FlagReward is set
@@ -288,8 +314,11 @@ func (t *backupTask) craftSessionPayload(
 		BlobType:         t.blobType,
 		SweepAddress:     t.sweepPkScript,
 		RevocationPubKey: toBlobPubKey(keyRing.RevocationKey),
-		LocalDelayPubKey: toBlobPubKey(keyRing.ToLocalKey),
-		CSVDelay:         t.breachInfo.RemoteDelay,
+	}
+
+	if !t.blobType.IsTaprootChannel() {
+		justiceKit.LocalDelayPubKey = toBlobPubKey(keyRing.ToLocalKey)
+		justiceKit.CSVDelay = t.breachInfo.RemoteDelay
 	}
 
 	// If this commitment has an output that pays to us, copy the to-remote
@@ -300,6 +329,11 @@ func (t *backupTask) craftSessionPayload(
 		justiceKit.CommitToRemotePubKey = toBlobPubKey(
 			keyRing.ToRemoteKey,
 		)
+
+		if t.blobType.IsTaprootChannel() {
+			// TODO: replace with public NUMS point.
+			justiceKit.Nums = toBlobPubKey(t.breachInfo.KeyRing.CombinedFundingKey)
+		}
 	}
 
 	// Now, begin construction of the justice transaction. We'll start with
@@ -367,22 +401,36 @@ func (t *backupTask) craftSessionPayload(
 		witness := inputScript.Witness
 		rawSignature := witness[0][:len(witness[0])-1]
 
-		// Re-encode the DER signature into a fixed-size 64 byte
-		// signature.
-		signature, err := lnwire.NewSigFromECDSARawSignature(
-			rawSignature,
-		)
-		if err != nil {
-			return hint, nil, err
+		var signature lnwire.Sig
+		if t.blobType.IsTaprootChannel() {
+			signature, err = lnwire.NewSigFromSchnorrRawSignature(
+				rawSignature,
+			)
+			if err != nil {
+				return hint, nil, err
+			}
+		} else {
+			// Re-encode the DER signature into a fixed-size 64 byte
+			// signature.
+			signature, err = lnwire.NewSigFromECDSARawSignature(
+				rawSignature,
+			)
+			if err != nil {
+				return hint, nil, err
+			}
 		}
 
 		// Finally, copy the serialized signature into the justice kit,
 		// using the input's witness type to select the appropriate
 		// field
 		switch inp.WitnessType() {
+		case input.TaprootCommitmentRevoke:
+			fallthrough
 		case input.CommitmentRevoke:
 			justiceKit.CommitToLocalSig = signature
 
+		case input.TaprootRemoteCommitSpend:
+			fallthrough
 		case input.CommitSpendNoDelayTweakless:
 			fallthrough
 		case input.CommitmentNoDelay:

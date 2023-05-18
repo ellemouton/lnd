@@ -1519,6 +1519,12 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		anchorPolicy.TxPolicy.BlobType |=
 			blob.Type(blob.FlagAnchorChannel)
 
+		// Copy the policy for legacy channels and set the blob flag
+		// signalling support for taproot channels.
+		taprootPolicy := policy
+		taprootPolicy.TxPolicy.BlobType |=
+			blob.Type(blob.FlagTaprootChannel)
+
 		// authDial is the wrapper around the btrontide.Dial for the
 		// watchtower.
 		authDial := func(localKey keychain.SingleKeyECDH,
@@ -1578,7 +1584,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			MaxBackoff:         5 * time.Minute,
 			ForceQuitDelay:     wtclient.DefaultForceQuitDelay,
 			MaxTasksInMemQueue: maxTasksInMemQueue,
-		}, policy, anchorPolicy)
+		}, policy, anchorPolicy, taprootPolicy)
 		if err != nil {
 			return nil, err
 		}
@@ -4621,8 +4627,8 @@ func (s *server) SendCustomMessage(peerPub [33]byte, msgType lnwire.MessageType,
 
 // newSweepPkScriptGen creates closure that generates a new public key script
 // which should be used to sweep any funds into the on-chain wallet.
-// Specifically, the script generated is a version 0, pay-to-witness-pubkey-hash
-// (p2wkh) output.
+// Specifically, the script generated is a version 1, pay-to-taproot (p2tr)
+// output.
 func newSweepPkScriptGen(
 	wallet lnwallet.WalletController) func() ([]byte, error) {
 

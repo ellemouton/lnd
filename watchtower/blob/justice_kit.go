@@ -37,6 +37,14 @@ const (
 	//    commit to-remote sig:           64 bytes, maybe blank
 	V0PlaintextSize = 274
 
+	// V1PlaintextSize is the plaintext size of a version 1 encoded blob.
+	//    sweep address length:             1 byte
+	//    padded sweep address:             42 bytes
+	//    commit to-local revocation sig:   64 bytes
+	//    commit to-remote pubkey:          33 bytes, may be blank
+	//    commit to-remote sig:             64 bytes, may be blank
+	V1PlaintextSize = 204
+
 	// MaxSweepAddrSize defines the maximum sweep address size that can be
 	// encoded in a blob.
 	MaxSweepAddrSize = 42
@@ -54,6 +62,8 @@ func Size(blobType Type) int {
 // PlaintextSize returns the size of the encoded-but-unencrypted blob in bytes.
 func PlaintextSize(blobType Type) int {
 	switch {
+	case blobType.Has(FlagTaprootChannel):
+		return V1PlaintextSize
 	case blobType.Has(FlagCommitOutputs):
 		return V0PlaintextSize
 	default:
@@ -124,13 +134,18 @@ type JusticeKit struct {
 
 	// LocalDelayPubKey is the compressed pubkey in the to-local script of
 	// the remote party, which guards the path where the remote party
-	// claims their commitment output.
+	// claims their commitment output. Not required for Taproot Channels.
 	LocalDelayPubKey PubKey
 
 	// CSVDelay is the relative timelock in the remote party's to-local
 	// output, which the remote party must wait out before sweeping their
-	// commitment output.
+	// commitment output. Not required for Taproot Channels.
 	CSVDelay uint32
+
+	// Nums is the internal key for the to_remote output.
+	// NOTE: remove this if NUMS point becomes public. Only set if the
+	// to_local is being swept. Only for Taproot chans.
+	Nums PubKey
 
 	// CommitToLocalSig is a signature under RevocationPubKey using
 	// SIGHASH_ALL.
@@ -214,6 +229,23 @@ func (b *JusticeKit) CommitToRemoteWitnessScript() ([]byte, error) {
 		}
 
 		return input.CommitScriptToRemoteConfirmed(pk)
+	} else if b.BlobType.IsTaprootChannel() {
+		pk, err := btcec.ParsePubKey(b.CommitToRemotePubKey[:])
+		if err != nil {
+			return nil, err
+		}
+
+		nums, err := btcec.ParsePubKey(b.Nums[:])
+		if err != nil {
+			return nil, err
+		}
+
+		scriptTree, err := input.NewRemoteCommitScriptTree(nums, pk)
+		if err != nil {
+			return nil, err
+		}
+
+		return scriptTree.SettleLeaf.Script, nil
 	}
 
 	return b.CommitToRemotePubKey[:], nil
@@ -324,6 +356,8 @@ func Decrypt(key BreachKey, ciphertext []byte,
 // error if the version is unknown.
 func (b *JusticeKit) encode(w io.Writer, blobType Type) error {
 	switch {
+	case blobType.Has(FlagTaprootChannel):
+		return b.encodeV1(w)
 	case blobType.Has(FlagCommitOutputs):
 		return b.encodeV0(w)
 	default:
@@ -335,11 +369,140 @@ func (b *JusticeKit) encode(w io.Writer, blobType Type) error {
 // error if the version is unknown.
 func (b *JusticeKit) decode(r io.Reader, blobType Type) error {
 	switch {
+	case blobType.Has(FlagTaprootChannel):
+		return b.decodeV1(r)
 	case blobType.Has(FlagCommitOutputs):
 		return b.decodeV0(r)
 	default:
 		return ErrUnknownBlobType
 	}
+}
+
+// encodeV1 encodes ..... The encoding produces a constant-size plaintext size
+// of 204 bytes.
+//
+// blob version 1 plaintext encoding:
+//
+//	sweep address length:             1 byte
+//	padded sweep address:             42 bytes
+//	commit to-local revocation sig:   64 bytes
+//	commit to-remote pubkey:          33 bytes, may be blank
+//	commit to-remote sig:             64 bytes, may be blank
+func (b *JusticeKit) encodeV1(w io.Writer) error {
+	// Assert the sweep address length is sane.
+	if len(b.SweepAddress) > MaxSweepAddrSize {
+		return ErrSweepAddressToLong
+	}
+
+	// Write the actual length of the sweep address as a single byte.
+	err := binary.Write(w, byteOrder, uint8(len(b.SweepAddress)))
+	if err != nil {
+		return err
+	}
+
+	// Pad the sweep address to our maximum length of 42 bytes.
+	var sweepAddressBuf [MaxSweepAddrSize]byte
+	copy(sweepAddressBuf[:], b.SweepAddress)
+
+	// Write padded 42-byte sweep address.
+	_, err = w.Write(sweepAddressBuf[:])
+	if err != nil {
+		return err
+	}
+
+	// Write 64-byte revocation signature for commit to-local output.
+	_, err = w.Write(b.CommitToLocalSig.RawBytes())
+	if err != nil {
+		return err
+	}
+
+	// Write 33-byte commit to-remote public key, which may be blank.
+	_, err = w.Write(b.CommitToRemotePubKey[:])
+	if err != nil {
+		return err
+	}
+
+	// Write 64-byte commit to-remote signature, which may be blank.
+	_, err = w.Write(b.CommitToRemoteSig.RawBytes())
+
+	return err
+}
+
+// decodeV1 ....
+//
+// blob version 1 plaintext encoding:
+//
+//	sweep address length:             1 byte
+//	padded sweep address:             42 bytes
+//	commit to-local revocation sig:   64 bytes
+//	commit to-remote pubkey:          33 bytes, may be blank
+//	commit to-remote sig:             64 bytes, may be blank
+func (b *JusticeKit) decodeV1(r io.Reader) error {
+	// Read the sweep address length as a single byte.
+	var sweepAddrLen uint8
+	err := binary.Read(r, byteOrder, &sweepAddrLen)
+	if err != nil {
+		return err
+	}
+
+	// Assert the sweep address length is sane.
+	if sweepAddrLen > MaxSweepAddrSize {
+		return ErrSweepAddressToLong
+	}
+
+	// Read padded 42-byte sweep address.
+	var sweepAddressBuf [MaxSweepAddrSize]byte
+	_, err = io.ReadFull(r, sweepAddressBuf[:])
+	if err != nil {
+		return err
+	}
+
+	// Parse sweep address from padded buffer.
+	b.SweepAddress = make([]byte, sweepAddrLen)
+	copy(b.SweepAddress, sweepAddressBuf[:])
+
+	// Read 64-byte revocation signature for commit to-local output.
+	var localSig [64]byte
+	_, err = io.ReadFull(r, localSig[:])
+	if err != nil {
+		return err
+	}
+
+	b.CommitToLocalSig, err = lnwire.NewSigFromSchnorrRawSignature(localSig[:])
+	if err != nil {
+		return err
+	}
+
+	var (
+		commitToRemotePubkey PubKey
+		commitToRemoteSig    [64]byte
+	)
+
+	// Read 33-byte commit to-remote public key, which may be discarded.
+	_, err = io.ReadFull(r, commitToRemotePubkey[:])
+	if err != nil {
+		return err
+	}
+
+	// Read 64-byte commit to-remote signature, which may be discarded.
+	_, err = io.ReadFull(r, commitToRemoteSig[:])
+	if err != nil {
+		return err
+	}
+
+	// Only populate the commit to-remote fields in the decoded blob if a
+	// valid compressed public key was read from the reader.
+	if btcec.IsCompressedPubKey(commitToRemotePubkey[:]) {
+		b.CommitToRemotePubKey = commitToRemotePubkey
+		b.CommitToRemoteSig, err = lnwire.NewSigFromSchnorrRawSignature(
+			commitToRemoteSig[:],
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // encodeV0 encodes the JusticeKit using the version 0 encoding scheme to the

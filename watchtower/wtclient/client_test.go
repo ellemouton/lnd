@@ -73,12 +73,12 @@ var (
 	waitTime = 5 * time.Second
 
 	defaultTxPolicy = wtpolicy.TxPolicy{
-		BlobType:     blob.TypeAltruistCommit,
+		BlobType:     blob.TypeAltruistTaprootCommit,
 		SweepFeeRate: wtpolicy.DefaultSweepFeeRate,
 	}
 
 	highSweepRateTxPolicy = wtpolicy.TxPolicy{
-		BlobType:     blob.TypeAltruistCommit,
+		BlobType:     blob.TypeAltruistTaprootCommit,
 		SweepFeeRate: 1000000, // The high sweep fee creates dust.
 	}
 )
@@ -525,7 +525,7 @@ func newHarness(t *testing.T, cfg harnessCfg) *testHarness {
 
 		_, retribution := h.channelFromID(id).getState(commitHeight)
 
-		return retribution, channeldb.SingleFunderBit, nil
+		return retribution, channeldb.SimpleTaprootFeatureBit, nil
 	}
 
 	if !cfg.noServerStart {
@@ -694,7 +694,7 @@ func (h *testHarness) registerChannel(id uint64) {
 	h.t.Helper()
 
 	chanID := chanIDFromInt(id)
-	err := h.clientMgr.RegisterChannel(chanID, channeldb.SingleFunderBit)
+	err := h.clientMgr.RegisterChannel(chanID, channeldb.SimpleTaprootFeatureBit)
 	require.NoError(h.t, err)
 }
 

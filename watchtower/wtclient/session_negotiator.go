@@ -128,6 +128,8 @@ func newSessionNegotiator(cfg *NegotiatorConfig) *sessionNegotiator {
 	}
 	if cfg.Policy.IsAnchorChannel() {
 		features = append(features, wtwire.AnchorCommitRequired)
+	} else if cfg.Policy.IsTaprootChannel() {
+		features = append(features, wtwire.TaprootCommitRequired)
 	}
 
 	localInit := wtwire.NewInitMessage(

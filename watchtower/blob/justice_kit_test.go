@@ -5,11 +5,11 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"io"
-	"reflect"
 	"testing"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -32,6 +32,14 @@ func makeSig(i int) lnwire.Sig {
 	binary.BigEndian.PutUint64(sigBytes[:8], uint64(i))
 
 	sig, _ := lnwire.NewSigFromWireECDSA(sigBytes[:])
+	return sig
+}
+
+func makeSchnorrSig(i int) lnwire.Sig {
+	var sigBytes [64]byte
+	binary.BigEndian.PutUint64(sigBytes[:8], uint64(i))
+
+	sig, _ := lnwire.NewSigFromSchnorrRawSignature(sigBytes[:])
 	return sig
 }
 
@@ -137,6 +145,23 @@ var descriptorTests = []descriptorTest{
 		commitToLocalSig: makeSig(1),
 		encErr:           blob.ErrSweepAddressToLong,
 	},
+	{
+		name:             "taproot to-local only",
+		encVersion:       blob.TypeAltruistTaprootCommit,
+		decVersion:       blob.TypeAltruistTaprootCommit,
+		sweepAddr:        makeAddr(blob.MaxSweepAddrSize),
+		commitToLocalSig: makeSchnorrSig(1),
+	},
+	{
+		name:                 "taproot to-local and to-remote",
+		encVersion:           blob.TypeAltruistTaprootCommit,
+		decVersion:           blob.TypeAltruistTaprootCommit,
+		sweepAddr:            makeAddr(blob.MaxSweepAddrSize),
+		commitToLocalSig:     makeSchnorrSig(1),
+		hasCommitToRemote:    true,
+		commitToRemotePubKey: makePubKey(2),
+		commitToRemoteSig:    makeSchnorrSig(2),
+	},
 }
 
 // TestBlobJusticeKitEncryptDecrypt asserts that encrypting and decrypting a
@@ -210,10 +235,7 @@ func testBlobJusticeKitEncryptDecrypt(t *testing.T, test descriptorTest) {
 
 	// Check that the original blob plaintext matches the
 	// one reconstructed from the encrypted blob.
-	if !reflect.DeepEqual(boj, boj2) {
-		t.Fatalf("decrypted plaintext does not match original, "+
-			"want: %v, got %v", boj, boj2)
-	}
+	require.Equal(t, boj, boj2)
 }
 
 type remoteWitnessTest struct {
@@ -223,7 +245,7 @@ type remoteWitnessTest struct {
 }
 
 // TestJusticeKitRemoteWitnessConstruction tests that a JusticeKit returns the
-// proper to-remote witnes script and to-remote witness stack. This should be
+// proper to-remote witness script and to-remote witness stack. This should be
 // equivalent to p2wkh spend.
 func TestJusticeKitRemoteWitnessConstruction(t *testing.T) {
 	tests := []remoteWitnessTest{
@@ -241,6 +263,16 @@ func TestJusticeKitRemoteWitnessConstruction(t *testing.T) {
 			expWitnessScript: func(pk *btcec.PublicKey) []byte {
 				script, _ := input.CommitScriptToRemoteConfirmed(pk)
 				return script
+			},
+		},
+		{
+			name: "taproot commitment",
+			blobType: blob.Type(blob.FlagCommitOutputs |
+				blob.FlagTaprootChannel),
+			expWitnessScript: func(pk *btcec.PublicKey) []byte {
+				// TODO: replace with NUMS point.
+				scriptTree, _ := input.NewRemoteCommitScriptTree(pk, pk)
+				return scriptTree.SettleLeaf.Script
 			},
 		},
 	}
@@ -267,9 +299,15 @@ func testJusticeKitRemoteWitnessConstruction(
 	// Sign a message using the to-remote private key. The exact message
 	// doesn't matter as we won't be validating the signature's validity.
 	digest := bytes.Repeat([]byte("a"), 32)
-	rawToRemoteSig := ecdsa.Sign(toRemotePrivKey, digest)
+	var rawToRemoteSig input.Signature
+	if test.blobType.IsTaprootChannel() {
+		rawToRemoteSig, err = schnorr.Sign(toRemotePrivKey, digest)
+		require.NoError(t, err)
+	} else {
+		rawToRemoteSig = ecdsa.Sign(toRemotePrivKey, digest)
+	}
 
-	// Convert the DER-encoded signature into a fixed-size sig.
+	// Convert the signature into a fixed-size sig.
 	commitToRemoteSig, err := lnwire.NewSigFromSignature(rawToRemoteSig)
 	require.Nil(t, err)
 
@@ -278,6 +316,10 @@ func testJusticeKitRemoteWitnessConstruction(
 		BlobType:             test.blobType,
 		CommitToRemotePubKey: toRemotePubKey,
 		CommitToRemoteSig:    commitToRemoteSig,
+	}
+
+	if test.blobType.IsTaprootChannel() {
+		justiceKit.Nums = toRemotePubKey
 	}
 
 	// Now, compute the to-remote witness script returned by the justice

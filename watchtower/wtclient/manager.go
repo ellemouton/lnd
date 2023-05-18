@@ -561,6 +561,8 @@ func (m *Manager) RegisterChannel(id lnwire.ChannelID,
 	blobType := blob.TypeAltruistCommit
 	if chanType.HasAnchors() {
 		blobType = blob.TypeAltruistAnchorCommit
+	} else if chanType.IsTaproot() {
+		blobType = blob.TypeAltruistTaprootCommit
 	}
 
 	m.clientsMu.Lock()
