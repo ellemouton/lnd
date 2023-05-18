@@ -87,6 +87,24 @@ func (t Type) IsAnchorChannel() bool {
 	return t.Has(FlagAnchorChannel)
 }
 
+// LogPrefix returns the prefix to be used for any log lines for the client
+// managing the blob type.
+func (t Type) LogPrefix() string {
+	var prefix string
+	switch t {
+	case TypeRewardCommit:
+		prefix = "reward"
+	case TypeAltruistCommit:
+		prefix = "legacy"
+	case TypeAltruistAnchorCommit:
+		prefix = "anchor"
+	default:
+		prefix = "unknown"
+	}
+
+	return fmt.Sprintf("(%s)", prefix)
+}
+
 // knownFlags maps the supported flags to their name.
 var knownFlags = map[Flag]struct{}{
 	FlagReward:        {},

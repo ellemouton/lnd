@@ -182,7 +182,7 @@ type Manager struct {
 var _ TowerClientManager = (*Manager)(nil)
 
 // NewManager constructs a new Manager.
-func NewManager(config *Config) (*Manager, error) {
+func NewManager(config *Config, policies ...wtpolicy.Policy) (*Manager, error) {
 	// Copy the config to prevent side effects from modifying both the
 	// internal and external version of the Config.
 	cfg := new(Config)
@@ -205,7 +205,7 @@ func NewManager(config *Config) (*Manager, error) {
 		return nil, err
 	}
 
-	return &Manager{
+	m := &Manager{
 		cfg:                  cfg,
 		clients:              make(map[blob.Type]*TowerClient),
 		chanCommitHeights:    make(map[lnwire.ChannelID]uint64),
@@ -214,19 +214,31 @@ func NewManager(config *Config) (*Manager, error) {
 		closableSessionQueue: newSessionCloseMinHeap(),
 		quit:                 make(chan struct{}),
 		forceQuit:            make(chan struct{}),
-	}, nil
+	}
+
+	for _, policy := range policies {
+		if err = policy.Validate(); err != nil {
+			return nil, err
+		}
+
+		if err = m.newClient(policy); err != nil {
+			return nil, err
+		}
+	}
+
+	return m, nil
 }
 
-// NewClient constructs a new TowerClient and adds it to the set of clients that
+// newClient constructs a new TowerClient and adds it to the set of clients that
 // the Manager is keeping track of.
-func (m *Manager) NewClient(policy wtpolicy.Policy) (*TowerClient, error) {
+func (m *Manager) newClient(policy wtpolicy.Policy) error {
 	m.clientsMu.Lock()
 	defer m.clientsMu.Unlock()
 
 	_, ok := m.clients[policy.BlobType]
 	if ok {
-		return nil, fmt.Errorf("a client with blob type %s has "+
-			"already been registered", policy.BlobType)
+		return fmt.Errorf("a client with blob type %s has already "+
+			"been registered", policy.BlobType)
 	}
 
 	// perUpdate is a callback function that will be used to inspect the
@@ -256,12 +268,12 @@ func (m *Manager) NewClient(policy wtpolicy.Policy) (*TowerClient, error) {
 
 	client, err := newTowerClient(cfg, perUpdate)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	m.clients[policy.BlobType] = client
 
-	return client, nil
+	return nil
 }
 
 // Start starts all the clients that have been registered with the Manager.

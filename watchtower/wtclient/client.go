@@ -182,10 +182,7 @@ type TowerClient struct {
 func newTowerClient(cfg *towerClientCfg, perUpdate func(policy wtpolicy.Policy,
 	chanID lnwire.ChannelID, commitHeight uint64)) (*TowerClient, error) {
 
-	prefix := "(legacy)"
-	if cfg.Policy.IsAnchorChannel() {
-		prefix = "(anchor)"
-	}
+	prefix := cfg.Policy.TxPolicy.BlobType.LogPrefix()
 	plog := build.NewPrefixLog(prefix, log)
 
 	var (

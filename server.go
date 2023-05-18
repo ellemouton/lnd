@@ -1513,6 +1513,12 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			return nil, err
 		}
 
+		// Copy the policy for legacy channels and set the blob flag
+		// signalling support for anchor channels.
+		anchorPolicy := policy
+		anchorPolicy.TxPolicy.BlobType |=
+			blob.Type(blob.FlagAnchorChannel)
+
 		// authDial is the wrapper around the btrontide.Dial for the
 		// watchtower.
 		authDial := func(localKey keychain.SingleKeyECDH,
@@ -1572,25 +1578,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			MaxBackoff:         5 * time.Minute,
 			ForceQuitDelay:     wtclient.DefaultForceQuitDelay,
 			MaxTasksInMemQueue: maxTasksInMemQueue,
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		// Register a legacy tower client.
-		_, err = s.towerClientMgr.NewClient(policy)
-		if err != nil {
-			return nil, err
-		}
-
-		// Copy the policy for legacy channels and set the blob flag
-		// signalling support for anchor channels.
-		anchorPolicy := policy
-		anchorPolicy.TxPolicy.BlobType |=
-			blob.Type(blob.FlagAnchorChannel)
-
-		// Register an anchors tower client.
-		_, err = s.towerClientMgr.NewClient(anchorPolicy)
+		}, policy, anchorPolicy)
 		if err != nil {
 			return nil, err
 		}
