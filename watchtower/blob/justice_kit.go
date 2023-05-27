@@ -11,6 +11,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
+	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -178,23 +179,76 @@ type JusticeKit struct {
 
 // CommitToLocalWitnessScript returns the serialized witness script for the
 // commitment to-local output.
-func (b *JusticeKit) CommitToLocalWitnessScript() ([]byte, error) {
-	revocationPubKey, err := btcec.ParsePubKey(
-		b.RevocationPubKey[:],
-	)
+func (b *JusticeKit) CommitToLocalWitnessScript() ([]byte, []byte, []byte,
+	error) {
+
+	revocationPubKey, err := btcec.ParsePubKey(b.RevocationPubKey[:])
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
-	localDelayedPubKey, err := btcec.ParsePubKey(
-		b.LocalDelayPubKey[:],
-	)
+	localDelayedPubKey, err := btcec.ParsePubKey(b.LocalDelayPubKey[:])
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
-	return input.CommitScriptToSelf(
-		b.CSVDelay, localDelayedPubKey, revocationPubKey,
+	if !b.BlobType.IsTaprootChannel() {
+		script, err := input.CommitScriptToSelf(
+			b.CSVDelay, localDelayedPubKey, revocationPubKey,
+		)
+
+		return script, nil, nil, err
+	}
+
+	revokeScript, err := input.NewLocalCommitRevokeScript(
+		localDelayedPubKey, revocationPubKey,
+	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	revokeLeaf := txscript.NewBaseTapLeaf(revokeScript)
+	revokeLeafHash := revokeLeaf.TapHash()
+	rootHash := tapBranchHash(revokeLeafHash[:], b.DelayScriptHash[:])
+
+	outputKey := txscript.ComputeTaprootOutputKey(
+		&input.TaprootNUMSKey, rootHash[:],
+	)
+
+	outputScript, err := input.PayToTaprootScript(outputKey)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	var outputKeyYIsOdd bool
+	if outputKey.SerializeCompressed()[0] ==
+		secp.PubKeyFormatCompressedOdd {
+
+		outputKeyYIsOdd = true
+	}
+
+	ctrlBlock := txscript.ControlBlock{
+		InternalKey:     &input.TaprootNUMSKey,
+		OutputKeyYIsOdd: outputKeyYIsOdd,
+		LeafVersion:     revokeLeaf.LeafVersion,
+		InclusionProof:  b.DelayScriptHash[:],
+	}
+
+	ctrlBytes, err := ctrlBlock.ToBytes()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return revokeScript, ctrlBytes, outputScript, nil
+}
+
+func tapBranchHash(l, r []byte) chainhash.Hash {
+	if bytes.Compare(l[:], r[:]) > 0 {
+		l, r = r, l
+	}
+
+	return *chainhash.TaggedHash(
+		chainhash.TagTapBranch, l[:], r[:],
 	)
 }
 
@@ -206,6 +260,13 @@ func (b *JusticeKit) CommitToLocalRevokeWitnessStack() ([][]byte, error) {
 	toLocalSig, err := b.CommitToLocalSig.ToSignature()
 	if err != nil {
 		return nil, err
+	}
+
+	if b.BlobType.IsTaprootChannel() {
+		witnessStack := make([][]byte, 1)
+		witnessStack[0] = toLocalSig.Serialize()
+
+		return witnessStack, nil
 	}
 
 	witnessStack := make([][]byte, 2)

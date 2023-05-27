@@ -422,7 +422,7 @@ func TestJusticeKitToLocalWitnessConstruction(t *testing.T) {
 	require.Nil(t, err)
 
 	// Compute the to-local script that is returned by the justice kit.
-	toLocalScript, err := justiceKit.CommitToLocalWitnessScript()
+	toLocalScript, _, _, err := justiceKit.CommitToLocalWitnessScript()
 	require.Nil(t, err)
 
 	// Assert that the expected to-local script matches the actual script.

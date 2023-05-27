@@ -57,16 +57,23 @@ type breachedInput struct {
 // to-local output.
 func (p *JusticeDescriptor) commitToLocalInput() (*breachedInput, error) {
 	// Retrieve the to-local witness script from the justice kit.
-	toLocalScript, err := p.JusticeKit.CommitToLocalWitnessScript()
+	toLocalScript, ctrl, outputScript, err := p.JusticeKit.CommitToLocalWitnessScript()
 	if err != nil {
 		return nil, err
 	}
 
 	// Compute the witness script hash, which will be used to locate the
 	// input on the breaching commitment transaction.
-	toLocalWitnessHash, err := input.WitnessScriptHash(toLocalScript)
-	if err != nil {
-		return nil, err
+	var toLocalWitnessHash []byte
+	if p.JusticeKit.BlobType.IsTaprootChannel() {
+		toLocalScript = outputScript
+	} else {
+		toLocalWitnessHash, err = input.WitnessScriptHash(
+			toLocalScript,
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Locate the to-local output on the breaching commitment transaction.
@@ -94,7 +101,7 @@ func (p *JusticeDescriptor) commitToLocalInput() (*breachedInput, error) {
 	return &breachedInput{
 		txOut:    toLocalTxOut,
 		outPoint: toLocalOutPoint,
-		witness:  buildWitness(witnessStack, toLocalScript, nil),
+		witness:  buildWitness(witnessStack, toLocalScript, ctrl),
 	}, nil
 }
 
