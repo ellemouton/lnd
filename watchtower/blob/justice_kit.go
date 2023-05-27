@@ -224,11 +224,11 @@ func (b *JusticeKit) HasCommitToRemoteOutput() bool {
 
 // CommitToRemoteWitnessScript returns the witness script for the commitment
 // to-remote output given the blob type. The script returned will either be for
-// a p2wpkh to-remote output or an p2wsh anchor to-remote output which includes
-// a CSV delay.
-func (b *JusticeKit) CommitToRemoteWitnessScript() ([]byte, error) {
+// a p2wpkh to-remote output, a p2wsh anchor to-remote output which includes
+// a CSV delay or a p2tr
+func (b *JusticeKit) CommitToRemoteWitnessScript() ([]byte, []byte, error) {
 	if !btcec.IsCompressedPubKey(b.CommitToRemotePubKey[:]) {
-		return nil, ErrNoCommitToRemoteOutput
+		return nil, nil, ErrNoCommitToRemoteOutput
 	}
 
 	// If this is a blob for an anchor channel, we'll return the p2wsh
@@ -236,13 +236,44 @@ func (b *JusticeKit) CommitToRemoteWitnessScript() ([]byte, error) {
 	if b.BlobType.IsAnchorChannel() {
 		pk, err := btcec.ParsePubKey(b.CommitToRemotePubKey[:])
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
-		return input.CommitScriptToRemoteConfirmed(pk)
+		toRemote, err := input.CommitScriptToRemoteConfirmed(pk)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		return toRemote, nil, nil
+	} else if b.BlobType.IsTaprootChannel() {
+		pk, err := btcec.ParsePubKey(b.CommitToRemotePubKey[:])
+		if err != nil {
+			return nil, nil, err
+		}
+
+		toRemoteScriptTree, err := input.NewRemoteCommitScriptTree(pk)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		tree := toRemoteScriptTree.TapscriptTree
+
+		settleTapleafHash := toRemoteScriptTree.SettleLeaf.TapHash()
+		settleIdx := tree.LeafProofIndex[settleTapleafHash]
+		settleMerkleProof := tree.LeafMerkleProofs[settleIdx]
+		settleControlBlock := settleMerkleProof.ToControlBlock(
+			&input.TaprootNUMSKey,
+		)
+
+		ctrl, err := settleControlBlock.ToBytes()
+		if err != nil {
+			return nil, nil, err
+		}
+
+		return toRemoteScriptTree.SettleLeaf.Script, ctrl, nil
 	}
 
-	return b.CommitToRemotePubKey[:], nil
+	return b.CommitToRemotePubKey[:], nil, nil
 }
 
 // CommitToRemoteWitnessStack returns a witness stack spending the commitment
@@ -257,6 +288,12 @@ func (b *JusticeKit) CommitToRemoteWitnessStack() ([][]byte, error) {
 	}
 
 	witnessStack := make([][]byte, 1)
+	if b.BlobType.IsTaprootChannel() {
+		witnessStack[0] = toRemoteSig.Serialize()
+
+		return witnessStack, nil
+	}
+
 	witnessStack[0] = append(toRemoteSig.Serialize(),
 		byte(txscript.SigHashAll))
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/lightningnetwork/lnd/input"
@@ -264,24 +265,31 @@ type remoteWitnessTest struct {
 }
 
 // TestJusticeKitRemoteWitnessConstruction tests that a JusticeKit returns the
-// proper to-remote witnes script and to-remote witness stack. This should be
-// equivalent to p2wkh spend.
+// proper to-remote witness script and to-remote witness stack.
 func TestJusticeKitRemoteWitnessConstruction(t *testing.T) {
 	tests := []remoteWitnessTest{
 		{
 			name:     "legacy commitment",
-			blobType: blob.Type(blob.FlagCommitOutputs),
+			blobType: blob.TypeAltruistCommit,
 			expWitnessScript: func(pk *btcec.PublicKey) []byte {
 				return pk.SerializeCompressed()
 			},
 		},
 		{
-			name: "anchor commitment",
-			blobType: blob.Type(blob.FlagCommitOutputs |
-				blob.FlagAnchorChannel),
+			name:     "anchor commitment",
+			blobType: blob.TypeAltruistAnchorCommit,
 			expWitnessScript: func(pk *btcec.PublicKey) []byte {
 				script, _ := input.CommitScriptToRemoteConfirmed(pk)
 				return script
+			},
+		},
+		{
+			name:     "taproot commitment",
+			blobType: blob.TypeAltruistTaprootCommit,
+			expWitnessScript: func(pk *btcec.PublicKey) []byte {
+				tree, _ := input.NewRemoteCommitScriptTree(pk)
+
+				return tree.SettleLeaf.Script
 			},
 		},
 	}
@@ -308,9 +316,15 @@ func testJusticeKitRemoteWitnessConstruction(
 	// Sign a message using the to-remote private key. The exact message
 	// doesn't matter as we won't be validating the signature's validity.
 	digest := bytes.Repeat([]byte("a"), 32)
-	rawToRemoteSig := ecdsa.Sign(toRemotePrivKey, digest)
+	var rawToRemoteSig input.Signature
+	if test.blobType.IsTaprootChannel() {
+		rawToRemoteSig, err = schnorr.Sign(toRemotePrivKey, digest)
+		require.NoError(t, err)
+	} else {
+		rawToRemoteSig = ecdsa.Sign(toRemotePrivKey, digest)
+	}
 
-	// Convert the DER-encoded signature into a fixed-size sig.
+	// Convert the signature into a fixed-size sig.
 	commitToRemoteSig, err := lnwire.NewSigFromSignature(rawToRemoteSig)
 	require.Nil(t, err)
 
@@ -323,7 +337,7 @@ func testJusticeKitRemoteWitnessConstruction(
 
 	// Now, compute the to-remote witness script returned by the justice
 	// kit.
-	toRemoteScript, err := justiceKit.CommitToRemoteWitnessScript()
+	toRemoteScript, _, err := justiceKit.CommitToRemoteWitnessScript()
 	require.Nil(t, err)
 
 	// Assert this is exactly the to-remote, compressed pubkey.
@@ -337,9 +351,14 @@ func testJusticeKitRemoteWitnessConstruction(
 
 	// Compute the expected first element, by appending a sighash all byte
 	// to our raw DER-encoded signature.
-	rawToRemoteSigWithSigHash := append(
-		rawToRemoteSig.Serialize(), byte(txscript.SigHashAll),
-	)
+	var rawToRemoteSigWithSigHash []byte
+	if test.blobType.IsTaprootChannel() {
+		rawToRemoteSigWithSigHash = rawToRemoteSig.Serialize()
+	} else {
+		rawToRemoteSigWithSigHash = append(
+			rawToRemoteSig.Serialize(), byte(txscript.SigHashAll),
+		)
+	}
 
 	// Assert that the expected witness stack is returned.
 	expWitnessStack := [][]byte{
@@ -353,7 +372,7 @@ func testJusticeKitRemoteWitnessConstruction(
 	// When trying to compute the witness script, this should now return
 	// ErrNoCommitToRemoteOutput since a valid pubkey could not be parsed
 	// from CommitToRemotePubKey.
-	_, err = justiceKit.CommitToRemoteWitnessScript()
+	_, _, err = justiceKit.CommitToRemoteWitnessScript()
 	require.Error(t, blob.ErrNoCommitToRemoteOutput, err)
 }
 

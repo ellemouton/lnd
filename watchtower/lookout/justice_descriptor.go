@@ -94,7 +94,7 @@ func (p *JusticeDescriptor) commitToLocalInput() (*breachedInput, error) {
 	return &breachedInput{
 		txOut:    toLocalTxOut,
 		outPoint: toLocalOutPoint,
-		witness:  buildWitness(witnessStack, toLocalScript),
+		witness:  buildWitness(witnessStack, toLocalScript, nil),
 	}, nil
 }
 
@@ -102,7 +102,7 @@ func (p *JusticeDescriptor) commitToLocalInput() (*breachedInput, error) {
 // to-remote output.
 func (p *JusticeDescriptor) commitToRemoteInput() (*breachedInput, error) {
 	// Retrieve the to-remote witness script from the justice kit.
-	toRemoteScript, err := p.JusticeKit.CommitToRemoteWitnessScript()
+	toRemoteScript, ctrl, err := p.JusticeKit.CommitToRemoteWitnessScript()
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +111,27 @@ func (p *JusticeDescriptor) commitToRemoteInput() (*breachedInput, error) {
 		toRemoteScriptHash []byte
 		toRemoteSequence   uint32
 	)
-	if p.JusticeKit.BlobType.IsAnchorChannel() {
+	if p.JusticeKit.BlobType.IsTaprootChannel() {
+		pk, err := btcec.ParsePubKey(
+			p.JusticeKit.CommitToRemotePubKey[:],
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		outputKey, err := input.TaprootCommitScriptToRemote(pk)
+		if err != nil {
+			return nil, err
+		}
+
+		script, err := input.PayToTaprootScript(outputKey)
+		if err != nil {
+			return nil, err
+		}
+
+		toRemoteScriptHash = script
+		toRemoteSequence = 1
+	} else if p.JusticeKit.BlobType.IsAnchorChannel() {
 		toRemoteScriptHash, err = input.WitnessScriptHash(
 			toRemoteScript,
 		)
@@ -163,7 +183,7 @@ func (p *JusticeDescriptor) commitToRemoteInput() (*breachedInput, error) {
 	return &breachedInput{
 		txOut:    toRemoteTxOut,
 		outPoint: toRemoteOutPoint,
-		witness:  buildWitness(witnessStack, toRemoteScript),
+		witness:  buildWitness(witnessStack, toRemoteScript, ctrl),
 		sequence: toRemoteSequence,
 	}, nil
 }
@@ -350,10 +370,19 @@ func findTxOutByPkScript(txn *wire.MsgTx,
 }
 
 // buildWitness appends the witness script to a given witness stack.
-func buildWitness(witnessStack [][]byte, witnessScript []byte) [][]byte {
-	witness := make([][]byte, len(witnessStack)+1)
+func buildWitness(witnessStack [][]byte, witnessScript, ctrl []byte) [][]byte {
+	extra := 1
+	if len(ctrl) != 0 {
+		extra = 2
+	}
+
+	witness := make([][]byte, len(witnessStack)+extra)
 	lastIdx := copy(witness, witnessStack)
 	witness[lastIdx] = witnessScript
+
+	if len(ctrl) != 0 {
+		witness[lastIdx+1] = ctrl
+	}
 
 	return witness
 }
