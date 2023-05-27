@@ -5,11 +5,11 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"io"
-	"reflect"
 	"testing"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -44,6 +44,23 @@ func makeAddr(size int) []byte {
 	return addr
 }
 
+func makeHash() [chainhash.HashSize]byte {
+	var hash [chainhash.HashSize]byte
+	if _, err := io.ReadFull(rand.Reader, hash[:]); err != nil {
+		panic("unable to create addr")
+	}
+
+	return hash
+}
+
+func makeSchnorrSig(i int) lnwire.Sig {
+	var sigBytes [64]byte
+	binary.BigEndian.PutUint64(sigBytes[:8], uint64(i))
+
+	sig, _ := lnwire.NewSigFromSchnorrRawSignature(sigBytes[:])
+	return sig
+}
+
 type descriptorTest struct {
 	name                 string
 	encVersion           blob.Type
@@ -52,6 +69,7 @@ type descriptorTest struct {
 	revPubKey            blob.PubKey
 	delayPubKey          blob.PubKey
 	csvDelay             uint32
+	delayScriptHash      [chainhash.HashSize]byte
 	commitToLocalSig     lnwire.Sig
 	hasCommitToRemote    bool
 	commitToRemotePubKey blob.PubKey
@@ -70,6 +88,27 @@ var descriptorTests = []descriptorTest{
 		delayPubKey:      makePubKey(1),
 		csvDelay:         144,
 		commitToLocalSig: makeSig(1),
+	},
+	{
+		name:             "taproot to-local only",
+		encVersion:       blob.TypeAltruistTaprootCommit,
+		decVersion:       blob.TypeAltruistTaprootCommit,
+		sweepAddr:        makeAddr(34),
+		delayScriptHash:  makeHash(),
+		revPubKey:        makePubKey(0),
+		delayPubKey:      makePubKey(1),
+		commitToLocalSig: makeSchnorrSig(1),
+	},
+	{
+		name:                 "taproot to-local and to-remote",
+		encVersion:           blob.TypeAltruistTaprootCommit,
+		decVersion:           blob.TypeAltruistTaprootCommit,
+		sweepAddr:            makeAddr(34),
+		delayScriptHash:      makeHash(),
+		commitToLocalSig:     makeSchnorrSig(1),
+		hasCommitToRemote:    true,
+		commitToRemotePubKey: makePubKey(2),
+		commitToRemoteSig:    makeSchnorrSig(2),
 	},
 	{
 		name:                 "to-local and p2wkh",
@@ -157,10 +196,15 @@ func testBlobJusticeKitEncryptDecrypt(t *testing.T, test descriptorTest) {
 		SweepAddress:         test.sweepAddr,
 		RevocationPubKey:     test.revPubKey,
 		LocalDelayPubKey:     test.delayPubKey,
-		CSVDelay:             test.csvDelay,
 		CommitToLocalSig:     test.commitToLocalSig,
 		CommitToRemotePubKey: test.commitToRemotePubKey,
 		CommitToRemoteSig:    test.commitToRemoteSig,
+	}
+
+	if boj.BlobType.IsTaprootChannel() {
+		boj.DelayScriptHash = test.delayScriptHash
+	} else {
+		boj.CSVDelay = test.csvDelay
 	}
 
 	// Generate a random encryption key for the blob. The key is
@@ -173,9 +217,9 @@ func testBlobJusticeKitEncryptDecrypt(t *testing.T, test descriptorTest) {
 	// Encrypt the blob plaintext using the generated key and
 	// target version for this test.
 	ctxt, err := boj.Encrypt(key)
-	if err != test.encErr {
-		t.Fatalf("unable to encrypt blob: %v", err)
-	} else if test.encErr != nil {
+	require.ErrorIs(t, err, test.encErr)
+
+	if test.encErr != nil {
 		// If the test expected an encryption failure, we can
 		// continue to the next test.
 		return
@@ -193,9 +237,9 @@ func testBlobJusticeKitEncryptDecrypt(t *testing.T, test descriptorTest) {
 	// blob plaintext from the decrypted contents. We use the target
 	// decryption version specified by this test case.
 	boj2, err := blob.Decrypt(key, ctxt, test.decVersion)
-	if err != test.decErr {
-		t.Fatalf("unable to decrypt blob: %v", err)
-	} else if test.decErr != nil {
+	require.ErrorIs(t, err, test.decErr)
+
+	if test.decErr != nil {
 		// If the test expected an decryption failure, we can
 		// continue to the next test.
 		return
@@ -210,10 +254,7 @@ func testBlobJusticeKitEncryptDecrypt(t *testing.T, test descriptorTest) {
 
 	// Check that the original blob plaintext matches the
 	// one reconstructed from the encrypted blob.
-	if !reflect.DeepEqual(boj, boj2) {
-		t.Fatalf("decrypted plaintext does not match original, "+
-			"want: %v, got %v", boj, boj2)
-	}
+	require.Equal(t, boj, boj2)
 }
 
 type remoteWitnessTest struct {
