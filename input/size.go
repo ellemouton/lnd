@@ -556,6 +556,47 @@ const (
 	//      - leafVersionAndParity: 1 byte
 	//      - schnorrPubKey: 32 byte
 	TaprootBaseControlBlockWitnessSize = 33
+
+	// TaprootToLocalRevokeScriptSize 68 bytes
+	//	- OP_DATA: 1 byte
+	//	- local key: 32 bytes
+	// 	- OP_DROP: 1 byte
+	// 	- OP_DATA: 1 byte
+	// 	- revocation key: 32 bytes
+	// 	- OP_CHECKSIG: 1 byte
+	TaprootToLocalRevokeScriptSize = 1 + 32 + 1 + 1 + 32 + 1
+
+	// TaprootToLocalRevokeWitnessSize
+	// 	- NumberOfWitnessElements: 1 byte
+	// 	- sigLength: 1 byte
+	// 	- sweep sig: 64 bytes
+	// 	- script len: 1 byte
+	// 	- revocation script size: 68 bytes
+	// 	- ctrl block size: 1 byte
+	// 	- base control block: 33 bytes
+	//	- merkle proof: 32
+	TaprootToLocalRevokeWitnessSize = 1 + 1 + 64 + 1 +
+		TaprootToLocalRevokeScriptSize + 1 + 33 + 32
+
+	// TaprootToRemoteScriptSize
+	// 	- OP_DATA: 1 byte
+	// 	- remote key: 32 bytes
+	// 	- OP_CHECKSIG: 1 byte
+	// 	- OP_1: 1 byte
+	// 	- OP_CHECKSEQUENCEVERIFY: 1 byte
+	// 	- OP_DROP: 1 byte
+	TaprootToRemoteScriptSize = 1 + 32 + 1 + 1 + 1 + 1
+
+	// TaprootToRemoteWitnessSize
+	// 	- NumberOfWitnessElements: 1 byte
+	// 	- sigLength: 1 byte
+	// 	- sweep sig: 64 bytes
+	// 	- script len: 1 byte
+	// 	- remote script size: 37 bytes
+	// 	- ctrl block size: 1 byte
+	// 	- base control block: 33 bytes
+	TaprootToRemoteWitnessSize = 1 + 1 + 64 + 1 +
+		TaprootToRemoteScriptSize + 1 + 33
 )
 
 // EstimateCommitTxWeight estimate commitment transaction weight depending on

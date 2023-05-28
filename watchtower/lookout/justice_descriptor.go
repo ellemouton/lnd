@@ -66,7 +66,7 @@ func (p *JusticeDescriptor) commitToLocalInput() (*breachedInput, error) {
 	// input on the breaching commitment transaction.
 	var toLocalWitnessHash []byte
 	if p.JusticeKit.BlobType.IsTaprootChannel() {
-		toLocalScript = outputScript
+		toLocalWitnessHash = outputScript
 	} else {
 		toLocalWitnessHash, err = input.WitnessScriptHash(
 			toLocalScript,
@@ -251,6 +251,9 @@ func (p *JusticeDescriptor) assembleJusticeTxn(txWeight int64,
 		return nil, fmt.Errorf("error creating previous output "+
 			"fetcher: %v", err)
 	}
+
+	hashes := txscript.NewTxSigHashes(justiceTxn, prevOutFetcher)
+
 	for _, inp := range inputs {
 		// Lookup the input's new post-sort position.
 		i := inputIndex[inp.outPoint]
@@ -261,7 +264,7 @@ func (p *JusticeDescriptor) assembleJusticeTxn(txWeight int64,
 		vm, err := txscript.NewEngine(
 			inp.txOut.PkScript, justiceTxn, i,
 			txscript.StandardVerifyFlags,
-			nil, nil, inp.txOut.Value, prevOutFetcher,
+			nil, hashes, inp.txOut.Value, prevOutFetcher,
 		)
 		if err != nil {
 			return nil, err
@@ -322,7 +325,9 @@ func (p *JusticeDescriptor) CreateJusticeTxn() (*wire.MsgTx, error) {
 	// values on the sweep transaction, so we mimic the original bug to
 	// avoid invalidating signatures by older clients. For anchor channels
 	// we correct this and use the correct witness size.
-	if p.JusticeKit.BlobType.IsAnchorChannel() {
+	if p.JusticeKit.BlobType.IsTaprootChannel() {
+		weightEstimate.AddWitnessInput(input.TaprootToLocalRevokeWitnessSize)
+	} else if p.JusticeKit.BlobType.IsAnchorChannel() {
 		weightEstimate.AddWitnessInput(input.ToLocalPenaltyWitnessSize)
 	} else {
 		weightEstimate.AddWitnessInput(input.ToLocalPenaltyWitnessSize - 1)
@@ -346,7 +351,9 @@ func (p *JusticeDescriptor) CreateJusticeTxn() (*wire.MsgTx, error) {
 		log.Debugf("Found to remote witness output=%#v, stack=%v",
 			toRemoteInput.txOut, toRemoteInput.witness)
 
-		if p.JusticeKit.BlobType.IsAnchorChannel() {
+		if p.JusticeKit.BlobType.IsTaprootChannel() {
+			weightEstimate.AddWitnessInput(input.TaprootToRemoteWitnessSize)
+		} else if p.JusticeKit.BlobType.IsAnchorChannel() {
 			weightEstimate.AddWitnessInput(input.ToRemoteConfirmedWitnessSize)
 		} else {
 			weightEstimate.AddWitnessInput(input.P2WKHWitnessSize)
