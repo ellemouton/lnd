@@ -9,6 +9,7 @@ import (
 	"io"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -631,5 +632,13 @@ func (t *justiceKitPacketV1) decode(r io.Reader) error {
 func toBlobPubKey(pk *btcec.PublicKey) pubKey {
 	var blobPubKey pubKey
 	copy(blobPubKey[:], pk.SerializeCompressed())
+	return blobPubKey
+}
+
+// toBlobSchnorrPubKey serializes the given public key into a schnorrPubKey that
+// can be set as a field on a JusticeKit.
+func toBlobSchnorrPubKey(pubKey *btcec.PublicKey) schnorrPubKey {
+	var blobPubKey schnorrPubKey
+	copy(blobPubKey[:], schnorr.SerializePubKey(pubKey))
 	return blobPubKey
 }
