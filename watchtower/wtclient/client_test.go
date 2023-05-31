@@ -73,12 +73,12 @@ var (
 	waitTime = 5 * time.Second
 
 	defaultTxPolicy = wtpolicy.TxPolicy{
-		BlobType:     blob.TypeAltruistCommit,
+		BlobType:     blob.TypeAltruistTaprootCommit,
 		SweepFeeRate: wtpolicy.DefaultSweepFeeRate,
 	}
 
 	highSweepRateTxPolicy = wtpolicy.TxPolicy{
-		BlobType:     blob.TypeAltruistCommit,
+		BlobType:     blob.TypeAltruistTaprootCommit,
 		SweepFeeRate: 1000000, // The high sweep fee creates dust.
 	}
 )
@@ -226,17 +226,25 @@ func (c *mockChannel) createRemoteCommitTx(t *testing.T) {
 	t.Helper()
 
 	// Construct the to-local witness script.
-	toLocalScript, err := input.CommitScriptToSelf(
+	toLocalScriptTree, err := input.NewLocalCommitScriptTree(
 		c.csvDelay, c.toLocalPK, c.revPK,
 	)
 	require.NoError(t, err, "unable to create to-local script")
 
+	// Construct the to-remote witness script.
+	toRemoteScriptTree, err := input.NewRemoteCommitScriptTree(c.toRemotePK)
+	require.NoError(t, err, "unable to create to-remote script")
+
 	// Compute the to-local witness script hash.
-	toLocalScriptHash, err := input.WitnessScriptHash(toLocalScript)
+	toLocalScriptHash, err := input.PayToTaprootScript(
+		toLocalScriptTree.TaprootKey,
+	)
 	require.NoError(t, err, "unable to create to-local witness script hash")
 
 	// Compute the to-remote witness script hash.
-	toRemoteScriptHash, err := input.CommitScriptUnencumbered(c.toRemotePK)
+	toRemoteScriptHash, err := input.PayToTaprootScript(
+		toRemoteScriptTree.TaprootKey,
+	)
 	require.NoError(t, err, "unable to create to-remote script")
 
 	// Construct the remote commitment txn, containing the to-local and
@@ -261,6 +269,19 @@ func (c *mockChannel) createRemoteCommitTx(t *testing.T) {
 			PkScript: toLocalScriptHash,
 		})
 
+		revokeTapleafHash := txscript.NewBaseTapLeaf(
+			toLocalScriptTree.RevocationLeaf.Script,
+		).TapHash()
+		tapTree := toLocalScriptTree.TapscriptTree
+		revokeIdx := tapTree.LeafProofIndex[revokeTapleafHash]
+		revokeMerkleProof := tapTree.LeafMerkleProofs[revokeIdx]
+		revokeControlBlock := revokeMerkleProof.ToControlBlock(
+			&input.TaprootNUMSKey,
+		)
+
+		ctrlBytes, err := revokeControlBlock.ToBytes()
+		require.NoError(t, err)
+
 		// Create the sign descriptor used to sign for the to-local
 		// input.
 		toLocalSignDesc = &input.SignDescriptor{
@@ -268,9 +289,11 @@ func (c *mockChannel) createRemoteCommitTx(t *testing.T) {
 				KeyLocator: c.revKeyLoc,
 				PubKey:     c.revPK,
 			},
-			WitnessScript: toLocalScript,
+			WitnessScript: toLocalScriptTree.RevocationLeaf.Script,
 			Output:        commitTxn.TxOut[outputIndex],
-			HashType:      txscript.SigHashAll,
+			HashType:      txscript.SigHashDefault,
+			SignMethod:    input.TaprootScriptSpendSignMethod,
+			ControlBlock:  ctrlBytes,
 		}
 		outputIndex++
 	}
@@ -280,6 +303,18 @@ func (c *mockChannel) createRemoteCommitTx(t *testing.T) {
 			PkScript: toRemoteScriptHash,
 		})
 
+		toRemoteTapleafHash := txscript.NewBaseTapLeaf(
+			toRemoteScriptTree.SettleLeaf.Script,
+		).TapHash()
+		tapTree := toRemoteScriptTree.TapscriptTree
+		remoteIdx := tapTree.LeafProofIndex[toRemoteTapleafHash]
+		remoteMerkleProof := tapTree.LeafMerkleProofs[remoteIdx]
+		remoteControlBlock := remoteMerkleProof.ToControlBlock(
+			&input.TaprootNUMSKey,
+		)
+
+		ctrlBytes, _ := remoteControlBlock.ToBytes()
+
 		// Create the sign descriptor used to sign for the to-remote
 		// input.
 		toRemoteSignDesc = &input.SignDescriptor{
@@ -287,9 +322,11 @@ func (c *mockChannel) createRemoteCommitTx(t *testing.T) {
 				KeyLocator: c.toRemoteKeyLoc,
 				PubKey:     c.toRemotePK,
 			},
-			WitnessScript: toRemoteScriptHash,
+			WitnessScript: toRemoteScriptTree.SettleLeaf.Script,
 			Output:        commitTxn.TxOut[outputIndex],
-			HashType:      txscript.SigHashAll,
+			HashType:      txscript.SigHashDefault,
+			SignMethod:    input.TaprootScriptSpendSignMethod,
+			ControlBlock:  ctrlBytes,
 		}
 		outputIndex++
 	}
@@ -525,7 +562,7 @@ func newHarness(t *testing.T, cfg harnessCfg) *testHarness {
 
 		_, retribution := h.channelFromID(id).getState(commitHeight)
 
-		return retribution, channeldb.SingleFunderBit, nil
+		return retribution, channeldb.SimpleTaprootFeatureBit, nil
 	}
 
 	if !cfg.noServerStart {
@@ -694,7 +731,9 @@ func (h *testHarness) registerChannel(id uint64) {
 	h.t.Helper()
 
 	chanID := chanIDFromInt(id)
-	err := h.clientMgr.RegisterChannel(chanID, channeldb.SingleFunderBit)
+	err := h.clientMgr.RegisterChannel(
+		chanID, channeldb.SimpleTaprootFeatureBit,
+	)
 	require.NoError(h.t, err)
 }
 
