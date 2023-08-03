@@ -227,6 +227,10 @@ const (
 	defaultGrpcClientPingMinWait = 5 * time.Second
 
 	bitcoinChainName = "bitcoin"
+
+	bitcoindBackendName = "bitcoind"
+	btcdBackendName     = "btcd"
+	neutrinoBackendName = "neutrino"
 )
 
 var (
@@ -1213,7 +1217,7 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 	}
 
 	switch cfg.Bitcoin.Node {
-	case "btcd":
+	case btcdBackendName:
 		err := parseRPCParams(
 			cfg.Bitcoin, cfg.BtcdMode, cfg.ActiveNetParams,
 		)
@@ -1221,7 +1225,7 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 			return nil, mkErr("unable to load RPC "+
 				"credentials for btcd: %v", err)
 		}
-	case "bitcoind":
+	case bitcoindBackendName:
 		if cfg.Bitcoin.SimNet {
 			return nil, mkErr("bitcoind does not " +
 				"support simnet")
@@ -1234,7 +1238,7 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 			return nil, mkErr("unable to load RPC "+
 				"credentials for bitcoind: %v", err)
 		}
-	case "neutrino":
+	case neutrinoBackendName:
 		// No need to get RPC parameters.
 
 	case "nochainbackend":
@@ -1244,6 +1248,7 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 	default:
 		str := "only btcd, bitcoind, and neutrino mode " +
 			"supported for bitcoin at this time"
+
 		return nil, mkErr(str)
 	}
 
@@ -1259,6 +1264,7 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 	}
 	if cfg.Autopilot.Allocation < 0 {
 		str := "autopilot.allocation must be non-negative"
+
 		return nil, mkErr(str)
 	}
 	if cfg.Autopilot.MinChannelSize < 0 {
