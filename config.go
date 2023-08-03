@@ -349,8 +349,6 @@ type Config struct {
 	BitcoindMode *lncfg.Bitcoind `group:"bitcoind" namespace:"bitcoind"`
 	NeutrinoMode *lncfg.Neutrino `group:"neutrino" namespace:"neutrino"`
 
-	LitecoindMode *lncfg.Bitcoind `group:"litecoind" namespace:"litecoind"`
-
 	BlockCacheSize uint64 `long:"blockcachesize" description:"The maximum capacity of the block cache"`
 
 	Autopilot *lncfg.AutoPilot `group:"Autopilot" namespace:"autopilot"`
@@ -559,12 +557,6 @@ func DefaultConfig() Config {
 			EstimateMode:       defaultBitcoindEstimateMode,
 			PrunedNodeMaxPeers: defaultPrunedNodeMaxPeers,
 			ZMQReadDeadline:    defaultZMQReadDeadline,
-		},
-		LitecoindMode: &lncfg.Bitcoind{
-			Dir:                defaultLitecoindDir,
-			RPCHost:            defaultRPCHost,
-			EstimateMode:       defaultBitcoindEstimateMode,
-			PrunedNodeMaxPeers: defaultPrunedNodeMaxPeers,
 		},
 		NeutrinoMode: &lncfg.Neutrino{
 			UserAgentName:    neutrino.UserAgentName,
@@ -931,13 +923,6 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 		cfg.BitcoindMode.ConfigPath,
 	)
 	cfg.BitcoindMode.RPCCookie = CleanAndExpandPath(cfg.BitcoindMode.RPCCookie)
-	cfg.LitecoindMode.Dir = CleanAndExpandPath(cfg.LitecoindMode.Dir)
-	cfg.LitecoindMode.ConfigPath = CleanAndExpandPath(
-		cfg.LitecoindMode.ConfigPath,
-	)
-	cfg.LitecoindMode.RPCCookie = CleanAndExpandPath(
-		cfg.LitecoindMode.RPCCookie,
-	)
 	cfg.Tor.PrivateKeyPath = CleanAndExpandPath(cfg.Tor.PrivateKeyPath)
 	cfg.Tor.WatchtowerKeyPath = CleanAndExpandPath(cfg.Tor.WatchtowerKeyPath)
 	cfg.Watchtower.TowerDir = CleanAndExpandPath(cfg.Watchtower.TowerDir)
