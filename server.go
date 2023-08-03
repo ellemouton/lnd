@@ -1219,17 +1219,10 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		HtlcNotifier:                  s.htlcNotifier,
 	}, dbs.ChanStateDB)
 
-	// Select the configuration and furnding parameters for Bitcoin or
-	// Litecoin, depending on the primary registered chain.
-	primaryChain := cfg.registeredChains.PrimaryChain()
+	// Select the configuration and funding parameters for Bitcoin.
 	chainCfg := cfg.Bitcoin
 	minRemoteDelay := funding.MinBtcRemoteDelay
 	maxRemoteDelay := funding.MaxBtcRemoteDelay
-	if primaryChain == chainreg.LitecoinChain {
-		chainCfg = cfg.Litecoin
-		minRemoteDelay = funding.MinLtcRemoteDelay
-		maxRemoteDelay = funding.MaxLtcRemoteDelay
-	}
 
 	var chanIDSeed [32]byte
 	if _, err := rand.Read(chanIDSeed[:]); err != nil {
@@ -2191,12 +2184,6 @@ func (s *server) Start() error {
 				chainreg.BitcoinSignetGenesis,
 			)
 		}
-		if s.cfg.Litecoin.Active && s.cfg.Litecoin.MainNet {
-			setSeedList(
-				s.cfg.Litecoin.DNSSeeds,
-				chainreg.LitecoinMainnetGenesis,
-			)
-		}
 
 		// If network bootstrapping hasn't been disabled, then we'll
 		// configure the set of active bootstrappers, and launch a
@@ -2548,7 +2535,7 @@ func initNetworkBootstrappers(s *server) ([]discovery.NetworkPeerBootstrapper, e
 
 	// If this isn't simnet mode, then one of our additional bootstrapping
 	// sources will be the set of running DNS seeds.
-	if !s.cfg.Bitcoin.SimNet || !s.cfg.Litecoin.SimNet {
+	if !s.cfg.Bitcoin.SimNet {
 		dnsSeeds, ok := chainreg.ChainDNSSeeds[*s.cfg.ActiveNetParams.GenesisHash]
 
 		// If we have a set of DNS seeds for this chain, then we'll add
@@ -4702,9 +4689,9 @@ func newSweepPkScriptGen(
 // bootstrapping to actively seek our peers using the set of active network
 // bootstrappers.
 func shouldPeerBootstrap(cfg *Config) bool {
-	isSimnet := (cfg.Bitcoin.SimNet || cfg.Litecoin.SimNet)
-	isSignet := (cfg.Bitcoin.SigNet || cfg.Litecoin.SigNet)
-	isRegtest := (cfg.Bitcoin.RegTest || cfg.Litecoin.RegTest)
+	isSimnet := cfg.Bitcoin.SimNet
+	isSignet := cfg.Bitcoin.SigNet
+	isRegtest := cfg.Bitcoin.RegTest
 	isDevNetwork := isSimnet || isSignet || isRegtest
 
 	// TODO(yy): remove the check on simnet/regtest such that the itest is

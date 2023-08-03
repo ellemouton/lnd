@@ -130,12 +130,7 @@ const (
 	// delta.
 	DefaultBitcoinTimeLockDelta = 80
 
-	DefaultLitecoinMinHTLCInMSat  = lnwire.MilliSatoshi(1)
-	DefaultLitecoinMinHTLCOutMSat = lnwire.MilliSatoshi(1000)
-	DefaultLitecoinBaseFeeMSat    = lnwire.MilliSatoshi(1000)
-	DefaultLitecoinFeeRate        = lnwire.MilliSatoshi(1)
-	DefaultLitecoinTimeLockDelta  = 576
-	DefaultLitecoinDustLimit      = btcutil.Amount(54600)
+	DefaultLitecoinDustLimit = btcutil.Amount(54600)
 
 	// DefaultBitcoinStaticFeePerKW is the fee rate of 50 sat/vbyte
 	// expressed in sat/kw.
