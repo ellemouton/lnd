@@ -1304,8 +1304,6 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			// in the case this gets re-orged out, and
 			// we will require more confirmations before
 			// we consider it open.
-			// TODO(halseth): Use Litecoin params in case
-			// of LTC channels.
 
 			// In case the user has explicitly specified
 			// a default value for the number of
@@ -1345,7 +1343,6 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			// close) linearly from minRemoteDelay blocks
 			// for small channels, to maxRemoteDelay blocks
 			// for channels of size MaxFundingAmount.
-			// TODO(halseth): Litecoin parameter for LTC.
 
 			// In case the user has explicitly specified
 			// a default value for the remote delay, we
