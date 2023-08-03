@@ -294,11 +294,7 @@ func NewPartialChainControl(cfg *Config) (*PartialChainControl, func(), error) {
 		}
 
 	case "bitcoind":
-		var bitcoindMode *lncfg.Bitcoind
-		switch {
-		case cfg.Bitcoin.Active:
-			bitcoindMode = cfg.BitcoindMode
-		}
+		bitcoindMode := cfg.BitcoindMode
 
 		// Otherwise, we'll be speaking directly via RPC and ZMQ to a
 		// bitcoind node. If the specified host for the btcd RPC
@@ -533,11 +529,7 @@ func NewPartialChainControl(cfg *Config) (*PartialChainControl, func(), error) {
 		// connection. If a raw cert was specified in the config, then
 		// we'll set that directly. Otherwise, we attempt to read the
 		// cert from the path specified in the config.
-		var btcdMode *lncfg.Btcd
-		switch {
-		case cfg.Bitcoin.Active:
-			btcdMode = cfg.BtcdMode
-		}
+		btcdMode := cfg.BtcdMode
 		var rpcCert []byte
 		if btcdMode.RawRPCCert != "" {
 			rpcCert, err = hex.DecodeString(btcdMode.RawRPCCert)

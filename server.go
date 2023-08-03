@@ -2159,22 +2159,20 @@ func (s *server) Start() error {
 			chainreg.ChainDNSSeeds[genesisHash] = result
 		}
 
-		// Let users overwrite the DNS seed nodes. We only allow them
-		// for bitcoin mainnet/testnet, all other combinations will just
-		// be ignored.
-		if s.cfg.Bitcoin.Active && s.cfg.Bitcoin.MainNet {
+		// Let users overwrite the DNS seed nodes.
+		if s.cfg.Bitcoin.MainNet {
 			setSeedList(
 				s.cfg.Bitcoin.DNSSeeds,
 				chainreg.BitcoinMainnetGenesis,
 			)
 		}
-		if s.cfg.Bitcoin.Active && s.cfg.Bitcoin.TestNet3 {
+		if s.cfg.Bitcoin.TestNet3 {
 			setSeedList(
 				s.cfg.Bitcoin.DNSSeeds,
 				chainreg.BitcoinTestnetGenesis,
 			)
 		}
-		if s.cfg.Bitcoin.Active && s.cfg.Bitcoin.SigNet {
+		if s.cfg.Bitcoin.SigNet {
 			setSeedList(
 				s.cfg.Bitcoin.DNSSeeds,
 				chainreg.BitcoinSignetGenesis,
