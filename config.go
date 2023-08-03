@@ -349,7 +349,6 @@ type Config struct {
 	BitcoindMode *lncfg.Bitcoind `group:"bitcoind" namespace:"bitcoind"`
 	NeutrinoMode *lncfg.Neutrino `group:"neutrino" namespace:"neutrino"`
 
-	LtcdMode      *lncfg.Btcd     `group:"ltcd" namespace:"ltcd"`
 	LitecoindMode *lncfg.Bitcoind `group:"litecoind" namespace:"litecoind"`
 
 	BlockCacheSize uint64 `long:"blockcachesize" description:"The maximum capacity of the block cache"`
@@ -560,11 +559,6 @@ func DefaultConfig() Config {
 			EstimateMode:       defaultBitcoindEstimateMode,
 			PrunedNodeMaxPeers: defaultPrunedNodeMaxPeers,
 			ZMQReadDeadline:    defaultZMQReadDeadline,
-		},
-		LtcdMode: &lncfg.Btcd{
-			Dir:     defaultLtcdDir,
-			RPCHost: defaultRPCHost,
-			RPCCert: defaultLtcdRPCCertFile,
 		},
 		LitecoindMode: &lncfg.Bitcoind{
 			Dir:                defaultLitecoindDir,
@@ -932,7 +926,6 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 	cfg.InvoiceMacPath = CleanAndExpandPath(cfg.InvoiceMacPath)
 	cfg.LogDir = CleanAndExpandPath(cfg.LogDir)
 	cfg.BtcdMode.Dir = CleanAndExpandPath(cfg.BtcdMode.Dir)
-	cfg.LtcdMode.Dir = CleanAndExpandPath(cfg.LtcdMode.Dir)
 	cfg.BitcoindMode.Dir = CleanAndExpandPath(cfg.BitcoindMode.Dir)
 	cfg.BitcoindMode.ConfigPath = CleanAndExpandPath(
 		cfg.BitcoindMode.ConfigPath,
