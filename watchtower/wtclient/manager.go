@@ -416,6 +416,7 @@ func (m *Manager) AddTower(address *lnwire.NetAddress) error {
 	defer m.clientsMu.Unlock()
 
 	for _, client := range m.clients {
+		log.Infof("ELLE: adding tower to client", client.cfg.Policy)
 		if err := client.addTower(tower); err != nil {
 			return err
 		}

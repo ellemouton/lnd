@@ -946,27 +946,11 @@ func (p *Brontide) addLink(chanPoint *wire.OutPoint,
 		return p.cfg.ChainArb.NotifyContractUpdate(*chanPoint, update)
 	}
 
-	chanType := lnChan.State().ChanType
-
 	// Select the appropriate tower client based on the channel type. It's
 	// okay if the clients are disabled altogether and these values are nil,
 	// as the link will check for nilness before using either.
 	var towerClient htlcswitch.TowerClient
-	switch {
-	case chanType.IsTaproot():
-		// Leave the tower client as nil for now until the tower client
-		// has support for taproot channels.
-		//
-		// If the user has activated the tower client, then add a log
-		// to explain that any taproot channel updates wil not be
-		// backed up to a tower.
-		if p.cfg.TowerClient != nil {
-			p.log.Debugf("Updates for channel %s will not be "+
-				"backed up to a watchtower as watchtowers "+
-				"are not yet taproot channel compatible",
-				chanPoint)
-		}
-	default:
+	if p.cfg.TowerClient != nil {
 		towerClient = p.cfg.TowerClient
 	}
 

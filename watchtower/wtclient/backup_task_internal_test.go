@@ -367,13 +367,13 @@ func TestBackupTask(t *testing.T) {
 			sweepFeeRateNoRewardRemoteDust = 225400
 			sweepFeeRateRewardRemoteDust = 174100
 		} else if chanType.IsTaproot() {
-			expSweepCommitNoRewardBoth = 299167
-			expSweepCommitNoRewardLocal = 199469
-			expSweepCommitNoRewardRemote = 99532
+			expSweepCommitNoRewardBoth = 299165
+			expSweepCommitNoRewardLocal = 199468
+			expSweepCommitNoRewardRemote = 99531
 			sweepFeeRateNoRewardRemoteDust = 213200
-			expSweepCommitRewardBoth = 295995
-			expSweepCommitRewardLocal = 197297
-			expSweepCommitRewardRemote = 98360
+			expSweepCommitRewardBoth = 295993
+			expSweepCommitRewardLocal = 197296
+			expSweepCommitRewardRemote = 98359
 			sweepFeeRateRewardRemoteDust = 167000
 		}
 

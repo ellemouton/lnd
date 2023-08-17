@@ -367,7 +367,7 @@ func (t *taprootJusticeKit) ToLocalOutputSpendInfo() ([]byte, [][]byte, error) {
 	}
 
 	witness := make([][]byte, 3)
-	witness[0] = toLocalSig.Serialize()
+	witness[0] = append(toLocalSig.Serialize(), byte(txscript.SigHashAll))
 	witness[1] = revokeScript
 	witness[2] = ctrlBytes
 
@@ -420,7 +420,7 @@ func (t *taprootJusticeKit) ToRemoteOutputSpendInfo() ([]byte, [][]byte, uint32,
 	}
 
 	witness := make([][]byte, 3)
-	witness[0] = toRemoteSig.Serialize()
+	witness[0] = append(toRemoteSig.Serialize(), byte(txscript.SigHashAll))
 	witness[1] = scriptTree.SettleLeaf.Script
 	witness[2] = ctrl
 
