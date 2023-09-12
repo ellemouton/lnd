@@ -444,7 +444,7 @@ func (q *sessionQueue) drainBackups() {
 			return
 		}
 
-		q.log.Infof("SessionQueue(%s) uploaded %v seqnum=%d",
+		q.log.Infof("SessionQueue(%s) uploaded %v selenium=%d",
 			q.ID(), backupID, stateUpdate.SeqNum)
 
 		// If the last task was backed up successfully, we'll exit and

@@ -16,14 +16,18 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btclog"
+	"github.com/lightningnetwork/lnd/build"
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channelnotifier"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/keychain"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lntest/wait"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/signal"
 	"github.com/lightningnetwork/lnd/subscribe"
 	"github.com/lightningnetwork/lnd/tor"
 	"github.com/lightningnetwork/lnd/watchtower/blob"
@@ -121,6 +125,8 @@ func (m *mockNet) LookupSRV(_, _, _ string) (string, []*net.SRV, error) {
 func (m *mockNet) ResolveTCPAddr(_, _ string) (*net.TCPAddr, error) {
 	panic("not implemented")
 }
+
+var i = 36723
 
 func (m *mockNet) AuthDial(local keychain.SingleKeyECDH,
 	netAddr *lnwire.NetAddress, _ tor.DialFunc) (wtserver.Peer, error) {
@@ -398,7 +404,7 @@ type testHarness struct {
 	cfg       harnessCfg
 	signer    *wtmock.MockSigner
 	capacity  lnwire.MilliSatoshi
-	clientDB  *wtmock.ClientDB
+	clientDB  wtclient.DB
 	clientCfg *wtclient.Config
 	client    wtclient.Client
 	server    *serverHarness
@@ -426,10 +432,31 @@ type harnessCfg struct {
 	noServerStart      bool
 }
 
+func newClientDB(t *testing.T) wtclient.DB {
+	// return wtmock.NewClientDB()
+
+	dbCfg := &kvdb.BoltConfig{
+		DBTimeout: kvdb.DefaultDBTimeout,
+	}
+
+	// Construct the ClientDB.
+	dir := t.TempDir()
+	bdb, err := wtdb.NewBoltBackendCreator(true, dir, "wtclient.db")(dbCfg)
+	require.NoError(t, err)
+
+	clientDB, err := wtdb.OpenClientDB(bdb)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		require.NoError(t, clientDB.Close())
+	})
+
+	return clientDB
+}
+
 func newHarness(t *testing.T, cfg harnessCfg) *testHarness {
 	signer := wtmock.NewMockSigner()
 	mockNet := newMockNet()
-	clientDB := wtmock.NewClientDB()
 
 	server := newServerHarness(
 		t, mockNet, towerAddrStr, func(serverCfg *wtserver.Config) {
@@ -442,7 +469,7 @@ func newHarness(t *testing.T, cfg harnessCfg) *testHarness {
 		cfg:            cfg,
 		signer:         signer,
 		capacity:       cfg.localBalance + cfg.remoteBalance,
-		clientDB:       clientDB,
+		clientDB:       newClientDB(t),
 		server:         server,
 		net:            mockNet,
 		blockEvents:    newMockBlockSub(t),
@@ -477,7 +504,7 @@ func newHarness(t *testing.T, cfg harnessCfg) *testHarness {
 		FetchClosedChannel: fetchChannel,
 		ChainNotifier:      h.blockEvents,
 		Dial:               mockNet.Dial,
-		DB:                 clientDB,
+		DB:                 h.clientDB,
 		AuthDial:           mockNet.AuthDial,
 		SecretKeyRing:      wtmock.NewSecretKeyRing(),
 		Policy:             cfg.policy,
@@ -1342,7 +1369,7 @@ var clientTests = []clientTest{
 
 			// Wait for all the updates to be populated in the
 			// server's database.
-			h.server.waitForUpdates(hints, 3*time.Second)
+			h.server.waitForUpdates(hints, waitTime)
 		},
 	},
 	{
@@ -2053,7 +2080,7 @@ var clientTests = []clientTest{
 			// Now stop the client and reset its database.
 			require.NoError(h.t, h.client.Stop())
 
-			db := wtmock.NewClientDB()
+			db := newClientDB(h.t)
 			h.clientDB = db
 			h.clientCfg.DB = db
 
@@ -2398,13 +2425,148 @@ var clientTests = []clientTest{
 			server2.waitForUpdates(hints[numUpdates/2:], waitTime)
 		},
 	},
+	{
+		/*
+			- back up state while tower is down.
+			- close channel
+			- bring tower back
+			- show error.
+		*/
+		name: "channel closed while update is un-acked",
+		cfg: harnessCfg{
+			localBalance:  localBalance,
+			remoteBalance: remoteBalance,
+			policy: wtpolicy.Policy{
+				TxPolicy:   defaultTxPolicy,
+				MaxUpdates: 5,
+			},
+		},
+		fn: func(h *testHarness) {
+			const numUpdates = 10
+
+			h.sendUpdatesOn = true
+
+			// In this test we want to demonstrate that an error
+			// can occur if we have an un-acked update of a closed
+			// channel in our update queue. This will be fixed in
+			// a later commit.
+
+			// Advance the channel with a few updates.
+			hints := h.advanceChannelN(0, numUpdates)
+
+			// Backup one of these updates and wait for it to arrive
+			// at the server.
+			h.backupStates(0, 0, numUpdates/2, nil)
+			h.server.waitForUpdates(hints[:numUpdates/2], waitTime)
+
+			// Now, shutdown the server.
+			h.server.restart(func(cfg *wtserver.Config) {
+				cfg.NoAckUpdates = true
+			})
+
+			// Backup the rest of the update. These should remain in
+			// the client as un-acked since the server is down.
+			h.backupStates(0, numUpdates/2, numUpdates, nil)
+
+			// Wait for the tasks to be bound to sessions.
+			err := wait.Predicate(func() bool {
+				sessions, err := h.clientDB.ListClientSessions(
+					nil,
+				)
+				require.NoError(h.t, err)
+
+				var updates []wtdb.CommittedUpdate
+				for id := range sessions {
+					updates, err = h.clientDB.FetchSessionCommittedUpdates(&id)
+					require.NoError(h.t, err)
+
+					if len(updates) != 0 {
+						return true
+					}
+				}
+
+				return false
+			}, waitTime)
+			require.NoError(h.t, err)
+
+			// Now we close this channel while the update for it has
+			// not yet been acked.
+			h.closeChannel(0, 1)
+
+			// Closable sessions should now be one.
+			err = wait.Predicate(func() bool {
+				cs, err := h.clientDB.ListClosableSessions()
+				require.NoError(h.t, err)
+
+				return len(cs) == 1
+			}, waitTime)
+			require.NoError(h.t, err)
+
+			// Now, restart the server.
+			h.server.cfg.NoAckUpdates = true
+			h.server.start()
+
+			h.mine(3)
+
+			err = wait.Predicate(func() bool {
+				cs, err := h.clientDB.ListClosableSessions()
+				require.NoError(h.t, err)
+
+				return len(cs) == 0
+			}, waitTime)
+			require.NoError(h.t, err)
+
+			// Wait for channel to be "unregistered".
+			chanID := chanIDFromInt(0)
+			err = wait.Predicate(func() bool {
+				err := h.client.BackupState(&chanID, 0)
+
+				return errors.Is(
+					err, wtclient.ErrUnregisteredChannel,
+				)
+			}, waitTime)
+			require.NoError(h.t, err)
+
+			// restart server and allow it to ack updates again.
+			h.server.restart(func(cfg *wtserver.Config) {
+				cfg.NoAckUpdates = false
+			})
+
+			// Create a new channel to produce updates with.
+			h.makeChannel(
+				1, h.cfg.localBalance, h.cfg.remoteBalance,
+			)
+			h.registerChannel(1)
+
+			// Advance the new channel.
+			hints = h.advanceChannelN(1, numUpdates)
+
+			// Backup the states of the new channel and wait for
+			// them to appear on the server.
+			h.backupStates(1, 0, numUpdates, nil)
+
+			// Should fail and does (if real DB is used).
+			h.server.waitForUpdates(hints, waitTime)
+		},
+	},
 }
 
 // TestClient executes the client test suite, asserting the ability to backup
 // states in a number of failure cases and it's reliability during shutdown.
 func TestClient(t *testing.T) {
+	logWriter := build.NewRotatingLogWriter()
+	shutdownInterceptor, err := signal.Intercept()
+	require.NoError(t, err)
+
+	AddSubLogger(logWriter, "WTCL", shutdownInterceptor, wtclient.UseLogger)
+
+	logWriter.SetLogLevels("debug")
+
 	for _, test := range clientTests {
 		tc := test
+		if tc.name != "channel closed while update is un-acked" {
+			continue
+		}
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -2412,5 +2574,47 @@ func TestClient(t *testing.T) {
 
 			tc.fn(h)
 		})
+	}
+}
+
+func AddSubLogger(root *build.RotatingLogWriter, subsystem string,
+	interceptor signal.Interceptor, useLoggers ...func(btclog.Logger)) {
+
+	// genSubLogger will return a callback for creating a logger instance,
+	// which we will give to the root logger.
+	genLogger := genSubLogger(root, interceptor)
+
+	// Create and register just a single logger to prevent them from
+	// overwriting each other internally.
+	logger := build.NewSubLogger(subsystem, genLogger)
+	SetSubLogger(root, subsystem, logger, useLoggers...)
+}
+
+func genSubLogger(root *build.RotatingLogWriter,
+	interceptor signal.Interceptor) func(string) btclog.Logger {
+
+	// Create a shutdown function which will request shutdown from our
+	// interceptor if it is listening.
+	shutdown := func() {
+		if !interceptor.Listening() {
+			return
+		}
+
+		interceptor.RequestShutdown()
+	}
+
+	// Return a function which will create a sublogger from our root
+	// logger without shutdown fn.
+	return func(tag string) btclog.Logger {
+		return root.GenSubLogger(tag, shutdown)
+	}
+}
+
+func SetSubLogger(root *build.RotatingLogWriter, subsystem string,
+	logger btclog.Logger, useLoggers ...func(btclog.Logger)) {
+
+	root.RegisterSubLogger(subsystem, logger)
+	for _, useLogger := range useLoggers {
+		useLogger(logger)
 	}
 }

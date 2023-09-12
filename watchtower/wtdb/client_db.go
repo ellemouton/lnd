@@ -2042,9 +2042,7 @@ func (c *ClientDB) AckUpdate(id *SessionID, seqNum uint16,
 			return err
 		}
 
-		chanDetails := chanDetailsBkt.NestedReadWriteBucket(
-			committedUpdate.BackupID.ChanID[:],
-		)
+		chanDetails := chanDetailsBkt.NestedReadWriteBucket(chanID[:])
 		if chanDetails == nil {
 			return ErrChannelNotRegistered
 		}

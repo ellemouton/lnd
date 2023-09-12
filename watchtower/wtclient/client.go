@@ -1008,6 +1008,16 @@ func (c *TowerClient) handleClosableSessions(
 
 					continue
 				}
+
+				// Ensure to remove the session from the
+				// in-memory session set.
+				err = c.activeSessions.StopAndRemove(
+					item.sessionID,
+				)
+				if err != nil {
+					c.log.Errorf("could not remove "+
+						"session(%s): %w", sess.ID, err)
+				}
 			}
 
 		case <-c.quit:
