@@ -2033,8 +2033,16 @@ func (c *ClientDB) AckUpdate(id *SessionID, seqNum uint16,
 		// ensure that the session acks sub-bucket is initialized, so
 		// that we can insert an entry.
 		rangesBkt, err := getRangesWriteBucket(tx, *id, chanID)
-		if err != nil {
+		switch {
+		case errors.Is(err, ErrChannelNotRegistered):
+			// The channel has been closed and deleted. So no
+			// further action necessary.
+			return nil
+
+		case err != nil:
 			return err
+
+		default:
 		}
 
 		dbSessionID, _, err := getDBSessionID(sessions, *id)

@@ -431,6 +431,7 @@ func (q *sessionQueue) drainBackups() {
 		}
 
 		// Now, send the state update to the tower and wait for a reply.
+		// ELLE: HERE ERROR 1
 		err = q.sendStateUpdate(conn, stateUpdate, sendInit, isPending)
 		if err != nil {
 			q.log.Errorf("SessionQueue(%s) unable to send state "+
@@ -664,6 +665,8 @@ func (q *sessionQueue) sendStateUpdate(conn wtserver.Peer,
 	lastApplied := stateUpdateReply.LastApplied
 	err = q.cfg.DB.AckUpdate(q.ID(), stateUpdate.SeqNum, lastApplied)
 	switch {
+	// case err == wtdb.ErrChannelNotRegistered:
+
 	case err == wtdb.ErrUnallocatedLastApplied:
 		// TODO(conner): borked watchtower
 		err = fmt.Errorf("unable to ack seqnum=%d: %v",
@@ -681,10 +684,13 @@ func (q *sessionQueue) sendStateUpdate(conn wtserver.Peer,
 		return err
 
 	case err != nil:
+		// ELLE HERE ERROR 2
 		err = fmt.Errorf("unable to ack seqnum=%d: %v",
 			stateUpdate.SeqNum, err)
 		q.log.Errorf("SessionQueue(%s) failed to ack update: %v",
 			q.ID(), err)
+
+		fmt.Println(err)
 		return err
 	}
 

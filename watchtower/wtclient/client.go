@@ -860,6 +860,7 @@ func (c *TowerClient) handleChannelCloses(chanSub subscribe.Subscription) {
 				c.log.Debugf("Channel notifier has exited")
 				return
 			}
+			fmt.Println("ELLE: GOT CHANNEL CLOSE")
 
 			// We only care about channel-close events.
 			event, ok := update.(channelnotifier.ClosedChannelEvent)
@@ -950,6 +951,7 @@ func (c *TowerClient) handleClosableSessions(
 				return
 			}
 
+			fmt.Println("NEW BLOCK")
 			height := uint32(newBlock.Height)
 			for {
 				select {
@@ -991,15 +993,18 @@ func (c *TowerClient) handleClosableSessions(
 					continue
 				}
 
+				fmt.Println("DELETING FROM TOWER")
 				err = c.deleteSessionFromTower(sess)
 				if err != nil {
 					c.log.Errorf("error deleting "+
 						"session %s from tower: %v",
 						sess.ID, err)
 
+					fmt.Println("HERE", err)
 					continue
 				}
 
+				fmt.Println("DELETING SESSION?")
 				err = c.cfg.DB.DeleteSession(item.sessionID)
 				if err != nil {
 					c.log.Errorf("could not delete "+

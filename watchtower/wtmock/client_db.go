@@ -2,6 +2,7 @@ package wtmock
 
 import (
 	"encoding/binary"
+	"fmt"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -529,19 +530,20 @@ func (m *ClientDB) AckUpdate(id *wtdb.SessionID, seqNum,
 			continue
 		}
 
-		// Add sessionID to channel.
-		channel, ok := m.channels[update.BackupID.ChanID]
-		if !ok {
-			return wtdb.ErrChannelNotRegistered
-		}
-		channel.sessions[*id] = true
-
 		// Remove the committed update from disk and mark the update as
 		// acked. The tower last applied value is also recorded to send
 		// along with the next update.
 		copy(updates[:i], updates[i+1:])
 		updates[len(updates)-1] = wtdb.CommittedUpdate{}
 		m.committedUpdates[session.ID] = updates[:len(updates)-1]
+
+		// Add sessionID to channel.
+		fmt.Println("ACK IN", update.BackupID.ChanID)
+		channel, ok := m.channels[update.BackupID.ChanID]
+		if !ok {
+			return wtdb.ErrChannelNotRegistered
+		}
+		channel.sessions[*id] = true
 
 		chanID := update.BackupID.ChanID
 		if _, ok := m.ackedUpdates[*id][update.BackupID.ChanID]; !ok {
@@ -794,7 +796,13 @@ func (m *ClientDB) DeleteSession(id wtdb.SessionID) error {
 			return wtdb.ErrChannelNotRegistered
 		}
 
+		fmt.Println("deleting for sessID", id)
 		delete(c.sessions, id)
+
+		if c.closedHeight != 0 {
+			fmt.Println("DEFS DELETING", chanID)
+			delete(m.channels, chanID)
+		}
 	}
 
 	delete(m.closableSessions, id)
