@@ -1143,6 +1143,7 @@ func (p *Brontide) readNextMessage() (lnwire.Message, error) {
 		return nil, err
 	}
 
+	noiseConn.Close()
 	pktLen, err := noiseConn.ReadNextHeader()
 	if err != nil {
 		return nil, fmt.Errorf("read next header: %w", err)
@@ -1950,7 +1951,7 @@ func messageSummary(msg lnwire.Message) string {
 
 	case *lnwire.QueryShortChanIDs:
 		return fmt.Sprintf("chain_hash=%v, encoding=%v, num_chans=%v",
-			msg.ChainHash, msg.EncodingType, len(msg.ShortChanIDs))
+			msg.ChainHash, msg.SCIDEncodingType, len(msg.ShortChanIDs))
 
 	case *lnwire.QueryChannelRange:
 		return fmt.Sprintf("chain_hash=%v, start_height=%v, "+

@@ -1005,9 +1005,9 @@ func TestLightningWireProtocol(t *testing.T) {
 			// With a 50/50 change, we'll either use zlib encoding,
 			// or regular encoding.
 			if r.Int31()%2 == 0 {
-				req.EncodingType = EncodingSortedZlib
+				req.SCIDEncodingType = EncodingSortedZlib
 			} else {
-				req.EncodingType = EncodingSortedPlain
+				req.SCIDEncodingType = EncodingSortedPlain
 			}
 
 			if _, err := rand.Read(req.ChainHash[:]); err != nil {

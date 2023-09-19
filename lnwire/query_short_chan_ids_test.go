@@ -7,7 +7,7 @@ import (
 
 type unsortedSidTest struct {
 	name    string
-	encType ShortChanIDEncoding
+	encType Encoding
 	sids    []ShortChannelID
 }
 
@@ -53,9 +53,9 @@ func TestQueryShortChanIDsUnsorted(t *testing.T) {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			req := &QueryShortChanIDs{
-				EncodingType: test.encType,
-				ShortChanIDs: test.sids,
-				noSort:       true,
+				SCIDEncodingType: test.encType,
+				ShortChanIDs:     test.sids,
+				noSort:           true,
 			}
 
 			var b bytes.Buffer
@@ -79,7 +79,7 @@ func TestQueryShortChanIDsUnsorted(t *testing.T) {
 func TestQueryShortChanIDsZero(t *testing.T) {
 	testCases := []struct {
 		name     string
-		encoding ShortChanIDEncoding
+		encoding Encoding
 	}{
 		{
 			name:     "plain",
@@ -99,9 +99,9 @@ func TestQueryShortChanIDsZero(t *testing.T) {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			req := &QueryShortChanIDs{
-				EncodingType: test.encoding,
-				ShortChanIDs: testSids,
-				noSort:       true,
+				SCIDEncodingType: test.encoding,
+				ShortChanIDs:     testSids,
+				noSort:           true,
 			}
 
 			var b bytes.Buffer

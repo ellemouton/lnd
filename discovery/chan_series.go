@@ -37,14 +37,15 @@ type ChannelGraphTimeSeries interface {
 	// ID's represents the ID's that we don't know of which were in the
 	// passed superSet.
 	FilterKnownChanIDs(chain chainhash.Hash,
-		superSet []lnwire.ShortChannelID) ([]lnwire.ShortChannelID, error)
+		superSet []channeldb.ChannelUpdateInfo) (
+		[]lnwire.ShortChannelID, error)
 
 	// FilterChannelRange returns the set of channels that we created
 	// between the start height and the end height. The channel IDs are
 	// grouped by their common block height. We'll use this to to a remote
 	// peer's QueryChannelRange message.
-	FilterChannelRange(chain chainhash.Hash,
-		startHeight, endHeight uint32) ([]channeldb.BlockChannelRange, error)
+	FilterChannelRange(chain chainhash.Hash, startHeight, endHeight uint32,
+		withTimestamps bool) ([]channeldb.BlockChannelRange, error)
 
 	// FetchChanAnns returns a full set of channel announcements as well as
 	// their updates that match the set of specified short channel ID's.
@@ -224,10 +225,13 @@ func (c *ChanSeries) FilterKnownChanIDs(chain chainhash.Hash,
 // message.
 //
 // NOTE: This is part of the ChannelGraphTimeSeries interface.
-func (c *ChanSeries) FilterChannelRange(chain chainhash.Hash,
-	startHeight, endHeight uint32) ([]channeldb.BlockChannelRange, error) {
+func (c *ChanSeries) FilterChannelRange(chain chainhash.Hash, startHeight,
+	endHeight uint32, withTimestamps bool) ([]channeldb.BlockChannelRange,
+	error) {
 
-	return c.graph.FilterChannelRange(startHeight, endHeight)
+	return c.graph.FilterChannelRange(
+		startHeight, endHeight, withTimestamps,
+	)
 }
 
 // FetchChanAnns returns a full set of channel announcements as well as their

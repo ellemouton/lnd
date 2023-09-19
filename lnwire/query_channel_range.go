@@ -6,12 +6,13 @@ import (
 	"math"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/lightningnetwork/lnd/tlv"
 )
 
 // QueryChannelRange is a message sent by a node in order to query the
 // receiving node of the set of open channel they know of with short channel
 // ID's after the specified block height, capped at the number of blocks beyond
-// that block height. This will be used by nodes upon initial connect to
+// that block height. This will be sed by nodes upon initial connect to
 // synchronize their views of the network.
 type QueryChannelRange struct {
 	// ChainHash denotes the target chain that we're trying to synchronize
@@ -27,6 +28,8 @@ type QueryChannelRange struct {
 	// channel ID's should be sent for.
 	NumBlocks uint32
 
+	QueryOptions *QueryOptions
+
 	// ExtraData is the set of data that was appended to this message to
 	// fill out the full maximum transport message size. These fields can
 	// be used to specify optional data such as custom TLV fields.
@@ -35,7 +38,9 @@ type QueryChannelRange struct {
 
 // NewQueryChannelRange creates a new empty QueryChannelRange message.
 func NewQueryChannelRange() *QueryChannelRange {
-	return &QueryChannelRange{}
+	return &QueryChannelRange{
+		ExtraData: make([]byte, 0),
+	}
 }
 
 // A compile time check to ensure QueryChannelRange implements the
@@ -47,12 +52,36 @@ var _ Message = (*QueryChannelRange)(nil)
 //
 // This is part of the lnwire.Message interface.
 func (q *QueryChannelRange) Decode(r io.Reader, pver uint32) error {
-	return ReadElements(r,
-		q.ChainHash[:],
-		&q.FirstBlockHeight,
+	err := ReadElements(r, q.ChainHash[:], &q.FirstBlockHeight,
 		&q.NumBlocks,
-		&q.ExtraData,
 	)
+	if err != nil {
+		return err
+	}
+
+	var tlvRecords ExtraOpaqueData
+	if err := ReadElements(r, &tlvRecords); err != nil {
+		return err
+	}
+
+	var (
+		queryOptions QueryOptions
+	)
+	typeMap, err := tlvRecords.ExtractRecords(&queryOptions)
+	if err != nil {
+		return err
+	}
+
+	// Set the corresponding TLV types if they were included in the stream.
+	if val, ok := typeMap[QueryOptionsRecordType]; ok && val == nil {
+		q.QueryOptions = &queryOptions
+	}
+
+	if len(tlvRecords) != 0 {
+		q.ExtraData = tlvRecords
+	}
+
+	return nil
 }
 
 // Encode serializes the target QueryChannelRange into the passed io.Writer
@@ -69,6 +98,15 @@ func (q *QueryChannelRange) Encode(w *bytes.Buffer, pver uint32) error {
 	}
 
 	if err := WriteUint32(w, q.NumBlocks); err != nil {
+		return err
+	}
+
+	recordProducers := make([]tlv.RecordProducer, 0, 1)
+	if q.QueryOptions != nil {
+		recordProducers = append(recordProducers, q.QueryOptions)
+	}
+	err := EncodeMessageExtraData(&q.ExtraData, recordProducers...)
+	if err != nil {
 		return err
 	}
 
@@ -92,4 +130,14 @@ func (q *QueryChannelRange) LastBlockHeight() uint32 {
 		return math.MaxUint32
 	}
 	return uint32(lastBlockHeight)
+}
+
+func (q *QueryChannelRange) WithTimestamps() bool {
+	if q.QueryOptions == nil {
+		return false
+	}
+
+	queryOpts := RawFeatureVector(*q.QueryOptions)
+
+	return queryOpts.IsSet(QueryOptionWithTimeStamp)
 }

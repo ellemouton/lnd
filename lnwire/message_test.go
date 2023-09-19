@@ -752,8 +752,8 @@ func newMsgQueryShortChanIDs(t testing.TB,
 	t.Helper()
 
 	msg := &lnwire.QueryShortChanIDs{
-		EncodingType: lnwire.EncodingSortedPlain,
-		ExtraData:    createExtraData(t, r),
+		SCIDEncodingType: lnwire.EncodingSortedPlain,
+		ExtraData:        createExtraData(t, r),
 	}
 
 	_, err := rand.Read(msg.ChainHash[:])
@@ -773,8 +773,8 @@ func newMsgQueryShortChanIDsZlib(t testing.TB,
 	t.Helper()
 
 	msg := &lnwire.QueryShortChanIDs{
-		EncodingType: lnwire.EncodingSortedZlib,
-		ExtraData:    createExtraData(t, r),
+		SCIDEncodingType: lnwire.EncodingSortedZlib,
+		ExtraData:        createExtraData(t, r),
 	}
 
 	_, err := rand.Read(msg.ChainHash[:])

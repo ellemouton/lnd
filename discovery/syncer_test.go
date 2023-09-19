@@ -42,7 +42,7 @@ type mockChannelGraphTimeSeries struct {
 	horizonReq  chan horizonQuery
 	horizonResp chan []lnwire.Message
 
-	filterReq  chan []lnwire.ShortChannelID
+	filterReq  chan []channeldb.ChannelUpdateInfo
 	filterResp chan []lnwire.ShortChannelID
 
 	filterRangeReqs chan filterRangeReq
@@ -91,22 +91,26 @@ func (m *mockChannelGraphTimeSeries) UpdatesInHorizon(chain chainhash.Hash,
 	return <-m.horizonResp, nil
 }
 func (m *mockChannelGraphTimeSeries) FilterKnownChanIDs(chain chainhash.Hash,
-	superSet []lnwire.ShortChannelID) ([]lnwire.ShortChannelID, error) {
+	superSet []channeldb.ChannelUpdateInfo) ([]lnwire.ShortChannelID, error) {
 
 	m.filterReq <- superSet
 
 	return <-m.filterResp, nil
 }
-func (m *mockChannelGraphTimeSeries) FilterChannelRange(chain chainhash.Hash,
-	startHeight, endHeight uint32) ([]channeldb.BlockChannelRange, error) {
+func (m *mockChannelGraphTimeSeries) FilterChannelRange(_ chainhash.Hash,
+	startHeight, endHeight uint32, withTimestamps bool) (
+	[]channeldb.BlockChannelRange, error) {
 
 	m.filterRangeReqs <- filterRangeReq{startHeight, endHeight}
 	reply := <-m.filterRangeResp
 
-	channelsPerBlock := make(map[uint32][]lnwire.ShortChannelID)
+	channelsPerBlock := make(map[uint32][]*channeldb.ChannelUpdateInfo)
 	for _, cid := range reply {
 		channelsPerBlock[cid.BlockHeight] = append(
-			channelsPerBlock[cid.BlockHeight], cid,
+			channelsPerBlock[cid.BlockHeight],
+			&channeldb.ChannelUpdateInfo{
+				ShortChannelID: cid,
+			},
 		)
 	}
 
@@ -119,16 +123,21 @@ func (m *mockChannelGraphTimeSeries) FilterChannelRange(chain chainhash.Hash,
 		return blocks[i] < blocks[j]
 	})
 
-	channelRanges := make([]channeldb.BlockChannelRange, 0, len(channelsPerBlock))
+	channelRanges := make(
+		[]channeldb.BlockChannelRange, 0, len(channelsPerBlock),
+	)
 	for _, block := range blocks {
-		channelRanges = append(channelRanges, channeldb.BlockChannelRange{
-			Height:   block,
-			Channels: channelsPerBlock[block],
-		})
+		channelRanges = append(
+			channelRanges, channeldb.BlockChannelRange{
+				Height:   block,
+				Channels: channelsPerBlock[block],
+			},
+		)
 	}
 
 	return channelRanges, nil
 }
+
 func (m *mockChannelGraphTimeSeries) FetchChanAnns(chain chainhash.Hash,
 	shortChanIDs []lnwire.ShortChannelID) ([]lnwire.Message, error) {
 
@@ -156,7 +165,7 @@ var _ ChannelGraphTimeSeries = (*mockChannelGraphTimeSeries)(nil)
 // ignored. If no flags are provided, both a channelGraphSyncer and replyHandler
 // will be spawned by default.
 func newTestSyncer(hID lnwire.ShortChannelID,
-	encodingType lnwire.ShortChanIDEncoding, chunkSize int32,
+	encodingType lnwire.Encoding, chunkSize int32,
 	flags ...bool) (chan []lnwire.Message,
 	*GossipSyncer, *mockChannelGraphTimeSeries) {
 
@@ -1131,7 +1140,7 @@ func TestGossipSyncerReplyChanRangeQueryNoNewChans(t *testing.T) {
 }
 
 // TestGossipSyncerGenChanRangeQuery tests that given the current best known
-// channel ID, we properly generate an correct initial channel range response.
+// channel ID, we properly generate a correct initial channel range response.
 func TestGossipSyncerGenChanRangeQuery(t *testing.T) {
 	t.Parallel()
 
@@ -1150,28 +1159,20 @@ func TestGossipSyncerGenChanRangeQuery(t *testing.T) {
 	require.NoError(t, err, "unable to resp")
 
 	firstHeight := uint32(startingHeight - chanRangeQueryBuffer)
-	if rangeQuery.FirstBlockHeight != firstHeight {
-		t.Fatalf("incorrect chan range query: expected %v, %v",
-			rangeQuery.FirstBlockHeight,
-			startingHeight-chanRangeQueryBuffer)
-	}
-	if rangeQuery.NumBlocks != latestKnownHeight-firstHeight {
-		t.Fatalf("wrong num blocks: expected %v, got %v",
-			latestKnownHeight-firstHeight, rangeQuery.NumBlocks)
-	}
+	require.Equal(t, firstHeight, rangeQuery.FirstBlockHeight)
+	require.Equal(t, latestKnownHeight-firstHeight, rangeQuery.NumBlocks)
 
 	// Generating a historical range query should result in a start height
 	// of 0.
 	rangeQuery, err = syncer.genChanRangeQuery(true)
 	require.NoError(t, err, "unable to resp")
-	if rangeQuery.FirstBlockHeight != 0 {
-		t.Fatalf("incorrect chan range query: expected %v, %v", 0,
-			rangeQuery.FirstBlockHeight)
-	}
-	if rangeQuery.NumBlocks != latestKnownHeight {
-		t.Fatalf("wrong num blocks: expected %v, got %v",
-			latestKnownHeight, rangeQuery.NumBlocks)
-	}
+	require.Zero(t, rangeQuery.FirstBlockHeight)
+	require.EqualValues(t, latestKnownHeight, rangeQuery.NumBlocks)
+
+	// Assert that the timestamps are also being asked for.
+	require.NotNil(t, rangeQuery.QueryOptions)
+	queryOpts := lnwire.RawFeatureVector(*rangeQuery.QueryOptions)
+	require.True(t, queryOpts.IsSet(lnwire.QueryOptionWithTimeStamp))
 }
 
 // TestGossipSyncerProcessChanRangeReply tests that we'll properly buffer

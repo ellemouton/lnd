@@ -317,7 +317,6 @@ func (c *ChannelGraph) getChannelMap(edges kvdb.RBucket) (
 var graphTopLevelBuckets = [][]byte{
 	nodeBucket,
 	edgeBucket,
-	edgeIndexBucket,
 	graphMetaBucket,
 }
 
@@ -2119,6 +2118,12 @@ func (c *ChannelGraph) FilterKnownChanIDs(chanIDs []uint64) ([]uint64, error) {
 	return newChanIDs, nil
 }
 
+type ChannelUpdateInfo struct {
+	ShortChannelID       lnwire.ShortChannelID
+	Node1UpdateTimestamp time.Time
+	Node2UpdateTimestamp time.Time
+}
+
 // BlockChannelRange represents a range of channels for a given block height.
 type BlockChannelRange struct {
 	// Height is the height of the block all of the channels below were
@@ -2128,7 +2133,7 @@ type BlockChannelRange struct {
 	// Channels is the list of channels identified by their short ID
 	// representation known to us that were included in the block height
 	// above.
-	Channels []lnwire.ShortChannelID
+	Channels []*ChannelUpdateInfo
 }
 
 // FilterChannelRange returns the channel ID's of all known channels which were
@@ -2136,8 +2141,8 @@ type BlockChannelRange struct {
 // by their common block height. This method can be used to quickly share with a
 // peer the set of channels we know of within a particular range to catch them
 // up after a period of time offline.
-func (c *ChannelGraph) FilterChannelRange(startHeight,
-	endHeight uint32) ([]BlockChannelRange, error) {
+func (c *ChannelGraph) FilterChannelRange(startHeight, endHeight uint32,
+	withTimestamps bool) ([]BlockChannelRange, error) {
 
 	startChanID := &lnwire.ShortChannelID{
 		BlockHeight: startHeight,
@@ -2156,7 +2161,7 @@ func (c *ChannelGraph) FilterChannelRange(startHeight,
 	byteOrder.PutUint64(chanIDStart[:], startChanID.ToUint64())
 	byteOrder.PutUint64(chanIDEnd[:], endChanID.ToUint64())
 
-	var channelsPerBlock map[uint32][]lnwire.ShortChannelID
+	var channelsPerBlock map[uint32][]*ChannelUpdateInfo
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		edges := tx.ReadBucket(edgeBucket)
 		if edges == nil {
@@ -2173,6 +2178,7 @@ func (c *ChannelGraph) FilterChannelRange(startHeight,
 		// channel ID that resides within the specified range.
 		for k, v := cursor.Seek(chanIDStart[:]); k != nil &&
 			bytes.Compare(k, chanIDEnd[:]) <= 0; k, v = cursor.Next() {
+
 			// Don't send alias SCIDs during gossip sync.
 			edgeReader := bytes.NewReader(v)
 			edgeInfo, err := deserializeChanEdgeInfo(edgeReader)
@@ -2188,14 +2194,57 @@ func (c *ChannelGraph) FilterChannelRange(startHeight,
 			// we'll add it to our returned set.
 			rawCid := byteOrder.Uint64(k)
 			cid := lnwire.NewShortChanIDFromInt(rawCid)
+
+			if !withTimestamps {
+				channelsPerBlock[cid.BlockHeight] = append(
+					channelsPerBlock[cid.BlockHeight],
+					&ChannelUpdateInfo{
+						ShortChannelID: cid,
+					},
+				)
+
+				continue
+			}
+
+			// Get the
+			var edgeKey [33 + 8]byte
+			copy(edgeKey[:], edgeInfo.NodeKey1Bytes[:])
+			byteOrder.PutUint64(edgeKey[33:], rawCid)
+
+			rawPolicy := edges.Get(edgeKey[:])
+			r := bytes.NewReader(rawPolicy)
+
+			edge1, err := deserializeChanEdgePolicyRaw(r)
+			if err != nil &&
+				err != ErrEdgePolicyOptionalFieldNotFound {
+
+				return err
+			}
+
+			copy(edgeKey[:33], edgeInfo.NodeKey2Bytes[:])
+			rawPolicy = edges.Get(edgeKey[:])
+			r = bytes.NewReader(rawPolicy)
+
+			edge2, err := deserializeChanEdgePolicyRaw(r)
+			if err != nil &&
+				err != ErrEdgePolicyOptionalFieldNotFound {
+
+				return err
+			}
+
 			channelsPerBlock[cid.BlockHeight] = append(
-				channelsPerBlock[cid.BlockHeight], cid,
+				channelsPerBlock[cid.BlockHeight],
+				&ChannelUpdateInfo{
+					ShortChannelID:       cid,
+					Node1UpdateTimestamp: edge1.LastUpdate,
+					Node2UpdateTimestamp: edge2.LastUpdate,
+				},
 			)
 		}
 
 		return nil
 	}, func() {
-		channelsPerBlock = make(map[uint32][]lnwire.ShortChannelID)
+		channelsPerBlock = make(map[uint32][]*ChannelUpdateInfo)
 	})
 
 	switch {
