@@ -1026,12 +1026,15 @@ func (g *GossipSyncer) replyChanRangeQuery(query *lnwire.QueryChannelRange) erro
 		"num_blocks=%v", g.cfg.peerPub[:], query.FirstBlockHeight,
 		query.NumBlocks)
 
+	// Check if query asked for timestamps.
+	withTimestamps := query.WithTimestamps()
+
 	// Next, we'll consult the time series to obtain the set of known
 	// channel ID's that match their query.
 	startBlock := query.FirstBlockHeight
 	endBlock := query.LastBlockHeight()
 	channelRanges, err := g.cfg.channelSeries.FilterChannelRange(
-		query.ChainHash, startBlock, endBlock,
+		query.ChainHash, startBlock, endBlock, withTimestamps,
 	)
 	if err != nil {
 		return err
@@ -1057,9 +1060,26 @@ func (g *GossipSyncer) replyChanRangeQuery(query *lnwire.QueryChannelRange) erro
 			complete = 1
 		}
 
+		var timestamps lnwire.Timestamps
+		if withTimestamps {
+			timestamps = make(lnwire.Timestamps, len(channelChunk))
+		}
+
 		scids := make([]lnwire.ShortChannelID, len(channelChunk))
 		for i, info := range channelChunk {
 			scids[i] = info.ShortChannelID
+
+			if !withTimestamps {
+				continue
+			}
+
+			timestamps[i].Timestamp1 = uint32(
+				info.Node1UpdateTimestamp.Unix(),
+			)
+
+			timestamps[i].Timestamp2 = uint32(
+				info.Node2UpdateTimestamp.Unix(),
+			)
 		}
 
 		return g.cfg.sendToPeerSync(&lnwire.ReplyChannelRange{
@@ -1069,6 +1089,7 @@ func (g *GossipSyncer) replyChanRangeQuery(query *lnwire.QueryChannelRange) erro
 			Complete:         complete,
 			EncodingType:     g.cfg.encodingType,
 			ShortChanIDs:     scids,
+			Timestamps:       timestamps,
 		})
 	}
 
