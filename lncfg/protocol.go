@@ -46,7 +46,12 @@ type ProtocolOptions struct {
 
 	// NoOptionAnySegwit should be set to true if we don't want to use any
 	// Taproot (and beyond) addresses for co-op closing.
-	NoOptionAnySegwit bool `long:"no-any-segwit" description:"disallow using any segiwt witness version as a co-op close address"`
+	NoOptionAnySegwit bool `long:"no-any-segwit" description:"disallow using any segwit witness version as a co-op close address"`
+
+	// NoTimestampQueryOption should be set to true if we don't want our
+	// syncing peers to also send us the timestamps of announcement messages
+	// when we send them a channel range query.
+	NoTimestampQueryOption bool `long:"no-timestamp-query-option" description:"do not query syncing peers for announcement timestamps"`
 }
 
 // Wumbo returns true if lnd should permit the creation and acceptance of wumbo
@@ -81,4 +86,11 @@ func (l *ProtocolOptions) ZeroConf() bool {
 // segwit witness versions for co-op close addresses.
 func (l *ProtocolOptions) NoAnySegwit() bool {
 	return l.NoOptionAnySegwit
+}
+
+// NoTimestampsQuery returns true if we should not ask our syncing peers to also
+// send us the timestamps of announcement messages when we send them a channel
+// range query.
+func (l *ProtocolOptions) NoTimestampsQuery() bool {
+	return l.NoTimestampQueryOption
 }

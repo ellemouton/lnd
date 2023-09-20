@@ -271,6 +271,10 @@ type gossipSyncerCfg struct {
 	// peer.
 	noReplyQueries bool
 
+	// noTimestampQueryOption will prevent the GossipSyncer from querying
+	// timestamps of announcement messages from the peer.
+	noTimestampQueryOption bool
+
 	// ignoreHistoricalFilters will prevent syncers from replying with
 	// historical data when the remote peer sets a gossip_timestamp_range.
 	// This prevents ranges with old start times from causing us to dump the
@@ -922,7 +926,7 @@ func (g *GossipSyncer) genChanRangeQuery(
 	case newestChan.BlockHeight <= chanRangeQueryBuffer:
 		startHeight = 0
 	default:
-		startHeight = uint32(newestChan.BlockHeight - chanRangeQueryBuffer)
+		startHeight = newestChan.BlockHeight - chanRangeQueryBuffer
 	}
 
 	// Determine the number of blocks to request based on our best height.
@@ -945,6 +949,11 @@ func (g *GossipSyncer) genChanRangeQuery(
 		FirstBlockHeight: startHeight,
 		NumBlocks:        numBlocks,
 	}
+
+	if !g.cfg.noTimestampQueryOption {
+		query.QueryOptions = lnwire.NewTimestampQueryOption()
+	}
+
 	g.curQueryRangeMsg = query
 
 	return query, nil
