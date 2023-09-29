@@ -346,7 +346,7 @@ func NewRawFeatureVector(bits ...FeatureBit) *RawFeatureVector {
 // vector from a given TLV stream.
 func (fv *RawFeatureVector) Record() tlv.Record {
 	return tlv.MakeDynamicRecord(
-		0, &fv, fv.featureBitLen, rawFeatureVectorEncoder,
+		0, fv, fv.featureBitLen, rawFeatureVectorEncoder,
 		rawFeatureVectorDecoder,
 	)
 }
