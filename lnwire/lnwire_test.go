@@ -2,6 +2,7 @@ package lnwire
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -13,7 +14,6 @@ import (
 	"reflect"
 	"testing"
 	"testing/quick"
-	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
@@ -1416,6 +1416,100 @@ func TestLightningWireProtocol(t *testing.T) {
 
 			v[0] = reflect.ValueOf(req)
 		},
+		MsgNodeAnnouncement2: func(v []reflect.Value, r *rand.Rand) {
+			req := NodeAnnouncement2{
+				Signature:       testSchnorrSig,
+				ExtraOpaqueData: make([]byte, 0),
+			}
+
+			req.BlockHeight.Val = r.Uint32()
+			req.NodeID.Val = randRawKey(t)
+			features := randRawFeatureVector(r)
+			req.Features.Val = *features
+
+			// Sometimes set the colour field.
+			if r.Int31()%2 == 0 {
+				rgbColour := tlv.ZeroRecordT[
+					tlv.TlvType1, RGBColor,
+				]()
+				rgbColour.Val = RGBColor{color.RGBA{
+					R: uint8(r.Int31()),
+					G: uint8(r.Int31()),
+					B: uint8(r.Int31()),
+				}}
+
+				req.RGBColor = tlv.SomeRecordT(rgbColour)
+			}
+
+			// Sometimes add an alias.
+			if r.Int31()%2 == 0 {
+				b := make([]byte, r.Intn(32))
+				_, err := rand.Read(b)
+				require.NoError(t, err)
+
+				aliasBytes := []byte(
+					base64.StdEncoding.EncodeToString(b),
+				)
+
+				if len(aliasBytes) > 32 {
+					aliasBytes = aliasBytes[:32]
+				}
+
+				alias := tlv.ZeroRecordT[
+					tlv.TlvType4, FlexibleNodeAlias,
+				]()
+				alias.Val = aliasBytes
+
+				req.Alias = tlv.SomeRecordT(alias)
+			}
+
+			// Sometimes add some ipv4 addrs.
+			if r.Int31()%2 == 0 {
+				ipv4Addr, err := randTCP4Addr(r)
+				require.NoError(t, err)
+
+				ipv4Addrs := tlv.ZeroRecordT[
+					tlv.TlvType3, IPV4Addrs,
+				]()
+				ipv4Addrs.Val = IPV4Addrs{ipv4Addr}
+				req.IPV4Addresses = tlv.SomeRecordT(ipv4Addrs)
+			}
+
+			// Sometimes add some ipv6 addrs.
+			if r.Int31()%2 == 0 {
+				ipv6Addr, err := randTCP6Addr(r)
+				require.NoError(t, err)
+
+				ipv6Addrs := tlv.ZeroRecordT[
+					tlv.TlvType5, IPV6Addrs,
+				]()
+				ipv6Addrs.Val = IPV6Addrs{ipv6Addr}
+				req.IPV6Addresses = tlv.SomeRecordT(ipv6Addrs)
+			}
+
+			// Sometimes add some torv3 addrs.
+			if r.Int31()%2 == 0 {
+				torAddr, err := randV3OnionAddr(r)
+				require.NoError(t, err)
+
+				torAddrs := tlv.ZeroRecordT[
+					tlv.TlvType7, TorV3Addrs,
+				]()
+				torAddrs.Val = TorV3Addrs{torAddr}
+				req.TorV3Addresses = tlv.SomeRecordT(torAddrs)
+			}
+
+			numExtraBytes := r.Int31n(1000)
+			if numExtraBytes > 0 {
+				req.ExtraOpaqueData = make(
+					[]byte, numExtraBytes,
+				)
+				_, err := r.Read(req.ExtraOpaqueData[:])
+				require.NoError(t, err)
+			}
+
+			v[0] = reflect.ValueOf(req)
+		},
 	}
 
 	// With the above types defined, we'll now generate a slice of
@@ -1644,6 +1738,12 @@ func TestLightningWireProtocol(t *testing.T) {
 				return mainScenario(&m)
 			},
 		},
+		{
+			msgType: MsgNodeAnnouncement2,
+			scenario: func(m NodeAnnouncement2) bool {
+				return mainScenario(&m)
+			},
+		},
 	}
 	for _, test := range tests {
 		var config *quick.Config
@@ -1664,8 +1764,4 @@ func TestLightningWireProtocol(t *testing.T) {
 		}
 	}
 
-}
-
-func init() {
-	rand.Seed(time.Now().Unix())
 }
