@@ -16,6 +16,8 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -111,6 +113,9 @@ var (
 	_             = testRScalar.SetByteSlice(testRBytes)
 	_             = testSScalar.SetByteSlice(testSBytes)
 	testSig       = ecdsa.NewSignature(testRScalar, testSScalar)
+
+	zeroVal        btcec.FieldVal
+	testSchnorrSig = schnorr.NewSignature(&zeroVal, testSScalar)
 
 	testKeyLoc = keychain.KeyLocator{Family: keychain.KeyFamilyNodeKey}
 
@@ -784,12 +789,6 @@ func fundChannel(t *testing.T, alice, bob *testNode, localFundingAmt,
 		Err:             errChan,
 	}
 
-	// If this is a taproot channel, then we want to force it to be a
-	// private channel, as that's the only channel type supported for now.
-	if isTaprootChanType(chanType) {
-		initReq.Private = true
-	}
-
 	alice.fundingMgr.InitFundingWorkflow(initReq)
 
 	// Alice should have sent the OpenChannel message to Bob.
@@ -1278,7 +1277,7 @@ func assertAnnouncementSignatures(t *testing.T, alice, bob *testNode) {
 		gotNodeAnnouncement := false
 		for _, msg := range announcements {
 			switch msg.(type) {
-			case *lnwire.AnnounceSignatures1:
+			case lnwire.AnnounceSignatures:
 				gotAnnounceSignatures = true
 			case *lnwire.NodeAnnouncement1:
 				gotNodeAnnouncement = true
@@ -1286,7 +1285,7 @@ func assertAnnouncementSignatures(t *testing.T, alice, bob *testNode) {
 		}
 
 		if !gotAnnounceSignatures {
-			t.Fatalf("did not get AnnounceSignatures1 from node %d",
+			t.Fatalf("did not get AnnounceSignatures from node %d",
 				j)
 		}
 		if !gotNodeAnnouncement {
@@ -1432,11 +1431,11 @@ func testNormalWorkflow(t *testing.T, chanType *lnwire.ChannelType) {
 		// test.
 		featureBits := []lnwire.FeatureBit{
 			lnwire.ZeroConfOptional,
-			lnwire.ScidAliasOptional,
 			lnwire.ExplicitChannelTypeOptional,
 			lnwire.StaticRemoteKeyOptional,
 			lnwire.AnchorsZeroFeeHtlcTxOptional,
 			lnwire.SimpleTaprootChannelsOptionalStaging,
+			lnwire.TaprootGossipOptionalStaging,
 		}
 		alice.localFeatures = featureBits
 		alice.remoteFeatures = featureBits
@@ -1526,20 +1525,7 @@ func testNormalWorkflow(t *testing.T, chanType *lnwire.ChannelType) {
 		Tx: fundingTx,
 	}
 
-	switch {
-	// For taproot channels, we expect them to only send a node
-	// announcement message at this point. These channels aren't advertised
-	// so we don't expect the other messages.
-	case isTaprootChanType(chanType):
-		assertNodeAnnSent(t, alice, bob)
-
-	// For regular channels, we'll make sure the fundingManagers exchange
-	// announcement signatures.
-	case chanType == nil:
-		fallthrough
-	default:
-		assertAnnouncementSignatures(t, alice, bob)
-	}
+	assertAnnouncementSignatures(t, alice, bob)
 
 	// The internal state-machine should now have deleted the channelStates
 	// from the database, as the channel is announced.
@@ -4475,6 +4461,7 @@ func testZeroConf(t *testing.T, chanType *lnwire.ChannelType) {
 		lnwire.StaticRemoteKeyOptional,
 		lnwire.AnchorsZeroFeeHtlcTxOptional,
 		lnwire.SimpleTaprootChannelsOptionalStaging,
+		lnwire.TaprootGossipOptionalStaging,
 	}
 	alice.localFeatures = featureBits
 	alice.remoteFeatures = featureBits
@@ -4572,12 +4559,9 @@ func testZeroConf(t *testing.T, chanType *lnwire.ChannelType) {
 		Tx: fundingTx,
 	}
 
-	// For taproot channels, we don't expect them to be announced atm.
-	if !isTaprootChanType(chanType) {
-		assertChannelAnnouncements(
-			t, alice, bob, fundingAmt, nil, nil, nil, nil,
-		)
-	}
+	assertChannelAnnouncements(
+		t, alice, bob, fundingAmt, nil, nil, nil, nil,
+	)
 
 	// Both Alice and Bob should send on reportScidChan.
 	select {
@@ -4601,20 +4585,7 @@ func testZeroConf(t *testing.T, chanType *lnwire.ChannelType) {
 		Tx: fundingTx,
 	}
 
-	switch {
-	// For taproot channels, we expect them to only send a node
-	// announcement message at this point. These channels aren't advertised
-	// so we don't expect the other messages.
-	case isTaprootChanType(chanType):
-		assertNodeAnnSent(t, alice, bob)
-
-	// For regular channels, we'll make sure the fundingManagers exchange
-	// announcement signatures.
-	case chanType == nil:
-		fallthrough
-	default:
-		assertAnnouncementSignatures(t, alice, bob)
-	}
+	assertAnnouncementSignatures(t, alice, bob)
 
 	// Assert that the channel state is deleted from the fundingmanager's
 	// datastore.
@@ -4954,8 +4925,30 @@ type mockSigner struct {
 	keychain.MessageSignerRing
 }
 
-func (s *mockSigner) SignMessage(_ keychain.KeyLocator, _ []byte,
+func (m *mockSigner) SignMessage(_ keychain.KeyLocator, _ []byte,
 	_ bool) (*ecdsa.Signature, error) {
 
 	return testSig, nil
+}
+
+func (m *mockSigner) SignMuSig2(secNonce [97]byte, keyLoc keychain.KeyLocator,
+	otherNonces [][66]byte, combinedNonce [66]byte,
+	pubKeys []*btcec.PublicKey, msg [32]byte,
+	opts ...musig2.SignOption) (*musig2.PartialSignature,
+	error) {
+
+	r := *bobPubKey
+	s := *testSScalar
+
+	return &musig2.PartialSignature{
+		S: &s,
+		R: &r,
+	}, nil
+}
+
+func (m *mockSigner) SignMessageSchnorr(keyLoc keychain.KeyLocator, msg []byte,
+	doubleHash bool, taprootTweak []byte) (*schnorr.Signature,
+	error) {
+
+	return testSchnorrSig, nil
 }
