@@ -1465,8 +1465,10 @@ func TestGraphPruning(t *testing.T) {
 			t.Fatalf("unable to add node: %v", err)
 		}
 
-		pkScript, err := genMultiSigP2WSH(
-			edgeInfo.BitcoinKey1Bytes[:], edgeInfo.BitcoinKey2Bytes[:],
+		pkScript, err := MakeFundingScript(
+			edgeInfo.BitcoinKey1Bytes[:],
+			edgeInfo.BitcoinKey2Bytes[:],
+			edgeInfo.IsTaproot,
 		)
 		if err != nil {
 			t.Fatalf("unable to gen multi-sig p2wsh: %v", err)
@@ -3223,10 +3225,6 @@ func compareEdgePolicies(a, b *ChannelEdgePolicy) error {
 	}
 	if err := compareNodes(a.Node, b.Node); err != nil {
 		return err
-	}
-	if !reflect.DeepEqual(a.db, b.db) {
-		return fmt.Errorf("db doesn't match: expected %#v, \n "+
-			"got %#v", a.db, b.db)
 	}
 	return nil
 }

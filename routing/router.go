@@ -23,7 +23,6 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/htlcswitch"
-	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnutils"
@@ -1450,51 +1449,6 @@ func (r *ChannelRouter) addZombieEdge(chanID uint64) error {
 	return nil
 }
 
-// makeFundingScript is used to make the funding script for both segwit v0 and
-// segwit v1 (taproot) channels.
-//
-// TODO(roasbeef: export and use elsewhere?
-func makeFundingScript(bitcoinKey1, bitcoinKey2 []byte,
-	isTaproot bool) ([]byte, error) {
-
-	legacyFundingScript := func() ([]byte, error) {
-		witnessScript, err := input.GenMultiSigScript(
-			bitcoinKey1, bitcoinKey2,
-		)
-		if err != nil {
-			return nil, err
-		}
-		pkScript, err := input.WitnessScriptHash(witnessScript)
-		if err != nil {
-			return nil, err
-		}
-
-		return pkScript, nil
-	}
-
-	if !isTaproot {
-		return legacyFundingScript()
-	}
-
-	pubKey1, err := btcec.ParsePubKey(bitcoinKey1)
-	if err != nil {
-		return nil, err
-	}
-	pubKey2, err := btcec.ParsePubKey(bitcoinKey2)
-	if err != nil {
-		return nil, err
-	}
-
-	fundingScript, _, err := input.GenTaprootFundingScript(
-		pubKey1, pubKey2, 0,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return fundingScript, nil
-}
-
 // processUpdate processes a new relate authenticated channel/edge, node or
 // channel/edge update network update. If the update didn't affect the internal
 // state of the draft due to either being out of date, invalid, or redundant,
@@ -1604,7 +1558,7 @@ func (r *ChannelRouter) processUpdate(msg interface{},
 		// Recreate witness output to be sure that declared in channel
 		// edge bitcoin keys and channel value corresponds to the
 		// reality.
-		fundingPkScript, err := makeFundingScript(
+		fundingPkScript, err := channeldb.MakeFundingScript(
 			msg.BitcoinKey1Bytes[:], msg.BitcoinKey2Bytes[:],
 			msg.IsTaproot,
 		)
