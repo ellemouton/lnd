@@ -90,7 +90,9 @@ func genIDs() (lnwire.ChannelID, lnwire.ChannelID, lnwire.ShortChannelID,
 
 // mockGetChanUpdateMessage helper function which returns topology update of
 // the channel
-func mockGetChanUpdateMessage(cid lnwire.ShortChannelID) (*lnwire.ChannelUpdate, error) {
+func mockGetChanUpdateMessage(cid lnwire.ShortChannelID) (lnwire.ChanUpdate,
+	error) {
+
 	return &lnwire.ChannelUpdate{
 		Signature: wireSig,
 	}, nil

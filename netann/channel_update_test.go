@@ -145,7 +145,7 @@ func TestUpdateDisableFlag(t *testing.T) {
 			err := netann.SignChannelUpdate(
 				tc.signer, testKeyLoc, newUpdate,
 				netann.ChanUpdSetDisable(tc.disable),
-				netann.ChanUpdSetTimestamp,
+				netann.ChanUpdSetTimestamp(1000),
 			)
 
 			var fail bool

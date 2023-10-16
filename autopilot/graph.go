@@ -87,7 +87,8 @@ func (d dbNode) Addrs() []net.Addr {
 // NOTE: Part of the autopilot.Node interface.
 func (d dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 	return d.node.ForEachChannel(d.tx, func(tx kvdb.RTx,
-		ei *channeldb.ChannelEdgeInfo, ep, _ *channeldb.ChannelEdgePolicy) error {
+		ei *channeldb.ChannelEdgeInfo, ep,
+		_ channeldb.ChanEdgePolicy) error {
 
 		// Skip channels for which no outgoing edge policy is available.
 		//
@@ -100,12 +101,14 @@ func (d dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 			return nil
 		}
 
+		chanID := ep.SCID().ToUint64()
+
 		edge := ChannelEdge{
-			ChanID:   lnwire.NewShortChanIDFromInt(ep.ChannelID),
+			ChanID:   lnwire.NewShortChanIDFromInt(chanID),
 			Capacity: ei.Capacity,
 			Peer: dbNode{
 				tx:   tx,
-				node: ep.Node,
+				node: ep.Node(),
 			},
 		}
 
@@ -230,7 +233,7 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 	if err := d.db.AddChannelEdge(edge); err != nil {
 		return nil, nil, err
 	}
-	edgePolicy := &channeldb.ChannelEdgePolicy{
+	edgePolicy := &channeldb.ChannelEdgePolicy1{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 chanID.ToUint64(),
 		LastUpdate:                time.Now(),
@@ -246,7 +249,7 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 	if err := d.db.UpdateEdgePolicy(edgePolicy); err != nil {
 		return nil, nil, err
 	}
-	edgePolicy = &channeldb.ChannelEdgePolicy{
+	edgePolicy = &channeldb.ChannelEdgePolicy1{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 chanID.ToUint64(),
 		LastUpdate:                time.Now(),

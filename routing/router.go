@@ -144,7 +144,7 @@ type ChannelGraphSource interface {
 
 	// UpdateEdge is used to update edge information, without this message
 	// edge considered as not fully constructed.
-	UpdateEdge(policy *channeldb.ChannelEdgePolicy,
+	UpdateEdge(policy channeldb.ChanEdgePolicy,
 		op ...batch.SchedulerOption) error
 
 	// IsStaleNode returns true if the graph source has a node announcement
@@ -164,8 +164,9 @@ type ChannelGraphSource interface {
 	// IsStaleEdgePolicy returns true if the graph source has a channel
 	// edge for the passed channel ID (and flags) that have a more recent
 	// timestamp.
-	IsStaleEdgePolicy(chanID lnwire.ShortChannelID, timestamp time.Time,
-		flags lnwire.ChanUpdateChanFlags) bool
+	IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
+		timestamp lnwire.Timestamp, isDisabled, isNode1 bool) (bool,
+		error)
 
 	// MarkEdgeLive clears an edge from our zombie index, deeming it as
 	// live.
@@ -176,7 +177,7 @@ type ChannelGraphSource interface {
 	// star-graph.
 	ForAllOutgoingChannels(cb func(tx kvdb.RTx,
 		c *channeldb.ChannelEdgeInfo,
-		e *channeldb.ChannelEdgePolicy) error) error
+		e channeldb.ChanEdgePolicy) error) error
 
 	// CurrentBlockHeight returns the block height from POV of the router
 	// subsystem.
@@ -184,8 +185,8 @@ type ChannelGraphSource interface {
 
 	// GetChannelByID return the channel by the channel id.
 	GetChannelByID(chanID lnwire.ShortChannelID) (
-		*channeldb.ChannelEdgeInfo, *channeldb.ChannelEdgePolicy,
-		*channeldb.ChannelEdgePolicy, error)
+		*channeldb.ChannelEdgeInfo, channeldb.ChanEdgePolicy,
+		channeldb.ChanEdgePolicy, error)
 
 	// FetchLightningNode attempts to look up a target node by its identity
 	// public key. channeldb.ErrGraphNodeNotFound is returned if the node
@@ -472,7 +473,7 @@ type ChannelRouter struct {
 	ntfnClientUpdates chan *topologyClientUpdate
 
 	// channelEdgeMtx is a mutex we use to make sure we process only one
-	// ChannelEdgePolicy at a time for a given channelID, to ensure
+	// ChannelEdgePolicy1 at a time for a given channelID, to ensure
 	// consistency between the various database accesses.
 	channelEdgeMtx *multimutex.Mutex[uint64]
 
@@ -748,6 +749,43 @@ func (r *ChannelRouter) Stop() error {
 	return nil
 }
 
+func (r *ChannelRouter) isStale(timestamp lnwire.Timestamp) (bool, error) {
+	// Otherwise, we'll fall back to our usual ChannelPruneExpiry.
+	switch t := timestamp.(type) {
+	case *lnwire.BlockHeight:
+		bh := uint32(*t)
+
+		blocksSince, err := r.blocksSince(bh)
+		if err != nil {
+			return false, err
+		}
+
+		return blocksSince > int64(r.pruneExpiryNumBlocks()),
+			nil
+
+	case *lnwire.UnixTimestamp:
+		ut := int64(*t)
+
+		return time.Since(time.Unix(ut, 0)) >
+			r.cfg.ChannelPruneExpiry, nil
+	default:
+		return false, fmt.Errorf("unexpected Timestamp type")
+	}
+}
+
+func (r *ChannelRouter) pruneExpiryNumBlocks() uint32 {
+	return uint32(r.cfg.ChannelPruneExpiry.Hours()) * 6
+}
+
+func (r *ChannelRouter) blocksSince(height uint32) (int64, error) {
+	_, bestBlock, err := r.cfg.Chain.GetBestBlock()
+	if err != nil {
+		return 0, err
+	}
+
+	return int64(bestBlock) - int64(height), nil
+}
+
 // syncGraphWithChain attempts to synchronize the current channel graph with
 // the latest UTXO set state. This process involves pruning from the channel
 // graph any channels which have been closed by spending their funding output
@@ -904,10 +942,12 @@ func (r *ChannelRouter) pruneZombieChans() error {
 	// First, we'll collect all the channels which are eligible for garbage
 	// collection due to being zombies.
 	filterPruneChans := func(info *channeldb.ChannelEdgeInfo,
-		e1, e2 *channeldb.ChannelEdgePolicy) error {
+		e1, e2 channeldb.ChanEdgePolicy) error {
 
-		// Exit early in case this channel is already marked to be pruned
-		if _, markedToPrune := chansToPrune[info.ChannelID]; markedToPrune {
+		// Exit early in case this channel is already marked to be
+		// pruned.
+		_, markedToPrune := chansToPrune[info.ChannelID]
+		if markedToPrune {
 			return nil
 		}
 
@@ -921,8 +961,23 @@ func (r *ChannelRouter) pruneZombieChans() error {
 		// If either edge hasn't been updated for a period of
 		// chanExpiry, then we'll mark the channel itself as eligible
 		// for graph pruning.
-		e1Zombie := e1 == nil || time.Since(e1.LastUpdate) >= chanExpiry
-		e2Zombie := e2 == nil || time.Since(e2.LastUpdate) >= chanExpiry
+		var (
+			e1Zombie = true
+			e2Zombie = true
+			err      error
+		)
+		if e1 != nil {
+			e1Zombie, err = r.isStale(e1.Timestamp())
+			if err != nil {
+				return err
+			}
+		}
+		if e2 != nil {
+			e2Zombie, err = r.isStale(e2.Timestamp())
+			if err != nil {
+				return err
+			}
+		}
 
 		if e1Zombie {
 			log.Tracef("Node1 pubkey=%x of chan_id=%v is zombie",
@@ -987,9 +1042,29 @@ func (r *ChannelRouter) pruneZombieChans() error {
 		}
 	}
 
-	startTime := time.Unix(0, 0)
-	endTime := time.Now().Add(-1 * chanExpiry)
-	oldEdges, err := r.cfg.Graph.ChanUpdatesInHorizon(startTime, endTime)
+	// First get legacy ChannelUpdates.
+	startTime := lnwire.UnixTimestamp(time.Unix(0, 0).Unix())
+	endTime := lnwire.UnixTimestamp(time.Now().Add(-1 * chanExpiry).Unix())
+
+	oldEdges, err := r.cfg.Graph.ChanUpdatesInHorizon(&startTime, &endTime)
+	if err != nil {
+		return fmt.Errorf("unable to fetch expired channel updates "+
+			"chans: %v", err)
+	}
+
+	for _, u := range oldEdges {
+		filterPruneChans(u.Info, u.Policy1, u.Policy2)
+	}
+
+	// Then get the new ChannelUpdates.
+	_, bestBlock, err := r.cfg.Chain.GetBestBlock()
+	if err != nil {
+		return err
+	}
+	startBlock := lnwire.BlockHeight(0)
+	endBlock := lnwire.BlockHeight(bestBlock - int32(chanExpiry.Hours()*6))
+
+	oldEdges, err = r.cfg.Graph.ChanUpdatesInHorizon(&startBlock, &endBlock)
 	if err != nil {
 		return fmt.Errorf("unable to fetch expired channel updates "+
 			"chans: %v", err)
@@ -1641,18 +1716,19 @@ func (r *ChannelRouter) processUpdate(msg interface{},
 				"view: %v", err)
 		}
 
-	case *channeldb.ChannelEdgePolicy:
-		log.Debugf("Received ChannelEdgePolicy for channel %v",
-			msg.ChannelID)
+	case channeldb.ChanEdgePolicy:
+		chanID := msg.SCID().ToUint64()
+
+		log.Debugf("Received ChannelEdgePolicy for channel %v", chanID)
 
 		// We make sure to hold the mutex for this channel ID,
 		// such that no other goroutine is concurrently doing
 		// database accesses for the same channel ID.
-		r.channelEdgeMtx.Lock(msg.ChannelID)
-		defer r.channelEdgeMtx.Unlock(msg.ChannelID)
+		r.channelEdgeMtx.Lock(chanID)
+		defer r.channelEdgeMtx.Unlock(chanID)
 
 		edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
-			r.cfg.Graph.HasChannelEdge(msg.ChannelID)
+			r.cfg.Graph.HasChannelEdge(chanID)
 		if err != nil && err != channeldb.ErrGraphNoEdgesFound {
 			return errors.Errorf("unable to check for edge "+
 				"existence: %v", err)
@@ -1662,21 +1738,24 @@ func (r *ChannelRouter) processUpdate(msg interface{},
 		// If the channel is marked as a zombie in our database, and
 		// we consider this a stale update, then we should not apply the
 		// policy.
-		isStaleUpdate := time.Since(msg.LastUpdate) > r.cfg.ChannelPruneExpiry
+		isStaleUpdate, err := r.isStale(msg.Timestamp())
+		if err != nil {
+			return errors.Errorf("unable to check if update is "+
+				"stale: %v", err)
+		}
+
 		if isZombie && isStaleUpdate {
 			return newErrf(ErrIgnored, "ignoring stale update "+
-				"(flags=%v|%v) for zombie chan_id=%v",
-				msg.MessageFlags, msg.ChannelFlags,
-				msg.ChannelID)
+				"%s for zombie chan_id=%v", msg.DetailsString(),
+				chanID)
 		}
 
 		// If the channel doesn't exist in our database, we cannot
 		// apply the updated policy.
 		if !exists {
 			return newErrf(ErrIgnored, "ignoring update "+
-				"(flags=%v|%v) for unknown chan_id=%v",
-				msg.MessageFlags, msg.ChannelFlags,
-				msg.ChannelID)
+				"%s for unknown chan_id=%v",
+				msg.DetailsString(), chanID)
 		}
 
 		// As edges are directional edge node has a unique policy for
@@ -1688,26 +1767,38 @@ func (r *ChannelRouter) processUpdate(msg interface{},
 
 		// A flag set of 0 indicates this is an announcement for the
 		// "first" node in the channel.
-		case msg.ChannelFlags&lnwire.ChanUpdateDirection == 0:
-
+		case msg.IsNode1():
 			// Ignore outdated message.
-			if !edge1Timestamp.Before(msg.LastUpdate) {
+			before, err := edge1Timestamp.Before(msg.Timestamp())
+			if err != nil {
+				return newErrf(ErrIgnored, "ignoring update "+
+					"%s for unknown chan_id=%v",
+					msg.DetailsString(), chanID)
+			}
+
+			if !before {
 				return newErrf(ErrOutdated, "Ignoring "+
-					"outdated update (flags=%v|%v) for "+
-					"known chan_id=%v", msg.MessageFlags,
-					msg.ChannelFlags, msg.ChannelID)
+					"outdated update %s for "+
+					"known chan_id=%v", msg.DetailsString(),
+					chanID)
 			}
 
 		// Similarly, a flag set of 1 indicates this is an announcement
 		// for the "second" node in the channel.
-		case msg.ChannelFlags&lnwire.ChanUpdateDirection == 1:
-
+		case !msg.IsNode1():
 			// Ignore outdated message.
-			if !edge2Timestamp.Before(msg.LastUpdate) {
+			before, err := edge2Timestamp.Before(msg.Timestamp())
+			if err != nil {
+				return newErrf(ErrIgnored, "ignoring update "+
+					"%s for unknown chan_id=%v",
+					msg.DetailsString(), chanID)
+			}
+
+			if !before {
 				return newErrf(ErrOutdated, "Ignoring "+
-					"outdated update (flags=%v|%v) for "+
-					"known chan_id=%v", msg.MessageFlags,
-					msg.ChannelFlags, msg.ChannelID)
+					"outdated update %s for "+
+					"known chan_id=%v", msg.DetailsString(),
+					chanID)
 			}
 		}
 
@@ -2550,20 +2641,20 @@ func (r *ChannelRouter) sendPayment(feeLimit lnwire.MilliSatoshi,
 
 // extractChannelUpdate examines the error and extracts the channel update.
 func (r *ChannelRouter) extractChannelUpdate(
-	failure lnwire.FailureMessage) *lnwire.ChannelUpdate {
+	failure lnwire.FailureMessage) lnwire.ChanUpdate {
 
-	var update *lnwire.ChannelUpdate
+	var update lnwire.ChanUpdate
 	switch onionErr := failure.(type) {
 	case *lnwire.FailExpiryTooSoon:
-		update = &onionErr.Update
+		update = onionErr.Update
 	case *lnwire.FailAmountBelowMinimum:
-		update = &onionErr.Update
+		update = onionErr.Update
 	case *lnwire.FailFeeInsufficient:
-		update = &onionErr.Update
+		update = onionErr.Update
 	case *lnwire.FailIncorrectCltvExpiry:
-		update = &onionErr.Update
+		update = onionErr.Update
 	case *lnwire.FailChannelDisabled:
-		update = &onionErr.Update
+		update = onionErr.Update
 	case *lnwire.FailTemporaryChannelFailure:
 		update = onionErr.Update
 	}
@@ -2573,8 +2664,8 @@ func (r *ChannelRouter) extractChannelUpdate(
 
 // applyChannelUpdate validates a channel update and if valid, applies it to the
 // database. It returns a bool indicating whether the updates were successful.
-func (r *ChannelRouter) applyChannelUpdate(msg *lnwire.ChannelUpdate) bool {
-	ch, _, _, err := r.GetChannelByID(msg.ShortChannelID)
+func (r *ChannelRouter) applyChannelUpdate(msg lnwire.ChanUpdate) bool {
+	ch, _, _, err := r.GetChannelByID(msg.SCID())
 	if err != nil {
 		log.Errorf("Unable to retrieve channel by id: %v", err)
 		return false
@@ -2582,18 +2673,15 @@ func (r *ChannelRouter) applyChannelUpdate(msg *lnwire.ChannelUpdate) bool {
 
 	var pubKey *btcec.PublicKey
 
-	switch msg.ChannelFlags & lnwire.ChanUpdateDirection {
-	case 0:
+	if msg.IsNode1() {
 		pubKey, _ = ch.NodeKey1()
-
-	case 1:
+	} else {
 		pubKey, _ = ch.NodeKey2()
 	}
 
 	// Exit early if the pubkey cannot be decided.
 	if pubKey == nil {
-		log.Errorf("Unable to decide pubkey with ChannelFlags=%v",
-			msg.ChannelFlags)
+		log.Errorf("Unable to decide pubkey with .. ")
 		return false
 	}
 
@@ -2603,18 +2691,32 @@ func (r *ChannelRouter) applyChannelUpdate(msg *lnwire.ChannelUpdate) bool {
 		return false
 	}
 
-	err = r.UpdateEdge(&channeldb.ChannelEdgePolicy{
-		SigBytes:                  msg.Signature.ToSignatureBytes(),
-		ChannelID:                 msg.ShortChannelID.ToUint64(),
-		LastUpdate:                time.Unix(int64(msg.Timestamp), 0),
-		MessageFlags:              msg.MessageFlags,
-		ChannelFlags:              msg.ChannelFlags,
-		TimeLockDelta:             msg.TimeLockDelta,
-		MinHTLC:                   msg.HtlcMinimumMsat,
-		MaxHTLC:                   msg.HtlcMaximumMsat,
-		FeeBaseMSat:               lnwire.MilliSatoshi(msg.BaseFee),
-		FeeProportionalMillionths: lnwire.MilliSatoshi(msg.FeeRate),
-	})
+	var policy channeldb.ChanEdgePolicy
+
+	switch m := msg.(type) {
+	case *lnwire.ChannelUpdate:
+		policy = &channeldb.ChannelEdgePolicy1{
+			SigBytes:                  m.Signature.ToSignatureBytes(),
+			ChannelID:                 m.ShortChannelID.ToUint64(),
+			LastUpdate:                time.Unix(int64(m.Timestamp), 0),
+			MessageFlags:              m.MessageFlags,
+			ChannelFlags:              m.ChannelFlags,
+			TimeLockDelta:             m.TimeLockDelta,
+			MinHTLC:                   m.HtlcMinimumMsat,
+			MaxHTLC:                   m.HtlcMaximumMsat,
+			FeeBaseMSat:               lnwire.MilliSatoshi(m.BaseFee),
+			FeeProportionalMillionths: lnwire.MilliSatoshi(m.FeeRate),
+		}
+	case *lnwire.ChannelUpdate2:
+		policy = &channeldb.ChanEdgePolicy2{
+			ChannelUpdate2: m,
+		}
+	default:
+		log.Errorf("unexpected chan update type")
+		return false
+	}
+
+	err = r.UpdateEdge(policy)
 	if err != nil && !IsError(err, ErrIgnored, ErrOutdated) {
 		log.Errorf("Unable to apply channel update: %v", err)
 		return false
@@ -2681,7 +2783,7 @@ func (r *ChannelRouter) AddEdge(edge *channeldb.ChannelEdgeInfo,
 // considered as not fully constructed.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (r *ChannelRouter) UpdateEdge(update *channeldb.ChannelEdgePolicy,
+func (r *ChannelRouter) UpdateEdge(update channeldb.ChanEdgePolicy,
 	op ...batch.SchedulerOption) error {
 
 	rMsg := &routingMsg{
@@ -2722,9 +2824,8 @@ func (r *ChannelRouter) SyncedHeight() uint32 {
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (r *ChannelRouter) GetChannelByID(chanID lnwire.ShortChannelID) (
-	*channeldb.ChannelEdgeInfo,
-	*channeldb.ChannelEdgePolicy,
-	*channeldb.ChannelEdgePolicy, error) {
+	*channeldb.ChannelEdgeInfo, channeldb.ChanEdgePolicy,
+	channeldb.ChanEdgePolicy, error) {
 
 	return r.cfg.Graph.FetchChannelEdgesByID(chanID.ToUint64())
 }
@@ -2757,11 +2858,11 @@ func (r *ChannelRouter) ForEachNode(
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (r *ChannelRouter) ForAllOutgoingChannels(cb func(kvdb.RTx,
-	*channeldb.ChannelEdgeInfo, *channeldb.ChannelEdgePolicy) error) error {
+	*channeldb.ChannelEdgeInfo, channeldb.ChanEdgePolicy) error) error {
 
 	return r.selfNode.ForEachChannel(nil, func(tx kvdb.RTx,
 		c *channeldb.ChannelEdgeInfo,
-		e, _ *channeldb.ChannelEdgePolicy) error {
+		e, _ channeldb.ChanEdgePolicy) error {
 
 		if e == nil {
 			return fmt.Errorf("channel from self node has no policy")
@@ -2829,13 +2930,14 @@ func (r *ChannelRouter) IsKnownEdge(chanID lnwire.ShortChannelID) bool {
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (r *ChannelRouter) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
-	timestamp time.Time, flags lnwire.ChanUpdateChanFlags) bool {
+	timestamp lnwire.Timestamp, isDisabled, isNode1 bool) (bool, error) {
 
 	edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
 		r.cfg.Graph.HasChannelEdge(chanID.ToUint64())
 	if err != nil {
 		log.Debugf("Check stale edge policy got error: %v", err)
-		return false
+
+		return false, nil
 
 	}
 
@@ -2846,21 +2948,19 @@ func (r *ChannelRouter) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 		// if both of their edges are disabled. We'll mark the new
 		// policy as stale if it remains disabled.
 		if r.cfg.AssumeChannelValid {
-			isDisabled := flags&lnwire.ChanUpdateDisabled ==
-				lnwire.ChanUpdateDisabled
 			if isDisabled {
-				return true
+				return true, nil
 			}
 		}
 
 		// Otherwise, we'll fall back to our usual ChannelPruneExpiry.
-		return time.Since(timestamp) > r.cfg.ChannelPruneExpiry
+		return r.isStale(timestamp)
 	}
 
 	// If we don't know of the edge, then it means it's fresh (thus not
 	// stale).
 	if !exists {
-		return false
+		return false, nil
 	}
 
 	// As edges are directional edge node has a unique policy for the
@@ -2870,16 +2970,26 @@ func (r *ChannelRouter) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 	switch {
 	// A flag set of 0 indicates this is an announcement for the "first"
 	// node in the channel.
-	case flags&lnwire.ChanUpdateDirection == 0:
-		return !edge1Timestamp.Before(timestamp)
+	case isNode1:
+		before, err := edge1Timestamp.Before(timestamp)
+		if err != nil {
+			return false, err
+		}
+
+		return !before, nil
 
 	// Similarly, a flag set of 1 indicates this is an announcement for the
 	// "second" node in the channel.
-	case flags&lnwire.ChanUpdateDirection == 1:
-		return !edge2Timestamp.Before(timestamp)
+	case !isNode1:
+		before, err := edge2Timestamp.Before(timestamp)
+		if err != nil {
+			return false, err
+		}
+
+		return !before, nil
 	}
 
-	return false
+	return false, nil
 }
 
 // MarkEdgeLive clears an edge from our zombie index, deeming it as live.

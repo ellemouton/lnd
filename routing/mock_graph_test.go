@@ -193,7 +193,7 @@ func (m *mockGraph) forEachNodeChannel(nodePub route.Vertex,
 				OtherNode:    peer,
 				Capacity:     channel.capacity,
 				OutPolicySet: true,
-				InPolicy: &channeldb.CachedEdgePolicy{
+				InPolicy: &channeldb.CachedEdgePolicy1{
 					ChannelID: channel.id,
 					ToNodePubKey: func() route.Vertex {
 						return nodePub

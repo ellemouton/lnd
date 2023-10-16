@@ -16,7 +16,19 @@ import (
 // ValidateChannelAnn validates the channel announcement message and checks
 // that node signatures covers the announcement message, and that the bitcoin
 // signatures covers the node keys.
-func ValidateChannelAnn(a *lnwire.ChannelAnnouncement) error {
+func ValidateChannelAnn(a lnwire.Message) error {
+	switch msg := a.(type) {
+	case *lnwire.ChannelAnnouncement:
+		return validateChannelAnn1(msg)
+	case *lnwire.ChannelAnnouncement2:
+		return validateChannelAnn2(msg)
+	default:
+		return fmt.Errorf("unexpected channel announcement type: %T",
+			msg)
+	}
+}
+
+func validateChannelAnn1(a *lnwire.ChannelAnnouncement) error {
 	// First, we'll compute the digest (h) which is to be signed by each of
 	// the keys included within the node announcement message. This hash
 	// digest includes all the keys, so the (up to 4 signatures) will
@@ -86,9 +98,9 @@ func ValidateChannelAnn(a *lnwire.ChannelAnnouncement) error {
 
 }
 
-// ValidateChannelAnn2 validates the channel announcement 2 message and checks
+// validateChannelAnn2 validates the channel announcement 2 message and checks
 // that signature is valid.
-func ValidateChannelAnn2(a *lnwire.ChannelAnnouncement2) error {
+func validateChannelAnn2(a *lnwire.ChannelAnnouncement2) error {
 	dataHash, err := a.DigestToSign()
 	if err != nil {
 		return err
@@ -181,7 +193,7 @@ func ValidateNodeAnn(a *lnwire.NodeAnnouncement) error {
 // signed by the node's private key, and (2) that the announcement's message
 // flags and optional fields are sane.
 func ValidateChannelUpdateAnn(pubKey *btcec.PublicKey, capacity btcutil.Amount,
-	a *lnwire.ChannelUpdate) error {
+	a lnwire.ChanUpdate) error {
 
 	if err := ValidateChannelUpdateFields(capacity, a); err != nil {
 		return err
@@ -192,23 +204,32 @@ func ValidateChannelUpdateAnn(pubKey *btcec.PublicKey, capacity btcutil.Amount,
 
 // VerifyChannelUpdateSignature verifies that the channel update message was
 // signed by the party with the given node public key.
-func VerifyChannelUpdateSignature(msg *lnwire.ChannelUpdate,
+func VerifyChannelUpdateSignature(msg lnwire.ChanUpdate,
 	pubKey *btcec.PublicKey) error {
 
-	data, err := msg.DataToSign()
-	if err != nil {
-		return fmt.Errorf("unable to reconstruct message data: %v", err)
-	}
-	dataHash := chainhash.DoubleHashB(data)
+	switch m := msg.(type) {
+	case *lnwire.ChannelUpdate:
+		data, err := m.DataToSign()
+		if err != nil {
+			return fmt.Errorf("unable to reconstruct message "+
+				"data: %v", err)
+		}
+		dataHash := chainhash.DoubleHashB(data)
 
-	nodeSig, err := msg.Signature.ToSignature()
-	if err != nil {
-		return err
-	}
+		nodeSig, err := m.Signature.ToSignature()
+		if err != nil {
+			return err
+		}
 
-	if !nodeSig.Verify(dataHash, pubKey) {
-		return fmt.Errorf("invalid signature for channel update %v",
-			spew.Sdump(msg))
+		if !nodeSig.Verify(dataHash, pubKey) {
+			return fmt.Errorf("invalid signature for channel "+
+				"update %v", spew.Sdump(msg))
+		}
+
+	case *lnwire.ChannelUpdate2:
+		panic("implement chan update 2 validation")
+	default:
+		return fmt.Errorf("unexpected channel update type")
 	}
 
 	return nil
@@ -217,27 +238,49 @@ func VerifyChannelUpdateSignature(msg *lnwire.ChannelUpdate,
 // ValidateChannelUpdateFields validates a channel update's message flags and
 // corresponding update fields.
 func ValidateChannelUpdateFields(capacity btcutil.Amount,
-	msg *lnwire.ChannelUpdate) error {
+	msg lnwire.Message) error {
 
-	// The maxHTLC flag is mandatory.
-	if !msg.MessageFlags.HasMaxHtlc() {
-		return errors.Errorf("max htlc flag not set for channel "+
-			"update %v", spew.Sdump(msg))
-	}
+	switch m := msg.(type) {
+	case *lnwire.ChannelUpdate:
+		// The maxHTLC flag is mandatory.
+		if !m.MessageFlags.HasMaxHtlc() {
+			return errors.Errorf("max htlc flag not set for "+
+				"channel update %v", spew.Sdump(msg))
+		}
 
-	maxHtlc := msg.HtlcMaximumMsat
-	if maxHtlc == 0 || maxHtlc < msg.HtlcMinimumMsat {
-		return errors.Errorf("invalid max htlc for channel "+
-			"update %v", spew.Sdump(msg))
-	}
+		maxHtlc := m.HtlcMaximumMsat
+		if maxHtlc == 0 || maxHtlc < m.HtlcMinimumMsat {
+			return errors.Errorf("invalid max htlc for channel "+
+				"update %v", spew.Sdump(m))
+		}
 
-	// For light clients, the capacity will not be set so we'll skip
-	// checking whether the MaxHTLC value respects the channel's
-	// capacity.
-	capacityMsat := lnwire.NewMSatFromSatoshis(capacity)
-	if capacityMsat != 0 && maxHtlc > capacityMsat {
-		return errors.Errorf("max_htlc (%v) for channel update "+
-			"greater than capacity (%v)", maxHtlc, capacityMsat)
+		// For light clients, the capacity will not be set so we'll skip
+		// checking whether the MaxHTLC value respects the channel's
+		// capacity.
+		capacityMsat := lnwire.NewMSatFromSatoshis(capacity)
+		if capacityMsat != 0 && maxHtlc > capacityMsat {
+			return errors.Errorf("max_htlc (%v) for channel "+
+				"update greater than capacity (%v)", maxHtlc,
+				capacityMsat)
+		}
+
+	case *lnwire.ChannelUpdate2:
+		maxHtlc := m.HTLCMaximumMsat
+		if maxHtlc == 0 || maxHtlc < m.HTLCMinimumMsat {
+			return errors.Errorf("invalid max htlc for channel "+
+				"update %v", spew.Sdump(m))
+		}
+
+		// For ChannelUpdate2, we will always have the capacity since
+		// it is advertised in the ChannelAnnouncement2.
+		capacityMsat := lnwire.NewMSatFromSatoshis(capacity)
+		if maxHtlc > capacityMsat {
+			return errors.Errorf("max_htlc (%v) for channel "+
+				"update greater than capacity (%v)", maxHtlc,
+				capacityMsat)
+		}
+	default:
+		return fmt.Errorf("expected channel update message")
 	}
 
 	return nil

@@ -7,6 +7,7 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/tlv"
 )
 
@@ -118,6 +119,167 @@ type ChannelUpdate2 struct {
 	// to fill out the full maximum transport message size. These fields can
 	// be used to specify optional data such as custom TLV fields.
 	ExtraOpaqueData ExtraOpaqueData
+}
+
+func (c *ChannelUpdate2) GetSignature() Sig {
+	return c.Signature
+}
+
+func (c *ChannelUpdate2) GetBaseFee() MilliSatoshi {
+	return MilliSatoshi(c.FeeBaseMsat)
+}
+
+func (c *ChannelUpdate2) GetFeeRate() MilliSatoshi {
+	return MilliSatoshi(c.FeeBaseMsat)
+}
+
+func (c *ChannelUpdate2) GetTimeLock() uint16 {
+	return c.CLTVExpiryDelta
+}
+
+func (c *ChannelUpdate2) SetSig(sig input.Signature) error {
+	s, err := NewSigFromSignature(sig)
+	if err != nil {
+		return err
+	}
+
+	c.Signature = s
+
+	return nil
+}
+
+func (c *ChannelUpdate2) IsDisabled() bool {
+	return !c.DisabledFlags.IsEnabled()
+}
+
+func (c *ChannelUpdate2) GetChainHash() chainhash.Hash {
+	return c.ChainHash
+}
+
+func (c *ChannelUpdate2) GetTimestamp() Timestamp {
+	t := BlockHeight(c.BlockHeight)
+
+	return &t
+}
+
+func (c *ChannelUpdate2) SetDisabled(disabled bool) {
+	if disabled {
+		c.DisabledFlags |= ChanUpdateDisableOutgoing
+		c.DisabledFlags |= ChanUpdateDisableIncoming
+	} else {
+		c.DisabledFlags &= ^ChanUpdateDisableOutgoing
+		c.DisabledFlags &= ^ChanUpdateDisableIncoming
+	}
+}
+
+func (c *ChannelUpdate2) SetSCID(scid ShortChannelID) {
+	c.ShortChannelID = scid
+}
+
+var _ ChanUpdate = (*ChannelUpdate2)(nil)
+
+func (c *ChannelUpdate2) SCID() ShortChannelID {
+	return c.ShortChannelID
+}
+
+func (c *ChannelUpdate2) IsNode1() bool {
+	return c.Direction
+}
+
+// DigestToSign computes the digest of the message to be signed.
+func (c *ChannelUpdate2) DigestToSign() (*chainhash.Hash, error) {
+	data, err := c.DataToSign()
+	if err != nil {
+		return nil, err
+	}
+
+	hash := MsgHash(
+		"channel_update", "update_signature", data,
+	)
+
+	return hash, nil
+}
+
+func (c *ChannelUpdate2) DataToSign() ([]byte, error) {
+	var records []tlv.Record
+
+	// The chain-hash record is only included if it is _not_ equal to the
+	// bitcoin mainnet genisis block hash.
+	if !c.ChainHash.IsEqual(chaincfg.MainNetParams.GenesisHash) {
+		chainHash := [32]byte(c.ChainHash)
+		records = append(records, tlv.MakePrimitiveRecord(
+			ChanUpdate2ChainHashType, &chainHash,
+		))
+	}
+
+	scidRecordProducer := &ShortChannelIDRecordProducer{
+		ShortChannelID: c.ShortChannelID,
+		Type:           ChanUpdate2SCIDType,
+	}
+
+	records = append(records,
+		scidRecordProducer.Record(),
+		tlv.MakePrimitiveRecord(
+			ChanUpdate2BlockHeightType, &c.BlockHeight,
+		),
+	)
+
+	// Only include the disable flags if any bit is set.
+	if !c.DisabledFlags.IsEnabled() {
+		disableFlags := uint8(c.DisabledFlags)
+		records = append(records, tlv.MakePrimitiveRecord(
+			ChanUpdate2DisableFlagsType, &disableFlags,
+		))
+	}
+
+	// We only need to encode the direction if the direction is set to 1.
+	if c.Direction {
+		directionRecordProducer := &BooleanRecordProducer{
+			Bool: true,
+			Type: ChanUpdate2DirectionType,
+		}
+		records = append(records, directionRecordProducer.Record())
+	}
+
+	// We only encode the cltv expiry delta if it is not equal to the
+	// default.
+	if c.CLTVExpiryDelta != defaultCltvExpiryDelta {
+		records = append(records, tlv.MakePrimitiveRecord(
+			ChanUpdate2CLTVExpiryDeltaType, &c.CLTVExpiryDelta,
+		))
+	}
+
+	if c.HTLCMinimumMsat != defaultHtlcMinMsat {
+		var htlcMin = uint64(c.HTLCMinimumMsat)
+		records = append(records, tlv.MakePrimitiveRecord(
+			ChanUpdate2HTLCMinMsatType, &htlcMin,
+		))
+	}
+
+	var htlcMax = uint64(c.HTLCMaximumMsat)
+	records = append(records, tlv.MakePrimitiveRecord(
+		ChanUpdate2HTLCMaxMsatType, &htlcMax,
+	))
+
+	if c.FeeBaseMsat != defaultFeeBaseMsat {
+		records = append(records, tlv.MakePrimitiveRecord(
+			ChanUpdate2FeeBaseMsatType, &c.FeeBaseMsat,
+		))
+	}
+
+	if c.FeeProportionalMillionths != defaultFeeProportionalMillionths {
+		records = append(records, tlv.MakePrimitiveRecord(
+			ChanUpdate2FeeProportionalMillionthsType,
+			&c.FeeProportionalMillionths,
+		))
+	}
+
+	err := EncodeMessageExtraDataFromRecords(&c.ExtraOpaqueData, records...)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.ExtraOpaqueData, nil
 }
 
 // Decode deserializes a serialized AnnounceSignatures stored in the passed
@@ -245,80 +407,7 @@ func (c *ChannelUpdate2) Encode(w *bytes.Buffer, _ uint32) error {
 		return err
 	}
 
-	var records []tlv.Record
-
-	// The chain-hash record is only included if it is _not_ equal to the
-	// bitcoin mainnet genisis block hash.
-	if !c.ChainHash.IsEqual(chaincfg.MainNetParams.GenesisHash) {
-		chainHash := [32]byte(c.ChainHash)
-		records = append(records, tlv.MakePrimitiveRecord(
-			ChanUpdate2ChainHashType, &chainHash,
-		))
-	}
-
-	scidRecordProducer := &ShortChannelIDRecordProducer{
-		ShortChannelID: c.ShortChannelID,
-		Type:           ChanUpdate2SCIDType,
-	}
-
-	records = append(records,
-		scidRecordProducer.Record(),
-		tlv.MakePrimitiveRecord(
-			ChanUpdate2BlockHeightType, &c.BlockHeight,
-		),
-	)
-
-	// Only include the disable flags if any bit is set.
-	if !c.DisabledFlags.IsEnabled() {
-		disableFlags := uint8(c.DisabledFlags)
-		records = append(records, tlv.MakePrimitiveRecord(
-			ChanUpdate2DisableFlagsType, &disableFlags,
-		))
-	}
-
-	// We only need to encode the direction if the direction is set to 1.
-	if c.Direction {
-		directionRecordProducer := &BooleanRecordProducer{
-			Bool: true,
-			Type: ChanUpdate2DirectionType,
-		}
-		records = append(records, directionRecordProducer.Record())
-	}
-
-	// We only encode the cltv expiry delta if it is not equal to the
-	// default.
-	if c.CLTVExpiryDelta != defaultCltvExpiryDelta {
-		records = append(records, tlv.MakePrimitiveRecord(
-			ChanUpdate2CLTVExpiryDeltaType, &c.CLTVExpiryDelta,
-		))
-	}
-
-	if c.HTLCMinimumMsat != defaultHtlcMinMsat {
-		var htlcMin = uint64(c.HTLCMinimumMsat)
-		records = append(records, tlv.MakePrimitiveRecord(
-			ChanUpdate2HTLCMinMsatType, &htlcMin,
-		))
-	}
-
-	var htlcMax = uint64(c.HTLCMaximumMsat)
-	records = append(records, tlv.MakePrimitiveRecord(
-		ChanUpdate2HTLCMaxMsatType, &htlcMax,
-	))
-
-	if c.FeeBaseMsat != defaultFeeBaseMsat {
-		records = append(records, tlv.MakePrimitiveRecord(
-			ChanUpdate2FeeBaseMsatType, &c.FeeBaseMsat,
-		))
-	}
-
-	if c.FeeProportionalMillionths != defaultFeeProportionalMillionths {
-		records = append(records, tlv.MakePrimitiveRecord(
-			ChanUpdate2FeeProportionalMillionthsType,
-			&c.FeeProportionalMillionths,
-		))
-	}
-
-	err = EncodeMessageExtraDataFromRecords(&c.ExtraOpaqueData, records...)
+	_, err = c.DataToSign()
 	if err != nil {
 		return err
 	}
@@ -351,7 +440,7 @@ const (
 	// ChanUpdateDisableOutgoing is a bit indicates that a channel is
 	// disabled in the outbound direction meaning that the node broadcasting
 	// the update is communicating that they cannot send or route funds.
-	ChanUpdateDisableOutgoing = 2
+	ChanUpdateDisableOutgoing ChanUpdateDisableFlags = 2
 )
 
 // IncomingDisabled returns true if the ChanUpdateDisableIncoming bit is set.

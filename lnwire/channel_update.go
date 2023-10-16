@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/lightningnetwork/lnd/input"
 )
 
 // ChanUpdateMsgFlags is a bitfield that signals whether optional fields are
@@ -54,6 +55,24 @@ func (c ChanUpdateChanFlags) IsDisabled() bool {
 // String returns the bitfield flags as a string.
 func (c ChanUpdateChanFlags) String() string {
 	return fmt.Sprintf("%08b", c)
+}
+
+type ChanUpdate interface {
+	Decode(r io.Reader, pver uint32) error
+	SCID() ShortChannelID
+	IsNode1() bool
+	SetDisabled(bool)
+	IsDisabled() bool
+	GetChainHash() chainhash.Hash
+	GetTimestamp() Timestamp
+	SetSig(signature input.Signature) error
+	SetSCID(scid ShortChannelID)
+	GetTimeLock() uint16
+	GetBaseFee() MilliSatoshi
+	GetFeeRate() MilliSatoshi
+	GetSignature() Sig
+
+	Message
 }
 
 // ChannelUpdate message is used after channel has been initially announced.
@@ -118,6 +137,73 @@ type ChannelUpdate struct {
 	// fill out the full maximum transport message size. These fields can
 	// be used to specify optional data such as custom TLV fields.
 	ExtraOpaqueData ExtraOpaqueData
+}
+
+func (a *ChannelUpdate) GetSignature() Sig {
+	return a.Signature
+}
+
+func (a *ChannelUpdate) GetBaseFee() MilliSatoshi {
+	return MilliSatoshi(a.BaseFee)
+}
+
+func (a *ChannelUpdate) GetFeeRate() MilliSatoshi {
+	return MilliSatoshi(a.FeeRate)
+}
+
+func (a *ChannelUpdate) GetTimeLock() uint16 {
+	return a.TimeLockDelta
+}
+
+func (a *ChannelUpdate) SetSCID(scid ShortChannelID) {
+	a.ShortChannelID = scid
+}
+
+func (a *ChannelUpdate) SetSig(sig input.Signature) error {
+	s, err := NewSigFromSignature(sig)
+	if err != nil {
+		return err
+	}
+
+	a.Signature = s
+
+	return nil
+}
+
+func (a *ChannelUpdate) IsDisabled() bool {
+	return a.ChannelFlags&ChanUpdateDisabled == 1
+}
+
+func (a *ChannelUpdate) GetChainHash() chainhash.Hash {
+	return a.ChainHash
+}
+
+func (a *ChannelUpdate) GetTimestamp() Timestamp {
+	t := UnixTimestamp(a.Timestamp)
+
+	return &t
+}
+
+func (a *ChannelUpdate) SetDisabled(disabled bool) {
+	if disabled {
+		// Set the bit responsible for marking a channel as
+		// disabled.
+		a.ChannelFlags |= ChanUpdateDisabled
+	} else {
+		// Clear the bit responsible for marking a channel as
+		// disabled.
+		a.ChannelFlags &= ^ChanUpdateDisabled
+	}
+}
+
+func (a *ChannelUpdate) IsNode1() bool {
+	return a.ChannelFlags&ChanUpdateDisabled == 0
+}
+
+var _ ChanUpdate = (*ChannelUpdate)(nil)
+
+func (a *ChannelUpdate) SCID() ShortChannelID {
+	return a.ShortChannelID
 }
 
 // A compile time check to ensure ChannelUpdate implements the lnwire.Message

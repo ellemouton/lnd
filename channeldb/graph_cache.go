@@ -27,8 +27,8 @@ type GraphCacheNode interface {
 	// error, then the iteration is halted with the error propagated back up
 	// to the caller.
 	ForEachChannel(kvdb.RTx,
-		func(kvdb.RTx, *ChannelEdgeInfo, *ChannelEdgePolicy,
-			*ChannelEdgePolicy) error) error
+		func(kvdb.RTx, *ChannelEdgeInfo, ChanEdgePolicy,
+			ChanEdgePolicy) error) error
 }
 
 // CachedEdgePolicy is a struct that only caches the information of a
@@ -104,17 +104,8 @@ func (c *CachedEdgePolicy) ComputeFeeFromIncoming(
 }
 
 // NewCachedPolicy turns a full policy into a minimal one that can be cached.
-func NewCachedPolicy(policy *ChannelEdgePolicy) *CachedEdgePolicy {
-	return &CachedEdgePolicy{
-		ChannelID:                 policy.ChannelID,
-		MessageFlags:              policy.MessageFlags,
-		ChannelFlags:              policy.ChannelFlags,
-		TimeLockDelta:             policy.TimeLockDelta,
-		MinHTLC:                   policy.MinHTLC,
-		MaxHTLC:                   policy.MaxHTLC,
-		FeeBaseMSat:               policy.FeeBaseMSat,
-		FeeProportionalMillionths: policy.FeeProportionalMillionths,
-	}
+func NewCachedPolicy(policy ChanEdgePolicy) *CachedEdgePolicy {
+	return policy.ToCachedEdgePolicy()
 }
 
 // DirectedChannel is a type that stores the channel information as seen from
@@ -224,8 +215,8 @@ func (c *GraphCache) AddNode(tx kvdb.RTx, node GraphCacheNode) error {
 
 	return node.ForEachChannel(
 		tx, func(tx kvdb.RTx, info *ChannelEdgeInfo,
-			outPolicy *ChannelEdgePolicy,
-			inPolicy *ChannelEdgePolicy) error {
+			outPolicy ChanEdgePolicy,
+			inPolicy ChanEdgePolicy) error {
 
 			c.AddChannel(info, outPolicy, inPolicy)
 
@@ -239,7 +230,7 @@ func (c *GraphCache) AddNode(tx kvdb.RTx, node GraphCacheNode) error {
 // and policy flags automatically. The policy will be set as the outgoing policy
 // on one node and the incoming policy on the peer's side.
 func (c *GraphCache) AddChannel(info *ChannelEdgeInfo,
-	policy1 *ChannelEdgePolicy, policy2 *ChannelEdgePolicy) {
+	policy1 ChanEdgePolicy, policy2 ChanEdgePolicy) {
 
 	if info == nil {
 		return
@@ -271,19 +262,17 @@ func (c *GraphCache) AddChannel(info *ChannelEdgeInfo,
 	// of node 2 then we have the policy 1 as seen from node 1.
 	if policy1 != nil {
 		fromNode, toNode := info.NodeKey1Bytes, info.NodeKey2Bytes
-		if policy1.Node.PubKeyBytes != info.NodeKey2Bytes {
+		if policy1.Node().PubKeyBytes != info.NodeKey2Bytes {
 			fromNode, toNode = toNode, fromNode
 		}
-		isEdge1 := policy1.ChannelFlags&lnwire.ChanUpdateDirection == 0
-		c.UpdatePolicy(policy1, fromNode, toNode, isEdge1)
+		c.UpdatePolicy(policy1, fromNode, toNode, policy1.IsNode1())
 	}
 	if policy2 != nil {
 		fromNode, toNode := info.NodeKey2Bytes, info.NodeKey1Bytes
-		if policy2.Node.PubKeyBytes != info.NodeKey1Bytes {
+		if policy2.Node().PubKeyBytes != info.NodeKey1Bytes {
 			fromNode, toNode = toNode, fromNode
 		}
-		isEdge1 := policy2.ChannelFlags&lnwire.ChanUpdateDirection == 0
-		c.UpdatePolicy(policy2, fromNode, toNode, isEdge1)
+		c.UpdatePolicy(policy2, fromNode, toNode, policy2.IsNode1())
 	}
 }
 
@@ -301,18 +290,20 @@ func (c *GraphCache) updateOrAddEdge(node route.Vertex, edge *DirectedChannel) {
 // of the from and to node is not strictly important. But we assume that a
 // channel edge was added beforehand so that the directed channel struct already
 // exists in the cache.
-func (c *GraphCache) UpdatePolicy(policy *ChannelEdgePolicy, fromNode,
+func (c *GraphCache) UpdatePolicy(policy ChanEdgePolicy, fromNode,
 	toNode route.Vertex, edge1 bool) {
 
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
+
+	scid := policy.SCID()
 
 	updatePolicy := func(nodeKey route.Vertex) {
 		if len(c.nodeChannels[nodeKey]) == 0 {
 			return
 		}
 
-		channel, ok := c.nodeChannels[nodeKey][policy.ChannelID]
+		channel, ok := c.nodeChannels[nodeKey][scid.ToUint64()]
 		if !ok {
 			return
 		}

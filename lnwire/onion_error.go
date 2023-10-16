@@ -597,7 +597,7 @@ func (f *FailInvalidOnionKey) Error() string {
 // unable to pull out a fully valid version, then we'll fall back to the
 // regular parsing mechanism which includes the length prefix an NO type byte.
 func parseChannelUpdateCompatibilityMode(reader io.Reader, length uint16,
-	chanUpdate *ChannelUpdate, pver uint32) error {
+	chanUpdate ChanUpdate, pver uint32) error {
 
 	// Instantiate a LimitReader because there may be additional data
 	// present after the channel update. Without limiting the stream, the
@@ -644,11 +644,13 @@ type FailTemporaryChannelFailure struct {
 	// which caused the failure.
 	//
 	// NOTE: This field is optional.
-	Update *ChannelUpdate
+	Update ChanUpdate
+
+	IsTaproot bool
 }
 
 // NewTemporaryChannelFailure creates new instance of the FailTemporaryChannelFailure.
-func NewTemporaryChannelFailure(update *ChannelUpdate) *FailTemporaryChannelFailure {
+func NewTemporaryChannelFailure(update ChanUpdate) *FailTemporaryChannelFailure {
 	return &FailTemporaryChannelFailure{Update: update}
 }
 
@@ -682,7 +684,11 @@ func (f *FailTemporaryChannelFailure) Decode(r io.Reader, pver uint32) error {
 	}
 
 	if length != 0 {
-		f.Update = &ChannelUpdate{}
+		if f.IsTaproot {
+			f.Update = &ChannelUpdate2{}
+		} else {
+			f.Update = &ChannelUpdate{}
+		}
 
 		return parseChannelUpdateCompatibilityMode(
 			r, length, f.Update, pver,
@@ -717,12 +723,14 @@ type FailAmountBelowMinimum struct {
 
 	// Update is used to update information about state of the channel
 	// which caused the failure.
-	Update ChannelUpdate
+	Update ChanUpdate
+
+	IsTaproot bool
 }
 
 // NewAmountBelowMinimum creates new instance of the FailAmountBelowMinimum.
 func NewAmountBelowMinimum(htlcMsat MilliSatoshi,
-	update ChannelUpdate) *FailAmountBelowMinimum {
+	update ChanUpdate) *FailAmountBelowMinimum {
 
 	return &FailAmountBelowMinimum{
 		HtlcMsat: htlcMsat,
@@ -758,10 +766,14 @@ func (f *FailAmountBelowMinimum) Decode(r io.Reader, pver uint32) error {
 		return err
 	}
 
-	f.Update = ChannelUpdate{}
+	if f.IsTaproot {
+		f.Update = &ChannelUpdate2{}
+	} else {
+		f.Update = &ChannelUpdate{}
+	}
 
 	return parseChannelUpdateCompatibilityMode(
-		r, length, &f.Update, pver,
+		r, length, f.Update, pver,
 	)
 }
 
@@ -773,7 +785,7 @@ func (f *FailAmountBelowMinimum) Encode(w *bytes.Buffer, pver uint32) error {
 		return err
 	}
 
-	return writeOnionErrorChanUpdate(w, &f.Update, pver)
+	return writeOnionErrorChanUpdate(w, f.Update, pver)
 }
 
 // FailFeeInsufficient is returned if the HTLC does not pay sufficient fee, we
@@ -787,12 +799,15 @@ type FailFeeInsufficient struct {
 
 	// Update is used to update information about state of the channel
 	// which caused the failure.
-	Update ChannelUpdate
+	Update ChanUpdate
+
+	IsTaproot bool
 }
 
 // NewFeeInsufficient creates new instance of the FailFeeInsufficient.
 func NewFeeInsufficient(htlcMsat MilliSatoshi,
-	update ChannelUpdate) *FailFeeInsufficient {
+	update ChanUpdate) *FailFeeInsufficient {
+
 	return &FailFeeInsufficient{
 		HtlcMsat: htlcMsat,
 		Update:   update,
@@ -827,10 +842,14 @@ func (f *FailFeeInsufficient) Decode(r io.Reader, pver uint32) error {
 		return err
 	}
 
-	f.Update = ChannelUpdate{}
+	if f.IsTaproot {
+		f.Update = &ChannelUpdate2{}
+	} else {
+		f.Update = &ChannelUpdate{}
+	}
 
 	return parseChannelUpdateCompatibilityMode(
-		r, length, &f.Update, pver,
+		r, length, f.Update, pver,
 	)
 }
 
@@ -842,7 +861,7 @@ func (f *FailFeeInsufficient) Encode(w *bytes.Buffer, pver uint32) error {
 		return err
 	}
 
-	return writeOnionErrorChanUpdate(w, &f.Update, pver)
+	return writeOnionErrorChanUpdate(w, f.Update, pver)
 }
 
 // FailIncorrectCltvExpiry is returned if outgoing cltv value does not match
@@ -858,12 +877,14 @@ type FailIncorrectCltvExpiry struct {
 
 	// Update is used to update information about state of the channel
 	// which caused the failure.
-	Update ChannelUpdate
+	Update ChanUpdate
+
+	IsTaproot bool
 }
 
 // NewIncorrectCltvExpiry creates new instance of the FailIncorrectCltvExpiry.
 func NewIncorrectCltvExpiry(cltvExpiry uint32,
-	update ChannelUpdate) *FailIncorrectCltvExpiry {
+	update ChanUpdate) *FailIncorrectCltvExpiry {
 
 	return &FailIncorrectCltvExpiry{
 		CltvExpiry: cltvExpiry,
@@ -896,10 +917,14 @@ func (f *FailIncorrectCltvExpiry) Decode(r io.Reader, pver uint32) error {
 		return err
 	}
 
-	f.Update = ChannelUpdate{}
+	if f.IsTaproot {
+		f.Update = &ChannelUpdate2{}
+	} else {
+		f.Update = &ChannelUpdate{}
+	}
 
 	return parseChannelUpdateCompatibilityMode(
-		r, length, &f.Update, pver,
+		r, length, f.Update, pver,
 	)
 }
 
@@ -911,7 +936,7 @@ func (f *FailIncorrectCltvExpiry) Encode(w *bytes.Buffer, pver uint32) error {
 		return err
 	}
 
-	return writeOnionErrorChanUpdate(w, &f.Update, pver)
+	return writeOnionErrorChanUpdate(w, f.Update, pver)
 }
 
 // FailExpiryTooSoon is returned if the ctlv-expiry is too near, we tell them
@@ -921,11 +946,13 @@ func (f *FailIncorrectCltvExpiry) Encode(w *bytes.Buffer, pver uint32) error {
 type FailExpiryTooSoon struct {
 	// Update is used to update information about state of the channel
 	// which caused the failure.
-	Update ChannelUpdate
+	Update ChanUpdate
+
+	IsTaproot bool
 }
 
 // NewExpiryTooSoon creates new instance of the FailExpiryTooSoon.
-func NewExpiryTooSoon(update ChannelUpdate) *FailExpiryTooSoon {
+func NewExpiryTooSoon(update ChanUpdate) *FailExpiryTooSoon {
 	return &FailExpiryTooSoon{
 		Update: update,
 	}
@@ -954,10 +981,14 @@ func (f *FailExpiryTooSoon) Decode(r io.Reader, pver uint32) error {
 		return err
 	}
 
-	f.Update = ChannelUpdate{}
+	if f.IsTaproot {
+		f.Update = &ChannelUpdate{}
+	} else {
+		f.Update = &ChannelUpdate2{}
+	}
 
 	return parseChannelUpdateCompatibilityMode(
-		r, length, &f.Update, pver,
+		r, length, f.Update, pver,
 	)
 }
 
@@ -965,7 +996,7 @@ func (f *FailExpiryTooSoon) Decode(r io.Reader, pver uint32) error {
 //
 // NOTE: Part of the Serializable interface.
 func (f *FailExpiryTooSoon) Encode(w *bytes.Buffer, pver uint32) error {
-	return writeOnionErrorChanUpdate(w, &f.Update, pver)
+	return writeOnionErrorChanUpdate(w, f.Update, pver)
 }
 
 // FailChannelDisabled is returned if the channel is disabled, we tell them the
@@ -980,11 +1011,13 @@ type FailChannelDisabled struct {
 
 	// Update is used to update information about state of the channel
 	// which caused the failure.
-	Update ChannelUpdate
+	Update ChanUpdate
+
+	IsTaproot bool
 }
 
 // NewChannelDisabled creates new instance of the FailChannelDisabled.
-func NewChannelDisabled(flags uint16, update ChannelUpdate) *FailChannelDisabled {
+func NewChannelDisabled(flags uint16, update ChanUpdate) *FailChannelDisabled {
 	return &FailChannelDisabled{
 		Flags:  flags,
 		Update: update,
@@ -1019,10 +1052,14 @@ func (f *FailChannelDisabled) Decode(r io.Reader, pver uint32) error {
 		return err
 	}
 
-	f.Update = ChannelUpdate{}
+	if f.IsTaproot {
+		f.Update = &ChannelUpdate2{}
+	} else {
+		f.Update = &ChannelUpdate{}
+	}
 
 	return parseChannelUpdateCompatibilityMode(
-		r, length, &f.Update, pver,
+		r, length, f.Update, pver,
 	)
 }
 
@@ -1034,7 +1071,7 @@ func (f *FailChannelDisabled) Encode(w *bytes.Buffer, pver uint32) error {
 		return err
 	}
 
-	return writeOnionErrorChanUpdate(w, &f.Update, pver)
+	return writeOnionErrorChanUpdate(w, f.Update, pver)
 }
 
 // FailFinalIncorrectCltvExpiry is returned if the outgoing_cltv_value does not
@@ -1459,7 +1496,7 @@ func makeEmptyOnionError(code FailCode) (FailureMessage, error) {
 // writeOnionErrorChanUpdate writes out a ChannelUpdate using the onion error
 // format. The format is that we first write out the true serialized length of
 // the channel update, followed by the serialized channel update itself.
-func writeOnionErrorChanUpdate(w *bytes.Buffer, chanUpdate *ChannelUpdate,
+func writeOnionErrorChanUpdate(w *bytes.Buffer, chanUpdate ChanUpdate,
 	pver uint32) error {
 
 	// First, we encode the channel update in a temporary buffer in order

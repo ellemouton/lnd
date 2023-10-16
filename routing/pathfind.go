@@ -83,7 +83,7 @@ var (
 )
 
 // edgePolicyWithSource is a helper struct to keep track of the source node
-// of a channel edge. ChannelEdgePolicy only contains to destination node
+// of a channel edge. ChannelEdgePolicy1 only contains to destination node
 // of the edge.
 type edgePolicyWithSource struct {
 	sourceNode route.Vertex

@@ -22,8 +22,6 @@ func SignAnnouncement(signer lnwallet.MessageSigner, keyLoc keychain.KeyLocator,
 	switch m := msg.(type) {
 	case *lnwire.ChannelAnnouncement:
 		data, err = m.DataToSign()
-	case *lnwire.ChannelUpdate:
-		data, err = m.DataToSign()
 	case *lnwire.NodeAnnouncement:
 		data, err = m.DataToSign()
 	default:

@@ -11,6 +11,7 @@ import (
 	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -386,6 +387,9 @@ type Config struct {
 	SignMessage func(keyLoc keychain.KeyLocator,
 		msg []byte, doubleHash bool) (*ecdsa.Signature, error)
 
+	SignSchnorr func(keyLoc keychain.KeyLocator,
+		msg []byte, doubleHash bool) (*schnorr.Signature, error)
+
 	// SignMuSig2 generates a MuSig2 partial signature given the passed key
 	// set, secret nonce, public nonce, and private keys.
 	SignMuSig2 func(secNonce [musig2.SecNonceSize]byte,
@@ -534,7 +538,7 @@ type Config struct {
 	// DeleteAliasEdge allows the Manager to delete an alias channel edge
 	// from the graph. It also returns our local to-be-deleted policy.
 	DeleteAliasEdge func(scid lnwire.ShortChannelID) (
-		*channeldb.ChannelEdgePolicy, error)
+		channeldb.ChanEdgePolicy, error)
 
 	// AliasManager is an implementation of the aliasHandler interface that
 	// abstracts away the handling of many alias functions.
@@ -3439,7 +3443,7 @@ func (f *Manager) extractAnnounceParams(c *channeldb.OpenChannel) (
 func (f *Manager) addToRouterGraph(completeChan *channeldb.OpenChannel,
 	shortChanID *lnwire.ShortChannelID,
 	peerAlias *lnwire.ShortChannelID,
-	ourPolicy *channeldb.ChannelEdgePolicy) error {
+	ourPolicy channeldb.ChanEdgePolicy) error {
 
 	chanID := lnwire.NewChanIDFromOutPoint(&completeChan.FundingOutpoint)
 
@@ -4282,7 +4286,7 @@ func (f *Manager) newChanAnnouncement(localPubKey,
 	remotePubKey *btcec.PublicKey, localFundingKey *keychain.KeyDescriptor,
 	remoteFundingKey *btcec.PublicKey, shortChanID lnwire.ShortChannelID,
 	chanID lnwire.ChannelID, fwdMinHTLC, fwdMaxHTLC lnwire.MilliSatoshi,
-	ourPolicy *channeldb.ChannelEdgePolicy, chanType channeldb.ChannelType,
+	ourEdgePolicy channeldb.ChanEdgePolicy, chanType channeldb.ChannelType,
 	channel *channeldb.OpenChannel, withProof bool) (*chanAnnouncement,
 	error) {
 
@@ -4290,8 +4294,13 @@ func (f *Manager) newChanAnnouncement(localPubKey,
 		return f.newTaprootChanAnnouncement(
 			localPubKey, remotePubKey, localFundingKey,
 			remoteFundingKey, shortChanID, chanID, fwdMinHTLC,
-			fwdMaxHTLC, ourPolicy, channel, withProof,
+			fwdMaxHTLC, ourEdgePolicy, channel, withProof,
 		)
+	}
+
+	ourPolicy, ok := ourEdgePolicy.(*channeldb.ChannelEdgePolicy1)
+	if !ok {
+		return nil, fmt.Errorf("incorrect edge policy type received")
 	}
 
 	chainHash := *f.cfg.Wallet.Cfg.NetParams.GenesisHash
@@ -4478,8 +4487,13 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 	remotePubKey *btcec.PublicKey, localFundingKey *keychain.KeyDescriptor,
 	remoteFundingKey *btcec.PublicKey, shortChanID lnwire.ShortChannelID,
 	chanID lnwire.ChannelID, fwdMinHTLC, fwdMaxHTLC lnwire.MilliSatoshi,
-	ourPolicy *channeldb.ChannelEdgePolicy, channel *channeldb.OpenChannel,
+	ourEdgePolicy channeldb.ChanEdgePolicy, channel *channeldb.OpenChannel,
 	withProof bool) (*chanAnnouncement, error) {
+
+	ourPolicy, ok := ourEdgePolicy.(*channeldb.ChanEdgePolicy2)
+	if !ok {
+		return nil, fmt.Errorf("incorrect edge policy type received")
+	}
 
 	chainHash := *f.cfg.Wallet.Cfg.NetParams.GenesisHash
 
@@ -4491,11 +4505,7 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 		BitcoinKey2:    &[33]byte{},
 	}
 
-	// The chanFlags field indicates which directed edge of the channel is
-	// being updated within the ChannelUpdateAnnouncement announcement
-	// below. A value of zero means it's the edge of the "first" node and 1
-	// being the other node.
-	var chanFlags lnwire.ChanUpdateChanFlags
+	var direction bool
 
 	// The lexicographical ordering of the two identity public keys of the
 	// nodes indicates which of the nodes is "first". If our serialized
@@ -4517,7 +4527,7 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 
 		// If we're the first node then update the chanFlags to
 		// indicate the "direction" of the update.
-		chanFlags = 0
+		direction = false
 	} else {
 		copy(chanAnn.NodeID1[:], remotePubKey.SerializeCompressed())
 		copy(chanAnn.NodeID2[:], localPubKey.SerializeCompressed())
@@ -4532,28 +4542,23 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 
 		// If we're the second node then update the chanFlags to
 		// indicate the "direction" of the update.
-		chanFlags = 1
+		direction = true
 	}
-
-	// TODO: update to use ChannelUpdate2!!!
-
-	// Our channel update message flags will signal that we support the
-	// max_htlc field.
-	msgFlags := lnwire.ChanUpdateRequiredMaxHtlc
 
 	// We announce the channel with the default values. Some of
 	// these values can later be changed by crafting a new ChannelUpdate.
-	chanUpdateAnn := &lnwire.ChannelUpdate{
-		ShortChannelID: shortChanID,
+	chanUpdateAnn := &lnwire.ChannelUpdate2{
 		ChainHash:      chainHash,
-		Timestamp:      uint32(time.Now().Unix()),
-		MessageFlags:   msgFlags,
-		ChannelFlags:   chanFlags,
-		TimeLockDelta: uint16(
+		ShortChannelID: shortChanID,
+		BlockHeight:    0,
+		Direction:      direction,
+		CLTVExpiryDelta: uint16(
 			f.cfg.DefaultRoutingPolicy.TimeLockDelta,
 		),
-		HtlcMinimumMsat: fwdMinHTLC,
-		HtlcMaximumMsat: fwdMaxHTLC,
+		HTLCMinimumMsat:           fwdMinHTLC,
+		HTLCMaximumMsat:           fwdMaxHTLC,
+		FeeBaseMsat:               0,
+		FeeProportionalMillionths: 0,
 	}
 
 	// The caller of newChanAnnouncement is expected to provide the initial
@@ -4570,28 +4575,26 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 	case ourPolicy != nil:
 		// If ourPolicy is non-nil, modify the default parameters of the
 		// ChannelUpdate.
-		chanUpdateAnn.MessageFlags = ourPolicy.MessageFlags
-		chanUpdateAnn.ChannelFlags = ourPolicy.ChannelFlags
-		chanUpdateAnn.TimeLockDelta = ourPolicy.TimeLockDelta
-		chanUpdateAnn.HtlcMinimumMsat = ourPolicy.MinHTLC
-		chanUpdateAnn.HtlcMaximumMsat = ourPolicy.MaxHTLC
-		chanUpdateAnn.BaseFee = uint32(ourPolicy.FeeBaseMSat)
-		chanUpdateAnn.FeeRate = uint32(
-			ourPolicy.FeeProportionalMillionths,
-		)
+		chanUpdateAnn.Direction = ourPolicy.Direction
+		chanUpdateAnn.CLTVExpiryDelta = ourPolicy.CLTVDelta()
+		chanUpdateAnn.HTLCMinimumMsat = ourPolicy.MinHTLCMsat()
+		chanUpdateAnn.HTLCMaximumMsat = ourPolicy.MaxHTLCMsat()
+		chanUpdateAnn.FeeBaseMsat = uint32(ourPolicy.BaseFee())
+		chanUpdateAnn.FeeProportionalMillionths =
+			ourPolicy.FeeProportionalMillionths
 
 	case storedFwdingPolicy != nil:
-		chanUpdateAnn.BaseFee = uint32(storedFwdingPolicy.BaseFee)
-		chanUpdateAnn.FeeRate = uint32(storedFwdingPolicy.FeeRate)
+		chanUpdateAnn.FeeBaseMsat = uint32(storedFwdingPolicy.BaseFee)
+		chanUpdateAnn.FeeProportionalMillionths = uint32(storedFwdingPolicy.FeeRate)
 
 	default:
 		log.Infof("No channel forwarding policy specified for channel "+
 			"announcement of ChannelID(%v). "+
 			"Assuming default fee parameters.", chanID)
-		chanUpdateAnn.BaseFee = uint32(
+		chanUpdateAnn.FeeBaseMsat = uint32(
 			f.cfg.DefaultRoutingPolicy.BaseFee,
 		)
-		chanUpdateAnn.FeeRate = uint32(
+		chanUpdateAnn.FeeProportionalMillionths = uint32(
 			f.cfg.DefaultRoutingPolicy.FeeRate,
 		)
 	}
@@ -4604,7 +4607,8 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 	if err != nil {
 		return nil, err
 	}
-	sig, err := f.cfg.SignMessage(f.cfg.IDKeyLoc, chanUpdateMsg, true)
+	// Need to add a _no hash_ option to SignSchnorr.
+	sig, err := f.cfg.SignSchnorr(f.cfg.IDKeyLoc, chanUpdateMsg, true)
 	if err != nil {
 		return nil, errors.Errorf("unable to generate channel "+
 			"update announcement signature: %v", err)

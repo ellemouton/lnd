@@ -338,7 +338,7 @@ func addToTopologyChange(graph *channeldb.ChannelGraph, update *TopologyChange,
 
 	// Any new ChannelUpdateAnnouncements will generate a corresponding
 	// ChannelEdgeUpdate notification.
-	case *channeldb.ChannelEdgePolicy:
+	case *channeldb.ChannelEdgePolicy1:
 		// We'll need to fetch the edge's information from the database
 		// in order to get the information concerning which nodes are
 		// being connected.
@@ -352,7 +352,7 @@ func addToTopologyChange(graph *channeldb.ChannelGraph, update *TopologyChange,
 		// the second node.
 		sourceNode := edgeInfo.NodeKey1
 		connectingNode := edgeInfo.NodeKey2
-		if m.ChannelFlags&lnwire.ChanUpdateDirection == 1 {
+		if !m.IsNode1() {
 			sourceNode = edgeInfo.NodeKey2
 			connectingNode = edgeInfo.NodeKey1
 		}
@@ -377,7 +377,7 @@ func addToTopologyChange(graph *channeldb.ChannelGraph, update *TopologyChange,
 			FeeRate:         m.FeeProportionalMillionths,
 			AdvertisingNode: aNode,
 			ConnectingNode:  cNode,
-			Disabled:        m.ChannelFlags&lnwire.ChanUpdateDisabled != 0,
+			Disabled:        m.IsDisabled(),
 		}
 
 		// TODO(roasbeef): add bit to toggle

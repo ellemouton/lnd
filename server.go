@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/connmgr"
@@ -702,6 +701,14 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		ApplyChannelUpdate:       s.applyChannelUpdate,
 		DB:                       s.chanStateDB,
 		Graph:                    dbs.GraphDB.ChannelGraph(),
+		BestBlockHeight: func() (uint32, error) {
+			_, height, err := s.cc.ChainIO.GetBestBlock()
+			if err != nil {
+				return 0, err
+			}
+
+			return uint32(height), nil
+		},
 	}
 
 	chanStatusMgr, err := netann.NewChanStatusManager(chanStatusMgrCfg)
@@ -1030,6 +1037,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		FindBaseByAlias:         s.aliasMgr.FindBaseSCID,
 		GetAlias:                s.aliasMgr.GetPeerAlias,
 		FindChannel:             s.findChannel,
+		ChainIO:                 cc.ChainIO,
 	}, nodeKeyDesc)
 
 	s.localChanMgr = &localchans.Manager{
@@ -1233,7 +1241,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	// Wrap the DeleteChannelEdges method so that the funding manager can
 	// use it without depending on several layers of indirection.
 	deleteAliasEdge := func(scid lnwire.ShortChannelID) (
-		*channeldb.ChannelEdgePolicy, error) {
+		channeldb.ChanEdgePolicy, error) {
 
 		info, e1, e2, err := s.graphDB.FetchChannelEdgesByID(
 			scid.ToUint64(),
@@ -1252,7 +1260,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		var ourKey [33]byte
 		copy(ourKey[:], nodeKeyDesc.PubKey.SerializeCompressed())
 
-		var ourPolicy *channeldb.ChannelEdgePolicy
+		var ourPolicy channeldb.ChanEdgePolicy
 		if info != nil && info.NodeKey1Bytes == ourKey {
 			ourPolicy = e1
 		} else {
@@ -1664,15 +1672,10 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 // signAliasUpdate takes a ChannelUpdate and returns the signature. This is
 // used for option_scid_alias channels where the ChannelUpdate to be sent back
 // may differ from what is on disk.
-func (s *server) signAliasUpdate(u *lnwire.ChannelUpdate) (*ecdsa.Signature,
+func (s *server) signAliasUpdate(u lnwire.ChanUpdate) (input.Signature,
 	error) {
 
-	data, err := u.DataToSign()
-	if err != nil {
-		return nil, err
-	}
-
-	return s.cc.MsgSigner.SignMessage(s.identityKeyLoc, data, true)
+	return netann.SignChannelUpdate(s.cc.MsgSigner, s.identityKeyLoc, u)
 }
 
 // createLivenessMonitor creates a set of health checks using our configured
@@ -3087,7 +3090,7 @@ func (s *server) establishPersistentConnections() error {
 	err = sourceNode.ForEachChannel(nil, func(
 		tx kvdb.RTx,
 		chanInfo *channeldb.ChannelEdgeInfo,
-		policy, _ *channeldb.ChannelEdgePolicy) error {
+		policy, _ channeldb.ChanEdgePolicy) error {
 
 		// If the remote party has announced the channel to us, but we
 		// haven't yet, then we won't have a policy. However, we don't
@@ -4622,10 +4625,10 @@ func (s *server) fetchNodeAdvertisedAddrs(pub *btcec.PublicKey) ([]net.Addr, err
 // fetchLastChanUpdate returns a function which is able to retrieve our latest
 // channel update for a target channel.
 func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
-	*lnwire.ChannelUpdate, error) {
+	lnwire.ChanUpdate, error) {
 
 	ourPubKey := s.identityECDH.PubKey().SerializeCompressed()
-	return func(cid lnwire.ShortChannelID) (*lnwire.ChannelUpdate, error) {
+	return func(cid lnwire.ShortChannelID) (lnwire.ChanUpdate, error) {
 		info, edge1, edge2, err := s.chanRouter.GetChannelByID(cid)
 		if err != nil {
 			return nil, err
@@ -4640,7 +4643,7 @@ func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
 // applyChannelUpdate applies the channel update to the different sub-systems of
 // the server. The useAlias boolean denotes whether or not to send an alias in
 // place of the real SCID.
-func (s *server) applyChannelUpdate(update *lnwire.ChannelUpdate,
+func (s *server) applyChannelUpdate(update lnwire.ChanUpdate,
 	op *wire.OutPoint, useAlias bool) error {
 
 	var (

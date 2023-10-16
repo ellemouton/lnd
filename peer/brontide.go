@@ -279,7 +279,7 @@ type Config struct {
 
 	// FetchLastChanUpdate fetches our latest channel update for a target
 	// channel.
-	FetchLastChanUpdate func(lnwire.ShortChannelID) (*lnwire.ChannelUpdate,
+	FetchLastChanUpdate func(lnwire.ShortChannelID) (lnwire.ChanUpdate,
 		error)
 
 	// FundingManager is an implementation of the funding.Controller interface.
@@ -866,7 +866,7 @@ func (p *Brontide) loadActiveChannels(chans []*channeldb.OpenChannel) (
 		//
 		// TODO(roasbeef): can add helper method to get policy for
 		// particular channel.
-		var selfPolicy *channeldb.ChannelEdgePolicy
+		var selfPolicy channeldb.ChanEdgePolicy
 		if info != nil && bytes.Equal(info.NodeKey1Bytes[:],
 			p.cfg.ServerPubKey[:]) {
 
@@ -881,11 +881,11 @@ func (p *Brontide) loadActiveChannels(chans []*channeldb.OpenChannel) (
 		var forwardingPolicy *models.ForwardingPolicy
 		if selfPolicy != nil {
 			forwardingPolicy = &models.ForwardingPolicy{
-				MinHTLCOut:    selfPolicy.MinHTLC,
-				MaxHTLC:       selfPolicy.MaxHTLC,
-				BaseFee:       selfPolicy.FeeBaseMSat,
-				FeeRate:       selfPolicy.FeeProportionalMillionths,
-				TimeLockDelta: uint32(selfPolicy.TimeLockDelta),
+				MinHTLCOut:    selfPolicy.MinHTLCMsat(),
+				MaxHTLC:       selfPolicy.MaxHTLCMsat(),
+				BaseFee:       selfPolicy.BaseFee(),
+				FeeRate:       selfPolicy.FeeRate(),
+				TimeLockDelta: uint32(selfPolicy.CLTVDelta()),
 			}
 		} else {
 			p.log.Warnf("Unable to find our forwarding policy "+

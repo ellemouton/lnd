@@ -1,8 +1,7 @@
 package discovery
 
 import (
-	"time"
-
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -29,8 +28,8 @@ type ChannelGraphTimeSeries interface {
 	// update timestamp between the start time and end time. We'll use this
 	// to catch up a remote node to the set of channel updates that they
 	// may have missed out on within the target chain.
-	UpdatesInHorizon(chain chainhash.Hash,
-		startTime time.Time, endTime time.Time) ([]lnwire.Message, error)
+	UpdatesInHorizon(chain chainhash.Hash, startTime,
+		endTime lnwire.Timestamp) ([]lnwire.Message, error)
 
 	// FilterKnownChanIDs takes a target chain, and a set of channel ID's,
 	// and returns a filtered set of chan ID's. This filtered set of chan
@@ -59,7 +58,7 @@ type ChannelGraphTimeSeries interface {
 	// specified short channel ID. If no channel updates are known for the
 	// channel, then an empty slice will be returned.
 	FetchChanUpdates(chain chainhash.Hash,
-		shortChanID lnwire.ShortChannelID) ([]*lnwire.ChannelUpdate, error)
+		shortChanID lnwire.ShortChannelID) ([]lnwire.ChanUpdate, error)
 }
 
 // ChanSeries is an implementation of the ChannelGraphTimeSeries
@@ -102,7 +101,7 @@ func (c *ChanSeries) HighestChanID(chain chainhash.Hash) (*lnwire.ShortChannelID
 //
 // NOTE: This is part of the ChannelGraphTimeSeries interface.
 func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
-	startTime time.Time, endTime time.Time) ([]lnwire.Message, error) {
+	startTime, endTime lnwire.Timestamp) ([]lnwire.Message, error) {
 
 	var updates []lnwire.Message
 
@@ -114,6 +113,16 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 	if err != nil {
 		return nil, err
 	}
+
+	extractCapacity := func(msg lnwire.Message) uint64 {
+		m, ok := msg.(*lnwire.ChannelAnnouncement2)
+		if ok {
+			return m.Capacity
+		}
+
+		return 0
+	}
+
 	for _, channel := range chansInHorizon {
 		// If the channel hasn't been fully advertised yet, or is a
 		// private channel, then we'll skip it as we can't construct a
@@ -122,35 +131,23 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 			continue
 		}
 
-		var (
-			chanAnn      lnwire.Message
-			edge1, edge2 *lnwire.ChannelUpdate
+		chanAnn, edge1, edge2, err := netann.CreateChanAnnouncement(
+			channel.Info.AuthProof, channel.Info, channel.Policy1,
+			channel.Policy2,
 		)
-		if channel.Info.IsTaproot {
-			//nolint:lll
-			chanAnn, edge1, edge2, err = netann.CreateChanAnnouncement2(
-				channel.Info.AuthProof, channel.Info, channel.Policy1,
-				channel.Policy2,
-			)
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			//nolint:lll
-			chanAnn, edge1, edge2, err = netann.CreateChanAnnouncement(
-				channel.Info.AuthProof, channel.Info, channel.Policy1,
-				channel.Policy2,
-			)
-			if err != nil {
-				return nil, err
-			}
+		if err != nil {
+			return nil, err
 		}
+
+		capacity := btcutil.Amount(extractCapacity(chanAnn))
 
 		updates = append(updates, chanAnn)
 		if edge1 != nil {
 			// We don't want to send channel updates that don't
 			// conform to the spec (anymore).
-			err := routing.ValidateChannelUpdateFields(0, edge1)
+			err := routing.ValidateChannelUpdateFields(
+				capacity, edge1,
+			)
 			if err != nil {
 				log.Errorf("not sending invalid channel "+
 					"update %v: %v", edge1, err)
@@ -159,7 +156,9 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 			}
 		}
 		if edge2 != nil {
-			err := routing.ValidateChannelUpdateFields(0, edge2)
+			err := routing.ValidateChannelUpdateFields(
+				capacity, edge2,
+			)
 			if err != nil {
 				log.Errorf("not sending invalid channel "+
 					"update %v: %v", edge2, err)
@@ -280,29 +279,12 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 			continue
 		}
 
-		var (
-			chanAnn      lnwire.Message
-			edge1, edge2 *lnwire.ChannelUpdate
+		chanAnn, edge1, edge2, err := netann.CreateChanAnnouncement(
+			channel.Info.AuthProof, channel.Info, channel.Policy1,
+			channel.Policy2,
 		)
-
-		if channel.Info.IsTaproot {
-			//nolint:lll
-			chanAnn, edge1, edge2, err = netann.CreateChanAnnouncement2(
-				channel.Info.AuthProof, channel.Info, channel.Policy1,
-				channel.Policy2,
-			)
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			//nolint:lll
-			chanAnn, edge1, edge2, err = netann.CreateChanAnnouncement(
-				channel.Info.AuthProof, channel.Info, channel.Policy1,
-				channel.Policy2,
-			)
-			if err != nil {
-				return nil, err
-			}
+		if err != nil {
+			return nil, err
 		}
 
 		chanAnns = append(chanAnns, chanAnn)
@@ -311,10 +293,10 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 
 			// If this edge has a validated node announcement, that
 			// we haven't yet sent, then we'll send that as well.
-			nodePub := channel.Policy1.Node.PubKeyBytes
-			hasNodeAnn := channel.Policy1.Node.HaveNodeAnnouncement
+			nodePub := channel.Policy1.Node().PubKeyBytes
+			hasNodeAnn := channel.Policy1.Node().HaveNodeAnnouncement
 			if _, ok := nodePubsSent[nodePub]; !ok && hasNodeAnn {
-				nodeAnn, err := channel.Policy1.Node.NodeAnnouncement(true)
+				nodeAnn, err := channel.Policy1.Node().NodeAnnouncement(true)
 				if err != nil {
 					return nil, err
 				}
@@ -328,10 +310,10 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 
 			// If this edge has a validated node announcement, that
 			// we haven't yet sent, then we'll send that as well.
-			nodePub := channel.Policy2.Node.PubKeyBytes
-			hasNodeAnn := channel.Policy2.Node.HaveNodeAnnouncement
+			nodePub := channel.Policy2.Node().PubKeyBytes
+			hasNodeAnn := channel.Policy2.Node().HaveNodeAnnouncement
 			if _, ok := nodePubsSent[nodePub]; !ok && hasNodeAnn {
-				nodeAnn, err := channel.Policy2.Node.NodeAnnouncement(true)
+				nodeAnn, err := channel.Policy2.Node().NodeAnnouncement(true)
 				if err != nil {
 					return nil, err
 				}
@@ -351,7 +333,7 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 //
 // NOTE: This is part of the ChannelGraphTimeSeries interface.
 func (c *ChanSeries) FetchChanUpdates(chain chainhash.Hash,
-	shortChanID lnwire.ShortChannelID) ([]*lnwire.ChannelUpdate, error) {
+	shortChanID lnwire.ShortChannelID) ([]lnwire.ChanUpdate, error) {
 
 	chanInfo, e1, e2, err := c.graph.FetchChannelEdgesByID(
 		shortChanID.ToUint64(),
@@ -360,7 +342,7 @@ func (c *ChanSeries) FetchChanUpdates(chain chainhash.Hash,
 		return nil, err
 	}
 
-	chanUpdates := make([]*lnwire.ChannelUpdate, 0, 2)
+	chanUpdates := make([]lnwire.ChanUpdate, 0, 2)
 	if e1 != nil {
 		chanUpdate, err := netann.ChannelUpdateFromEdge(chanInfo, e1)
 		if err != nil {

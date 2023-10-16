@@ -1,5 +1,7 @@
 package channeldb
 
+import "github.com/lightningnetwork/lnd/lnwire"
+
 // rejectFlags is a compact representation of various metadata stored by the
 // reject cache about a particular channel.
 type rejectFlags uint8
@@ -41,8 +43,8 @@ func (f rejectFlags) unpack() (bool, bool) {
 // including the timestamps of its latest edge policies and whether or not the
 // channel exists in the graph.
 type rejectCacheEntry struct {
-	upd1Time int64
-	upd2Time int64
+	upd1Time lnwire.Timestamp
+	upd2Time lnwire.Timestamp
 	flags    rejectFlags
 }
 

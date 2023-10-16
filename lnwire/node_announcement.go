@@ -121,6 +121,12 @@ func (a *NodeAnnouncement) Decode(r io.Reader, pver uint32) error {
 	)
 }
 
+func (a *NodeAnnouncement) GetTimestamp() Timestamp {
+	t := UnixTimestamp(a.Timestamp)
+
+	return &t
+}
+
 // Encode serializes the target NodeAnnouncement into the passed io.Writer
 // observing the protocol version specified.
 //

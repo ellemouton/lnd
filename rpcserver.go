@@ -5915,7 +5915,7 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// similar response which details both the edge information as well as
 	// the routing policies of th nodes connecting the two edges.
 	err = graph.ForEachChannel(func(edgeInfo *channeldb.ChannelEdgeInfo,
-		c1, c2 *channeldb.ChannelEdgePolicy) error {
+		c1, c2 channeldb.ChanEdgePolicy) error {
 
 		// Do not include unannounced channels unless specifically
 		// requested. Unannounced channels include both private channels as
@@ -5971,22 +5971,20 @@ func marshalExtraOpaqueData(data []byte) map[uint64][]byte {
 }
 
 func marshalDbEdge(edgeInfo *channeldb.ChannelEdgeInfo,
-	c1, c2 *channeldb.ChannelEdgePolicy) *lnrpc.ChannelEdge {
+	c1, c2 channeldb.ChanEdgePolicy) *lnrpc.ChannelEdge {
 
 	// Make sure the policies match the node they belong to. c1 should point
 	// to the policy for NodeKey1, and c2 for NodeKey2.
-	if c1 != nil && c1.ChannelFlags&lnwire.ChanUpdateDirection == 1 ||
-		c2 != nil && c2.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
-
+	if c1 != nil && !c1.IsNode1() || c2 != nil && c2.IsNode1() {
 		c2, c1 = c1, c2
 	}
 
-	var lastUpdate int64
+	var lastUpdate uint64
 	if c1 != nil {
-		lastUpdate = c1.LastUpdate.Unix()
+		lastUpdate = c1.Timestamp().Int()
 	}
-	if c2 != nil && c2.LastUpdate.Unix() > lastUpdate {
-		lastUpdate = c2.LastUpdate.Unix()
+	if c2 != nil && c1.Timestamp().Int() > lastUpdate {
+		lastUpdate = c2.Timestamp().Int()
 	}
 
 	customRecords := marshalExtraOpaqueData(edgeInfo.ExtraOpaqueData)
@@ -6014,19 +6012,22 @@ func marshalDbEdge(edgeInfo *channeldb.ChannelEdgeInfo,
 }
 
 func marshalDBRoutingPolicy(
-	policy *channeldb.ChannelEdgePolicy) *lnrpc.RoutingPolicy {
+	edgePolicy channeldb.ChanEdgePolicy) *lnrpc.RoutingPolicy {
 
-	disabled := policy.ChannelFlags&lnwire.ChanUpdateDisabled != 0
+	policy, ok := edgePolicy.(*channeldb.ChannelEdgePolicy1)
+	if !ok {
+		panic("impl")
+	}
 
-	customRecords := marshalExtraOpaqueData(policy.ExtraOpaqueData)
+	customRecords := marshalExtraOpaqueData(policy.ExtraData())
 
 	return &lnrpc.RoutingPolicy{
-		TimeLockDelta:    uint32(policy.TimeLockDelta),
-		MinHtlc:          int64(policy.MinHTLC),
-		MaxHtlcMsat:      uint64(policy.MaxHTLC),
-		FeeBaseMsat:      int64(policy.FeeBaseMSat),
-		FeeRateMilliMsat: int64(policy.FeeProportionalMillionths),
-		Disabled:         disabled,
+		TimeLockDelta:    uint32(policy.CLTVDelta()),
+		MinHtlc:          int64(policy.MinHTLCMsat()),
+		MaxHtlcMsat:      uint64(policy.MaxHTLCMsat()),
+		FeeBaseMsat:      int64(policy.BaseFee()),
+		FeeRateMilliMsat: int64(policy.FeeRate()),
+		Disabled:         policy.IsDisabled(),
 		LastUpdate:       uint32(policy.LastUpdate.Unix()),
 		CustomRecords:    customRecords,
 	}
@@ -6146,7 +6147,7 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 
 	if err := node.ForEachChannel(nil, func(_ kvdb.RTx,
 		edge *channeldb.ChannelEdgeInfo,
-		c1, c2 *channeldb.ChannelEdgePolicy) error {
+		c1, c2 channeldb.ChanEdgePolicy) error {
 
 		numChannels++
 		totalCapacity += edge.Capacity
@@ -6756,8 +6757,9 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 	}
 
 	var feeReports []*lnrpc.ChannelFeeReport
-	err = selfNode.ForEachChannel(nil, func(_ kvdb.RTx, chanInfo *channeldb.ChannelEdgeInfo,
-		edgePolicy, _ *channeldb.ChannelEdgePolicy) error {
+	err = selfNode.ForEachChannel(nil, func(_ kvdb.RTx,
+		chanInfo *channeldb.ChannelEdgeInfo,
+		edgePolicy, _ channeldb.ChanEdgePolicy) error {
 
 		// Self node should always have policies for its channels.
 		if edgePolicy == nil {
@@ -6770,14 +6772,14 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 		// rate field in the database the amount of mSAT charged per
 		// 1mil mSAT sent, so will divide by this to get the proper fee
 		// rate.
-		feeRateFixedPoint := edgePolicy.FeeProportionalMillionths
+		feeRateFixedPoint := edgePolicy.FeeRate()
 		feeRate := float64(feeRateFixedPoint) / feeBase
 
 		// TODO(roasbeef): also add stats for revenue for each channel
 		feeReports = append(feeReports, &lnrpc.ChannelFeeReport{
 			ChanId:       chanInfo.ChannelID,
 			ChannelPoint: chanInfo.ChannelPoint.String(),
-			BaseFeeMsat:  int64(edgePolicy.FeeBaseMSat),
+			BaseFeeMsat:  int64(edgePolicy.BaseFee()),
 			FeePerMil:    int64(feeRateFixedPoint),
 			FeeRate:      feeRate,
 		})
