@@ -27,7 +27,7 @@ type GraphCacheNode interface {
 	// error, then the iteration is halted with the error propagated back up
 	// to the caller.
 	ForEachChannel(kvdb.RTx,
-		func(kvdb.RTx, *ChannelEdgeInfo, *ChannelEdgePolicy,
+		func(kvdb.RTx, ChannelEdgeInfo, *ChannelEdgePolicy,
 			*ChannelEdgePolicy) error) error
 }
 
@@ -223,7 +223,7 @@ func (c *GraphCache) AddNode(tx kvdb.RTx, node GraphCacheNode) error {
 	c.AddNodeFeatures(node)
 
 	return node.ForEachChannel(
-		tx, func(tx kvdb.RTx, info *ChannelEdgeInfo,
+		tx, func(tx kvdb.RTx, info ChannelEdgeInfo,
 			outPolicy *ChannelEdgePolicy,
 			inPolicy *ChannelEdgePolicy) error {
 
@@ -238,7 +238,7 @@ func (c *GraphCache) AddNode(tx kvdb.RTx, node GraphCacheNode) error {
 // and policy 2 does not matter, the directionality is extracted from the info
 // and policy flags automatically. The policy will be set as the outgoing policy
 // on one node and the incoming policy on the peer's side.
-func (c *GraphCache) AddChannel(info *ChannelEdgeInfo,
+func (c *GraphCache) AddChannel(info ChannelEdgeInfo,
 	policy1 *ChannelEdgePolicy, policy2 *ChannelEdgePolicy) {
 
 	if info == nil {
@@ -251,35 +251,42 @@ func (c *GraphCache) AddChannel(info *ChannelEdgeInfo,
 		return
 	}
 
+	var (
+		node1Bytes = info.Node1Bytes()
+		node2Bytes = info.Node2Bytes()
+		capacity   = info.GetCapacity()
+		chanID     = info.GetChanID()
+	)
+
 	// Create the edge entry for both nodes.
 	c.mtx.Lock()
-	c.updateOrAddEdge(info.NodeKey1Bytes, &DirectedChannel{
-		ChannelID: info.ChannelID,
+	c.updateOrAddEdge(node1Bytes, &DirectedChannel{
+		ChannelID: chanID,
 		IsNode1:   true,
-		OtherNode: info.NodeKey2Bytes,
-		Capacity:  info.Capacity,
+		OtherNode: node2Bytes,
+		Capacity:  capacity,
 	})
-	c.updateOrAddEdge(info.NodeKey2Bytes, &DirectedChannel{
-		ChannelID: info.ChannelID,
+	c.updateOrAddEdge(node2Bytes, &DirectedChannel{
+		ChannelID: chanID,
 		IsNode1:   false,
-		OtherNode: info.NodeKey1Bytes,
-		Capacity:  info.Capacity,
+		OtherNode: node1Bytes,
+		Capacity:  capacity,
 	})
 	c.mtx.Unlock()
 
 	// The policy's node is always the to_node. So if policy 1 has to_node
 	// of node 2 then we have the policy 1 as seen from node 1.
 	if policy1 != nil {
-		fromNode, toNode := info.NodeKey1Bytes, info.NodeKey2Bytes
-		if policy1.Node.PubKeyBytes != info.NodeKey2Bytes {
+		fromNode, toNode := node1Bytes, node2Bytes
+		if policy1.Node.PubKeyBytes != node2Bytes {
 			fromNode, toNode = toNode, fromNode
 		}
 		isEdge1 := policy1.ChannelFlags&lnwire.ChanUpdateDirection == 0
 		c.UpdatePolicy(policy1, fromNode, toNode, isEdge1)
 	}
 	if policy2 != nil {
-		fromNode, toNode := info.NodeKey2Bytes, info.NodeKey1Bytes
-		if policy2.Node.PubKeyBytes != info.NodeKey1Bytes {
+		fromNode, toNode := node2Bytes, node1Bytes
+		if policy2.Node.PubKeyBytes != node1Bytes {
 			fromNode, toNode = toNode, fromNode
 		}
 		isEdge1 := policy2.ChannelFlags&lnwire.ChanUpdateDirection == 0
@@ -380,28 +387,35 @@ func (c *GraphCache) removeChannelIfFound(node route.Vertex, chanID uint64) {
 // UpdateChannel updates the channel edge information for a specific edge. We
 // expect the edge to already exist and be known. If it does not yet exist, this
 // call is a no-op.
-func (c *GraphCache) UpdateChannel(info *ChannelEdgeInfo) {
+func (c *GraphCache) UpdateChannel(info ChannelEdgeInfo) {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
 
-	if len(c.nodeChannels[info.NodeKey1Bytes]) == 0 ||
-		len(c.nodeChannels[info.NodeKey2Bytes]) == 0 {
+	var (
+		node1Bytes = info.Node1Bytes()
+		node2Bytes = info.Node2Bytes()
+		chanID     = info.GetChanID()
+		capacity   = info.GetCapacity()
+	)
+
+	if len(c.nodeChannels[node1Bytes]) == 0 ||
+		len(c.nodeChannels[node2Bytes]) == 0 {
 
 		return
 	}
 
-	channel, ok := c.nodeChannels[info.NodeKey1Bytes][info.ChannelID]
+	channel, ok := c.nodeChannels[node1Bytes][chanID]
 	if ok {
 		// We only expect to be called when the channel is already
 		// known.
-		channel.Capacity = info.Capacity
-		channel.OtherNode = info.NodeKey2Bytes
+		channel.Capacity = capacity
+		channel.OtherNode = node2Bytes
 	}
 
-	channel, ok = c.nodeChannels[info.NodeKey2Bytes][info.ChannelID]
+	channel, ok = c.nodeChannels[node2Bytes][chanID]
 	if ok {
-		channel.Capacity = info.Capacity
-		channel.OtherNode = info.NodeKey1Bytes
+		channel.Capacity = capacity
+		channel.OtherNode = node1Bytes
 	}
 }
 

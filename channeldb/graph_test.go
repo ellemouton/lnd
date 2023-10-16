@@ -327,10 +327,10 @@ func TestEdgeInsertionDeletion(t *testing.T) {
 	require.NoError(t, err, "unable to generate node key")
 	node2Pub, err := node2.PubKey()
 	require.NoError(t, err, "unable to generate node key")
-	edgeInfo := ChannelEdgeInfo{
+	edgeInfo := ChannelEdgeInfo1{
 		ChannelID: chanID,
 		ChainHash: key,
-		AuthProof: &ChannelAuthProof{
+		AuthProof: &ChannelAuthProof1{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
@@ -387,7 +387,7 @@ func TestEdgeInsertionDeletion(t *testing.T) {
 }
 
 func createEdge(height, txIndex uint32, txPosition uint16, outPointIndex uint32,
-	node1, node2 *LightningNode) (ChannelEdgeInfo, lnwire.ShortChannelID) {
+	node1, node2 *LightningNode) (ChannelEdgeInfo1, lnwire.ShortChannelID) {
 
 	shortChanID := lnwire.ShortChannelID{
 		BlockHeight: height,
@@ -401,10 +401,10 @@ func createEdge(height, txIndex uint32, txPosition uint16, outPointIndex uint32,
 
 	node1Pub, _ := node1.PubKey()
 	node2Pub, _ := node2.PubKey()
-	edgeInfo := ChannelEdgeInfo{
+	edgeInfo := ChannelEdgeInfo1{
 		ChannelID: shortChanID.ToUint64(),
 		ChainHash: key,
-		AuthProof: &ChannelAuthProof{
+		AuthProof: &ChannelAuthProof1{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
@@ -509,10 +509,10 @@ func TestDisconnectBlockAtHeight(t *testing.T) {
 		t.Fatalf("expected two edges to be removed from graph, "+
 			"only %d were", len(removed))
 	}
-	if removed[0].ChannelID != edgeInfo.ChannelID {
+	if removed[0].GetChanID() != edgeInfo.ChannelID {
 		t.Fatalf("expected edge to be removed from graph")
 	}
-	if removed[1].ChannelID != edgeInfo2.ChannelID {
+	if removed[1].GetChanID() != edgeInfo2.ChannelID {
 		t.Fatalf("expected edge to be removed from graph")
 	}
 
@@ -556,14 +556,7 @@ func TestDisconnectBlockAtHeight(t *testing.T) {
 	}
 }
 
-func assertEdgeInfoEqual(t *testing.T, e1 *ChannelEdgeInfo,
-	e2 *ChannelEdgeInfo) {
-
-	if e1.ChannelID != e2.ChannelID {
-		t.Fatalf("chan id's don't match: %v vs %v", e1.ChannelID,
-			e2.ChannelID)
-	}
-
+func assertEdgeInfo1Equal(t *testing.T, e1, e2 *ChannelEdgeInfo1) {
 	if e1.ChainHash != e2.ChainHash {
 		t.Fatalf("chain hashes don't match: %v vs %v", e1.ChainHash,
 			e2.ChainHash)
@@ -618,8 +611,22 @@ func assertEdgeInfoEqual(t *testing.T, e1 *ChannelEdgeInfo,
 	}
 }
 
-func createChannelEdge(db kvdb.Backend, node1, node2 *LightningNode) (*ChannelEdgeInfo,
-	*ChannelEdgePolicy, *ChannelEdgePolicy) {
+func assertEdgeInfoEqual(t *testing.T, e1 ChannelEdgeInfo,
+	e2 ChannelEdgeInfo) {
+
+	switch edge1 := e1.(type) {
+	case *ChannelEdgeInfo1:
+		edge2, ok := e2.(*ChannelEdgeInfo1)
+		require.True(t, ok)
+
+		assertEdgeInfo1Equal(t, edge1, edge2)
+	default:
+		t.Fatalf("unhandled ChannelEdgeInfo type: %T", e1)
+	}
+}
+
+func createChannelEdge(db kvdb.Backend, node1, node2 *LightningNode) (
+	ChannelEdgeInfo, *ChannelEdgePolicy, *ChannelEdgePolicy) {
 
 	var (
 		firstNode  *LightningNode
@@ -643,10 +650,10 @@ func createChannelEdge(db kvdb.Backend, node1, node2 *LightningNode) (*ChannelEd
 
 	// Add the new edge to the database, this should proceed without any
 	// errors.
-	edgeInfo := &ChannelEdgeInfo{
+	edgeInfo := &ChannelEdgeInfo1{
 		ChannelID: chanID,
 		ChainHash: key,
-		AuthProof: &ChannelAuthProof{
+		AuthProof: &ChannelAuthProof1{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
@@ -732,8 +739,8 @@ func TestEdgeInfoUpdates(t *testing.T) {
 	}
 	assertEdgeWithNoPoliciesInCache(t, graph, edgeInfo)
 
-	chanID := edgeInfo.ChannelID
-	outpoint := edgeInfo.ChannelPoint
+	chanID := edgeInfo.GetChanID()
+	outpoint := edgeInfo.GetChanPoint()
 
 	// Next, insert both edge policies into the database, they should both
 	// be inserted without any issues.
@@ -822,49 +829,54 @@ func assertNodeNotInCache(t *testing.T, g *ChannelGraph, n route.Vertex) {
 }
 
 func assertEdgeWithNoPoliciesInCache(t *testing.T, g *ChannelGraph,
-	e *ChannelEdgeInfo) {
+	e ChannelEdgeInfo) {
+
+	var (
+		node1Bytes = e.Node1Bytes()
+		node2Bytes = e.Node2Bytes()
+	)
 
 	// Let's check the internal view first.
-	require.NotEmpty(t, g.graphCache.nodeChannels[e.NodeKey1Bytes])
-	require.NotEmpty(t, g.graphCache.nodeChannels[e.NodeKey2Bytes])
+	require.NotEmpty(t, g.graphCache.nodeChannels[node1Bytes])
+	require.NotEmpty(t, g.graphCache.nodeChannels[node2Bytes])
 
 	expectedNode1Channel := &DirectedChannel{
-		ChannelID:    e.ChannelID,
+		ChannelID:    e.GetChanID(),
 		IsNode1:      true,
-		OtherNode:    e.NodeKey2Bytes,
-		Capacity:     e.Capacity,
+		OtherNode:    node2Bytes,
+		Capacity:     e.GetCapacity(),
 		OutPolicySet: false,
 		InPolicy:     nil,
 	}
 	require.Contains(
-		t, g.graphCache.nodeChannels[e.NodeKey1Bytes], e.ChannelID,
+		t, g.graphCache.nodeChannels[node1Bytes], e.GetChanID(),
 	)
 	require.Equal(
 		t, expectedNode1Channel,
-		g.graphCache.nodeChannels[e.NodeKey1Bytes][e.ChannelID],
+		g.graphCache.nodeChannels[node1Bytes][e.GetChanID()],
 	)
 
 	expectedNode2Channel := &DirectedChannel{
-		ChannelID:    e.ChannelID,
+		ChannelID:    e.GetChanID(),
 		IsNode1:      false,
-		OtherNode:    e.NodeKey1Bytes,
-		Capacity:     e.Capacity,
+		OtherNode:    node1Bytes,
+		Capacity:     e.GetCapacity(),
 		OutPolicySet: false,
 		InPolicy:     nil,
 	}
 	require.Contains(
-		t, g.graphCache.nodeChannels[e.NodeKey2Bytes], e.ChannelID,
+		t, g.graphCache.nodeChannels[node2Bytes], e.GetChanID(),
 	)
 	require.Equal(
 		t, expectedNode2Channel,
-		g.graphCache.nodeChannels[e.NodeKey2Bytes][e.ChannelID],
+		g.graphCache.nodeChannels[node2Bytes][e.GetChanID()],
 	)
 
 	// The external view should reflect this as well.
 	var foundChannel *DirectedChannel
 	err := g.graphCache.ForEachChannel(
-		e.NodeKey1Bytes, func(c *DirectedChannel) error {
-			if c.ChannelID == e.ChannelID {
+		node1Bytes, func(c *DirectedChannel) error {
+			if c.ChannelID == e.GetChanID() {
 				foundChannel = c
 			}
 
@@ -876,8 +888,8 @@ func assertEdgeWithNoPoliciesInCache(t *testing.T, g *ChannelGraph,
 	require.Equal(t, expectedNode1Channel, foundChannel)
 
 	err = g.graphCache.ForEachChannel(
-		e.NodeKey2Bytes, func(c *DirectedChannel) error {
-			if c.ChannelID == e.ChannelID {
+		node2Bytes, func(c *DirectedChannel) error {
+			if c.ChannelID == e.GetChanID() {
 				foundChannel = c
 			}
 
@@ -900,10 +912,16 @@ func assertNoEdge(t *testing.T, g *ChannelGraph, chanID uint64) {
 }
 
 func assertEdgeWithPolicyInCache(t *testing.T, g *ChannelGraph,
-	e *ChannelEdgeInfo, p *ChannelEdgePolicy, policy1 bool) {
+	e ChannelEdgeInfo, p *ChannelEdgePolicy, policy1 bool) {
+
+	var (
+		node1Bytes = e.Node1Bytes()
+		node2Bytes = e.Node2Bytes()
+		chanID     = e.GetChanID()
+	)
 
 	// Check the internal state first.
-	c1, ok := g.graphCache.nodeChannels[e.NodeKey1Bytes][e.ChannelID]
+	c1, ok := g.graphCache.nodeChannels[node1Bytes][chanID]
 	require.True(t, ok)
 
 	if policy1 {
@@ -916,7 +934,7 @@ func assertEdgeWithPolicyInCache(t *testing.T, g *ChannelGraph,
 		)
 	}
 
-	c2, ok := g.graphCache.nodeChannels[e.NodeKey2Bytes][e.ChannelID]
+	c2, ok := g.graphCache.nodeChannels[node2Bytes][chanID]
 	require.True(t, ok)
 
 	if policy1 {
@@ -935,14 +953,14 @@ func assertEdgeWithPolicyInCache(t *testing.T, g *ChannelGraph,
 		c2Ext *DirectedChannel
 	)
 	require.NoError(t, g.graphCache.ForEachChannel(
-		e.NodeKey1Bytes, func(c *DirectedChannel) error {
+		node1Bytes, func(c *DirectedChannel) error {
 			c1Ext = c
 
 			return nil
 		},
 	))
 	require.NoError(t, g.graphCache.ForEachChannel(
-		e.NodeKey2Bytes, func(c *DirectedChannel) error {
+		node2Bytes, func(c *DirectedChannel) error {
 			c2Ext = c
 
 			return nil
@@ -959,7 +977,7 @@ func assertEdgeWithPolicyInCache(t *testing.T, g *ChannelGraph,
 			c2Ext.InPolicy.FeeProportionalMillionths,
 		)
 		require.Equal(
-			t, route.Vertex(e.NodeKey2Bytes),
+			t, route.Vertex(node2Bytes),
 			c2Ext.InPolicy.ToNodePubKey(),
 		)
 		require.Equal(t, testFeatures, c2Ext.InPolicy.ToNodeFeatures)
@@ -969,7 +987,7 @@ func assertEdgeWithPolicyInCache(t *testing.T, g *ChannelGraph,
 			c1Ext.InPolicy.FeeProportionalMillionths,
 		)
 		require.Equal(
-			t, route.Vertex(e.NodeKey1Bytes),
+			t, route.Vertex(node1Bytes),
 			c1Ext.InPolicy.ToNodePubKey(),
 		)
 		require.Equal(t, testFeatures, c1Ext.InPolicy.ToNodeFeatures)
@@ -1043,10 +1061,10 @@ func TestGraphTraversal(t *testing.T) {
 	// Iterate through all the known channels within the graph DB, once
 	// again if the map is empty that indicates that all edges have
 	// properly been reached.
-	err = graph.ForEachChannel(func(ei *ChannelEdgeInfo, _ *ChannelEdgePolicy,
-		_ *ChannelEdgePolicy) error {
+	err = graph.ForEachChannel(func(ei ChannelEdgeInfo,
+		_ *ChannelEdgePolicy, _ *ChannelEdgePolicy) error {
 
-		delete(chanIndex, ei.ChannelID)
+		delete(chanIndex, ei.GetChanID())
 		return nil
 	})
 	require.NoError(t, err)
@@ -1056,7 +1074,7 @@ func TestGraphTraversal(t *testing.T) {
 	// outgoing channels for a particular node.
 	numNodeChans := 0
 	firstNode, secondNode := nodeList[0], nodeList[1]
-	err = firstNode.ForEachChannel(nil, func(_ kvdb.RTx, _ *ChannelEdgeInfo,
+	err = firstNode.ForEachChannel(nil, func(_ kvdb.RTx, _ ChannelEdgeInfo,
 		outEdge, inEdge *ChannelEdgePolicy) error {
 
 		// All channels between first and second node should have fully
@@ -1129,11 +1147,11 @@ func TestGraphTraversalCacheable(t *testing.T) {
 	err = graph.db.View(func(tx kvdb.RTx) error {
 		for _, node := range nodes {
 			err := node.ForEachChannel(
-				tx, func(tx kvdb.RTx, info *ChannelEdgeInfo,
+				tx, func(tx kvdb.RTx, info ChannelEdgeInfo,
 					policy *ChannelEdgePolicy,
 					policy2 *ChannelEdgePolicy) error {
 
-					delete(chanIndex, info.ChannelID)
+					delete(chanIndex, info.GetChanID())
 					return nil
 				},
 			)
@@ -1249,10 +1267,10 @@ func fillTestGraph(t require.TestingT, graph *ChannelGraph, numNodes,
 				Index: 0,
 			}
 
-			edgeInfo := ChannelEdgeInfo{
+			edgeInfo := ChannelEdgeInfo1{
 				ChannelID: chanID,
 				ChainHash: key,
-				AuthProof: &ChannelAuthProof{
+				AuthProof: &ChannelAuthProof1{
 					NodeSig1Bytes:    testSig.Serialize(),
 					NodeSig2Bytes:    testSig.Serialize(),
 					BitcoinSig1Bytes: testSig.Serialize(),
@@ -1313,7 +1331,7 @@ func assertPruneTip(t *testing.T, graph *ChannelGraph, blockHash *chainhash.Hash
 
 func assertNumChans(t *testing.T, graph *ChannelGraph, n int) {
 	numChans := 0
-	if err := graph.ForEachChannel(func(*ChannelEdgeInfo, *ChannelEdgePolicy,
+	if err := graph.ForEachChannel(func(ChannelEdgeInfo, *ChannelEdgePolicy,
 		*ChannelEdgePolicy) error {
 
 		numChans++
@@ -1430,10 +1448,10 @@ func TestGraphPruning(t *testing.T) {
 
 		channelPoints = append(channelPoints, &op)
 
-		edgeInfo := ChannelEdgeInfo{
+		edgeInfo := ChannelEdgeInfo1{
 			ChannelID: chanID,
 			ChainHash: key,
-			AuthProof: &ChannelAuthProof{
+			AuthProof: &ChannelAuthProof1{
 				NodeSig1Bytes:    testSig.Serialize(),
 				NodeSig2Bytes:    testSig.Serialize(),
 				BitcoinSig1Bytes: testSig.Serialize(),
@@ -2280,8 +2298,9 @@ func TestIncompleteChannelPolicies(t *testing.T) {
 	// Ensure that channel is reported with unknown policies.
 	checkPolicies := func(node *LightningNode, expectedIn, expectedOut bool) {
 		calls := 0
-		err := node.ForEachChannel(nil, func(_ kvdb.RTx, _ *ChannelEdgeInfo,
-			outEdge, inEdge *ChannelEdgePolicy) error {
+		err := node.ForEachChannel(nil, func(_ kvdb.RTx,
+			_ ChannelEdgeInfo, outEdge,
+			inEdge *ChannelEdgePolicy) error {
 
 			if !expectedOut && outEdge != nil {
 				t.Fatalf("Expected no outgoing policy")
@@ -2698,7 +2717,7 @@ func TestNodeIsPublic(t *testing.T) {
 	// After creating all of our nodes and edges, we'll add them to each
 	// participant's graph.
 	nodes := []*LightningNode{aliceNode, bobNode, carolNode}
-	edges := []*ChannelEdgeInfo{&aliceBobEdge, &bobCarolEdge}
+	edges := []*ChannelEdgeInfo1{&aliceBobEdge, &bobCarolEdge}
 	dbs := []kvdb.Backend{aliceGraph.db, bobGraph.db, carolGraph.db}
 	graphs := []*ChannelGraph{aliceGraph, bobGraph, carolGraph}
 	for i, graph := range graphs {
@@ -2859,14 +2878,16 @@ func TestDisabledChannelIDs(t *testing.T) {
 	}
 	disabledChanIds, err = graph.DisabledChannelIDs()
 	require.NoError(t, err, "unable to get disabled channel ids")
-	if len(disabledChanIds) != 1 || disabledChanIds[0] != edgeInfo.ChannelID {
+	if len(disabledChanIds) != 1 ||
+		disabledChanIds[0] != edgeInfo.GetChanID() {
+
 		t.Fatalf("expected disabled channel with id %v, "+
-			"got %v", edgeInfo.ChannelID, disabledChanIds)
+			"got %v", edgeInfo.GetChanID(), disabledChanIds)
 	}
 
 	// Delete the channel edge and ensure it is removed from the disabled list.
 	if err = graph.DeleteChannelEdges(
-		false, true, edgeInfo.ChannelID,
+		false, true, edgeInfo.GetChanID(),
 	); err != nil {
 		t.Fatalf("unable to delete channel edge: %v", err)
 	}
@@ -2907,7 +2928,7 @@ func TestEdgePolicyMissingMaxHtcl(t *testing.T) {
 		t.Fatalf("unable to create channel edge: %v", err)
 	}
 
-	chanID := edgeInfo.ChannelID
+	chanID := edgeInfo.GetChanID()
 	from := edge2.Node.PubKeyBytes[:]
 	to := edge1.Node.PubKeyBytes[:]
 
@@ -3068,7 +3089,7 @@ func TestGraphZombieIndex(t *testing.T) {
 
 	// Since the edge is known the graph and it isn't a zombie, IsZombieEdge
 	// should not report the channel as a zombie.
-	isZombie, _, _ := graph.IsZombieEdge(edge.ChannelID)
+	isZombie, _, _ := graph.IsZombieEdge(edge.GetChanID())
 	if isZombie {
 		t.Fatal("expected edge to not be marked as zombie")
 	}
@@ -3076,9 +3097,9 @@ func TestGraphZombieIndex(t *testing.T) {
 
 	// If we delete the edge and mark it as a zombie, then we should expect
 	// to see it within the index.
-	err = graph.DeleteChannelEdges(false, true, edge.ChannelID)
+	err = graph.DeleteChannelEdges(false, true, edge.GetChanID())
 	require.NoError(t, err, "unable to mark edge as zombie")
-	isZombie, pubKey1, pubKey2 := graph.IsZombieEdge(edge.ChannelID)
+	isZombie, pubKey1, pubKey2 := graph.IsZombieEdge(edge.GetChanID())
 	if !isZombie {
 		t.Fatal("expected edge to be marked as zombie")
 	}
@@ -3094,10 +3115,10 @@ func TestGraphZombieIndex(t *testing.T) {
 
 	// Similarly, if we mark the same edge as live, we should no longer see
 	// it within the index.
-	if err := graph.MarkEdgeLive(edge.ChannelID); err != nil {
+	if err := graph.MarkEdgeLive(edge.GetChanID()); err != nil {
 		t.Fatalf("unable to mark edge as live: %v", err)
 	}
-	isZombie, _, _ = graph.IsZombieEdge(edge.ChannelID)
+	isZombie, _, _ = graph.IsZombieEdge(edge.GetChanID())
 	if isZombie {
 		t.Fatal("expected edge to not be marked as zombie")
 	}
@@ -3106,10 +3127,10 @@ func TestGraphZombieIndex(t *testing.T) {
 	// If we mark the edge as a zombie manually, then it should show up as
 	// being a zombie once again.
 	err = graph.MarkEdgeZombie(
-		edge.ChannelID, node1.PubKeyBytes, node2.PubKeyBytes,
+		edge.GetChanID(), node1.PubKeyBytes, node2.PubKeyBytes,
 	)
 	require.NoError(t, err, "unable to mark edge as zombie")
-	isZombie, _, _ = graph.IsZombieEdge(edge.ChannelID)
+	isZombie, _, _ = graph.IsZombieEdge(edge.GetChanID())
 	if !isZombie {
 		t.Fatal("expected edge to be marked as zombie")
 	}
@@ -3326,7 +3347,7 @@ func TestBatchedAddChannelEdge(t *testing.T) {
 	// Create a third edge, this with a block height of 155.
 	edgeInfo3, _ := createEdge(height-1, 0, 0, 2, node1, node2)
 
-	edges := []ChannelEdgeInfo{edgeInfo, edgeInfo2, edgeInfo3}
+	edges := []ChannelEdgeInfo1{edgeInfo, edgeInfo2, edgeInfo3}
 	errChan := make(chan error, len(edges))
 	errTimeout := errors.New("timeout adding batched channel")
 
@@ -3334,7 +3355,7 @@ func TestBatchedAddChannelEdge(t *testing.T) {
 	var wg sync.WaitGroup
 	for _, edge := range edges {
 		wg.Add(1)
-		go func(edge ChannelEdgeInfo) {
+		go func(edge ChannelEdgeInfo1) {
 			defer wg.Done()
 
 			select {
@@ -3443,7 +3464,7 @@ func BenchmarkForEachChannel(b *testing.B) {
 			for _, n := range nodes {
 				err := n.ForEachChannel(
 					tx, func(tx kvdb.RTx,
-						info *ChannelEdgeInfo,
+						info ChannelEdgeInfo,
 						policy *ChannelEdgePolicy,
 						policy2 *ChannelEdgePolicy) error {
 
@@ -3452,7 +3473,7 @@ func BenchmarkForEachChannel(b *testing.B) {
 						// compiler is going to optimize
 						// this away, and we get bogus
 						// results.
-						totalCapacity += info.Capacity
+						totalCapacity += info.GetCapacity()
 						maxHTLCs += policy.MaxHTLC
 						maxHTLCs += policy2.MaxHTLC
 

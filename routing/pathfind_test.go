@@ -96,7 +96,7 @@ var (
 	_             = testSScalar.SetByteSlice(testSBytes)
 	testSig       = ecdsa.NewSignature(testRScalar, testSScalar)
 
-	testAuthProof = channeldb.ChannelAuthProof{
+	testAuthProof = channeldb.ChannelAuthProof1{
 		NodeSig1Bytes:    testSig.Serialize(),
 		NodeSig2Bytes:    testSig.Serialize(),
 		BitcoinSig1Bytes: testSig.Serialize(),
@@ -345,7 +345,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 
 		// We first insert the existence of the edge between the two
 		// nodes.
-		edgeInfo := channeldb.ChannelEdgeInfo{
+		edgeInfo := channeldb.ChannelEdgeInfo1{
 			ChannelID:    edge.ChannelID,
 			AuthProof:    &testAuthProof,
 			ChannelPoint: fundingPoint,
@@ -657,7 +657,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 
 		// We first insert the existence of the edge between the two
 		// nodes.
-		edgeInfo := channeldb.ChannelEdgeInfo{
+		edgeInfo := channeldb.ChannelEdgeInfo1{
 			ChannelID:    channelID,
 			AuthProof:    &testAuthProof,
 			ChannelPoint: *fundingPoint,

@@ -28,7 +28,7 @@ type node struct {
 	pubKey   route.Vertex
 	features *lnwire.FeatureVector
 
-	edgeInfos   []*ChannelEdgeInfo
+	edgeInfos   []ChannelEdgeInfo
 	outPolicies []*ChannelEdgePolicy
 	inPolicies  []*ChannelEdgePolicy
 }
@@ -41,7 +41,7 @@ func (n *node) Features() *lnwire.FeatureVector {
 }
 
 func (n *node) ForEachChannel(tx kvdb.RTx,
-	cb func(kvdb.RTx, *ChannelEdgeInfo, *ChannelEdgePolicy,
+	cb func(kvdb.RTx, ChannelEdgeInfo, *ChannelEdgePolicy,
 		*ChannelEdgePolicy) error) error {
 
 	for idx := range n.edgeInfos {
@@ -89,13 +89,15 @@ func TestGraphCacheAddNode(t *testing.T) {
 		node := &node{
 			pubKey:   nodeA,
 			features: lnwire.EmptyFeatureVector(),
-			edgeInfos: []*ChannelEdgeInfo{{
-				ChannelID: 1000,
-				// Those are direction independent!
-				NodeKey1Bytes: pubKey1,
-				NodeKey2Bytes: pubKey2,
-				Capacity:      500,
-			}},
+			edgeInfos: []ChannelEdgeInfo{
+				&ChannelEdgeInfo1{
+					ChannelID: 1000,
+					// Those are direction independent!
+					NodeKey1Bytes: pubKey1,
+					NodeKey2Bytes: pubKey2,
+					Capacity:      500,
+				},
+			},
 			outPolicies: []*ChannelEdgePolicy{outPolicy1},
 			inPolicies:  []*ChannelEdgePolicy{inPolicy1},
 		}

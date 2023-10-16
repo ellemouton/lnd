@@ -1253,7 +1253,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		copy(ourKey[:], nodeKeyDesc.PubKey.SerializeCompressed())
 
 		var ourPolicy *channeldb.ChannelEdgePolicy
-		if info != nil && info.NodeKey1Bytes == ourKey {
+		if info != nil && info.Node1Bytes() == ourKey {
 			ourPolicy = e1
 		} else {
 			ourPolicy = e2
@@ -3085,7 +3085,7 @@ func (s *server) establishPersistentConnections() error {
 	selfPub := s.identityECDH.PubKey().SerializeCompressed()
 	err = sourceNode.ForEachChannel(nil, func(
 		tx kvdb.RTx,
-		chanInfo *channeldb.ChannelEdgeInfo,
+		chanInfo channeldb.ChannelEdgeInfo,
 		policy, _ *channeldb.ChannelEdgePolicy) error {
 
 		// If the remote party has announced the channel to us, but we
@@ -3093,15 +3093,17 @@ func (s *server) establishPersistentConnections() error {
 		// need this to connect to the peer, so we'll log it and move on.
 		if policy == nil {
 			srvrLog.Warnf("No channel policy found for "+
-				"ChannelPoint(%v): ", chanInfo.ChannelPoint)
+				"ChannelPoint(%v): ", chanInfo.GetChanPoint())
 		}
 
 		// We'll now fetch the peer opposite from us within this
 		// channel so we can queue up a direct connection to them.
-		channelPeer, err := chanInfo.FetchOtherNode(tx, selfPub)
+		channelPeer, err := channeldb.FetchOtherNode(
+			tx, chanInfo, selfPub,
+		)
 		if err != nil {
 			return fmt.Errorf("unable to fetch channel peer for "+
-				"ChannelPoint(%v): %v", chanInfo.ChannelPoint,
+				"ChannelPoint(%v): %v", chanInfo.GetChanPoint(),
 				err)
 		}
 

@@ -544,8 +544,11 @@ func chanCanBeHopHint(channel *HopHintInfo, cfg *SelectHopHintsCfg) (
 
 	// Now, we'll need to determine which is the correct policy for HTLCs
 	// being sent from the remote node.
-	var remotePolicy *channeldb.ChannelEdgePolicy
-	if bytes.Equal(remotePub[:], info.NodeKey1Bytes[:]) {
+	var (
+		remotePolicy *channeldb.ChannelEdgePolicy
+		node1Bytes   = info.Node1Bytes()
+	)
+	if bytes.Equal(remotePub[:], node1Bytes[:]) {
 		remotePolicy = p1
 	} else {
 		remotePolicy = p2
@@ -627,7 +630,7 @@ type SelectHopHintsCfg struct {
 
 	// FetchChannelEdgesByID attempts to lookup the two directed edges for
 	// the channel identified by the channel ID.
-	FetchChannelEdgesByID func(chanID uint64) (*channeldb.ChannelEdgeInfo,
+	FetchChannelEdgesByID func(chanID uint64) (channeldb.ChannelEdgeInfo,
 		*channeldb.ChannelEdgePolicy, *channeldb.ChannelEdgePolicy,
 		error)
 

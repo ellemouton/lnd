@@ -527,7 +527,7 @@ func New(cfg Config, selfKeyDesc *keychain.KeyDescriptor) *AuthenticatedGossiper
 // EdgeWithInfo contains the information that is required to update an edge.
 type EdgeWithInfo struct {
 	// Info describes the channel.
-	Info *channeldb.ChannelEdgeInfo
+	Info channeldb.ChannelEdgeInfo
 
 	// Edge describes the policy in one direction of the channel.
 	Edge *channeldb.ChannelEdgePolicy
@@ -1574,7 +1574,7 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 	// Iterate over all of our channels and check if any of them fall
 	// within the prune interval or re-broadcast interval.
 	type updateTuple struct {
-		info *channeldb.ChannelEdgeInfo
+		info channeldb.ChannelEdgeInfo
 		edge *channeldb.ChannelEdgePolicy
 	}
 
@@ -1583,8 +1583,7 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 		edgesToUpdate      []updateTuple
 	)
 	err := d.cfg.Router.ForAllOutgoingChannels(func(
-		_ kvdb.RTx,
-		info *channeldb.ChannelEdgeInfo,
+		_ kvdb.RTx, info channeldb.ChannelEdgeInfo,
 		edge *channeldb.ChannelEdgePolicy) error {
 
 		// If there's no auth proof attached to this edge, it means
@@ -1592,9 +1591,9 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 		// the greater network, so avoid sending channel updates for
 		// this channel to not leak its
 		// existence.
-		if info.AuthProof == nil {
+		if info.GetAuthProof() == nil {
 			log.Debugf("Skipping retransmission of channel "+
-				"without AuthProof: %v", info.ChannelID)
+				"without AuthProof: %v", info.GetChanID())
 			return nil
 		}
 
@@ -1610,7 +1609,9 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 			// We'll make sure we support the new max_htlc field if
 			// not already present.
 			edge.MessageFlags |= lnwire.ChanUpdateRequiredMaxHtlc
-			edge.MaxHTLC = lnwire.NewMSatFromSatoshis(info.Capacity)
+			edge.MaxHTLC = lnwire.NewMSatFromSatoshis(
+				info.GetCapacity(),
+			)
 
 			edgesToUpdate = append(edgesToUpdate, updateTuple{
 				info: info,
@@ -1728,15 +1729,15 @@ func (d *AuthenticatedGossiper) processChanPolicyUpdate(
 		// We'll avoid broadcasting any updates for private channels to
 		// avoid directly giving away their existence. Instead, we'll
 		// send the update directly to the remote party.
-		if edgeInfo.Info.AuthProof == nil {
+		if edgeInfo.Info.GetAuthProof() == nil {
 			// If AuthProof is nil and an alias was found for this
 			// ChannelID (meaning the option-scid-alias feature was
 			// negotiated), we'll replace the ShortChannelID in the
 			// update with the peer's alias. We do this after
 			// updateChannel so that the alias isn't persisted to
 			// the database.
-			op := &edgeInfo.Info.ChannelPoint
-			chanID := lnwire.NewChanIDFromOutPoint(op)
+			op := edgeInfo.Info.GetChanPoint()
+			chanID := lnwire.NewChanIDFromOutPoint(&op)
 
 			var defaultAlias lnwire.ShortChannelID
 			foundAlias, _ := d.cfg.GetAlias(chanID)
@@ -1789,16 +1790,16 @@ func (d *AuthenticatedGossiper) processChanPolicyUpdate(
 }
 
 // remotePubFromChanInfo returns the public key of the remote peer given a
-// ChannelEdgeInfo that describe a channel we have with them.
-func remotePubFromChanInfo(chanInfo *channeldb.ChannelEdgeInfo,
+// ChannelEdgeInfo1 that describe a channel we have with them.
+func remotePubFromChanInfo(chanInfo channeldb.ChannelEdgeInfo,
 	chanFlags lnwire.ChanUpdateChanFlags) [33]byte {
 
 	var remotePubKey [33]byte
 	switch {
 	case chanFlags&lnwire.ChanUpdateDirection == 0:
-		remotePubKey = chanInfo.NodeKey2Bytes
+		remotePubKey = chanInfo.Node2Bytes()
 	case chanFlags&lnwire.ChanUpdateDirection == 1:
-		remotePubKey = chanInfo.NodeKey1Bytes
+		remotePubKey = chanInfo.Node1Bytes()
 	}
 
 	return remotePubKey
@@ -1812,21 +1813,21 @@ func remotePubFromChanInfo(chanInfo *channeldb.ChannelEdgeInfo,
 // to receive the remote peer's proof, while the remote peer is able to fully
 // assemble the proof and craft the ChannelAnnouncement1.
 func (d *AuthenticatedGossiper) processRejectedEdge(
-	chanAnnMsg *lnwire.ChannelAnnouncement1,
-	proof *channeldb.ChannelAuthProof) ([]networkMsg, error) {
+	chanAnnMsg lnwire.ChannelAnnouncement,
+	proof channeldb.ChannelAuthProof) ([]networkMsg, error) {
+
+	scid := chanAnnMsg.SCID()
 
 	// First, we'll fetch the state of the channel as we know if from the
 	// database.
-	chanInfo, e1, e2, err := d.cfg.Router.GetChannelByID(
-		chanAnnMsg.ShortChannelID,
-	)
+	chanInfo, e1, e2, err := d.cfg.Router.GetChannelByID(scid)
 	if err != nil {
 		return nil, err
 	}
 
 	// The edge is in the graph, and has a proof attached, then we'll just
 	// reject it as normal.
-	if chanInfo.AuthProof != nil {
+	if chanInfo.GetAuthProof() != nil {
 		return nil, nil
 	}
 
@@ -1849,18 +1850,17 @@ func (d *AuthenticatedGossiper) processRejectedEdge(
 	err = routing.ValidateChannelAnn(chanAnn)
 	if err != nil {
 		err := fmt.Errorf("assembled channel announcement proof "+
-			"for shortChanID=%v isn't valid: %v",
-			chanAnnMsg.ShortChannelID, err)
+			"for shortChanID=%v isn't valid: %v", scid, err)
 		log.Error(err)
 		return nil, err
 	}
 
 	// If everything checks out, then we'll add the fully assembled proof
 	// to the database.
-	err = d.cfg.Router.AddProof(chanAnnMsg.ShortChannelID, proof)
+	err = d.cfg.Router.AddProof(scid, proof)
 	if err != nil {
 		err := fmt.Errorf("unable add proof to shortChanID=%v: %v",
-			chanAnnMsg.ShortChannelID, err)
+			scid, err)
 		log.Error(err)
 		return nil, err
 	}
@@ -1997,7 +1997,7 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(
 	// *creation* of a new channel within the network. This only advertises
 	// the existence of a channel and not yet the routing policies in
 	// either direction of the channel.
-	case *lnwire.ChannelAnnouncement1:
+	case lnwire.ChannelAnnouncement:
 		return d.handleChanAnnouncement(nMsg, msg, schedulerOp)
 
 	// A new authenticated channel edge update has arrived. This indicates
@@ -2022,7 +2022,7 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(
 // processZombieUpdate determines whether the provided channel update should
 // resurrect a given zombie edge.
 func (d *AuthenticatedGossiper) processZombieUpdate(
-	chanInfo *channeldb.ChannelEdgeInfo, msg *lnwire.ChannelUpdate) error {
+	chanInfo channeldb.ChannelEdgeInfo, msg *lnwire.ChannelUpdate) error {
 
 	// The least-significant bit in the flag on the channel update tells us
 	// which edge is being updated.
@@ -2035,9 +2035,9 @@ func (d *AuthenticatedGossiper) processZombieUpdate(
 	// will only have the pubkey of the node with the oldest timestamp.
 	var pubKey *btcec.PublicKey
 	switch {
-	case isNode1 && chanInfo.NodeKey1Bytes != emptyPubkey:
+	case isNode1 && chanInfo.Node1Bytes() != emptyPubkey:
 		pubKey, _ = chanInfo.NodeKey1()
-	case !isNode1 && chanInfo.NodeKey2Bytes != emptyPubkey:
+	case !isNode1 && chanInfo.Node2Bytes() != emptyPubkey:
 		pubKey, _ = chanInfo.NodeKey2()
 	}
 	if pubKey == nil {
@@ -2054,7 +2054,7 @@ func (d *AuthenticatedGossiper) processZombieUpdate(
 	// With the signature valid, we'll proceed to mark the
 	// edge as live and wait for the channel announcement to
 	// come through again.
-	baseScid := lnwire.NewShortChanIDFromInt(chanInfo.ChannelID)
+	baseScid := lnwire.NewShortChanIDFromInt(chanInfo.GetChanID())
 	err = d.cfg.Router.MarkEdgeLive(baseScid)
 	if err != nil {
 		return fmt.Errorf("unable to remove edge with "+
@@ -2098,14 +2098,14 @@ func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
 		}
 		if err != nil {
 			log.Debugf("Unable to retrieve channel=%v from graph: "+
-				"%v", chanInfo.ChannelID, err)
+				"%v", chanInfo.GetChanID(), err)
 			return false
 		}
 
 		// If the proof exists in the graph, then we have successfully
 		// received the remote proof and assembled the full proof, so we
 		// can safely delete the local proof from the database.
-		return chanInfo.AuthProof != nil
+		return chanInfo.GetAuthProof() != nil
 
 	case *lnwire.ChannelUpdate:
 		_, p1, p2, err := d.cfg.Router.GetChannelByID(msg.ShortChannelID)
@@ -2150,12 +2150,14 @@ func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
 
 // updateChannel creates a new fully signed update for the channel, and updates
 // the underlying graph with the new state.
-func (d *AuthenticatedGossiper) updateChannel(info *channeldb.ChannelEdgeInfo,
-	edge *channeldb.ChannelEdgePolicy) (*lnwire.ChannelAnnouncement1,
-	*lnwire.ChannelUpdate, error) {
+func (d *AuthenticatedGossiper) updateChannel(
+	edgeInfo channeldb.ChannelEdgeInfo, edge *channeldb.ChannelEdgePolicy) (
+	lnwire.ChannelAnnouncement, *lnwire.ChannelUpdate, error) {
 
 	// Parse the unsigned edge into a channel update.
-	chanUpdate := netann.UnsignedChannelUpdateFromEdge(info, edge)
+	chanUpdate := netann.UnsignedChannelUpdateFromEdge(
+		edgeInfo.GetChainHash(), edge,
+	)
 
 	// We'll generate a new signature over a digest of the channel
 	// announcement itself and update the timestamp to ensure it propagate.
@@ -2174,7 +2176,9 @@ func (d *AuthenticatedGossiper) updateChannel(info *channeldb.ChannelEdgeInfo,
 
 	// To ensure that our signature is valid, we'll verify it ourself
 	// before committing it to the slice returned.
-	err = routing.ValidateChannelUpdateAnn(d.selfKey, info.Capacity, chanUpdate)
+	err = routing.ValidateChannelUpdateAnn(
+		d.selfKey, edgeInfo.GetCapacity(), chanUpdate,
+	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("generated invalid channel "+
 			"update sig: %v", err)
@@ -2188,46 +2192,65 @@ func (d *AuthenticatedGossiper) updateChannel(info *channeldb.ChannelEdgeInfo,
 	// We'll also create the original channel announcement so the two can
 	// be broadcast along side each other (if necessary), but only if we
 	// have a full channel announcement for this channel.
-	var chanAnn *lnwire.ChannelAnnouncement1
-	if info.AuthProof != nil {
-		chanID := lnwire.NewShortChanIDFromInt(info.ChannelID)
-		chanAnn = &lnwire.ChannelAnnouncement1{
-			ShortChannelID:  chanID,
-			NodeID1:         info.NodeKey1Bytes,
-			NodeID2:         info.NodeKey2Bytes,
-			ChainHash:       info.ChainHash,
-			BitcoinKey1:     info.BitcoinKey1Bytes,
-			Features:        lnwire.NewRawFeatureVector(),
-			BitcoinKey2:     info.BitcoinKey2Bytes,
-			ExtraOpaqueData: edge.ExtraOpaqueData,
+	var chanAnn lnwire.ChannelAnnouncement
+	switch info := edgeInfo.(type) {
+	case *channeldb.ChannelEdgeInfo1:
+		if info.AuthProof != nil {
+			chanAnn, err = chanAnn1FromEdgeInfo1(info)
+			if err != nil {
+				return nil, nil, err
+			}
 		}
-		chanAnn.NodeSig1, err = lnwire.NewSigFromECDSARawSignature(
-			info.AuthProof.NodeSig1Bytes,
-		)
-		if err != nil {
-			return nil, nil, err
-		}
-		chanAnn.NodeSig2, err = lnwire.NewSigFromECDSARawSignature(
-			info.AuthProof.NodeSig2Bytes,
-		)
-		if err != nil {
-			return nil, nil, err
-		}
-		chanAnn.BitcoinSig1, err = lnwire.NewSigFromECDSARawSignature(
-			info.AuthProof.BitcoinSig1Bytes,
-		)
-		if err != nil {
-			return nil, nil, err
-		}
-		chanAnn.BitcoinSig2, err = lnwire.NewSigFromECDSARawSignature(
-			info.AuthProof.BitcoinSig2Bytes,
-		)
-		if err != nil {
-			return nil, nil, err
-		}
+	default:
+		return nil, nil, fmt.Errorf("unhandled implementation of "+
+			"lnwire.ChannelEdgeInfo: %T", info)
 	}
 
 	return chanAnn, chanUpdate, err
+}
+
+func chanAnn1FromEdgeInfo1(info *channeldb.ChannelEdgeInfo1) (
+	lnwire.ChannelAnnouncement, error) {
+
+	var err error
+
+	chanID := lnwire.NewShortChanIDFromInt(info.ChannelID)
+	chanAnn := &lnwire.ChannelAnnouncement1{
+		ShortChannelID:  chanID,
+		NodeID1:         info.NodeKey1Bytes,
+		NodeID2:         info.NodeKey2Bytes,
+		ChainHash:       info.ChainHash,
+		BitcoinKey1:     info.BitcoinKey1Bytes,
+		Features:        lnwire.NewRawFeatureVector(),
+		BitcoinKey2:     info.BitcoinKey2Bytes,
+		ExtraOpaqueData: info.ExtraOpaqueData,
+	}
+	chanAnn.NodeSig1, err = lnwire.NewSigFromECDSARawSignature(
+		info.AuthProof.NodeSig1Bytes,
+	)
+	if err != nil {
+		return nil, err
+	}
+	chanAnn.NodeSig2, err = lnwire.NewSigFromECDSARawSignature(
+		info.AuthProof.NodeSig2Bytes,
+	)
+	if err != nil {
+		return nil, err
+	}
+	chanAnn.BitcoinSig1, err = lnwire.NewSigFromECDSARawSignature(
+		info.AuthProof.BitcoinSig1Bytes,
+	)
+	if err != nil {
+		return nil, err
+	}
+	chanAnn.BitcoinSig2, err = lnwire.NewSigFromECDSARawSignature(
+		info.AuthProof.BitcoinSig2Bytes,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return chanAnn, nil
 }
 
 // SyncManager returns the gossiper's SyncManager instance.
@@ -2363,23 +2386,27 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(nMsg *networkMsg,
 
 // handleChanAnnouncement processes a new channel announcement.
 func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
-	ann *lnwire.ChannelAnnouncement1,
+	ann lnwire.ChannelAnnouncement,
 	ops []batch.SchedulerOption) ([]networkMsg, bool) {
 
+	var (
+		scid      = ann.SCID()
+		chainHash = ann.GetChainHash()
+	)
+
 	log.Debugf("Processing ChannelAnnouncement1: peer=%v, short_chan_id=%v",
-		nMsg.peer, ann.ShortChannelID.ToUint64())
+		nMsg.peer, scid.ToUint64())
 
 	// We'll ignore any channel announcements that target any chain other
 	// than the set of chains we know of.
-	if !bytes.Equal(ann.ChainHash[:], d.cfg.ChainHash[:]) {
-		err := fmt.Errorf("ignoring ChannelAnnouncement1 from chain=%v"+
-			", gossiper on chain=%v", ann.ChainHash,
+	if !bytes.Equal(chainHash[:], d.cfg.ChainHash[:]) {
+		err := fmt.Errorf("ignoring %s from chain=%v"+
+			", gossiper on chain=%v", ann.MsgType(), chainHash,
 			d.cfg.ChainHash)
 		log.Errorf(err.Error())
 
 		key := newRejectCacheKey(
-			ann.ShortChannelID.ToUint64(),
-			sourceToPub(nMsg.source),
+			scid.ToUint64(), sourceToPub(nMsg.source),
 		)
 		_, _ = d.recentRejects.Put(key, &cachedReject{})
 
@@ -2390,14 +2417,12 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 	// If this is a remote ChannelAnnouncement1 with an alias SCID, we'll
 	// reject the announcement. Since the router accepts alias SCIDs,
 	// not erroring out would be a DoS vector.
-	if nMsg.isRemote && d.cfg.IsAlias(ann.ShortChannelID) {
-		err := fmt.Errorf("ignoring remote alias channel=%v",
-			ann.ShortChannelID)
+	if nMsg.isRemote && d.cfg.IsAlias(scid) {
+		err := fmt.Errorf("ignoring remote alias channel=%v", scid)
 		log.Errorf(err.Error())
 
 		key := newRejectCacheKey(
-			ann.ShortChannelID.ToUint64(),
-			sourceToPub(nMsg.source),
+			scid.ToUint64(), sourceToPub(nMsg.source),
 		)
 		_, _ = d.recentRejects.Put(key, &cachedReject{})
 
@@ -2408,11 +2433,10 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 	// If the advertised inclusionary block is beyond our knowledge of the
 	// chain tip, then we'll ignore it for now.
 	d.Lock()
-	if nMsg.isRemote && d.isPremature(ann.ShortChannelID, 0, nMsg) {
+	if nMsg.isRemote && d.isPremature(scid, 0, nMsg) {
 		log.Warnf("Announcement for chan_id=(%v), is premature: "+
 			"advertises height %v, only height %v is known",
-			ann.ShortChannelID.ToUint64(),
-			ann.ShortChannelID.BlockHeight, d.bestHeight)
+			scid.ToUint64(), scid.BlockHeight, d.bestHeight)
 		d.Unlock()
 		nMsg.err <- nil
 		return nil, false
@@ -2421,22 +2445,21 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 
 	// At this point, we'll now ask the router if this is a zombie/known
 	// edge. If so we can skip all the processing below.
-	if d.cfg.Router.IsKnownEdge(ann.ShortChannelID) {
+	if d.cfg.Router.IsKnownEdge(scid) {
 		nMsg.err <- nil
 		return nil, true
 	}
 
 	// If this is a remote channel announcement, then we'll validate all
 	// the signatures within the proof as it should be well formed.
-	var proof *channeldb.ChannelAuthProof
+	var proof channeldb.ChannelAuthProof
 	if nMsg.isRemote {
 		if err := routing.ValidateChannelAnn(ann); err != nil {
 			err := fmt.Errorf("unable to validate announcement: "+
 				"%v", err)
 
 			key := newRejectCacheKey(
-				ann.ShortChannelID.ToUint64(),
-				sourceToPub(nMsg.source),
+				scid.ToUint64(), sourceToPub(nMsg.source),
 			)
 			_, _ = d.recentRejects.Put(key, &cachedReject{})
 
@@ -2448,49 +2471,40 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 		// If the proof checks out, then we'll save the proof itself to
 		// the database so we can fetch it later when gossiping with
 		// other nodes.
-		proof = &channeldb.ChannelAuthProof{
-			NodeSig1Bytes:    ann.NodeSig1.ToSignatureBytes(),
-			NodeSig2Bytes:    ann.NodeSig2.ToSignatureBytes(),
-			BitcoinSig1Bytes: ann.BitcoinSig1.ToSignatureBytes(),
-			BitcoinSig2Bytes: ann.BitcoinSig2.ToSignatureBytes(),
+		var err error
+		proof, err = buildChanProof(ann)
+		if err != nil {
+			err := fmt.Errorf("unable to build announcement "+
+				"proof: %v", err)
+
+			log.Error(err)
+			nMsg.err <- err
+
+			return nil, false
 		}
 	}
 
 	// With the proof validated (if necessary), we can now store it within
 	// the database for our path finding and syncing needs.
-	var featureBuf bytes.Buffer
-	if err := ann.Features.Encode(&featureBuf); err != nil {
-		log.Errorf("unable to encode features: %v", err)
+	edge, err := buildEdgeInfo(ann, nMsg.optionalMsgFields)
+	if err != nil {
+		log.Errorf("unable to build edge info from announcement: %v",
+			err)
+
 		nMsg.err <- err
+
 		return nil, false
 	}
 
-	edge := &channeldb.ChannelEdgeInfo{
-		ChannelID:        ann.ShortChannelID.ToUint64(),
-		ChainHash:        ann.ChainHash,
-		NodeKey1Bytes:    ann.NodeID1,
-		NodeKey2Bytes:    ann.NodeID2,
-		BitcoinKey1Bytes: ann.BitcoinKey1,
-		BitcoinKey2Bytes: ann.BitcoinKey2,
-		AuthProof:        proof,
-		Features:         featureBuf.Bytes(),
-		ExtraOpaqueData:  ann.ExtraOpaqueData,
+	err = edge.SetAuthProof(proof)
+	if err != nil {
+		log.Errorf("unable set edge info proof: %v", err)
+		nMsg.err <- err
+
+		return nil, false
 	}
 
-	// If there were any optional message fields provided, we'll include
-	// them in its serialized disk representation now.
-	if nMsg.optionalMsgFields != nil {
-		if nMsg.optionalMsgFields.capacity != nil {
-			edge.Capacity = *nMsg.optionalMsgFields.capacity
-		}
-		if nMsg.optionalMsgFields.channelPoint != nil {
-			cp := *nMsg.optionalMsgFields.channelPoint
-			edge.ChannelPoint = cp
-		}
-	}
-
-	log.Debugf("Adding edge for short_chan_id: %v",
-		ann.ShortChannelID.ToUint64())
+	log.Debugf("Adding edge for short_chan_id: %v", scid.ToUint64())
 
 	// We will add the edge to the channel router. If the nodes present in
 	// this channel are not present in the database, a partial node will be
@@ -2500,13 +2514,13 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 	// channel ID. We do this to ensure no other goroutine has read the
 	// database and is now making decisions based on this DB state, before
 	// it writes to the DB.
-	d.channelMtx.Lock(ann.ShortChannelID.ToUint64())
-	err := d.cfg.Router.AddEdge(edge, ops...)
+	d.channelMtx.Lock(scid.ToUint64())
+	err = d.cfg.Router.AddEdge(edge, ops...)
 	if err != nil {
 		log.Debugf("Router rejected edge for short_chan_id(%v): %v",
-			ann.ShortChannelID.ToUint64(), err)
+			scid.ToUint64(), err)
 
-		defer d.channelMtx.Unlock(ann.ShortChannelID.ToUint64())
+		defer d.channelMtx.Unlock(scid.ToUint64())
 
 		// If the edge was rejected due to already being known, then it
 		// may be the case that this new message has a fresh channel
@@ -2517,7 +2531,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 			anns, rErr := d.processRejectedEdge(ann, proof)
 			if rErr != nil {
 				key := newRejectCacheKey(
-					ann.ShortChannelID.ToUint64(),
+					scid.ToUint64(),
 					sourceToPub(nMsg.source),
 				)
 				cr := &cachedReject{}
@@ -2542,8 +2556,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 		} else {
 			// Otherwise, this is just a regular rejected edge.
 			key := newRejectCacheKey(
-				ann.ShortChannelID.ToUint64(),
-				sourceToPub(nMsg.source),
+				scid.ToUint64(), sourceToPub(nMsg.source),
 			)
 			_, _ = d.recentRejects.Put(key, &cachedReject{})
 		}
@@ -2553,14 +2566,13 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 	}
 
 	// If err is nil, release the lock immediately.
-	d.channelMtx.Unlock(ann.ShortChannelID.ToUint64())
+	d.channelMtx.Unlock(scid.ToUint64())
 
-	log.Debugf("Finish adding edge for short_chan_id: %v",
-		ann.ShortChannelID.ToUint64())
+	log.Debugf("Finish adding edge for short_chan_id: %v", scid.ToUint64())
 
 	// If we earlier received any ChannelUpdates for this channel, we can
 	// now process them, as the channel is added to the graph.
-	shortChanID := ann.ShortChannelID.ToUint64()
+	shortChanID := scid.ToUint64()
 	var channelUpdates []*processedNetworkMsg
 
 	earlyChanUpdates, err := d.prematureChannelUpdates.Get(shortChanID)
@@ -2630,10 +2642,68 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 
 	nMsg.err <- nil
 
-	log.Debugf("Processed ChannelAnnouncement1: peer=%v, short_chan_id=%v",
-		nMsg.peer, ann.ShortChannelID.ToUint64())
+	log.Debugf("Processed %s: peer=%v, short_chan_id=%v", ann.MsgType(),
+		nMsg.peer, scid.ToUint64())
 
 	return announcements, true
+}
+
+func buildChanProof(ann lnwire.ChannelAnnouncement) (channeldb.ChannelAuthProof,
+	error) {
+
+	switch a := ann.(type) {
+	case *lnwire.ChannelAnnouncement1:
+		return &channeldb.ChannelAuthProof1{
+			NodeSig1Bytes:    a.NodeSig1.ToSignatureBytes(),
+			NodeSig2Bytes:    a.NodeSig2.ToSignatureBytes(),
+			BitcoinSig1Bytes: a.BitcoinSig1.ToSignatureBytes(),
+			BitcoinSig2Bytes: a.BitcoinSig2.ToSignatureBytes(),
+		}, nil
+	default:
+		return nil, fmt.Errorf("unhandled lnwire.ChannelAnnouncement "+
+			"implementation: %T", a)
+	}
+}
+
+func buildEdgeInfo(ann lnwire.ChannelAnnouncement, opts *optionalMsgFields) (
+	channeldb.ChannelEdgeInfo, error) {
+
+	switch a := ann.(type) {
+	case *lnwire.ChannelAnnouncement1:
+		var featureBuf bytes.Buffer
+		if err := a.Features.Encode(&featureBuf); err != nil {
+			return nil, err
+		}
+
+		edge := &channeldb.ChannelEdgeInfo1{
+			ChannelID:        a.ShortChannelID.ToUint64(),
+			ChainHash:        a.ChainHash,
+			NodeKey1Bytes:    a.NodeID1,
+			NodeKey2Bytes:    a.NodeID2,
+			BitcoinKey1Bytes: a.BitcoinKey1,
+			BitcoinKey2Bytes: a.BitcoinKey2,
+			Features:         featureBuf.Bytes(),
+			ExtraOpaqueData:  a.ExtraOpaqueData,
+		}
+
+		// If there were any optional message fields provided, we'll
+		// include them in its serialized disk representation now.
+		if opts != nil {
+			if opts.capacity != nil {
+				edge.Capacity = *opts.capacity
+			}
+			if opts.channelPoint != nil {
+				cp := *opts.channelPoint
+				edge.ChannelPoint = cp
+			}
+		}
+
+		return edge, nil
+
+	default:
+		return nil, fmt.Errorf("unhandled lnwire.ChannelAnnouncement "+
+			"implementation: %T", a)
+	}
 }
 
 // handleChanUpdate processes a new channel update.
@@ -2828,14 +2898,18 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 		edgeToUpdate = e2
 	}
 
+	chanID := chanInfo.GetChanID()
+
 	log.Debugf("Validating ChannelUpdate: channel=%v, from node=%x, has "+
-		"edge=%v", chanInfo.ChannelID, pubKey.SerializeCompressed(),
+		"edge=%v", chanID, pubKey.SerializeCompressed(),
 		edgeToUpdate != nil)
 
 	// Validate the channel announcement with the expected public key and
 	// channel capacity. In the case of an invalid channel update, we'll
 	// return an error to the caller and exit early.
-	err = routing.ValidateChannelUpdateAnn(pubKey, chanInfo.Capacity, upd)
+	err = routing.ValidateChannelUpdateAnn(
+		pubKey, chanInfo.GetCapacity(), upd,
+	)
 	if err != nil {
 		rErr := fmt.Errorf("unable to validate channel update "+
 			"announcement for short_chan_id=%v: %v",
@@ -2843,6 +2917,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 
 		log.Error(rErr)
 		nMsg.err <- rErr
+
 		return nil, false
 	}
 
@@ -2874,7 +2949,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 			// multiple aliases for a channel and we may otherwise
 			// rate-limit only a single alias of the channel,
 			// instead of the whole channel.
-			baseScid := chanInfo.ChannelID
+			baseScid := chanID
 			d.Lock()
 			rls, ok := d.chanUpdateRateLimiter[baseScid]
 			if !ok {
@@ -2907,7 +2982,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 	// only be a difference if AuthProof == nil, this is fine.
 	update := &channeldb.ChannelEdgePolicy{
 		SigBytes:                  upd.Signature.ToSignatureBytes(),
-		ChannelID:                 chanInfo.ChannelID,
+		ChannelID:                 chanID,
 		LastUpdate:                timestamp,
 		MessageFlags:              upd.MessageFlags,
 		ChannelFlags:              upd.ChannelFlags,
@@ -2932,8 +3007,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 			// Since we know the stored SCID in the graph, we'll
 			// cache that SCID.
 			key := newRejectCacheKey(
-				chanInfo.ChannelID,
-				sourceToPub(nMsg.source),
+				chanID, sourceToPub(nMsg.source),
 			)
 			_, _ = d.recentRejects.Put(key, &cachedReject{})
 
@@ -2950,7 +3024,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 	// to the greater network. However, our channel counter party will need
 	// to be given the update, so we'll try sending the update directly to
 	// the remote peer.
-	if !nMsg.isRemote && chanInfo.AuthProof == nil {
+	if !nMsg.isRemote && chanInfo.GetAuthProof() == nil {
 		if nMsg.optionalMsgFields != nil {
 			remoteAlias := nMsg.optionalMsgFields.remoteAlias
 			if remoteAlias != nil {
@@ -3007,7 +3081,9 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 	// authentication proof. We also won't broadcast the update if it
 	// contains an alias because the network would reject this.
 	var announcements []networkMsg
-	if chanInfo.AuthProof != nil && !d.cfg.IsAlias(upd.ShortChannelID) {
+	if chanInfo.GetAuthProof() != nil &&
+		!d.cfg.IsAlias(upd.ShortChannelID) {
+
 		announcements = append(announcements, networkMsg{
 			peer:     nMsg.peer,
 			source:   nMsg.source,
@@ -3096,9 +3172,14 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 		return nil, false
 	}
 
+	var (
+		node1Bytes = chanInfo.Node1Bytes()
+		node2Bytes = chanInfo.Node2Bytes()
+	)
+
 	nodeID := nMsg.source.SerializeCompressed()
-	isFirstNode := bytes.Equal(nodeID, chanInfo.NodeKey1Bytes[:])
-	isSecondNode := bytes.Equal(nodeID, chanInfo.NodeKey2Bytes[:])
+	isFirstNode := bytes.Equal(nodeID, node1Bytes[:])
+	isSecondNode := bytes.Equal(nodeID, node2Bytes[:])
 
 	// Ensure that channel that was retrieved belongs to the peer which
 	// sent the proof announcement.
@@ -3117,9 +3198,9 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 	if !nMsg.isRemote {
 		var remotePubKey [33]byte
 		if isFirstNode {
-			remotePubKey = chanInfo.NodeKey2Bytes
+			remotePubKey = node2Bytes
 		} else {
-			remotePubKey = chanInfo.NodeKey1Bytes
+			remotePubKey = node1Bytes
 		}
 
 		// Since the remote peer might not be online we'll call a
@@ -3136,7 +3217,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 	}
 
 	// Check if we already have the full proof for this channel.
-	if chanInfo.AuthProof != nil {
+	if chanInfo.GetAuthProof() != nil {
 		// If we already have the fully assembled proof, then the peer
 		// sending us their proof has probably not received our local
 		// proof yet. So be kind and send them the full proof.
@@ -3155,7 +3236,8 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 					ann.ChannelID, peerID)
 
 				ca, _, _, err := netann.CreateChanAnnouncement(
-					chanInfo.AuthProof, chanInfo, e1, e2,
+					chanInfo.GetAuthProof(), chanInfo, e1,
+					e2,
 				)
 				if err != nil {
 					log.Errorf("unable to gen ann: %v",
@@ -3217,7 +3299,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 	// We now have both halves of the channel announcement proof, then
 	// we'll reconstruct the initial announcement so we can validate it
 	// shortly below.
-	var dbProof channeldb.ChannelAuthProof
+	var dbProof channeldb.ChannelAuthProof1
 	if isFirstNode {
 		dbProof.NodeSig1Bytes = ann.NodeSignature.ToSignatureBytes()
 		dbProof.NodeSig2Bytes = oppProof.NodeSignature.ToSignatureBytes()
@@ -3309,10 +3391,10 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 	// it since the source gets skipped. This isn't necessary for channel
 	// updates and announcement signatures since we send those directly to
 	// our channel counterparty through the gossiper's reliable sender.
-	node1Ann, err := d.fetchNodeAnn(chanInfo.NodeKey1Bytes)
+	node1Ann, err := d.fetchNodeAnn(chanInfo.Node1Bytes())
 	if err != nil {
 		log.Debugf("Unable to fetch node announcement for %x: %v",
-			chanInfo.NodeKey1Bytes, err)
+			chanInfo.Node1Bytes(), err)
 	} else {
 		if nodeKey1, err := chanInfo.NodeKey1(); err == nil {
 			announcements = append(announcements, networkMsg{
@@ -3323,10 +3405,10 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 		}
 	}
 
-	node2Ann, err := d.fetchNodeAnn(chanInfo.NodeKey2Bytes)
+	node2Ann, err := d.fetchNodeAnn(chanInfo.Node2Bytes())
 	if err != nil {
 		log.Debugf("Unable to fetch node announcement for %x: %v",
-			chanInfo.NodeKey2Bytes, err)
+			chanInfo.Node2Bytes(), err)
 	} else {
 		if nodeKey2, err := chanInfo.NodeKey2(); err == nil {
 			announcements = append(announcements, networkMsg{

@@ -58,6 +58,22 @@ type ChannelAnnouncement1 struct {
 	ExtraOpaqueData ExtraOpaqueData
 }
 
+func (a *ChannelAnnouncement1) Node1KeyBytes() [33]byte {
+	return a.NodeID1
+}
+
+func (a *ChannelAnnouncement1) Node2KeyBytes() [33]byte {
+	return a.NodeID2
+}
+
+func (a *ChannelAnnouncement1) GetChainHash() chainhash.Hash {
+	return a.ChainHash
+}
+
+func (a *ChannelAnnouncement1) SCID() ShortChannelID {
+	return a.ShortChannelID
+}
+
 // A compile time check to ensure ChannelAnnouncement1 implements the
 // lnwire.Message interface.
 var _ Message = (*ChannelAnnouncement1)(nil)
@@ -184,3 +200,5 @@ func (a *ChannelAnnouncement1) DataToSign() ([]byte, error) {
 
 	return buf.Bytes(), nil
 }
+
+var _ ChannelAnnouncement = (*ChannelAnnouncement1)(nil)
