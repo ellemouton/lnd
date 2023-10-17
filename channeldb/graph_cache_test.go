@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -41,8 +42,8 @@ func (n *node) Features() *lnwire.FeatureVector {
 }
 
 func (n *node) ForEachChannel(db kvdb.Backend, tx kvdb.RTx,
-	cb func(kvdb.Backend, kvdb.RTx, *ChannelEdgeInfo1, *ChannelEdgePolicy,
-		*ChannelEdgePolicy) error) error {
+	cb func(kvdb.Backend, kvdb.RTx, models.ChannelEdgeInfo,
+		*ChannelEdgePolicy, *ChannelEdgePolicy) error) error {
 
 	for idx := range n.edgeInfos {
 		err := cb(

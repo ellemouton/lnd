@@ -1262,9 +1262,7 @@ func TestAddProof(t *testing.T) {
 
 	info, _, _, err := ctx.router.GetChannelByID(*chanID)
 	require.NoError(t, err, "unable to get channel")
-	if info.AuthProof == nil {
-		t.Fatal("proof have been updated")
-	}
+	require.NotNil(t, info.GetAuthProof())
 }
 
 // TestIgnoreNodeAnnouncement tests that adding a node to the router that is

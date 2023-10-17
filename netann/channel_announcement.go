@@ -2,8 +2,10 @@ package netann
 
 import (
 	"bytes"
+	"fmt"
 
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
 
@@ -12,7 +14,29 @@ import (
 // function is used to transform out database structs into the corresponding wire
 // structs for announcing new channels to other peers, or simply syncing up a
 // peer's initial routing table upon connect.
-func CreateChanAnnouncement(chanProof *channeldb.ChannelAuthProof1,
+func CreateChanAnnouncement(chanProof models.ChannelAuthProof,
+	chanInfo models.ChannelEdgeInfo,
+	e1, e2 *channeldb.ChannelEdgePolicy) (lnwire.ChannelAnnouncement,
+	*lnwire.ChannelUpdate, *lnwire.ChannelUpdate, error) {
+
+	switch proof := chanProof.(type) {
+	case *channeldb.ChannelAuthProof1:
+		info, ok := chanInfo.(*channeldb.ChannelEdgeInfo1)
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("expected type "+
+				"ChannelEdgeInfo1 to be paired with "+
+				"ChannelAuthProof1, got: %T", chanInfo)
+		}
+
+		return createChanAnnouncement1(proof, info, e1, e2)
+
+	default:
+		return nil, nil, nil, fmt.Errorf("unhandled "+
+			"channeldb.ChannelAuthProof type: %T", chanProof)
+	}
+}
+
+func createChanAnnouncement1(chanProof *channeldb.ChannelAuthProof1,
 	chanInfo *channeldb.ChannelEdgeInfo1,
 	e1, e2 *channeldb.ChannelEdgePolicy) (lnwire.ChannelAnnouncement,
 	*lnwire.ChannelUpdate, *lnwire.ChannelUpdate, error) {
