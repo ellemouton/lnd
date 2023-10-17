@@ -141,7 +141,7 @@ type ChannelGraphSource interface {
 	// AddProof updates the channel edge info with proof which is needed to
 	// properly announce the edge to the rest of the network.
 	AddProof(chanID lnwire.ShortChannelID,
-		proof *channeldb.ChannelAuthProof) error
+		proof *channeldb.ChannelAuthProof1) error
 
 	// UpdateEdge is used to update edge information, without this message
 	// edge considered as not fully constructed.
@@ -2841,7 +2841,7 @@ func (r *ChannelRouter) ForAllOutgoingChannels(cb func(kvdb.RTx,
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (r *ChannelRouter) AddProof(chanID lnwire.ShortChannelID,
-	proof *channeldb.ChannelAuthProof) error {
+	proof *channeldb.ChannelAuthProof1) error {
 
 	info, _, _, err := r.cfg.Graph.FetchChannelEdgesByID(chanID.ToUint64())
 	if err != nil {
