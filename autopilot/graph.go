@@ -12,6 +12,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -89,7 +90,7 @@ func (d dbNode) Addrs() []net.Addr {
 // NOTE: Part of the autopilot.Node interface.
 func (d dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 	return d.node.ForEachChannel(d.db, d.tx, func(db kvdb.Backend,
-		tx kvdb.RTx, ei *channeldb.ChannelEdgeInfo1, ep,
+		tx kvdb.RTx, ei models.ChannelEdgeInfo, ep,
 		_ *channeldb.ChannelEdgePolicy) error {
 
 		// Skip channels for which no outgoing edge policy is available.
@@ -105,7 +106,7 @@ func (d dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 
 		edge := ChannelEdge{
 			ChanID:   lnwire.NewShortChanIDFromInt(ep.ChannelID),
-			Capacity: ei.Capacity,
+			Capacity: ei.GetCapacity(),
 			Peer: dbNode{
 				db:   db,
 				tx:   tx,
