@@ -288,8 +288,8 @@ func (s *Server) ImportGraph(ctx context.Context,
 				rpcEdge.ChanPoint, err)
 		}
 
-		makePolicy := func(rpcPolicy *lnrpc.RoutingPolicy) *channeldb.ChannelEdgePolicy {
-			policy := &channeldb.ChannelEdgePolicy{
+		makePolicy := func(rpcPolicy *lnrpc.RoutingPolicy) *channeldb.ChannelEdgePolicy1 {
+			policy := &channeldb.ChannelEdgePolicy1{
 				ChannelID: rpcEdge.ChannelId,
 				LastUpdate: time.Unix(
 					int64(rpcPolicy.LastUpdate), 0,

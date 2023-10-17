@@ -91,7 +91,7 @@ func (d dbNode) Addrs() []net.Addr {
 func (d dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 	return d.node.ForEachChannel(d.db, d.tx, func(db kvdb.Backend,
 		tx kvdb.RTx, ei models.ChannelEdgeInfo, ep,
-		_ *channeldb.ChannelEdgePolicy) error {
+		_ *channeldb.ChannelEdgePolicy1) error {
 
 		// Skip channels for which no outgoing edge policy is available.
 		//
@@ -236,7 +236,7 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 	if err := d.db.AddChannelEdge(edge); err != nil {
 		return nil, nil, err
 	}
-	edgePolicy := &channeldb.ChannelEdgePolicy{
+	edgePolicy := &channeldb.ChannelEdgePolicy1{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 chanID.ToUint64(),
 		LastUpdate:                time.Now(),
@@ -252,7 +252,7 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 	if err := d.db.UpdateEdgePolicy(edgePolicy); err != nil {
 		return nil, nil, err
 	}
-	edgePolicy = &channeldb.ChannelEdgePolicy{
+	edgePolicy = &channeldb.ChannelEdgePolicy1{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 chanID.ToUint64(),
 		LastUpdate:                time.Now(),

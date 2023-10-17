@@ -376,7 +376,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 			targetNode = edgeInfo.NodeKey2Bytes
 		}
 
-		edgePolicy := &channeldb.ChannelEdgePolicy{
+		edgePolicy := &channeldb.ChannelEdgePolicy1{
 			SigBytes:                  testSig.Serialize(),
 			MessageFlags:              lnwire.ChanUpdateMsgFlags(edge.MessageFlags),
 			ChannelFlags:              channelFlags,
@@ -689,7 +689,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 				node2Features = node2.Features
 			}
 
-			edgePolicy := &channeldb.ChannelEdgePolicy{
+			edgePolicy := &channeldb.ChannelEdgePolicy1{
 				SigBytes:                  testSig.Serialize(),
 				MessageFlags:              msgFlags,
 				ChannelFlags:              channelFlags,
@@ -727,7 +727,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 				node1Features = node1.Features
 			}
 
-			edgePolicy := &channeldb.ChannelEdgePolicy{
+			edgePolicy := &channeldb.ChannelEdgePolicy1{
 				SigBytes:                  testSig.Serialize(),
 				MessageFlags:              msgFlags,
 				ChannelFlags:              channelFlags,
