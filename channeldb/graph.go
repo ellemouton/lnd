@@ -249,6 +249,10 @@ func NewChannelGraph(db kvdb.Backend, rejectCacheSize, chanCacheSize int,
 	return g, nil
 }
 
+func (c *ChannelGraph) DB() kvdb.Backend {
+	return c.db
+}
+
 // channelMapKey is the key structure used for storing channel edge policies.
 type channelMapKey struct {
 	nodeKey route.Vertex
@@ -557,7 +561,7 @@ func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
 	return c.ForEachNode(func(tx kvdb.RTx, node *LightningNode) error {
 		channels := make(map[uint64]*DirectedChannel)
 
-		err := node.ForEachChannel(tx, func(tx kvdb.RTx,
+		err := node.ForEachChannel(c.db, tx, func(tx kvdb.RTx,
 			e *ChannelEdgeInfo1, p1 *ChannelEdgePolicy,
 			p2 *ChannelEdgePolicy) error {
 
@@ -679,7 +683,6 @@ func (c *ChannelGraph) ForEachNode(
 			if err != nil {
 				return err
 			}
-			node.db = c.db
 
 			// Execute the callback, the transaction will abort if
 			// this returns an error.
@@ -777,7 +780,6 @@ func (c *ChannelGraph) sourceNode(nodes kvdb.RBucket) (*LightningNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	node.db = c.db
 
 	return &node, nil
 }
@@ -1186,8 +1188,9 @@ func (c *ChannelGraph) HasChannelEdge(
 			return ErrGraphNodeNotFound
 		}
 
-		e1, e2, err := fetchChanEdgePolicies(edgeIndex, edges, nodes,
-			channelID[:], c.db)
+		e1, e2, err := fetchChanEdgePolicies(
+			edgeIndex, edges, nodes, channelID[:],
+		)
 		if err != nil {
 			return err
 		}
@@ -1943,7 +1946,7 @@ func (c *ChannelGraph) ChanUpdatesInHorizon(startTime,
 			// With the static information obtained, we'll now
 			// fetch the dynamic policy info.
 			edge1, edge2, err := fetchChanEdgePolicies(
-				edgeIndex, edges, nodes, chanID, c.db,
+				edgeIndex, edges, nodes, chanID,
 			)
 			if err != nil {
 				chanID := byteOrder.Uint64(chanID)
@@ -2035,7 +2038,6 @@ func (c *ChannelGraph) NodeUpdatesInHorizon(startTime,
 			if err != nil {
 				return err
 			}
-			node.db = c.db
 
 			nodesInHorizon = append(nodesInHorizon, node)
 		}
@@ -2275,7 +2277,7 @@ func (c *ChannelGraph) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 			// With the static information obtained, we'll now
 			// fetch the dynamic policy info.
 			edge1, edge2, err := fetchChanEdgePolicies(
-				edgeIndex, edges, nodes, cidBytes[:], c.db,
+				edgeIndex, edges, nodes, cidBytes[:],
 			)
 			if err != nil {
 				return err
@@ -2356,7 +2358,7 @@ func (c *ChannelGraph) delChannelEdge(edges, edgeIndex, chanIndex, zombieIndex,
 	// times.
 	cid := byteOrder.Uint64(chanID)
 	edge1, edge2, err := fetchChanEdgePolicies(
-		edgeIndex, edges, nodes, chanID, nil,
+		edgeIndex, edges, nodes, chanID,
 	)
 	if err != nil {
 		return err
@@ -2657,8 +2659,6 @@ type LightningNode struct {
 	// compatible manner.
 	ExtraOpaqueData []byte
 
-	db kvdb.Backend
-
 	// TODO(roasbeef): discovery will need storage to keep it's last IP
 	// address and re-announce if interface changes?
 
@@ -2740,14 +2740,16 @@ func (l *LightningNode) NodeAnnouncement(signed bool) (*lnwire.NodeAnnouncement,
 // isPublic determines whether the node is seen as public within the graph from
 // the source node's point of view. An existing database transaction can also be
 // specified.
-func (l *LightningNode) isPublic(tx kvdb.RTx, sourcePubKey []byte) (bool, error) {
+func (l *LightningNode) isPublic(db kvdb.Backend, tx kvdb.RTx,
+	sourcePubKey []byte) (bool, error) {
+
 	// In order to determine whether this node is publicly advertised within
 	// the graph, we'll need to look at all of its edges and check whether
 	// they extend to any other node than the source node. errDone will be
 	// used to terminate the check early.
 	nodeIsPublic := false
 	errDone := errors.New("done")
-	err := l.ForEachChannel(tx, func(_ kvdb.RTx, info *ChannelEdgeInfo1,
+	err := l.ForEachChannel(db, tx, func(_ kvdb.RTx, info *ChannelEdgeInfo1,
 		_, _ *ChannelEdgePolicy) error {
 
 		// If this edge doesn't extend to the source node, we'll
@@ -2807,7 +2809,6 @@ func (c *ChannelGraph) FetchLightningNode(nodePub route.Vertex) (
 		if err != nil {
 			return err
 		}
-		n.db = c.db
 
 		node = &n
 
@@ -2919,7 +2920,8 @@ func (c *ChannelGraph) HasLightningNode(nodePub [33]byte) (time.Time, bool, erro
 // nodeTraversal is used to traverse all channels of a node given by its
 // public key and passes channel information into the specified callback.
 func nodeTraversal(tx kvdb.RTx, nodePub []byte, db kvdb.Backend,
-	cb func(kvdb.RTx, *ChannelEdgeInfo1, *ChannelEdgePolicy, *ChannelEdgePolicy) error) error {
+	cb func(kvdb.RTx, *ChannelEdgeInfo1, *ChannelEdgePolicy,
+		*ChannelEdgePolicy) error) error {
 
 	traversal := func(tx kvdb.RTx) error {
 		nodes := tx.ReadBucket(nodeBucket)
@@ -3016,12 +3018,11 @@ func nodeTraversal(tx kvdb.RTx, nodePub []byte, db kvdb.Backend,
 // should be passed as the first argument.  Otherwise the first argument should
 // be nil and a fresh transaction will be created to execute the graph
 // traversal.
-func (l *LightningNode) ForEachChannel(tx kvdb.RTx,
+func (l *LightningNode) ForEachChannel(db kvdb.Backend, tx kvdb.RTx,
 	cb func(kvdb.RTx, *ChannelEdgeInfo1, *ChannelEdgePolicy,
 		*ChannelEdgePolicy) error) error {
 
 	nodePub := l.PubKeyBytes[:]
-	db := l.db
 
 	return nodeTraversal(tx, nodePub, db, cb)
 }
@@ -3236,7 +3237,6 @@ func (c *ChannelEdgeInfo1) FetchOtherNode(tx kvdb.RTx,
 		if err != nil {
 			return err
 		}
-		node.db = c.db
 
 		targetNode = &node
 
@@ -3447,8 +3447,6 @@ type ChannelEdgePolicy struct {
 	// and ensure we're able to make upgrades to the network in a forwards
 	// compatible manner.
 	ExtraOpaqueData []byte
-
-	db kvdb.Backend
 }
 
 // Signature is a channel announcement signature, which is needed for proper
@@ -3570,7 +3568,7 @@ func (c *ChannelGraph) FetchChannelEdgesByOutpoint(op *wire.OutPoint,
 		// we'll fetch the routing policies for each for the directed
 		// edges.
 		e1, e2, err := fetchChanEdgePolicies(
-			edgeIndex, edges, nodes, chanID, c.db,
+			edgeIndex, edges, nodes, chanID,
 		)
 		if err != nil {
 			return err
@@ -3675,7 +3673,7 @@ func (c *ChannelGraph) FetchChannelEdgesByID(chanID uint64,
 		// Then we'll attempt to fetch the accompanying policies of this
 		// edge.
 		e1, e2, err := fetchChanEdgePolicies(
-			edgeIndex, edges, nodes, channelID[:], c.db,
+			edgeIndex, edges, nodes, channelID[:],
 		)
 		if err != nil {
 			return err
@@ -3718,7 +3716,7 @@ func (c *ChannelGraph) IsPublicNode(pubKey [33]byte) (bool, error) {
 			return err
 		}
 
-		nodeIsPublic, err = node.isPublic(tx, ourPubKey)
+		nodeIsPublic, err = node.isPublic(c.db, tx, ourPubKey)
 		return err
 	}, func() {
 		nodeIsPublic = false
@@ -3832,11 +3830,6 @@ func (c *ChannelGraph) ChannelView() ([]EdgePoint, error) {
 	}
 
 	return edgePoints, nil
-}
-
-// NewChannelEdgePolicy returns a new blank ChannelEdgePolicy.
-func (c *ChannelGraph) NewChannelEdgePolicy() *ChannelEdgePolicy {
-	return &ChannelEdgePolicy{db: c.db}
 }
 
 // MarkEdgeZombie attempts to mark a channel identified by its channel ID as a
@@ -4618,8 +4611,8 @@ func fetchChanEdgePolicy(edges kvdb.RBucket, chanID []byte,
 }
 
 func fetchChanEdgePolicies(edgeIndex kvdb.RBucket, edges kvdb.RBucket,
-	nodes kvdb.RBucket, chanID []byte,
-	db kvdb.Backend) (*ChannelEdgePolicy, *ChannelEdgePolicy, error) {
+	nodes kvdb.RBucket, chanID []byte) (*ChannelEdgePolicy,
+	*ChannelEdgePolicy, error) {
 
 	edgeInfo := edgeIndex.Get(chanID)
 	if edgeInfo == nil {
@@ -4635,24 +4628,12 @@ func fetchChanEdgePolicies(edgeIndex kvdb.RBucket, edges kvdb.RBucket,
 		return nil, nil, err
 	}
 
-	// As we may have a single direction of the edge but not the other,
-	// only fill in the database pointers if the edge is found.
-	if edge1 != nil {
-		edge1.db = db
-		edge1.Node.db = db
-	}
-
 	// Similarly, the second node is contained within the latter
 	// half of the edge information.
 	node2Pub := edgeInfo[33:66]
 	edge2, err := fetchChanEdgePolicy(edges, chanID, node2Pub, nodes)
 	if err != nil {
 		return nil, nil, err
-	}
-
-	if edge2 != nil {
-		edge2.db = db
-		edge2.Node.db = db
 	}
 
 	return edge1, edge2, nil

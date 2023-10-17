@@ -53,6 +53,8 @@ func ChannelGraphFromDatabase(db *channeldb.ChannelGraph) ChannelGraph {
 // channeldb.LightningNode. The wrapper method implement the autopilot.Node
 // interface.
 type dbNode struct {
+	db kvdb.Backend
+
 	tx kvdb.RTx
 
 	node *channeldb.LightningNode
@@ -86,8 +88,9 @@ func (d dbNode) Addrs() []net.Addr {
 //
 // NOTE: Part of the autopilot.Node interface.
 func (d dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
-	return d.node.ForEachChannel(d.tx, func(tx kvdb.RTx,
-		ei *channeldb.ChannelEdgeInfo1, ep, _ *channeldb.ChannelEdgePolicy) error {
+	return d.node.ForEachChannel(d.db, d.tx, func(tx kvdb.RTx,
+		ei *channeldb.ChannelEdgeInfo1, ep,
+		_ *channeldb.ChannelEdgePolicy) error {
 
 		// Skip channels for which no outgoing edge policy is available.
 		//
@@ -104,6 +107,7 @@ func (d dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 			ChanID:   lnwire.NewShortChanIDFromInt(ep.ChannelID),
 			Capacity: ei.Capacity,
 			Peer: dbNode{
+				db:   d.db,
 				tx:   tx,
 				node: ep.Node,
 			},
@@ -128,6 +132,7 @@ func (d *databaseChannelGraph) ForEachNode(cb func(Node) error) error {
 		}
 
 		node := dbNode{
+			db:   d.db.DB(),
 			tx:   tx,
 			node: n,
 		}
@@ -267,6 +272,7 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 			Capacity: capacity,
 			Peer: dbNode{
 				node: vertex1,
+				db:   d.db.DB(),
 			},
 		},
 		&ChannelEdge{
@@ -274,6 +280,7 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 			Capacity: capacity,
 			Peer: dbNode{
 				node: vertex2,
+				db:   d.db.DB(),
 			},
 		},
 		nil
