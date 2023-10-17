@@ -3068,7 +3068,7 @@ type ChannelEdgeInfo1 struct {
 	// AuthProof is the authentication proof for this channel. This proof
 	// contains a set of signatures binding four identities, which attests
 	// to the legitimacy of the advertised channel.
-	AuthProof *ChannelAuthProof
+	AuthProof *ChannelAuthProof1
 
 	// ChannelPoint is the funding outpoint of the channel. This can be
 	// used to uniquely identify the channel within the channel graph.
@@ -3255,14 +3255,14 @@ func (c *ChannelEdgeInfo1) FetchOtherNode(tx kvdb.RTx,
 	return targetNode, err
 }
 
-// ChannelAuthProof is the authentication proof (the signature portion) for a
+// ChannelAuthProof1 is the authentication proof (the signature portion) for a
 // channel. Using the four signatures contained in the struct, and some
 // auxiliary knowledge (the funding script, node identities, and outpoint) nodes
 // on the network are able to validate the authenticity and existence of a
 // channel. Each of these signatures signs the following digest: chanID ||
 // nodeID1 || nodeID2 || bitcoinKey1|| bitcoinKey2 || 2-byte-feature-len ||
 // features.
-type ChannelAuthProof struct {
+type ChannelAuthProof1 struct {
 	// nodeSig1 is a cached instance of the first node signature.
 	nodeSig1 *ecdsa.Signature
 
@@ -3298,7 +3298,7 @@ type ChannelAuthProof struct {
 //
 // NOTE: By having this method to access an attribute, we ensure we only need
 // to fully deserialize the signature if absolutely necessary.
-func (c *ChannelAuthProof) Node1Sig() (*ecdsa.Signature, error) {
+func (c *ChannelAuthProof1) Node1Sig() (*ecdsa.Signature, error) {
 	if c.nodeSig1 != nil {
 		return c.nodeSig1, nil
 	}
@@ -3319,7 +3319,7 @@ func (c *ChannelAuthProof) Node1Sig() (*ecdsa.Signature, error) {
 //
 // NOTE: By having this method to access an attribute, we ensure we only need
 // to fully deserialize the signature if absolutely necessary.
-func (c *ChannelAuthProof) Node2Sig() (*ecdsa.Signature, error) {
+func (c *ChannelAuthProof1) Node2Sig() (*ecdsa.Signature, error) {
 	if c.nodeSig2 != nil {
 		return c.nodeSig2, nil
 	}
@@ -3339,7 +3339,7 @@ func (c *ChannelAuthProof) Node2Sig() (*ecdsa.Signature, error) {
 //
 // NOTE: By having this method to access an attribute, we ensure we only need
 // to fully deserialize the signature if absolutely necessary.
-func (c *ChannelAuthProof) BitcoinSig1() (*ecdsa.Signature, error) {
+func (c *ChannelAuthProof1) BitcoinSig1() (*ecdsa.Signature, error) {
 	if c.bitcoinSig1 != nil {
 		return c.bitcoinSig1, nil
 	}
@@ -3359,7 +3359,7 @@ func (c *ChannelAuthProof) BitcoinSig1() (*ecdsa.Signature, error) {
 //
 // NOTE: By having this method to access an attribute, we ensure we only need
 // to fully deserialize the signature if absolutely necessary.
-func (c *ChannelAuthProof) BitcoinSig2() (*ecdsa.Signature, error) {
+func (c *ChannelAuthProof1) BitcoinSig2() (*ecdsa.Signature, error) {
 	if c.bitcoinSig2 != nil {
 		return c.bitcoinSig2, nil
 	}
@@ -3376,7 +3376,7 @@ func (c *ChannelAuthProof) BitcoinSig2() (*ecdsa.Signature, error) {
 
 // IsEmpty check is the authentication proof is empty Proof is empty if at
 // least one of the signatures are equal to nil.
-func (c *ChannelAuthProof) IsEmpty() bool {
+func (c *ChannelAuthProof1) IsEmpty() bool {
 	return len(c.NodeSig1Bytes) == 0 ||
 		len(c.NodeSig2Bytes) == 0 ||
 		len(c.BitcoinSig1Bytes) == 0 ||
@@ -4411,7 +4411,7 @@ func deserializeChanEdgeInfo(r io.Reader) (ChannelEdgeInfo1, error) {
 		return ChannelEdgeInfo1{}, err
 	}
 
-	proof := &ChannelAuthProof{}
+	proof := &ChannelAuthProof1{}
 
 	proof.NodeSig1Bytes, err = wire.ReadVarBytes(r, 0, 80, "sigs")
 	if err != nil {
