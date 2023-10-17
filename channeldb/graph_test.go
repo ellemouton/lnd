@@ -327,7 +327,7 @@ func TestEdgeInsertionDeletion(t *testing.T) {
 	edgeInfo := ChannelEdgeInfo1{
 		ChannelID: chanID,
 		ChainHash: key,
-		AuthProof: &ChannelAuthProof{
+		AuthProof: &ChannelAuthProof1{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
@@ -401,7 +401,7 @@ func createEdge(height, txIndex uint32, txPosition uint16, outPointIndex uint32,
 	edgeInfo := ChannelEdgeInfo1{
 		ChannelID: shortChanID.ToUint64(),
 		ChainHash: key,
-		AuthProof: &ChannelAuthProof{
+		AuthProof: &ChannelAuthProof1{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
@@ -643,7 +643,7 @@ func createChannelEdge(db kvdb.Backend, node1, node2 *LightningNode) (*ChannelEd
 	edgeInfo := &ChannelEdgeInfo1{
 		ChannelID: chanID,
 		ChainHash: key,
-		AuthProof: &ChannelAuthProof{
+		AuthProof: &ChannelAuthProof1{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
@@ -1254,7 +1254,7 @@ func fillTestGraph(t require.TestingT, graph *ChannelGraph, numNodes,
 			edgeInfo := ChannelEdgeInfo1{
 				ChannelID: chanID,
 				ChainHash: key,
-				AuthProof: &ChannelAuthProof{
+				AuthProof: &ChannelAuthProof1{
 					NodeSig1Bytes:    testSig.Serialize(),
 					NodeSig2Bytes:    testSig.Serialize(),
 					BitcoinSig1Bytes: testSig.Serialize(),
@@ -1435,7 +1435,7 @@ func TestGraphPruning(t *testing.T) {
 		edgeInfo := ChannelEdgeInfo1{
 			ChannelID: chanID,
 			ChainHash: key,
-			AuthProof: &ChannelAuthProof{
+			AuthProof: &ChannelAuthProof1{
 				NodeSig1Bytes:    testSig.Serialize(),
 				NodeSig2Bytes:    testSig.Serialize(),
 				BitcoinSig1Bytes: testSig.Serialize(),
