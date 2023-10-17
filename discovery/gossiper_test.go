@@ -464,7 +464,7 @@ type annBatch struct {
 	nodeAnn1 *lnwire.NodeAnnouncement
 	nodeAnn2 *lnwire.NodeAnnouncement
 
-	chanAnn *lnwire.ChannelAnnouncement
+	chanAnn *lnwire.ChannelAnnouncement1
 
 	chanUpdAnn1 *lnwire.ChannelUpdate
 	chanUpdAnn2 *lnwire.ChannelUpdate
@@ -623,9 +623,9 @@ func signUpdate(nodeKey *btcec.PrivateKey, a *lnwire.ChannelUpdate) error {
 
 func createAnnouncementWithoutProof(blockHeight uint32,
 	key1, key2 *btcec.PublicKey,
-	extraBytes ...[]byte) *lnwire.ChannelAnnouncement {
+	extraBytes ...[]byte) *lnwire.ChannelAnnouncement1 {
 
-	a := &lnwire.ChannelAnnouncement{
+	a := &lnwire.ChannelAnnouncement1{
 		ShortChannelID: lnwire.ShortChannelID{
 			BlockHeight: blockHeight,
 			TxIndex:     0,
@@ -645,13 +645,13 @@ func createAnnouncementWithoutProof(blockHeight uint32,
 }
 
 func createRemoteChannelAnnouncement(blockHeight uint32,
-	extraBytes ...[]byte) (*lnwire.ChannelAnnouncement, error) {
+	extraBytes ...[]byte) (*lnwire.ChannelAnnouncement1, error) {
 
 	return createChannelAnnouncement(blockHeight, remoteKeyPriv1, remoteKeyPriv2, extraBytes...)
 }
 
 func createChannelAnnouncement(blockHeight uint32, key1, key2 *btcec.PrivateKey,
-	extraBytes ...[]byte) (*lnwire.ChannelAnnouncement, error) {
+	extraBytes ...[]byte) (*lnwire.ChannelAnnouncement1, error) {
 
 	a := createAnnouncementWithoutProof(blockHeight, key1.PubKey(), key2.PubKey(), extraBytes...)
 
@@ -1566,7 +1566,7 @@ out:
 
 // TestSignatureAnnouncementFullProofWhenRemoteProof tests that if a remote
 // proof is received when we already have the full proof, the gossiper will send
-// the full proof (ChannelAnnouncement) to the remote peer.
+// the full proof (ChannelAnnouncement1) to the remote peer.
 func TestSignatureAnnouncementFullProofWhenRemoteProof(t *testing.T) {
 	t.Parallel()
 
@@ -1728,7 +1728,7 @@ func TestSignatureAnnouncementFullProofWhenRemoteProof(t *testing.T) {
 	}
 
 	// Now give the gossiper the remote proof yet again. This should
-	// trigger a send of the full ChannelAnnouncement.
+	// trigger a send of the full ChannelAnnouncement1.
 	select {
 	case err = <-ctx.gossiper.ProcessRemoteAnnouncement(
 		batch.remoteProofAnn, remotePeer,
@@ -1741,10 +1741,9 @@ func TestSignatureAnnouncementFullProofWhenRemoteProof(t *testing.T) {
 	// We expect the gossiper to send this message to the remote peer.
 	select {
 	case msg := <-sentToPeer:
-		_, ok := msg.(*lnwire.ChannelAnnouncement)
-		if !ok {
-			t.Fatalf("expected ChannelAnnouncement, instead got %T", msg)
-		}
+		_, ok := msg.(*lnwire.ChannelAnnouncement1)
+		require.Truef(t, ok,
+			"expected ChannelAnnouncement1, instead got %T", msg)
 	case <-time.After(2 * time.Second):
 		t.Fatal("did not send local proof to peer")
 	}
@@ -2058,7 +2057,7 @@ func TestForwardPrivateNodeAnnouncement(t *testing.T) {
 
 	// Now, we'll attempt to forward the NodeAnnouncement for the same node
 	// by opening a public channel on the network. We'll create a
-	// ChannelAnnouncement and hand it off to the gossiper in order to
+	// ChannelAnnouncement1 and hand it off to the gossiper in order to
 	// process it.
 	remoteChanAnn, err := createRemoteChannelAnnouncement(startingHeight - 1)
 	require.NoError(t, err, "unable to create remote channel announcement")
@@ -2360,8 +2359,8 @@ func TestProcessZombieEdgeNowLive(t *testing.T) {
 }
 
 // TestReceiveRemoteChannelUpdateFirst tests that if we receive a ChannelUpdate
-// from the remote before we have processed our own ChannelAnnouncement, it will
-// be reprocessed later, after our ChannelAnnouncement.
+// from the remote before we have processed our own ChannelAnnouncement1, it will
+// be reprocessed later, after our ChannelAnnouncement1.
 func TestReceiveRemoteChannelUpdateFirst(t *testing.T) {
 	t.Parallel()
 
@@ -2388,7 +2387,7 @@ func TestReceiveRemoteChannelUpdateFirst(t *testing.T) {
 	}
 
 	// Recreate the case where the remote node is sending us its ChannelUpdate
-	// before we have been able to process our own ChannelAnnouncement and
+	// before we have been able to process our own ChannelAnnouncement1 and
 	// ChannelUpdate.
 	errRemoteAnn := ctx.gossiper.ProcessRemoteAnnouncement(
 		batch.chanUpdAnn2, remotePeer,
@@ -2557,7 +2556,7 @@ func TestReceiveRemoteChannelUpdateFirst(t *testing.T) {
 }
 
 // TestExtraDataChannelAnnouncementValidation tests that we're able to properly
-// validate a ChannelAnnouncement that includes opaque bytes that we don't
+// validate a ChannelAnnouncement1 that includes opaque bytes that we don't
 // currently know of.
 func TestExtraDataChannelAnnouncementValidation(t *testing.T) {
 	t.Parallel()
@@ -2776,7 +2775,7 @@ func TestRetransmit(t *testing.T) {
 		var chanAnn, chanUpd, nodeAnn int
 		for _, msg := range anns {
 			switch msg.(type) {
-			case *lnwire.ChannelAnnouncement:
+			case *lnwire.ChannelAnnouncement1:
 				chanAnn++
 			case *lnwire.ChannelUpdate:
 				chanUpd++
