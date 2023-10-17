@@ -51,7 +51,7 @@ func (h *hopHintsConfigMock) FetchAllChannels() ([]*channeldb.OpenChannel,
 // FetchChannelEdgesByID attempts to lookup the two directed edges for
 // the channel identified by the channel ID.
 func (h *hopHintsConfigMock) FetchChannelEdgesByID(chanID uint64) (
-	*channeldb.ChannelEdgeInfo, *channeldb.ChannelEdgePolicy,
+	*channeldb.ChannelEdgeInfo1, *channeldb.ChannelEdgePolicy,
 	*channeldb.ChannelEdgePolicy, error) {
 
 	args := h.Mock.Called(chanID)
@@ -64,7 +64,7 @@ func (h *hopHintsConfigMock) FetchChannelEdgesByID(chanID uint64) (
 		return nil, nil, nil, err
 	}
 
-	edgeInfo := args.Get(0).(*channeldb.ChannelEdgeInfo)
+	edgeInfo := args.Get(0).(*channeldb.ChannelEdgeInfo1)
 	policy1 := args.Get(1).(*channeldb.ChannelEdgePolicy)
 	policy2 := args.Get(2).(*channeldb.ChannelEdgePolicy)
 
@@ -215,7 +215,7 @@ var shouldIncludeChannelTestCases = []struct {
 		h.Mock.On(
 			"FetchChannelEdgesByID", mock.Anything,
 		).Once().Return(
-			&channeldb.ChannelEdgeInfo{},
+			&channeldb.ChannelEdgeInfo1{},
 			&channeldb.ChannelEdgePolicy{},
 			&channeldb.ChannelEdgePolicy{}, nil,
 		)
@@ -253,7 +253,7 @@ var shouldIncludeChannelTestCases = []struct {
 		h.Mock.On(
 			"FetchChannelEdgesByID", mock.Anything,
 		).Once().Return(
-			&channeldb.ChannelEdgeInfo{},
+			&channeldb.ChannelEdgeInfo1{},
 			&channeldb.ChannelEdgePolicy{},
 			&channeldb.ChannelEdgePolicy{}, nil,
 		)
@@ -294,7 +294,7 @@ var shouldIncludeChannelTestCases = []struct {
 		h.Mock.On(
 			"FetchChannelEdgesByID", mock.Anything,
 		).Once().Return(
-			&channeldb.ChannelEdgeInfo{
+			&channeldb.ChannelEdgeInfo1{
 				NodeKey1Bytes: selectedPolicy,
 			},
 			&channeldb.ChannelEdgePolicy{
@@ -342,7 +342,7 @@ var shouldIncludeChannelTestCases = []struct {
 		h.Mock.On(
 			"FetchChannelEdgesByID", mock.Anything,
 		).Once().Return(
-			&channeldb.ChannelEdgeInfo{},
+			&channeldb.ChannelEdgeInfo1{},
 			&channeldb.ChannelEdgePolicy{},
 			&channeldb.ChannelEdgePolicy{
 				FeeBaseMSat:               1000,
@@ -387,7 +387,7 @@ var shouldIncludeChannelTestCases = []struct {
 		h.Mock.On(
 			"FetchChannelEdgesByID", mock.Anything,
 		).Once().Return(
-			&channeldb.ChannelEdgeInfo{},
+			&channeldb.ChannelEdgeInfo1{},
 			&channeldb.ChannelEdgePolicy{},
 			&channeldb.ChannelEdgePolicy{
 				FeeBaseMSat:               1000,
@@ -554,7 +554,7 @@ var populateHopHintsTestCases = []struct {
 		h.Mock.On(
 			"FetchChannelEdgesByID", mock.Anything,
 		).Once().Return(
-			&channeldb.ChannelEdgeInfo{},
+			&channeldb.ChannelEdgeInfo1{},
 			&channeldb.ChannelEdgePolicy{},
 			&channeldb.ChannelEdgePolicy{}, nil,
 		)
@@ -604,7 +604,7 @@ var populateHopHintsTestCases = []struct {
 		h.Mock.On(
 			"FetchChannelEdgesByID", mock.Anything,
 		).Once().Return(
-			&channeldb.ChannelEdgeInfo{},
+			&channeldb.ChannelEdgeInfo1{},
 			&channeldb.ChannelEdgePolicy{},
 			&channeldb.ChannelEdgePolicy{}, nil,
 		)
@@ -655,7 +655,7 @@ var populateHopHintsTestCases = []struct {
 		h.Mock.On(
 			"FetchChannelEdgesByID", mock.Anything,
 		).Once().Return(
-			&channeldb.ChannelEdgeInfo{},
+			&channeldb.ChannelEdgeInfo1{},
 			&channeldb.ChannelEdgePolicy{},
 			&channeldb.ChannelEdgePolicy{}, nil,
 		)
@@ -688,7 +688,7 @@ var populateHopHintsTestCases = []struct {
 		h.Mock.On(
 			"FetchChannelEdgesByID", mock.Anything,
 		).Once().Return(
-			&channeldb.ChannelEdgeInfo{},
+			&channeldb.ChannelEdgeInfo1{},
 			&channeldb.ChannelEdgePolicy{},
 			&channeldb.ChannelEdgePolicy{}, nil,
 		)
@@ -705,7 +705,7 @@ var populateHopHintsTestCases = []struct {
 		h.Mock.On(
 			"FetchChannelEdgesByID", mock.Anything,
 		).Once().Return(
-			&channeldb.ChannelEdgeInfo{},
+			&channeldb.ChannelEdgeInfo1{},
 			&channeldb.ChannelEdgePolicy{},
 			&channeldb.ChannelEdgePolicy{}, nil,
 		)
@@ -742,7 +742,7 @@ var populateHopHintsTestCases = []struct {
 		h.Mock.On(
 			"FetchChannelEdgesByID", mock.Anything,
 		).Once().Return(
-			&channeldb.ChannelEdgeInfo{},
+			&channeldb.ChannelEdgeInfo1{},
 			&channeldb.ChannelEdgePolicy{},
 			&channeldb.ChannelEdgePolicy{}, nil,
 		)
@@ -759,7 +759,7 @@ var populateHopHintsTestCases = []struct {
 		h.Mock.On(
 			"FetchChannelEdgesByID", mock.Anything,
 		).Once().Return(
-			&channeldb.ChannelEdgeInfo{},
+			&channeldb.ChannelEdgeInfo1{},
 			&channeldb.ChannelEdgePolicy{},
 			&channeldb.ChannelEdgePolicy{}, nil,
 		)
@@ -797,7 +797,7 @@ var populateHopHintsTestCases = []struct {
 		h.Mock.On(
 			"FetchChannelEdgesByID", mock.Anything,
 		).Once().Return(
-			&channeldb.ChannelEdgeInfo{},
+			&channeldb.ChannelEdgeInfo1{},
 			&channeldb.ChannelEdgePolicy{},
 			&channeldb.ChannelEdgePolicy{}, nil,
 		)

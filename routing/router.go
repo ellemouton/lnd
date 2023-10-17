@@ -135,7 +135,7 @@ type ChannelGraphSource interface {
 	// AddEdge is used to add edge/channel to the topology of the router,
 	// after all information about channel will be gathered this
 	// edge/channel might be used in construction of payment path.
-	AddEdge(edge *channeldb.ChannelEdgeInfo,
+	AddEdge(edge *channeldb.ChannelEdgeInfo1,
 		op ...batch.SchedulerOption) error
 
 	// AddProof updates the channel edge info with proof which is needed to
@@ -176,7 +176,7 @@ type ChannelGraphSource interface {
 	// emanating from the "source" node which is the center of the
 	// star-graph.
 	ForAllOutgoingChannels(cb func(tx kvdb.RTx,
-		c *channeldb.ChannelEdgeInfo,
+		c *channeldb.ChannelEdgeInfo1,
 		e *channeldb.ChannelEdgePolicy) error) error
 
 	// CurrentBlockHeight returns the block height from POV of the router
@@ -185,7 +185,7 @@ type ChannelGraphSource interface {
 
 	// GetChannelByID return the channel by the channel id.
 	GetChannelByID(chanID lnwire.ShortChannelID) (
-		*channeldb.ChannelEdgeInfo, *channeldb.ChannelEdgePolicy,
+		*channeldb.ChannelEdgeInfo1, *channeldb.ChannelEdgePolicy,
 		*channeldb.ChannelEdgePolicy, error)
 
 	// FetchLightningNode attempts to look up a target node by its identity
@@ -897,14 +897,14 @@ func (r *ChannelRouter) pruneZombieChans() error {
 	log.Infof("Examining channel graph for zombie channels")
 
 	// A helper method to detect if the channel belongs to this node
-	isSelfChannelEdge := func(info *channeldb.ChannelEdgeInfo) bool {
+	isSelfChannelEdge := func(info *channeldb.ChannelEdgeInfo1) bool {
 		return info.NodeKey1Bytes == r.selfNode.PubKeyBytes ||
 			info.NodeKey2Bytes == r.selfNode.PubKeyBytes
 	}
 
 	// First, we'll collect all the channels which are eligible for garbage
 	// collection due to being zombies.
-	filterPruneChans := func(info *channeldb.ChannelEdgeInfo,
+	filterPruneChans := func(info *channeldb.ChannelEdgeInfo1,
 		e1, e2 *channeldb.ChannelEdgePolicy) error {
 
 		// Exit early in case this channel is already marked to be pruned
@@ -1539,8 +1539,8 @@ func (r *ChannelRouter) processUpdate(msg interface{},
 		log.Tracef("Updated vertex data for node=%x", msg.PubKeyBytes)
 		r.stats.incNumNodeUpdates()
 
-	case *channeldb.ChannelEdgeInfo:
-		log.Debugf("Received ChannelEdgeInfo for channel %v",
+	case *channeldb.ChannelEdgeInfo1:
+		log.Debugf("Received ChannelEdgeInfo1 for channel %v",
 			msg.ChannelID)
 
 		// Prior to processing the announcement we first check if we
@@ -2720,7 +2720,7 @@ func (r *ChannelRouter) AddNode(node *channeldb.LightningNode,
 // in construction of payment path.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (r *ChannelRouter) AddEdge(edge *channeldb.ChannelEdgeInfo,
+func (r *ChannelRouter) AddEdge(edge *channeldb.ChannelEdgeInfo1,
 	op ...batch.SchedulerOption) error {
 
 	rMsg := &routingMsg{
@@ -2787,7 +2787,7 @@ func (r *ChannelRouter) SyncedHeight() uint32 {
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (r *ChannelRouter) GetChannelByID(chanID lnwire.ShortChannelID) (
-	*channeldb.ChannelEdgeInfo,
+	*channeldb.ChannelEdgeInfo1,
 	*channeldb.ChannelEdgePolicy,
 	*channeldb.ChannelEdgePolicy, error) {
 
@@ -2822,10 +2822,10 @@ func (r *ChannelRouter) ForEachNode(
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (r *ChannelRouter) ForAllOutgoingChannels(cb func(kvdb.RTx,
-	*channeldb.ChannelEdgeInfo, *channeldb.ChannelEdgePolicy) error) error {
+	*channeldb.ChannelEdgeInfo1, *channeldb.ChannelEdgePolicy) error) error {
 
 	return r.selfNode.ForEachChannel(nil, func(tx kvdb.RTx,
-		c *channeldb.ChannelEdgeInfo,
+		c *channeldb.ChannelEdgeInfo1,
 		e, _ *channeldb.ChannelEdgePolicy) error {
 
 		if e == nil {

@@ -98,7 +98,7 @@ func assertHasChanEntries(t *testing.T, c *channelCache, start, end uint64) {
 // channelForInt generates a unique ChannelEdge given an integer.
 func channelForInt(i uint64) ChannelEdge {
 	return ChannelEdge{
-		Info: &ChannelEdgeInfo{
+		Info: &ChannelEdgeInfo1{
 			ChannelID: i,
 		},
 	}
