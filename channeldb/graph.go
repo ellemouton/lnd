@@ -487,8 +487,8 @@ func (c *ChannelGraph) ForEachNodeChannel(tx kvdb.RTx, node route.Vertex,
 		return err
 	}
 
-	dbCallback := func(tx kvdb.RTx, e *ChannelEdgeInfo1, p1,
-		p2 *ChannelEdgePolicy) error {
+	dbCallback := func(_ kvdb.Backend, tx kvdb.RTx, e *ChannelEdgeInfo1,
+		p1, p2 *ChannelEdgePolicy) error {
 
 		var cachedInPolicy *CachedEdgePolicy
 		if p2 != nil {
@@ -561,8 +561,8 @@ func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
 	return c.ForEachNode(func(tx kvdb.RTx, node *LightningNode) error {
 		channels := make(map[uint64]*DirectedChannel)
 
-		err := node.ForEachChannel(c.db, tx, func(tx kvdb.RTx,
-			e *ChannelEdgeInfo1, p1 *ChannelEdgePolicy,
+		err := node.ForEachChannel(c.db, tx, func(_ kvdb.Backend,
+			tx kvdb.RTx, e *ChannelEdgeInfo1, p1 *ChannelEdgePolicy,
 			p2 *ChannelEdgePolicy) error {
 
 			toNodeCallback := func() route.Vertex {
@@ -1941,7 +1941,6 @@ func (c *ChannelGraph) ChanUpdatesInHorizon(startTime,
 				return fmt.Errorf("unable to fetch info for "+
 					"edge with chan_id=%v: %v", chanID, err)
 			}
-			edgeInfo.db = c.db
 
 			// With the static information obtained, we'll now
 			// fetch the dynamic policy info.
@@ -2272,7 +2271,6 @@ func (c *ChannelGraph) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 			case err != nil:
 				return err
 			}
-			edgeInfo.db = c.db
 
 			// With the static information obtained, we'll now
 			// fetch the dynamic policy info.
@@ -2749,8 +2747,8 @@ func (l *LightningNode) isPublic(db kvdb.Backend, tx kvdb.RTx,
 	// used to terminate the check early.
 	nodeIsPublic := false
 	errDone := errors.New("done")
-	err := l.ForEachChannel(db, tx, func(_ kvdb.RTx, info *ChannelEdgeInfo1,
-		_, _ *ChannelEdgePolicy) error {
+	err := l.ForEachChannel(db, tx, func(_ kvdb.Backend, _ kvdb.RTx,
+		info *ChannelEdgeInfo1, _, _ *ChannelEdgePolicy) error {
 
 		// If this edge doesn't extend to the source node, we'll
 		// terminate our search as we can now conclude that the node is
@@ -2858,11 +2856,11 @@ func (n *graphCacheNode) Features() *lnwire.FeatureVector {
 // halted with the error propagated back up to the caller.
 //
 // Unknown policies are passed into the callback as nil values.
-func (n *graphCacheNode) ForEachChannel(tx kvdb.RTx,
-	cb func(kvdb.RTx, *ChannelEdgeInfo1, *ChannelEdgePolicy,
+func (n *graphCacheNode) ForEachChannel(db kvdb.Backend, tx kvdb.RTx,
+	cb func(kvdb.Backend, kvdb.RTx, *ChannelEdgeInfo1, *ChannelEdgePolicy,
 		*ChannelEdgePolicy) error) error {
 
-	return nodeTraversal(tx, n.pubKeyBytes[:], nil, cb)
+	return nodeTraversal(tx, n.pubKeyBytes[:], db, cb)
 }
 
 var _ GraphCacheNode = (*graphCacheNode)(nil)
@@ -2920,7 +2918,7 @@ func (c *ChannelGraph) HasLightningNode(nodePub [33]byte) (time.Time, bool, erro
 // nodeTraversal is used to traverse all channels of a node given by its
 // public key and passes channel information into the specified callback.
 func nodeTraversal(tx kvdb.RTx, nodePub []byte, db kvdb.Backend,
-	cb func(kvdb.RTx, *ChannelEdgeInfo1, *ChannelEdgePolicy,
+	cb func(kvdb.Backend, kvdb.RTx, *ChannelEdgeInfo1, *ChannelEdgePolicy,
 		*ChannelEdgePolicy) error) error {
 
 	traversal := func(tx kvdb.RTx) error {
@@ -2963,7 +2961,6 @@ func nodeTraversal(tx kvdb.RTx, nodePub []byte, db kvdb.Backend,
 			if err != nil {
 				return err
 			}
-			edgeInfo.db = db
 
 			outgoingPolicy, err := fetchChanEdgePolicy(
 				edges, chanID, nodePub, nodes,
@@ -2985,7 +2982,10 @@ func nodeTraversal(tx kvdb.RTx, nodePub []byte, db kvdb.Backend,
 			}
 
 			// Finally, we execute the callback.
-			err = cb(tx, &edgeInfo, outgoingPolicy, incomingPolicy)
+			err = cb(
+				db, tx, &edgeInfo, outgoingPolicy,
+				incomingPolicy,
+			)
 			if err != nil {
 				return err
 			}
@@ -3019,7 +3019,7 @@ func nodeTraversal(tx kvdb.RTx, nodePub []byte, db kvdb.Backend,
 // be nil and a fresh transaction will be created to execute the graph
 // traversal.
 func (l *LightningNode) ForEachChannel(db kvdb.Backend, tx kvdb.RTx,
-	cb func(kvdb.RTx, *ChannelEdgeInfo1, *ChannelEdgePolicy,
+	cb func(kvdb.Backend, kvdb.RTx, *ChannelEdgeInfo1, *ChannelEdgePolicy,
 		*ChannelEdgePolicy) error) error {
 
 	nodePub := l.PubKeyBytes[:]
@@ -3086,8 +3086,6 @@ type ChannelEdgeInfo1 struct {
 	// and ensure we're able to make upgrades to the network in a forwards
 	// compatible manner.
 	ExtraOpaqueData []byte
-
-	db kvdb.Backend
 }
 
 // AddNodeKeys is a setter-like method that can be used to replace the set of
@@ -3210,7 +3208,7 @@ func (c *ChannelEdgeInfo1) OtherNodeKeyBytes(thisNodeKey []byte) (
 // the target node in the channel. This is useful when one knows the pubkey of
 // one of the nodes, and wishes to obtain the full LightningNode for the other
 // end of the channel.
-func (c *ChannelEdgeInfo1) FetchOtherNode(tx kvdb.RTx,
+func (c *ChannelEdgeInfo1) FetchOtherNode(db kvdb.Backend, tx kvdb.RTx,
 	thisNodeKey []byte) (*LightningNode, error) {
 
 	// Ensure that the node passed in is actually a member of the channel.
@@ -3247,7 +3245,7 @@ func (c *ChannelEdgeInfo1) FetchOtherNode(tx kvdb.RTx,
 	// otherwise we can use the existing db transaction.
 	var err error
 	if tx == nil {
-		err = kvdb.View(c.db, fetchNodeFunc, func() { targetNode = nil })
+		err = kvdb.View(db, fetchNodeFunc, func() { targetNode = nil })
 	} else {
 		err = fetchNodeFunc(tx)
 	}
@@ -3562,7 +3560,6 @@ func (c *ChannelGraph) FetchChannelEdgesByOutpoint(op *wire.OutPoint,
 			return err
 		}
 		edgeInfo = &edge
-		edgeInfo.db = c.db
 
 		// Once we have the information about the channels' parameters,
 		// we'll fetch the routing policies for each for the directed
@@ -3668,7 +3665,6 @@ func (c *ChannelGraph) FetchChannelEdgesByID(chanID uint64,
 		}
 
 		edgeInfo = &edge
-		edgeInfo.db = c.db
 
 		// Then we'll attempt to fetch the accompanying policies of this
 		// edge.

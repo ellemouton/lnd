@@ -88,8 +88,8 @@ func (d dbNode) Addrs() []net.Addr {
 //
 // NOTE: Part of the autopilot.Node interface.
 func (d dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
-	return d.node.ForEachChannel(d.db, d.tx, func(tx kvdb.RTx,
-		ei *channeldb.ChannelEdgeInfo1, ep,
+	return d.node.ForEachChannel(d.db, d.tx, func(db kvdb.Backend,
+		tx kvdb.RTx, ei *channeldb.ChannelEdgeInfo1, ep,
 		_ *channeldb.ChannelEdgePolicy) error {
 
 		// Skip channels for which no outgoing edge policy is available.
@@ -107,7 +107,7 @@ func (d dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 			ChanID:   lnwire.NewShortChanIDFromInt(ep.ChannelID),
 			Capacity: ei.Capacity,
 			Peer: dbNode{
-				db:   d.db,
+				db:   db,
 				tx:   tx,
 				node: ep.Node,
 			},

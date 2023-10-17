@@ -3095,7 +3095,7 @@ func (s *server) establishPersistentConnections() error {
 	// each of the nodes.
 	selfPub := s.identityECDH.PubKey().SerializeCompressed()
 	err = sourceNode.ForEachChannel(s.graphDB.DB(), nil, func(
-		tx kvdb.RTx,
+		db kvdb.Backend, tx kvdb.RTx,
 		chanInfo *channeldb.ChannelEdgeInfo1,
 		policy, _ *channeldb.ChannelEdgePolicy) error {
 
@@ -3109,7 +3109,7 @@ func (s *server) establishPersistentConnections() error {
 
 		// We'll now fetch the peer opposite from us within this
 		// channel so we can queue up a direct connection to them.
-		channelPeer, err := chanInfo.FetchOtherNode(tx, selfPub)
+		channelPeer, err := chanInfo.FetchOtherNode(db, tx, selfPub)
 		if err != nil {
 			return fmt.Errorf("unable to fetch channel peer for "+
 				"ChannelPoint(%v): %v", chanInfo.ChannelPoint,

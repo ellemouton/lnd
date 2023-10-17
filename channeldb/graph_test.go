@@ -1051,7 +1051,7 @@ func TestGraphTraversal(t *testing.T) {
 	numNodeChans := 0
 	firstNode, secondNode := nodeList[0], nodeList[1]
 	err = firstNode.ForEachChannel(graph.DB(), nil,
-		func(_ kvdb.RTx, _ *ChannelEdgeInfo1,
+		func(_ kvdb.Backend, _ kvdb.RTx, _ *ChannelEdgeInfo1,
 			outEdge, inEdge *ChannelEdgePolicy) error {
 
 			// All channels between first and second node should have fully
@@ -1124,11 +1124,13 @@ func TestGraphTraversalCacheable(t *testing.T) {
 	err = graph.db.View(func(tx kvdb.RTx) error {
 		for _, node := range nodes {
 			err := node.ForEachChannel(
-				tx, func(tx kvdb.RTx, info *ChannelEdgeInfo1,
-					policy *ChannelEdgePolicy,
-					policy2 *ChannelEdgePolicy) error {
+				graph.db, tx, func(_ kvdb.Backend, _ kvdb.RTx,
+					info *ChannelEdgeInfo1,
+					_ *ChannelEdgePolicy,
+					_ *ChannelEdgePolicy) error {
 
 					delete(chanIndex, info.ChannelID)
+
 					return nil
 				},
 			)
@@ -2276,7 +2278,7 @@ func TestIncompleteChannelPolicies(t *testing.T) {
 	checkPolicies := func(node *LightningNode, expectedIn, expectedOut bool) {
 		calls := 0
 		err := node.ForEachChannel(graph.DB(), nil,
-			func(_ kvdb.RTx, _ *ChannelEdgeInfo1,
+			func(_ kvdb.Backend, _ kvdb.RTx, _ *ChannelEdgeInfo1,
 				outEdge, inEdge *ChannelEdgePolicy) error {
 
 				if !expectedOut && outEdge != nil {
@@ -2695,16 +2697,14 @@ func TestNodeIsPublic(t *testing.T) {
 	// participant's graph.
 	nodes := []*LightningNode{aliceNode, bobNode, carolNode}
 	edges := []*ChannelEdgeInfo1{&aliceBobEdge, &bobCarolEdge}
-	dbs := []kvdb.Backend{aliceGraph.db, bobGraph.db, carolGraph.db}
 	graphs := []*ChannelGraph{aliceGraph, bobGraph, carolGraph}
-	for i, graph := range graphs {
+	for _, graph := range graphs {
 		for _, node := range nodes {
 			if err := graph.AddLightningNode(node); err != nil {
 				t.Fatalf("unable to add node: %v", err)
 			}
 		}
 		for _, edge := range edges {
-			edge.db = dbs[i]
 			if err := graph.AddChannelEdge(edge); err != nil {
 				t.Fatalf("unable to add edge: %v", err)
 			}
@@ -2764,7 +2764,7 @@ func TestNodeIsPublic(t *testing.T) {
 	// that allows it to be advertised. Within Alice's graph, we'll
 	// completely remove the edge as it is not possible for her to know of
 	// it without it being advertised.
-	for i, graph := range graphs {
+	for _, graph := range graphs {
 		err := graph.DeleteChannelEdges(
 			false, true, bobCarolEdge.ChannelID,
 		)
@@ -2777,7 +2777,6 @@ func TestNodeIsPublic(t *testing.T) {
 		}
 
 		bobCarolEdge.AuthProof = nil
-		bobCarolEdge.db = dbs[i]
 		if err := graph.AddChannelEdge(&bobCarolEdge); err != nil {
 			t.Fatalf("unable to add edge: %v", err)
 		}
@@ -3429,7 +3428,8 @@ func BenchmarkForEachChannel(b *testing.B) {
 		err = graph.db.View(func(tx kvdb.RTx) error {
 			for _, n := range nodes {
 				err := n.ForEachChannel(
-					tx, func(tx kvdb.RTx,
+					graph.db, tx, func(_ kvdb.Backend,
+						_ kvdb.RTx,
 						info *ChannelEdgeInfo1,
 						policy *ChannelEdgePolicy,
 						policy2 *ChannelEdgePolicy) error {

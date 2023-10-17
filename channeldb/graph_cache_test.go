@@ -40,13 +40,13 @@ func (n *node) Features() *lnwire.FeatureVector {
 	return n.features
 }
 
-func (n *node) ForEachChannel(tx kvdb.RTx,
-	cb func(kvdb.RTx, *ChannelEdgeInfo1, *ChannelEdgePolicy,
+func (n *node) ForEachChannel(db kvdb.Backend, tx kvdb.RTx,
+	cb func(kvdb.Backend, kvdb.RTx, *ChannelEdgeInfo1, *ChannelEdgePolicy,
 		*ChannelEdgePolicy) error) error {
 
 	for idx := range n.edgeInfos {
 		err := cb(
-			tx, n.edgeInfos[idx], n.outPolicies[idx],
+			db, tx, n.edgeInfos[idx], n.outPolicies[idx],
 			n.inPolicies[idx],
 		)
 		if err != nil {
