@@ -647,7 +647,7 @@ func (m *ChanStatusManager) signAndSendNextUpdate(outpoint wire.OutPoint,
 
 // fetchLastChanUpdateByOutPoint fetches the latest policy for our direction of
 // a channel, and crafts a new ChannelUpdate1 with this policy. Returns an error
-// in case our ChannelEdgePolicy is not found in the database. Also returns if
+// in case our ChannelEdgePolicy1 is not found in the database. Also returns if
 // the channel is private by checking AuthProof for nil.
 func (m *ChanStatusManager) fetchLastChanUpdateByOutPoint(op wire.OutPoint) (
 	*lnwire.ChannelUpdate1, bool, error) {
