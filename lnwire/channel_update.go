@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/lightningnetwork/lnd/input"
 )
 
 // ChanUpdateMsgFlags is a bitfield that signals whether optional fields are
@@ -279,3 +280,64 @@ func (a *ChannelUpdate1) DataToSign() ([]byte, error) {
 
 	return buf.Bytes(), nil
 }
+
+func (a *ChannelUpdate1) GetSignature() Sig {
+	return a.Signature
+}
+
+func (a *ChannelUpdate1) GetBaseFee() MilliSatoshi {
+	return MilliSatoshi(a.BaseFee)
+}
+
+func (a *ChannelUpdate1) GetFeeRate() MilliSatoshi {
+	return MilliSatoshi(a.FeeRate)
+}
+
+func (a *ChannelUpdate1) GetTimeLock() uint16 {
+	return a.TimeLockDelta
+}
+
+func (a *ChannelUpdate1) SetSCID(scid ShortChannelID) {
+	a.ShortChannelID = scid
+}
+
+func (a *ChannelUpdate1) SetSig(sig input.Signature) error {
+	s, err := NewSigFromSignature(sig)
+	if err != nil {
+		return err
+	}
+
+	a.Signature = s
+
+	return nil
+}
+
+func (a *ChannelUpdate1) IsDisabled() bool {
+	return a.ChannelFlags&ChanUpdateDisabled == 1
+}
+
+func (a *ChannelUpdate1) GetChainHash() chainhash.Hash {
+	return a.ChainHash
+}
+
+func (a *ChannelUpdate1) SetDisabled(disabled bool) {
+	if disabled {
+		// Set the bit responsible for marking a channel as
+		// disabled.
+		a.ChannelFlags |= ChanUpdateDisabled
+	} else {
+		// Clear the bit responsible for marking a channel as
+		// disabled.
+		a.ChannelFlags &= ^ChanUpdateDisabled
+	}
+}
+
+func (a *ChannelUpdate1) IsNode1() bool {
+	return a.ChannelFlags&ChanUpdateDisabled == 0
+}
+
+func (a *ChannelUpdate1) SCID() ShortChannelID {
+	return a.ShortChannelID
+}
+
+var _ ChannelUpdate = (*ChannelUpdate1)(nil)
