@@ -6151,8 +6151,8 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 		channels      []*lnrpc.ChannelEdge
 	)
 
-	if err := node.ForEachChannel(graph.DB(), nil, func(_ kvdb.RTx,
-		edge *channeldb.ChannelEdgeInfo1,
+	if err := node.ForEachChannel(graph.DB(), nil, func(_ kvdb.Backend,
+		_ kvdb.RTx, edge *channeldb.ChannelEdgeInfo1,
 		c1, c2 *channeldb.ChannelEdgePolicy) error {
 
 		numChannels++
@@ -6764,7 +6764,8 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 
 	var feeReports []*lnrpc.ChannelFeeReport
 	err = selfNode.ForEachChannel(channelGraph.DB(), nil,
-		func(_ kvdb.RTx, chanInfo *channeldb.ChannelEdgeInfo1,
+		func(_ kvdb.Backend, _ kvdb.RTx,
+			chanInfo *channeldb.ChannelEdgeInfo1,
 			edgePolicy, _ *channeldb.ChannelEdgePolicy) error {
 
 			// Self node should always have policies for its channels.

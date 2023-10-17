@@ -2825,7 +2825,7 @@ func (r *ChannelRouter) ForAllOutgoingChannels(cb func(kvdb.RTx,
 	*channeldb.ChannelEdgeInfo1, *channeldb.ChannelEdgePolicy) error) error {
 
 	return r.selfNode.ForEachChannel(r.cfg.Graph.DB(), nil,
-		func(tx kvdb.RTx, c *channeldb.ChannelEdgeInfo1,
+		func(_ kvdb.Backend, tx kvdb.RTx, c *channeldb.ChannelEdgeInfo1,
 			e, _ *channeldb.ChannelEdgePolicy) error {
 
 			if e == nil {

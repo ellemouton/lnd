@@ -26,9 +26,9 @@ type GraphCacheNode interface {
 	// incoming edge *from* the connecting node. If the callback returns an
 	// error, then the iteration is halted with the error propagated back up
 	// to the caller.
-	ForEachChannel(kvdb.RTx,
-		func(kvdb.RTx, *ChannelEdgeInfo1, *ChannelEdgePolicy,
-			*ChannelEdgePolicy) error) error
+	ForEachChannel(kvdb.Backend, kvdb.RTx,
+		func(kvdb.Backend, kvdb.RTx, *ChannelEdgeInfo1,
+			*ChannelEdgePolicy, *ChannelEdgePolicy) error) error
 }
 
 // CachedEdgePolicy is a struct that only caches the information of a
@@ -222,16 +222,14 @@ func (c *GraphCache) AddNodeFeatures(node GraphCacheNode) {
 func (c *GraphCache) AddNode(tx kvdb.RTx, node GraphCacheNode) error {
 	c.AddNodeFeatures(node)
 
-	return node.ForEachChannel(
-		tx, func(tx kvdb.RTx, info *ChannelEdgeInfo1,
-			outPolicy *ChannelEdgePolicy,
-			inPolicy *ChannelEdgePolicy) error {
+	return node.ForEachChannel(nil, tx, func(_ kvdb.Backend, tx kvdb.RTx,
+		info *ChannelEdgeInfo1, outPolicy *ChannelEdgePolicy,
+		inPolicy *ChannelEdgePolicy) error {
 
-			c.AddChannel(info, outPolicy, inPolicy)
+		c.AddChannel(info, outPolicy, inPolicy)
 
-			return nil
-		},
-	)
+		return nil
+	})
 }
 
 // AddChannel adds a non-directed channel, meaning that the order of policy 1
