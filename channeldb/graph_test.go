@@ -22,6 +22,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/davecgh/go-spew/spew"
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -506,10 +507,10 @@ func TestDisconnectBlockAtHeight(t *testing.T) {
 		t.Fatalf("expected two edges to be removed from graph, "+
 			"only %d were", len(removed))
 	}
-	if removed[0].ChannelID != edgeInfo.ChannelID {
+	if removed[0].GetChanID() != edgeInfo.ChannelID {
 		t.Fatalf("expected edge to be removed from graph")
 	}
-	if removed[1].ChannelID != edgeInfo2.ChannelID {
+	if removed[1].GetChanID() != edgeInfo2.ChannelID {
 		t.Fatalf("expected edge to be removed from graph")
 	}
 
@@ -553,7 +554,19 @@ func TestDisconnectBlockAtHeight(t *testing.T) {
 	}
 }
 
-func assertEdgeInfoEqual(t *testing.T, e1 *ChannelEdgeInfo1,
+func assertEdgeInfoEqual(t *testing.T, e1, e2 models.ChannelEdgeInfo) {
+	switch edge1 := e1.(type) {
+	case *ChannelEdgeInfo1:
+		edge2, ok := e2.(*ChannelEdgeInfo1)
+		require.True(t, ok)
+
+		assertEdgeInfo1Equal(t, edge1, edge2)
+	default:
+		t.Fatalf("unhandled ChannelEdgeInfo type: %T", e1)
+	}
+}
+
+func assertEdgeInfo1Equal(t *testing.T, e1 *ChannelEdgeInfo1,
 	e2 *ChannelEdgeInfo1) {
 
 	if e1.ChannelID != e2.ChannelID {
@@ -817,49 +830,54 @@ func assertNodeNotInCache(t *testing.T, g *ChannelGraph, n route.Vertex) {
 }
 
 func assertEdgeWithNoPoliciesInCache(t *testing.T, g *ChannelGraph,
-	e *ChannelEdgeInfo1) {
+	e models.ChannelEdgeInfo) {
+
+	var (
+		node1Bytes = e.Node1Bytes()
+		node2Bytes = e.Node2Bytes()
+	)
 
 	// Let's check the internal view first.
-	require.NotEmpty(t, g.graphCache.nodeChannels[e.NodeKey1Bytes])
-	require.NotEmpty(t, g.graphCache.nodeChannels[e.NodeKey2Bytes])
+	require.NotEmpty(t, g.graphCache.nodeChannels[node1Bytes])
+	require.NotEmpty(t, g.graphCache.nodeChannels[node2Bytes])
 
 	expectedNode1Channel := &DirectedChannel{
-		ChannelID:    e.ChannelID,
+		ChannelID:    e.GetChanID(),
 		IsNode1:      true,
-		OtherNode:    e.NodeKey2Bytes,
-		Capacity:     e.Capacity,
+		OtherNode:    node2Bytes,
+		Capacity:     e.GetCapacity(),
 		OutPolicySet: false,
 		InPolicy:     nil,
 	}
 	require.Contains(
-		t, g.graphCache.nodeChannels[e.NodeKey1Bytes], e.ChannelID,
+		t, g.graphCache.nodeChannels[node1Bytes], e.GetChanID(),
 	)
 	require.Equal(
 		t, expectedNode1Channel,
-		g.graphCache.nodeChannels[e.NodeKey1Bytes][e.ChannelID],
+		g.graphCache.nodeChannels[node1Bytes][e.GetChanID()],
 	)
 
 	expectedNode2Channel := &DirectedChannel{
-		ChannelID:    e.ChannelID,
+		ChannelID:    e.GetChanID(),
 		IsNode1:      false,
-		OtherNode:    e.NodeKey1Bytes,
-		Capacity:     e.Capacity,
+		OtherNode:    node1Bytes,
+		Capacity:     e.GetCapacity(),
 		OutPolicySet: false,
 		InPolicy:     nil,
 	}
 	require.Contains(
-		t, g.graphCache.nodeChannels[e.NodeKey2Bytes], e.ChannelID,
+		t, g.graphCache.nodeChannels[node2Bytes], e.GetChanID(),
 	)
 	require.Equal(
 		t, expectedNode2Channel,
-		g.graphCache.nodeChannels[e.NodeKey2Bytes][e.ChannelID],
+		g.graphCache.nodeChannels[node2Bytes][e.GetChanID()],
 	)
 
 	// The external view should reflect this as well.
 	var foundChannel *DirectedChannel
 	err := g.graphCache.ForEachChannel(
-		e.NodeKey1Bytes, func(c *DirectedChannel) error {
-			if c.ChannelID == e.ChannelID {
+		node1Bytes, func(c *DirectedChannel) error {
+			if c.ChannelID == e.GetChanID() {
 				foundChannel = c
 			}
 
@@ -871,8 +889,8 @@ func assertEdgeWithNoPoliciesInCache(t *testing.T, g *ChannelGraph,
 	require.Equal(t, expectedNode1Channel, foundChannel)
 
 	err = g.graphCache.ForEachChannel(
-		e.NodeKey2Bytes, func(c *DirectedChannel) error {
-			if c.ChannelID == e.ChannelID {
+		node2Bytes, func(c *DirectedChannel) error {
+			if c.ChannelID == e.GetChanID() {
 				foundChannel = c
 			}
 
@@ -895,10 +913,16 @@ func assertNoEdge(t *testing.T, g *ChannelGraph, chanID uint64) {
 }
 
 func assertEdgeWithPolicyInCache(t *testing.T, g *ChannelGraph,
-	e *ChannelEdgeInfo1, p *ChannelEdgePolicy, policy1 bool) {
+	e models.ChannelEdgeInfo, p *ChannelEdgePolicy, policy1 bool) {
+
+	var (
+		node1Bytes = e.Node1Bytes()
+		node2Bytes = e.Node2Bytes()
+		chanID     = e.GetChanID()
+	)
 
 	// Check the internal state first.
-	c1, ok := g.graphCache.nodeChannels[e.NodeKey1Bytes][e.ChannelID]
+	c1, ok := g.graphCache.nodeChannels[node1Bytes][chanID]
 	require.True(t, ok)
 
 	if policy1 {
@@ -911,7 +935,7 @@ func assertEdgeWithPolicyInCache(t *testing.T, g *ChannelGraph,
 		)
 	}
 
-	c2, ok := g.graphCache.nodeChannels[e.NodeKey2Bytes][e.ChannelID]
+	c2, ok := g.graphCache.nodeChannels[node2Bytes][chanID]
 	require.True(t, ok)
 
 	if policy1 {
@@ -930,14 +954,14 @@ func assertEdgeWithPolicyInCache(t *testing.T, g *ChannelGraph,
 		c2Ext *DirectedChannel
 	)
 	require.NoError(t, g.graphCache.ForEachChannel(
-		e.NodeKey1Bytes, func(c *DirectedChannel) error {
+		node1Bytes, func(c *DirectedChannel) error {
 			c1Ext = c
 
 			return nil
 		},
 	))
 	require.NoError(t, g.graphCache.ForEachChannel(
-		e.NodeKey2Bytes, func(c *DirectedChannel) error {
+		node2Bytes, func(c *DirectedChannel) error {
 			c2Ext = c
 
 			return nil
@@ -954,7 +978,7 @@ func assertEdgeWithPolicyInCache(t *testing.T, g *ChannelGraph,
 			c2Ext.InPolicy.FeeProportionalMillionths,
 		)
 		require.Equal(
-			t, route.Vertex(e.NodeKey2Bytes),
+			t, route.Vertex(node2Bytes),
 			c2Ext.InPolicy.ToNodePubKey(),
 		)
 		require.Equal(t, testFeatures, c2Ext.InPolicy.ToNodeFeatures)
@@ -964,7 +988,7 @@ func assertEdgeWithPolicyInCache(t *testing.T, g *ChannelGraph,
 			c1Ext.InPolicy.FeeProportionalMillionths,
 		)
 		require.Equal(
-			t, route.Vertex(e.NodeKey1Bytes),
+			t, route.Vertex(node1Bytes),
 			c1Ext.InPolicy.ToNodePubKey(),
 		)
 		require.Equal(t, testFeatures, c1Ext.InPolicy.ToNodeFeatures)
@@ -1037,10 +1061,10 @@ func TestGraphTraversal(t *testing.T) {
 	// Iterate through all the known channels within the graph DB, once
 	// again if the map is empty that indicates that all edges have
 	// properly been reached.
-	err = graph.ForEachChannel(func(ei *ChannelEdgeInfo1, _ *ChannelEdgePolicy,
-		_ *ChannelEdgePolicy) error {
+	err = graph.ForEachChannel(func(ei models.ChannelEdgeInfo,
+		_ *ChannelEdgePolicy, _ *ChannelEdgePolicy) error {
 
-		delete(chanIndex, ei.ChannelID)
+		delete(chanIndex, ei.GetChanID())
 		return nil
 	})
 	require.NoError(t, err)
@@ -1051,7 +1075,7 @@ func TestGraphTraversal(t *testing.T) {
 	numNodeChans := 0
 	firstNode, secondNode := nodeList[0], nodeList[1]
 	err = graph.ForEachNodeChannel(nil, firstNode.PubKeyBytes,
-		func(_ kvdb.RTx, _ *ChannelEdgeInfo1, outEdge,
+		func(_ kvdb.RTx, _ models.ChannelEdgeInfo, outEdge,
 			inEdge *ChannelEdgePolicy) error {
 
 			// All channels between first and second node should
@@ -1131,11 +1155,12 @@ func TestGraphTraversalCacheable(t *testing.T) {
 	err = graph.db.View(func(tx kvdb.RTx) error {
 		for _, node := range nodes {
 			err := node.ForEachChannel(
-				tx, func(tx kvdb.RTx, info *ChannelEdgeInfo1,
+				tx, func(tx kvdb.RTx,
+					info models.ChannelEdgeInfo,
 					policy *ChannelEdgePolicy,
 					policy2 *ChannelEdgePolicy) error {
 
-					delete(chanIndex, info.ChannelID)
+					delete(chanIndex, info.GetChanID())
 					return nil
 				},
 			)
@@ -1315,8 +1340,8 @@ func assertPruneTip(t *testing.T, graph *ChannelGraph, blockHash *chainhash.Hash
 
 func assertNumChans(t *testing.T, graph *ChannelGraph, n int) {
 	numChans := 0
-	if err := graph.ForEachChannel(func(*ChannelEdgeInfo1, *ChannelEdgePolicy,
-		*ChannelEdgePolicy) error {
+	if err := graph.ForEachChannel(func(models.ChannelEdgeInfo,
+		*ChannelEdgePolicy, *ChannelEdgePolicy) error {
 
 		numChans++
 		return nil
@@ -1452,9 +1477,7 @@ func TestGraphPruning(t *testing.T) {
 			t.Fatalf("unable to add node: %v", err)
 		}
 
-		pkScript, err := genMultiSigP2WSH(
-			edgeInfo.BitcoinKey1Bytes[:], edgeInfo.BitcoinKey2Bytes[:],
-		)
+		pkScript, err := edgeInfo.FundingScript()
 		if err != nil {
 			t.Fatalf("unable to gen multi-sig p2wsh: %v", err)
 		}
@@ -2283,7 +2306,7 @@ func TestIncompleteChannelPolicies(t *testing.T) {
 	checkPolicies := func(node *LightningNode, expectedIn, expectedOut bool) {
 		calls := 0
 		err := graph.ForEachNodeChannel(nil, node.PubKeyBytes,
-			func(_ kvdb.RTx, _ *ChannelEdgeInfo1, outEdge,
+			func(_ kvdb.RTx, _ models.ChannelEdgeInfo, outEdge,
 				inEdge *ChannelEdgePolicy) error {
 
 				if !expectedOut && outEdge != nil {
@@ -3436,7 +3459,7 @@ func BenchmarkForEachChannel(b *testing.B) {
 			for _, n := range nodes {
 				err := n.ForEachChannel(
 					tx, func(tx kvdb.RTx,
-						info *ChannelEdgeInfo1,
+						info models.ChannelEdgeInfo,
 						policy *ChannelEdgePolicy,
 						policy2 *ChannelEdgePolicy) error {
 
@@ -3445,7 +3468,8 @@ func BenchmarkForEachChannel(b *testing.B) {
 						// compiler is going to optimize
 						// this away, and we get bogus
 						// results.
-						totalCapacity += info.Capacity
+						capacity := info.GetCapacity()
+						totalCapacity += capacity
 						maxHTLCs += policy.MaxHTLC
 						maxHTLCs += policy2.MaxHTLC
 
@@ -3492,8 +3516,8 @@ func TestGraphCacheForEachNodeChannel(t *testing.T) {
 	// though we have a nil edge policy here.
 	var numChans int
 	err = graph.ForEachNodeChannel(nil, node1.PubKeyBytes,
-		func(tx kvdb.RTx, _ *ChannelEdgeInfo1, _ *ChannelEdgePolicy,
-			_ *ChannelEdgePolicy) error {
+		func(tx kvdb.RTx, _ models.ChannelEdgeInfo,
+			_ *ChannelEdgePolicy, _ *ChannelEdgePolicy) error {
 
 			numChans++
 			return nil

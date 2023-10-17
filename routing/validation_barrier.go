@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -126,9 +127,8 @@ func (v *ValidationBarrier) InitJobDependencies(job interface{}) {
 			v.nodeAnnDependencies[msg.Node1KeyBytes()] = signals
 			v.nodeAnnDependencies[msg.Node2KeyBytes()] = signals
 		}
-	case *channeldb.ChannelEdgeInfo1:
-
-		shortID := lnwire.NewShortChanIDFromInt(msg.ChannelID)
+	case models.ChannelEdgeInfo:
+		shortID := lnwire.NewShortChanIDFromInt(msg.GetChanID())
 		if _, ok := v.chanAnnFinSignal[shortID]; !ok {
 			signals := &validationSignals{
 				allow: make(chan struct{}),
@@ -138,8 +138,8 @@ func (v *ValidationBarrier) InitJobDependencies(job interface{}) {
 			v.chanAnnFinSignal[shortID] = signals
 			v.chanEdgeDependencies[shortID] = signals
 
-			v.nodeAnnDependencies[route.Vertex(msg.NodeKey1Bytes)] = signals
-			v.nodeAnnDependencies[route.Vertex(msg.NodeKey2Bytes)] = signals
+			v.nodeAnnDependencies[msg.Node1Bytes()] = signals
+			v.nodeAnnDependencies[msg.Node2Bytes()] = signals
 		}
 
 	// These other types don't have any dependants, so no further
@@ -218,7 +218,7 @@ func (v *ValidationBarrier) WaitForDependants(job interface{}) error {
 	// return directly.
 	case *lnwire.AnnounceSignatures:
 		// TODO(roasbeef): need to wait on chan ann?
-	case *channeldb.ChannelEdgeInfo1:
+	case models.ChannelEdgeInfo:
 	case lnwire.ChannelAnnouncement:
 	}
 
@@ -264,8 +264,8 @@ func (v *ValidationBarrier) SignalDependants(job interface{}, allow bool) {
 	// If we've just finished executing a ChannelAnnouncement1, then we'll
 	// close out the signal, and remove the signal from the map of active
 	// ones. This will allow/deny any dependent jobs to continue execution.
-	case *channeldb.ChannelEdgeInfo1:
-		shortID := lnwire.NewShortChanIDFromInt(msg.ChannelID)
+	case models.ChannelEdgeInfo:
+		shortID := lnwire.NewShortChanIDFromInt(msg.GetChanID())
 		finSignals, ok := v.chanAnnFinSignal[shortID]
 		if ok {
 			if allow {

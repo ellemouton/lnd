@@ -8,6 +8,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/zpay32"
 	"github.com/stretchr/testify/mock"
@@ -51,7 +52,7 @@ func (h *hopHintsConfigMock) FetchAllChannels() ([]*channeldb.OpenChannel,
 // FetchChannelEdgesByID attempts to lookup the two directed edges for
 // the channel identified by the channel ID.
 func (h *hopHintsConfigMock) FetchChannelEdgesByID(chanID uint64) (
-	*channeldb.ChannelEdgeInfo1, *channeldb.ChannelEdgePolicy,
+	models.ChannelEdgeInfo, *channeldb.ChannelEdgePolicy,
 	*channeldb.ChannelEdgePolicy, error) {
 
 	args := h.Mock.Called(chanID)
@@ -64,7 +65,12 @@ func (h *hopHintsConfigMock) FetchChannelEdgesByID(chanID uint64) (
 		return nil, nil, nil, err
 	}
 
-	edgeInfo := args.Get(0).(*channeldb.ChannelEdgeInfo1)
+	edgeInfo, ok := args.Get(0).(*channeldb.ChannelEdgeInfo1)
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("unexpected "+
+			"ChannelEdgeInfo impl received: %T", args.Get(0))
+	}
+
 	policy1 := args.Get(1).(*channeldb.ChannelEdgePolicy)
 	policy2 := args.Get(2).(*channeldb.ChannelEdgePolicy)
 
