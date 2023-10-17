@@ -266,3 +266,38 @@ func (c *ChannelAnnouncement2) MsgType() MessageType {
 // A compile time check to ensure ChannelAnnouncement2 implements the
 // lnwire.Message interface.
 var _ Message = (*ChannelAnnouncement2)(nil)
+
+// Node1KeyBytes returns the bytes representing the public key of node 1 in the
+// channel.
+//
+// NOTE: This is part of the ChannelAnnouncement interface.
+func (c *ChannelAnnouncement2) Node1KeyBytes() [33]byte {
+	return c.NodeID1
+}
+
+// Node2KeyBytes returns the bytes representing the public key of node 2 in the
+// channel.
+//
+// NOTE: This is part of the ChannelAnnouncement interface.
+func (c *ChannelAnnouncement2) Node2KeyBytes() [33]byte {
+	return c.NodeID2
+}
+
+// GetChainHash returns the hash of the chain which this channel's funding
+// transaction is confirmed in.
+//
+// NOTE: This is part of the ChannelAnnouncement interface.
+func (c *ChannelAnnouncement2) GetChainHash() chainhash.Hash {
+	return c.ChainHash
+}
+
+// SCID returns the short channel ID of the channel.
+//
+// NOTE: This is part of the ChannelAnnouncement interface.
+func (c *ChannelAnnouncement2) SCID() ShortChannelID {
+	return c.ShortChannelID
+}
+
+// A compile-time check to ensure that ChannelAnnouncement2 implements the
+// ChannelAnnouncement interface.
+var _ ChannelAnnouncement = (*ChannelAnnouncement2)(nil)
