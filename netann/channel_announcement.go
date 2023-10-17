@@ -13,7 +13,7 @@ import (
 // structs for announcing new channels to other peers, or simply syncing up a
 // peer's initial routing table upon connect.
 func CreateChanAnnouncement(chanProof *channeldb.ChannelAuthProof,
-	chanInfo *channeldb.ChannelEdgeInfo,
+	chanInfo *channeldb.ChannelEdgeInfo1,
 	e1, e2 *channeldb.ChannelEdgePolicy) (*lnwire.ChannelAnnouncement1,
 	*lnwire.ChannelUpdate, *lnwire.ChannelUpdate, error) {
 
