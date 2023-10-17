@@ -1,6 +1,7 @@
 package channeldb
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"errors"
@@ -163,6 +164,13 @@ const (
 
 	// feeRateParts is the total number of parts used to express fee rates.
 	feeRateParts = 1e6
+
+	// chanEdgeNewEncodingPrefix is a byte used in the channel edge encoding
+	// to signal that the new style encoding which is prefixed with a type
+	// byte is being used instead of the legacy encoding which would start
+	// with either 0x02 or 0x03 due to the fact that the encoding would
+	// start with a node's compressed public key.
+	chanEdgeNewEncodingPrefix = 0xff
 )
 
 // ChannelGraph is a persistent, on-disk graph representation of the Lightning
@@ -4555,10 +4563,6 @@ func serializeChanEdgeInfo1(w io.Writer, edgeInfo *ChannelEdgeInfo1,
 	if len(edgeInfo.ExtraOpaqueData) > MaxAllowedExtraOpaqueBytes {
 		return ErrTooManyExtraOpaqueBytes(len(edgeInfo.ExtraOpaqueData))
 	}
-	err = wire.WriteVarBytes(w, 0, edgeInfo.ExtraOpaqueData)
-	if err != nil {
-		return err
-	}
 
 	return wire.WriteVarBytes(w, 0, edgeInfo.ExtraOpaqueData)
 }
@@ -4577,7 +4581,20 @@ func fetchChanEdgeInfo(edgeIndex kvdb.RBucket,
 }
 
 func deserializeChanEdgeInfo(reader io.Reader) (models.ChannelEdgeInfo, error) {
-	return deserializeChanEdgeInfo1(reader)
+	// Wrap the io.Reader in a bufio.Reader so that we can peak the first
+	// byte of the stream without actually consuming from the stream.
+	r := bufio.NewReader(reader)
+
+	firstByte, err := r.Peek(1)
+	if err != nil {
+		return nil, err
+	}
+
+	if firstByte[0] != chanEdgeNewEncodingPrefix {
+		return deserializeChanEdgeInfo1(r)
+	}
+
+	return nil, fmt.Errorf("unknown channel edge encoding")
 }
 
 func deserializeChanEdgeInfo1(r io.Reader) (*ChannelEdgeInfo1, error) {
