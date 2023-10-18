@@ -1273,15 +1273,17 @@ func (g *GossipSyncer) FilterGossipMsgs(msgs ...msgWithSenders) {
 	// set of channel announcements and channel updates. This will allow us
 	// to quickly check if we should forward a chan ann, based on the known
 	// channel updates for a channel.
-	chanUpdateIndex := make(map[lnwire.ShortChannelID][]*lnwire.ChannelUpdate1)
+	chanUpdateIndex := make(
+		map[lnwire.ShortChannelID][]lnwire.ChannelUpdate,
+	)
 	for _, msg := range msgs {
-		chanUpdate, ok := msg.msg.(*lnwire.ChannelUpdate1)
+		chanUpdate, ok := msg.msg.(lnwire.ChannelUpdate)
 		if !ok {
 			continue
 		}
 
-		chanUpdateIndex[chanUpdate.ShortChannelID] = append(
-			chanUpdateIndex[chanUpdate.ShortChannelID], chanUpdate,
+		chanUpdateIndex[chanUpdate.SCID()] = append(
+			chanUpdateIndex[chanUpdate.SCID()], chanUpdate,
 		)
 	}
 
@@ -1294,10 +1296,24 @@ func (g *GossipSyncer) FilterGossipMsgs(msgs ...msgWithSenders) {
 	)
 	g.Unlock()
 
-	passesFilter := func(timeStamp uint32) bool {
-		t := time.Unix(int64(timeStamp), 0)
+	passesTimestampFilter := func(timestamp uint32) bool {
+		t := time.Unix(int64(timestamp), 0)
 		return t.Equal(startTime) ||
 			(t.After(startTime) && t.Before(endTime))
+	}
+
+	passesFilter := func(update lnwire.Message) bool {
+		switch upd := update.(type) {
+		case *lnwire.ChannelUpdate1:
+			return passesTimestampFilter(upd.Timestamp)
+		case *lnwire.NodeAnnouncement:
+			return passesTimestampFilter(upd.Timestamp)
+		}
+
+		log.Errorf("Unhandled implementation of lnwire.Message: %T, "+
+			"could not filter", update)
+
+		return false
 	}
 
 	msgsToSend := make([]lnwire.Message, 0, len(msgs))
@@ -1333,7 +1349,7 @@ func (g *GossipSyncer) FilterGossipMsgs(msgs ...msgWithSenders) {
 			}
 
 			for _, chanUpdate := range chanUpdates {
-				if passesFilter(chanUpdate.Timestamp) {
+				if passesFilter(chanUpdate) {
 					msgsToSend = append(msgsToSend, msg)
 					break
 				}
@@ -1343,17 +1359,17 @@ func (g *GossipSyncer) FilterGossipMsgs(msgs ...msgWithSenders) {
 				msgsToSend = append(msgsToSend, msg)
 			}
 
-		// For each channel update, we'll only send if it the timestamp
+		// For each channel update, we'll only send it if the timestamp
 		// is between our time range.
-		case *lnwire.ChannelUpdate1:
-			if passesFilter(msg.Timestamp) {
+		case lnwire.ChannelUpdate:
+			if passesFilter(msg) {
 				msgsToSend = append(msgsToSend, msg)
 			}
 
 		// Similarly, we only send node announcements if the update
 		// timestamp ifs between our set gossip filter time range.
 		case *lnwire.NodeAnnouncement:
-			if passesFilter(msg.Timestamp) {
+			if passesFilter(msg) {
 				msgsToSend = append(msgsToSend, msg)
 			}
 		}

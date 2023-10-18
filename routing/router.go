@@ -162,10 +162,8 @@ type ChannelGraphSource interface {
 	IsKnownEdge(chanID lnwire.ShortChannelID) bool
 
 	// IsStaleEdgePolicy returns true if the graph source has a channel
-	// edge for the passed channel ID (and flags) that have a more recent
-	// timestamp.
-	IsStaleEdgePolicy(chanID lnwire.ShortChannelID, timestamp time.Time,
-		flags lnwire.ChanUpdateChanFlags) bool
+	// edge for update that has a more recent timestamp.
+	IsStaleEdgePolicy(update lnwire.ChannelUpdate) (bool, error)
 
 	// MarkEdgeLive clears an edge from our zombie index, deeming it as
 	// live.
@@ -2563,20 +2561,20 @@ func (r *ChannelRouter) sendPayment(feeLimit lnwire.MilliSatoshi,
 
 // extractChannelUpdate examines the error and extracts the channel update.
 func (r *ChannelRouter) extractChannelUpdate(
-	failure lnwire.FailureMessage) *lnwire.ChannelUpdate1 {
+	failure lnwire.FailureMessage) lnwire.ChannelUpdate {
 
-	var update *lnwire.ChannelUpdate1
+	var update lnwire.ChannelUpdate
 	switch onionErr := failure.(type) {
 	case *lnwire.FailExpiryTooSoon:
-		update = &onionErr.Update
+		update = onionErr.Update
 	case *lnwire.FailAmountBelowMinimum:
-		update = &onionErr.Update
+		update = onionErr.Update
 	case *lnwire.FailFeeInsufficient:
-		update = &onionErr.Update
+		update = onionErr.Update
 	case *lnwire.FailIncorrectCltvExpiry:
-		update = &onionErr.Update
+		update = onionErr.Update
 	case *lnwire.FailChannelDisabled:
-		update = &onionErr.Update
+		update = onionErr.Update
 	case *lnwire.FailTemporaryChannelFailure:
 		update = onionErr.Update
 	}
@@ -2586,8 +2584,8 @@ func (r *ChannelRouter) extractChannelUpdate(
 
 // applyChannelUpdate validates a channel update and if valid, applies it to the
 // database. It returns a bool indicating whether the updates were successful.
-func (r *ChannelRouter) applyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
-	ch, _, _, err := r.GetChannelByID(msg.ShortChannelID)
+func (r *ChannelRouter) applyChannelUpdate(msg lnwire.ChannelUpdate) bool {
+	ch, _, _, err := r.GetChannelByID(msg.SCID())
 	if err != nil {
 		log.Errorf("Unable to retrieve channel by id: %v", err)
 		return false
@@ -2595,19 +2593,10 @@ func (r *ChannelRouter) applyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 
 	var pubKey *btcec.PublicKey
 
-	switch msg.ChannelFlags & lnwire.ChanUpdateDirection {
-	case 0:
+	if msg.IsNode1() {
 		pubKey, _ = ch.NodeKey1()
-
-	case 1:
+	} else {
 		pubKey, _ = ch.NodeKey2()
-	}
-
-	// Exit early if the pubkey cannot be decided.
-	if pubKey == nil {
-		log.Errorf("Unable to decide pubkey with ChannelFlags=%v",
-			msg.ChannelFlags)
-		return false
 	}
 
 	err = ValidateChannelUpdateAnn(pubKey, ch.GetCapacity(), msg)
@@ -2616,18 +2605,15 @@ func (r *ChannelRouter) applyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 		return false
 	}
 
-	err = r.UpdateEdge(&channeldb.ChannelEdgePolicy1{
-		SigBytes:                  msg.Signature.ToSignatureBytes(),
-		ChannelID:                 msg.ShortChannelID.ToUint64(),
-		LastUpdate:                time.Unix(int64(msg.Timestamp), 0),
-		MessageFlags:              msg.MessageFlags,
-		ChannelFlags:              msg.ChannelFlags,
-		TimeLockDelta:             msg.TimeLockDelta,
-		MinHTLC:                   msg.HtlcMinimumMsat,
-		MaxHTLC:                   msg.HtlcMaximumMsat,
-		FeeBaseMSat:               lnwire.MilliSatoshi(msg.BaseFee),
-		FeeProportionalMillionths: lnwire.MilliSatoshi(msg.FeeRate),
-	})
+	edgePolicy, err := channeldb.EdgePolicyFromUpdate(msg)
+	if err != nil {
+		log.Errorf("Unable to convert update message to edge "+
+			"policy: %v", err)
+
+		return false
+	}
+
+	err = r.UpdateEdge(edgePolicy)
 	if err != nil && !IsError(err, ErrIgnored, ErrOutdated) {
 		log.Errorf("Unable to apply channel update: %v", err)
 		return false
@@ -2845,16 +2831,25 @@ func (r *ChannelRouter) IsKnownEdge(chanID lnwire.ShortChannelID) bool {
 // the passed channel ID (and flags) that have a more recent timestamp.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (r *ChannelRouter) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
-	timestamp time.Time, flags lnwire.ChanUpdateChanFlags) bool {
+func (r *ChannelRouter) IsStaleEdgePolicy(msg lnwire.ChannelUpdate) (bool,
+	error) {
+
+	update, ok := msg.(*lnwire.ChannelUpdate1)
+	if !ok {
+		return false, fmt.Errorf("unhandled implementation of the "+
+			"lnwire.ChannelUpdate interface: %T", msg)
+	}
 
 	edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
-		r.cfg.Graph.HasChannelEdge(chanID.ToUint64())
+		r.cfg.Graph.HasChannelEdge(update.SCID().ToUint64())
 	if err != nil {
-		log.Debugf("Check stale edge policy got error: %v", err)
-		return false
-
+		return false, err
 	}
+
+	var (
+		timestamp = time.Unix(int64(update.Timestamp), 0)
+		flags     = update.ChannelFlags
+	)
 
 	// If we know of the edge as a zombie, then we'll make some additional
 	// checks to determine if the new policy is fresh.
@@ -2866,18 +2861,18 @@ func (r *ChannelRouter) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 			isDisabled := flags&lnwire.ChanUpdateDisabled ==
 				lnwire.ChanUpdateDisabled
 			if isDisabled {
-				return true
+				return true, nil
 			}
 		}
 
 		// Otherwise, we'll fall back to our usual ChannelPruneExpiry.
-		return time.Since(timestamp) > r.cfg.ChannelPruneExpiry
+		return time.Since(timestamp) > r.cfg.ChannelPruneExpiry, nil
 	}
 
 	// If we don't know of the edge, then it means it's fresh (thus not
 	// stale).
 	if !exists {
-		return false
+		return false, nil
 	}
 
 	// As edges are directional edge node has a unique policy for the
@@ -2888,15 +2883,15 @@ func (r *ChannelRouter) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 	// A flag set of 0 indicates this is an announcement for the "first"
 	// node in the channel.
 	case flags&lnwire.ChanUpdateDirection == 0:
-		return !edge1Timestamp.Before(timestamp)
+		return !edge1Timestamp.Before(timestamp), nil
 
 	// Similarly, a flag set of 1 indicates this is an announcement for the
 	// "second" node in the channel.
 	case flags&lnwire.ChanUpdateDirection == 1:
-		return !edge2Timestamp.Before(timestamp)
+		return !edge2Timestamp.Before(timestamp), nil
 	}
 
-	return false
+	return false, nil
 }
 
 // MarkEdgeLive clears an edge from our zombie index, deeming it as live.

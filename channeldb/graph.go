@@ -3712,6 +3712,30 @@ func (c *ChannelEdgePolicy1) ComputeFeeFromIncoming(
 	)
 }
 
+func EdgePolicyFromUpdate(update lnwire.ChannelUpdate) (*ChannelEdgePolicy1,
+	error) {
+
+	switch upd := update.(type) {
+	case *lnwire.ChannelUpdate1:
+		//nolint:lll
+		return &ChannelEdgePolicy1{
+			SigBytes:                  upd.Signature.ToSignatureBytes(),
+			ChannelID:                 upd.ShortChannelID.ToUint64(),
+			LastUpdate:                time.Unix(int64(upd.Timestamp), 0),
+			MessageFlags:              upd.MessageFlags,
+			ChannelFlags:              upd.ChannelFlags,
+			TimeLockDelta:             upd.TimeLockDelta,
+			MinHTLC:                   upd.HtlcMinimumMsat,
+			MaxHTLC:                   upd.HtlcMaximumMsat,
+			FeeBaseMSat:               lnwire.MilliSatoshi(upd.BaseFee),
+			FeeProportionalMillionths: lnwire.MilliSatoshi(upd.FeeRate),
+		}, nil
+	default:
+		return nil, fmt.Errorf("unhandled implementation of "+
+			"lnwire.ChannelUpdate: %T", update)
+	}
+}
+
 // FetchChannelEdgesByOutpoint attempts to lookup the two directed edges for
 // the channel identified by the funding outpoint. If the channel can't be
 // found, then ErrEdgeNotFound is returned. A struct which houses the general

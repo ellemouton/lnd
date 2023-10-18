@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
@@ -348,8 +347,19 @@ func (r *mockGraphSource) IsKnownEdge(chanID lnwire.ShortChannelID) bool {
 
 // IsStaleEdgePolicy returns true if the graph source has a channel edge for
 // the passed channel ID (and flags) that have a more recent timestamp.
-func (r *mockGraphSource) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
-	timestamp time.Time, flags lnwire.ChanUpdateChanFlags) bool {
+func (r *mockGraphSource) IsStaleEdgePolicy(msg lnwire.ChannelUpdate) (bool,
+	error) {
+
+	update, ok := msg.(*lnwire.ChannelUpdate1)
+	if !ok {
+		panic("message must be of type *lnwire.ChannelUpdate1")
+	}
+
+	var (
+		chanID    = update.SCID()
+		timestamp = time.Unix(int64(update.Timestamp), 0)
+		flags     = update.ChannelFlags
+	)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -361,28 +371,29 @@ func (r *mockGraphSource) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 		// well.
 		_, isZombie := r.zombies[chanIDInt]
 		if !isZombie {
-			return false
+			return false, nil
 		}
 
 		// Since it exists within our zombie index, we'll check that it
 		// respects the router's live edge horizon to determine whether
 		// it is stale or not.
-		return time.Since(timestamp) > routing.DefaultChannelPruneExpiry
+		return time.Since(timestamp) >
+			routing.DefaultChannelPruneExpiry, nil
 	}
 
 	switch {
 	case flags&lnwire.ChanUpdateDirection == 0 &&
 		!reflect.DeepEqual(edges[0], channeldb.ChannelEdgePolicy1{}):
 
-		return !timestamp.After(edges[0].LastUpdate)
+		return !timestamp.After(edges[0].LastUpdate), nil
 
 	case flags&lnwire.ChanUpdateDirection == 1 &&
 		!reflect.DeepEqual(edges[1], channeldb.ChannelEdgePolicy1{}):
 
-		return !timestamp.After(edges[1].LastUpdate)
+		return !timestamp.After(edges[1].LastUpdate), nil
 
 	default:
-		return false
+		return false, nil
 	}
 }
 
@@ -748,10 +759,8 @@ func createTestCtx(t *testing.T, startHeight uint32) (*testCtx, error) {
 		return false
 	}
 
-	signAliasUpdate := func(*lnwire.ChannelUpdate1) (*ecdsa.Signature,
-		error) {
-
-		return nil, nil
+	signAliasUpdate := func(lnwire.ChannelUpdate) error {
+		return nil
 	}
 
 	findBaseByAlias := func(lnwire.ShortChannelID) (lnwire.ShortChannelID,
@@ -1450,10 +1459,8 @@ func TestSignatureAnnouncementRetryAtStartup(t *testing.T) {
 		return false
 	}
 
-	signAliasUpdate := func(*lnwire.ChannelUpdate1) (*ecdsa.Signature,
-		error) {
-
-		return nil, nil
+	signAliasUpdate := func(lnwire.ChannelUpdate) error {
+		return nil
 	}
 
 	findBaseByAlias := func(lnwire.ShortChannelID) (lnwire.ShortChannelID,
@@ -1855,7 +1862,8 @@ func TestDeDuplicatedAnnouncements(t *testing.T) {
 	assertChannelUpdate := func(channelUpdate *lnwire.ChannelUpdate1) {
 		channelKey := channelUpdateID{
 			ua3.ShortChannelID,
-			ua3.ChannelFlags,
+			ua3.ChannelFlags&lnwire.ChanUpdateDirection == 0,
+			ua3.ChannelFlags.IsDisabled(),
 		}
 
 		mws, ok := announcements.channelUpdates[channelKey]

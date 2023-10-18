@@ -313,7 +313,7 @@ func (a *ChannelUpdate1) SetSig(sig input.Signature) error {
 }
 
 func (a *ChannelUpdate1) IsDisabled() bool {
-	return a.ChannelFlags&ChanUpdateDisabled == 1
+	return a.ChannelFlags&ChanUpdateDisabled == ChanUpdateDisabled
 }
 
 func (a *ChannelUpdate1) GetChainHash() chainhash.Hash {

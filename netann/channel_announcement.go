@@ -17,7 +17,7 @@ import (
 func CreateChanAnnouncement(chanProof models.ChannelAuthProof,
 	chanInfo models.ChannelEdgeInfo,
 	e1, e2 *channeldb.ChannelEdgePolicy1) (lnwire.ChannelAnnouncement,
-	*lnwire.ChannelUpdate1, *lnwire.ChannelUpdate1, error) {
+	lnwire.ChannelUpdate, lnwire.ChannelUpdate, error) {
 
 	switch proof := chanProof.(type) {
 	case *channeldb.ChannelAuthProof1:
@@ -94,13 +94,13 @@ func createChanAnnouncement1(chanProof *channeldb.ChannelAuthProof1,
 	// nil.
 	var edge1Ann, edge2Ann *lnwire.ChannelUpdate1
 	if e1 != nil {
-		edge1Ann, err = ChannelUpdateFromEdge(chanInfo, e1)
+		edge1Ann, err = channelUpdate1FromEdge(chanInfo, e1)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 	}
 	if e2 != nil {
-		edge2Ann, err = ChannelUpdateFromEdge(chanInfo, e2)
+		edge2Ann, err = channelUpdate1FromEdge(chanInfo, e2)
 		if err != nil {
 			return nil, nil, nil, err
 		}
