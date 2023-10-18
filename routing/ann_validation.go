@@ -194,18 +194,36 @@ func ValidateNodeAnn(a *lnwire.NodeAnnouncement) error {
 // signed by the node's private key, and (2) that the announcement's message
 // flags and optional fields are sane.
 func ValidateChannelUpdateAnn(pubKey *btcec.PublicKey, capacity btcutil.Amount,
-	a *lnwire.ChannelUpdate1) error {
+	a lnwire.ChannelUpdate) error {
 
-	if err := ValidateChannelUpdateFields(capacity, a); err != nil {
+	update, ok := a.(*lnwire.ChannelUpdate1)
+	if !ok {
+		return fmt.Errorf("unhandled implementation of "+
+			"lnwire.ChannelUpdate: %T", a)
+	}
+
+	if err := ValidateChannelUpdateFields(capacity, update); err != nil {
 		return err
 	}
 
-	return VerifyChannelUpdateSignature(a, pubKey)
+	return VerifyChannelUpdateSignature(update, pubKey)
 }
 
 // VerifyChannelUpdateSignature verifies that the channel update message was
 // signed by the party with the given node public key.
-func VerifyChannelUpdateSignature(msg *lnwire.ChannelUpdate1,
+func VerifyChannelUpdateSignature(msg lnwire.ChannelUpdate,
+	pubKey *btcec.PublicKey) error {
+
+	switch m := msg.(type) {
+	case *lnwire.ChannelUpdate1:
+		return verifyChannelUpdate1Signature(m, pubKey)
+	default:
+		return fmt.Errorf("unhandled implementation of "+
+			"lnwire.ChannelUpdate: %T", msg)
+	}
+}
+
+func verifyChannelUpdate1Signature(msg *lnwire.ChannelUpdate1,
 	pubKey *btcec.PublicKey) error {
 
 	data, err := msg.DataToSign()
