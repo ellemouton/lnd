@@ -19,36 +19,35 @@ var ErrUnableToExtractChanUpdate = fmt.Errorf("unable to extract ChannelUpdate1"
 
 // ChannelUpdateModifier is a closure that makes in-place modifications to an
 // lnwire.ChannelUpdate1.
-type ChannelUpdateModifier func(*lnwire.ChannelUpdate1)
+type ChannelUpdateModifier func(lnwire.ChannelUpdate)
 
 // ChanUpdSetDisable is a functional option that sets the disabled channel flag
 // if disabled is true, and clears the bit otherwise.
 func ChanUpdSetDisable(disabled bool) ChannelUpdateModifier {
-	return func(update *lnwire.ChannelUpdate1) {
-		if disabled {
-			// Set the bit responsible for marking a channel as
-			// disabled.
-			update.ChannelFlags |= lnwire.ChanUpdateDisabled
-		} else {
-			// Clear the bit responsible for marking a channel as
-			// disabled.
-			update.ChannelFlags &= ^lnwire.ChanUpdateDisabled
-		}
+	return func(update lnwire.ChannelUpdate) {
+		update.SetDisabled(disabled)
 	}
 }
 
 // ChanUpdSetTimestamp is a functional option that sets the timestamp of the
 // update to the current time, or increments it if the timestamp is already in
 // the future.
-func ChanUpdSetTimestamp(update *lnwire.ChannelUpdate1) {
-	newTimestamp := uint32(time.Now().Unix())
-	if newTimestamp <= update.Timestamp {
-		// Increment the prior value to ensure the timestamp
-		// monotonically increases, otherwise the update won't
-		// propagate.
-		newTimestamp = update.Timestamp + 1
+func ChanUpdSetTimestamp(update lnwire.ChannelUpdate) {
+	switch upd := update.(type) {
+	case *lnwire.ChannelUpdate1:
+		newTimestamp := uint32(time.Now().Unix())
+		if newTimestamp <= upd.Timestamp {
+			// Increment the prior value to ensure the timestamp
+			// monotonically increases, otherwise the update won't
+			// propagate.
+			newTimestamp = upd.Timestamp + 1
+		}
+		upd.Timestamp = newTimestamp
+
+	default:
+		log.Errorf("unhandled implementation of "+
+			"lnwire.ChannelUpdate: %T", update)
 	}
-	update.Timestamp = newTimestamp
 }
 
 // SignChannelUpdate applies the given modifiers to the passed
@@ -58,7 +57,7 @@ func ChanUpdSetTimestamp(update *lnwire.ChannelUpdate1) {
 //
 // NOTE: This method modifies the given update.
 func SignChannelUpdate(signer keychain.MessageSignerRing,
-	keyLoc keychain.KeyLocator, update *lnwire.ChannelUpdate1,
+	keyLoc keychain.KeyLocator, update lnwire.ChannelUpdate,
 	mods ...ChannelUpdateModifier) error {
 
 	// Apply the requested changes to the channel update.
@@ -66,16 +65,43 @@ func SignChannelUpdate(signer keychain.MessageSignerRing,
 		modifier(update)
 	}
 
-	// Create the DER-encoded ECDSA signature over the message digest.
-	sig, err := SignAnnouncement(signer, keyLoc, update)
-	if err != nil {
-		return err
-	}
+	switch upd := update.(type) {
+	case *lnwire.ChannelUpdate1:
+		data, err := upd.DataToSign()
+		if err != nil {
+			return err
+		}
 
-	// Parse the DER-encoded signature into a fixed-size 64-byte array.
-	update.Signature, err = lnwire.NewSigFromSignature(sig)
-	if err != nil {
-		return err
+		sig, err := signer.SignMessage(keyLoc, data, true)
+		if err != nil {
+			return err
+		}
+
+		// Parse the DER-encoded signature into a fixed-size 64-byte
+		// array.
+		upd.Signature, err = lnwire.NewSigFromSignature(sig)
+		if err != nil {
+			return err
+		}
+
+	case *lnwire.ChannelUpdate2:
+		data, err := upd.DigestToSignNoHash()
+		if err != nil {
+			return err
+		}
+
+		sig, err := signer.SignMessageSchnorr(keyLoc, data, false, nil)
+		if err != nil {
+			return err
+		}
+
+		upd.Signature, err = lnwire.NewSigFromSignature(sig)
+		if err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unhandled implementaion of "+
+			"ChannelUpdate: %T", update)
 	}
 
 	return nil
