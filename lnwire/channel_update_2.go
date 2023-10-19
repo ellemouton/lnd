@@ -7,6 +7,7 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/tlv"
 )
 
@@ -118,6 +119,58 @@ type ChannelUpdate2 struct {
 	// to fill out the full maximum transport message size. These fields can
 	// be used to specify optional data such as custom TLV fields.
 	ExtraOpaqueData ExtraOpaqueData
+}
+
+func (c *ChannelUpdate2) SCID() ShortChannelID {
+	return c.ShortChannelID
+}
+
+func (c *ChannelUpdate2) IsNode1() bool {
+	return c.Direction == false
+}
+
+func (c *ChannelUpdate2) SetDisabled(b bool) {
+	c.DisabledFlags |= ChanUpdateDisableIncoming
+	c.DisabledFlags |= ChanUpdateDisableOutgoing
+}
+
+func (c *ChannelUpdate2) IsDisabled() bool {
+	return !c.DisabledFlags.IsEnabled()
+}
+
+func (c *ChannelUpdate2) GetChainHash() chainhash.Hash {
+	return c.ChainHash
+}
+
+func (c *ChannelUpdate2) SetSig(signature input.Signature) error {
+	sig, err := NewSigFromSignature(signature)
+	if err != nil {
+		return err
+	}
+
+	c.Signature = sig
+
+	return nil
+}
+
+func (c *ChannelUpdate2) SetSCID(scid ShortChannelID) {
+	c.ShortChannelID = scid
+}
+
+func (c *ChannelUpdate2) GetTimeLock() uint16 {
+	return c.CLTVExpiryDelta
+}
+
+func (c *ChannelUpdate2) GetBaseFee() MilliSatoshi {
+	return MilliSatoshi(c.FeeBaseMsat)
+}
+
+func (c *ChannelUpdate2) GetFeeRate() MilliSatoshi {
+	return MilliSatoshi(c.FeeProportionalMillionths)
+}
+
+func (c *ChannelUpdate2) GetSignature() Sig {
+	return c.Signature
 }
 
 // Decode deserializes a serialized AnnounceSignatures stored in the passed
@@ -245,10 +298,30 @@ func (c *ChannelUpdate2) Encode(w *bytes.Buffer, _ uint32) error {
 		return err
 	}
 
-	var records []tlv.Record
+	_, err = c.DataToSign()
+	if err != nil {
+		return err
+	}
 
+	return WriteBytes(w, c.ExtraOpaqueData)
+}
+
+// DigestToSignNoHash computes the digest of the message to be signed.
+func (c *ChannelUpdate2) DigestToSignNoHash() ([]byte, error) {
+	data, err := c.DataToSign()
+	if err != nil {
+		return nil, err
+	}
+
+	return MsgHashPreFinalHash(
+		"channel_announcement_2", "announcement_signature", data,
+	), nil
+}
+
+func (c *ChannelUpdate2) DataToSign() ([]byte, error) {
 	// The chain-hash record is only included if it is _not_ equal to the
 	// bitcoin mainnet genisis block hash.
+	var records []tlv.Record
 	if !c.ChainHash.IsEqual(chaincfg.MainNetParams.GenesisHash) {
 		chainHash := [32]byte(c.ChainHash)
 		records = append(records, tlv.MakePrimitiveRecord(
@@ -318,12 +391,12 @@ func (c *ChannelUpdate2) Encode(w *bytes.Buffer, _ uint32) error {
 		))
 	}
 
-	err = EncodeMessageExtraDataFromRecords(&c.ExtraOpaqueData, records...)
+	err := EncodeMessageExtraDataFromRecords(&c.ExtraOpaqueData, records...)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return WriteBytes(w, c.ExtraOpaqueData)
+	return c.ExtraOpaqueData, nil
 }
 
 // MsgType returns the integer uniquely identifying this message type on the
@@ -334,9 +407,9 @@ func (c *ChannelUpdate2) MsgType() MessageType {
 	return MsgChannelUpdate2
 }
 
-// A compile time check to ensure ChannelUpdate2 implements the lnwire.Message
-// interface.
-var _ Message = (*ChannelUpdate2)(nil)
+// A compile time check to ensure ChannelUpdate2 implements the
+// lnwire.ChannelUpdate interface.
+var _ ChannelUpdate = (*ChannelUpdate2)(nil)
 
 // ChanUpdateDisableFlags is a bit vector that can be used to indicate various
 // reasons for the channel being marked as disabled.
