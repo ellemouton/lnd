@@ -16,6 +16,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
@@ -26,6 +27,7 @@ import (
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
+	"github.com/lightningnetwork/lnd/tlv"
 )
 
 var (
@@ -3436,6 +3438,10 @@ func (c *ChannelEdgeInfo1) BitcoinKey2() (*btcec.PublicKey, error) {
 	return key, nil
 }
 
+// A compile-time check to ensure that ChannelEdgeInfo1 implements
+// modesl.ChannelEdgeInfo.
+var _ models.ChannelEdgeInfo = (*ChannelEdgeInfo1)(nil)
+
 // FetchOtherNode attempts to fetch the full LightningNode that's opposite of
 // the target node in the channel. This is useful when one knows the pubkey of
 // one of the nodes, and wishes to obtain the full LightningNode for the other
@@ -3490,10 +3496,6 @@ func (c *ChannelGraph) FetchOtherNode(tx kvdb.RTx,
 
 	return targetNode, err
 }
-
-// A compile-time check to ensure that ChannelEdgeInfo1 implements
-// modesl.ChannelEdgeInfo.
-var _ models.ChannelEdgeInfo = (*ChannelEdgeInfo1)(nil)
 
 // ChannelAuthProof1 is the authentication proof (the signature portion) for a
 // channel. Using the four signatures contained in the struct, and some
@@ -4545,22 +4547,64 @@ func deserializeLightningNode(r io.Reader) (LightningNode, error) {
 	return node, nil
 }
 
+// edgeInfoEncodingType indicate how the bytes for a channel edge have been
+// serialised.
+type edgeInfoEncodingType uint8
+
+const (
+	// edgeInfo2EncodingType will be used as a prefix for edge's advertised
+	// using the ChannelAnnouncement2 message. The type indicates how the
+	// bytes following should be deserialized.
+	edgeInfo2EncodingType edgeInfoEncodingType = 0
+)
+
 // putChanEdgeInfo encodes and writes the given edge to the edge index bucket.
 // The encoding used will depend on the channel type.
 func putChanEdgeInfo(edgeIndex kvdb.RwBucket, edgeInfo models.ChannelEdgeInfo,
 	chanID [8]byte) error {
 
-	var b bytes.Buffer
+	var (
+		b            bytes.Buffer
+		withTypeByte bool
+		typeByte     edgeInfoEncodingType
+		serialize    func(w io.Writer) error
+	)
 
 	switch info := edgeInfo.(type) {
 	case *ChannelEdgeInfo1:
-		err := serializeChanEdgeInfo1(&b, info, chanID)
-		if err != nil {
-			return err
+		serialize = func(w io.Writer) error {
+			return serializeChanEdgeInfo1(&b, info, chanID)
+		}
+	case *ChannelEdgeInfo2:
+		withTypeByte = true
+		typeByte = edgeInfo2EncodingType
+
+		serialize = func(w io.Writer) error {
+			return serializeChanEdgeInfo2(&b, info)
 		}
 	default:
 		return fmt.Errorf("unhandled implementation of "+
 			"ChannelEdgeInfo: %T", edgeInfo)
+	}
+
+	if withTypeByte {
+		// First, write the identifying encoding byte to signal that
+		// this is not using the legacy encoding.
+		_, err := b.Write([]byte{chanEdgeNewEncodingPrefix})
+		if err != nil {
+			return err
+		}
+
+		// Now, write the encoding type.
+		_, err = b.Write([]byte{byte(typeByte)})
+		if err != nil {
+			return err
+		}
+	}
+
+	err := serialize(&b)
+	if err != nil {
+		return err
 	}
 
 	return edgeIndex.Put(chanID[:], b.Bytes())
@@ -4656,7 +4700,26 @@ func deserializeChanEdgeInfo(reader io.Reader) (models.ChannelEdgeInfo, error) {
 		return deserializeChanEdgeInfo1(r)
 	}
 
-	return nil, fmt.Errorf("unknown channel edge encoding")
+	// Pop the encoding type byte.
+	var scratch [1]byte
+	if _, err = r.Read(scratch[:]); err != nil {
+		return nil, err
+	}
+
+	// Now, read the encoding type byte.
+	if _, err = r.Read(scratch[:]); err != nil {
+		return nil, err
+	}
+
+	encoding := edgeInfoEncodingType(scratch[0])
+	switch encoding {
+	case edgeInfo2EncodingType:
+		return deserializeChanEdgeInfo2(r)
+
+	default:
+		return nil, fmt.Errorf("unknown edge info encoding type: %d",
+			encoding)
+	}
 }
 
 func deserializeChanEdgeInfo1(r io.Reader) (*ChannelEdgeInfo1, error) {
@@ -5086,4 +5149,299 @@ func deserializeChanEdgePolicyRaw(r io.Reader) (*ChannelEdgePolicy1, error) {
 	}
 
 	return edge, nil
+}
+
+const (
+	EdgeInfo2MsgType   = tlv.Type(0)
+	EdgeInfo2ChanPoint = tlv.Type(1)
+	EdgeInfo2Sig       = tlv.Type(2)
+)
+
+type ChannelEdgeInfo2 struct {
+	lnwire.ChannelAnnouncement2
+
+	// ChannelPoint is the funding outpoint of the channel. This can be
+	// used to uniquely identify the channel within the channel graph.
+	ChannelPoint wire.OutPoint
+
+	// AuthProof is the authentication proof for this channel.
+	AuthProof *ChannelAuthProof2
+
+	nodeKey1    *btcec.PublicKey
+	nodeKey2    *btcec.PublicKey
+	bitcoinKey1 *btcec.PublicKey
+	bitcoinKey2 *btcec.PublicKey
+}
+
+// Copy returns a copy of the ChannelEdgeInfo.
+//
+// NOTE: this is part of the models.ChannelEdgeInfo interface.
+func (c *ChannelEdgeInfo2) Copy() models.ChannelEdgeInfo {
+	return &ChannelEdgeInfo2{
+		ChannelAnnouncement2: lnwire.ChannelAnnouncement2{
+			ChainHash:       c.ChainHash,
+			Features:        c.Features,
+			ShortChannelID:  c.ShortChannelID,
+			Capacity:        c.Capacity,
+			NodeID1:         c.NodeID1,
+			NodeID2:         c.NodeID2,
+			BitcoinKey1:     c.BitcoinKey1,
+			BitcoinKey2:     c.BitcoinKey2,
+			MerkleRootHash:  c.MerkleRootHash,
+			ExtraOpaqueData: c.ExtraOpaqueData,
+		},
+		ChannelPoint: c.ChannelPoint,
+		AuthProof:    c.AuthProof,
+	}
+}
+
+// Node1Bytes returns bytes of the public key of node 1.
+//
+// NOTE: this is part of the models.ChannelEdgeInfo interface.
+func (c *ChannelEdgeInfo2) Node1Bytes() [33]byte {
+	return c.NodeID1
+}
+
+// Node2Bytes returns bytes of the public key of node 2.
+//
+// NOTE: this is part of the models.ChannelEdgeInfo interface.
+func (c *ChannelEdgeInfo2) Node2Bytes() [33]byte {
+	return c.NodeID2
+}
+
+// GetChainHash returns the hash of the genesis block of the chain that the edge
+// is on.
+//
+// NOTE: this is part of the models.ChannelEdgeInfo interface.
+func (c *ChannelEdgeInfo2) GetChainHash() chainhash.Hash {
+	return c.ChainHash
+}
+
+// GetChanID returns the channel ID.
+//
+// NOTE: this is part of the models.ChannelEdgeInfo interface.
+func (c *ChannelEdgeInfo2) GetChanID() uint64 {
+	return c.ShortChannelID.ToUint64()
+}
+
+// GetAuthProof returns the ChannelAuthProof for the edge.
+//
+// NOTE: this is part of the models.ChannelEdgeInfo interface.
+func (c *ChannelEdgeInfo2) GetAuthProof() models.ChannelAuthProof {
+	// Cant just return AuthProof cause you then run into the
+	// nil interface gotcha.
+	if c.AuthProof == nil {
+		return nil
+	}
+
+	return c.AuthProof
+}
+
+// GetCapacity returns the capacity of the channel.
+//
+// NOTE: this is part of the models.ChannelEdgeInfo interface.
+func (c *ChannelEdgeInfo2) GetCapacity() btcutil.Amount {
+	return btcutil.Amount(c.Capacity)
+}
+
+// SetAuthProof sets the proof of the channel.
+//
+// NOTE: this is part of the models.ChannelEdgeInfo interface.
+func (c *ChannelEdgeInfo2) SetAuthProof(proof models.ChannelAuthProof) error {
+	if proof == nil {
+		c.AuthProof = nil
+
+		return nil
+	}
+
+	p, ok := proof.(*ChannelAuthProof2)
+	if !ok {
+		return fmt.Errorf("expected type ChannelAuthProof2 for "+
+			"ChannelEdgeInfo2, got %T", proof)
+	}
+
+	c.AuthProof = p
+
+	return nil
+}
+
+// GetChanPoint returns the outpoint of the funding transaction of the channel.
+//
+// NOTE: this is part of the models.ChannelEdgeInfo interface.
+func (c *ChannelEdgeInfo2) GetChanPoint() wire.OutPoint {
+	return c.ChannelPoint
+}
+
+// FundingScript returns the pk script for the funding output of the
+// channel.
+//
+// NOTE: this is part of the models.ChannelEdgeInfo interface.
+func (c *ChannelEdgeInfo2) FundingScript() ([]byte, error) {
+	pubKey1, err := btcec.ParsePubKey(c.BitcoinKey1[:])
+	if err != nil {
+		return nil, err
+	}
+	pubKey2, err := btcec.ParsePubKey(c.BitcoinKey2[:])
+	if err != nil {
+		return nil, err
+	}
+
+	fundingScript, _, err := input.GenTaprootFundingScript(
+		pubKey1, pubKey2, 0,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return fundingScript, nil
+}
+
+// NodeKey1 is the identity public key of the "first" node that was involved in
+// the creation of this channel. A node is considered "first" if the
+// lexicographical ordering the its serialized public key is "smaller" than
+// that of the other node involved in channel creation.
+//
+// NOTE: By having this method to access an attribute, we ensure we only need
+// to fully deserialize the pubkey if absolutely necessary.
+//
+// NOTE: this is part of the models.ChannelEdgeInfo interface.
+func (c *ChannelEdgeInfo2) NodeKey1() (*btcec.PublicKey, error) {
+	if c.nodeKey1 != nil {
+		return c.nodeKey1, nil
+	}
+
+	key, err := btcec.ParsePubKey(c.NodeID1[:])
+	if err != nil {
+		return nil, err
+	}
+	c.nodeKey1 = key
+
+	return key, nil
+}
+
+// NodeKey2 is the identity public key of the "second" node that was
+// involved in the creation of this channel. A node is considered
+// "second" if the lexicographical ordering the its serialized public
+// key is "larger" than that of the other node involved in channel
+// creation.
+//
+// NOTE: By having this method to access an attribute, we ensure we only need
+// to fully deserialize the pubkey if absolutely necessary.
+//
+// NOTE: this is part of the models.ChannelEdgeInfo interface.
+func (c *ChannelEdgeInfo2) NodeKey2() (*btcec.PublicKey, error) {
+	if c.nodeKey2 != nil {
+		return c.nodeKey2, nil
+	}
+
+	key, err := btcec.ParsePubKey(c.NodeID2[:])
+	if err != nil {
+		return nil, err
+	}
+	c.nodeKey2 = key
+
+	return key, nil
+}
+
+func serializeChanEdgeInfo2(w io.Writer, edge *ChannelEdgeInfo2) error {
+	if len(edge.ExtraOpaqueData) > MaxAllowedExtraOpaqueBytes {
+		return ErrTooManyExtraOpaqueBytes(len(edge.ExtraOpaqueData))
+	}
+
+	serializedMsg, err := edge.DataToSign()
+	if err != nil {
+		return err
+	}
+
+	records := []tlv.Record{
+		tlv.MakePrimitiveRecord(EdgeInfo2MsgType, &serializedMsg),
+		tlv.MakeStaticRecord(
+			EdgeInfo2ChanPoint, &edge.ChannelPoint, 34,
+			encodeOutpoint, decodeOutpoint,
+		),
+	}
+
+	if edge.AuthProof != nil {
+		records = append(
+			records,
+			tlv.MakePrimitiveRecord(
+				EdgeInfo2Sig, &edge.AuthProof.SchnorrSigBytes,
+			),
+		)
+	}
+
+	stream, err := tlv.NewStream(records...)
+	if err != nil {
+		return err
+	}
+
+	return stream.Encode(w)
+}
+
+func deserializeChanEdgeInfo2(r io.Reader) (*ChannelEdgeInfo2, error) {
+	var (
+		edgeInfo ChannelEdgeInfo2
+		msgBytes []byte
+		sigBytes []byte
+	)
+
+	records := []tlv.Record{
+		tlv.MakePrimitiveRecord(EdgeInfo2MsgType, &msgBytes),
+		tlv.MakeStaticRecord(
+			EdgeInfo2ChanPoint, &edgeInfo.ChannelPoint, 34,
+			encodeOutpoint, decodeOutpoint,
+		),
+		tlv.MakePrimitiveRecord(EdgeInfo2Sig, &sigBytes),
+	}
+
+	stream, err := tlv.NewStream(records...)
+	if err != nil {
+		return nil, err
+	}
+
+	typeMap, err := stream.DecodeWithParsedTypes(r)
+	if err != nil {
+		return nil, err
+	}
+
+	reader := bytes.NewReader(msgBytes)
+	err = edgeInfo.ChannelAnnouncement2.DecodeTLVRecords(reader)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, ok := typeMap[EdgeInfo2Sig]; ok {
+		edgeInfo.AuthProof = &ChannelAuthProof2{
+			SchnorrSigBytes: sigBytes,
+		}
+	}
+
+	return &edgeInfo, nil
+}
+
+type ChannelAuthProof2 struct {
+	// SchnorrSigBytes are the raw bytes of the encoded schnorr signature.
+	SchnorrSigBytes []byte
+
+	// schnorrSig is the cached instance of the schnorr signature.
+	schnorrSig *schnorr.Signature
+}
+
+// A compile-time check to ensure that ChannelEdgeInfo2 implements
+// models.ChannelEdgeInfo.
+var _ models.ChannelEdgeInfo = (*ChannelEdgeInfo2)(nil)
+
+func encodeOutpoint(w io.Writer, val interface{}, _ *[8]byte) error {
+	if o, ok := val.(*wire.OutPoint); ok {
+		return writeOutpoint(w, o)
+	}
+
+	return tlv.NewTypeForEncodingErr(val, "*wire.Outpoint")
+}
+
+func decodeOutpoint(r io.Reader, val interface{}, _ *[8]byte, l uint64) error {
+	if o, ok := val.(*wire.OutPoint); ok {
+		return readOutpoint(r, o)
+	}
+	return tlv.NewTypeForDecodingErr(val, "*wire.Outpoint", l, l)
 }

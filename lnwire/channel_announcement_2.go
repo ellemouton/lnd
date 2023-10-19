@@ -117,6 +117,10 @@ func (c *ChannelAnnouncement2) Decode(r io.Reader, _ uint32) error {
 	}
 	c.Signature.ForceSchnorr()
 
+	return c.DecodeTLVRecords(r)
+}
+
+func (c *ChannelAnnouncement2) DecodeTLVRecords(r io.Reader) error {
 	// First extract into extra opaque data.
 	var tlvRecords ExtraOpaqueData
 	if err := ReadElements(r, &tlvRecords); err != nil {

@@ -36,13 +36,16 @@ var (
 		"[2001:db8:85a3:0:0:8a2e:370:7334]:80")
 	testAddrs = []net.Addr{testAddr, anotherAddr}
 
-	testRBytes, _ = hex.DecodeString("8ce2bc69281ce27da07e6683571319d18e949ddfa2965fb6caa1bf0314f882d7")
-	testSBytes, _ = hex.DecodeString("299105481d63e0f4bc2a88121167221b6700d72a0ead154c03be696a292d24ae")
-	testRScalar   = new(btcec.ModNScalar)
-	testSScalar   = new(btcec.ModNScalar)
-	_             = testRScalar.SetByteSlice(testRBytes)
-	_             = testSScalar.SetByteSlice(testSBytes)
-	testSig       = ecdsa.NewSignature(testRScalar, testSScalar)
+	testRBytes, _        = hex.DecodeString("8ce2bc69281ce27da07e6683571319d18e949ddfa2965fb6caa1bf0314f882d7")
+	testSBytes, _        = hex.DecodeString("299105481d63e0f4bc2a88121167221b6700d72a0ead154c03be696a292d24ae")
+	testRScalar          = new(btcec.ModNScalar)
+	testSScalar          = new(btcec.ModNScalar)
+	_                    = testRScalar.SetByteSlice(testRBytes)
+	_                    = testSScalar.SetByteSlice(testSBytes)
+	testSig              = ecdsa.NewSignature(testRScalar, testSScalar)
+	testSchnorrSigStr, _ = hex.DecodeString("04E7F9037658A92AFEB4F2" +
+		"5BAE5339E3DDCA81A353493827D26F16D92308E49E2A25E9220867" +
+		"8A2DF86970DA91B03A8AF8815A8A60498B358DAF560B347AA557")
 
 	testFeatures = lnwire.NewFeatureVector(
 		lnwire.NewRawFeatureVector(lnwire.GossipQueriesRequired),
@@ -385,7 +388,7 @@ func TestEdgeInsertionDeletion(t *testing.T) {
 }
 
 func createEdge(height, txIndex uint32, txPosition uint16, outPointIndex uint32,
-	node1, node2 *LightningNode) (ChannelEdgeInfo1, lnwire.ShortChannelID) {
+	node1, node2 *LightningNode) (*ChannelEdgeInfo1, lnwire.ShortChannelID) {
 
 	shortChanID := lnwire.ShortChannelID{
 		BlockHeight: height,
@@ -417,7 +420,48 @@ func createEdge(height, txIndex uint32, txPosition uint16, outPointIndex uint32,
 	copy(edgeInfo.BitcoinKey1Bytes[:], node1Pub.SerializeCompressed())
 	copy(edgeInfo.BitcoinKey2Bytes[:], node2Pub.SerializeCompressed())
 
-	return edgeInfo, shortChanID
+	return &edgeInfo, shortChanID
+}
+
+func createEdge2(height, txIndex uint32, txPosition uint16,
+	outPointIndex uint32, node1, node2 *LightningNode) (*ChannelEdgeInfo2,
+	lnwire.ShortChannelID) {
+
+	shortChanID := lnwire.ShortChannelID{
+		BlockHeight: height,
+		TxIndex:     txIndex,
+		TxPosition:  txPosition,
+	}
+	outpoint := wire.OutPoint{
+		Hash:  rev,
+		Index: outPointIndex,
+	}
+
+	node1Pub, _ := node1.PubKey()
+	node2Pub, _ := node2.PubKey()
+	edgeInfo := ChannelEdgeInfo2{
+		ChannelAnnouncement2: lnwire.ChannelAnnouncement2{
+			ChainHash:      key,
+			Features:       lnwire.RawFeatureVector{},
+			ShortChannelID: shortChanID,
+			Capacity:       9000,
+		},
+		ChannelPoint: outpoint,
+		AuthProof: &ChannelAuthProof2{
+			SchnorrSigBytes: testSchnorrSigStr,
+		},
+	}
+
+	copy(edgeInfo.NodeID1[:], node1Pub.SerializeCompressed())
+	copy(edgeInfo.NodeID2[:], node2Pub.SerializeCompressed())
+
+	var btc1, btc2 [33]byte
+	copy(btc1[:], node1Pub.SerializeCompressed())
+	copy(btc2[:], node2Pub.SerializeCompressed())
+	edgeInfo.BitcoinKey1 = &btc1
+	edgeInfo.BitcoinKey2 = &btc2
+
+	return &edgeInfo, shortChanID
 }
 
 // TestDisconnectBlockAtHeight checks that the pruned state of the channel
@@ -477,20 +521,20 @@ func TestDisconnectBlockAtHeight(t *testing.T) {
 	edgeInfo3, _ := createEdge(height-1, 0, 0, 2, node1, node2)
 
 	// Now add all these new edges to the database.
-	if err := graph.AddChannelEdge(&edgeInfo); err != nil {
+	if err := graph.AddChannelEdge(edgeInfo); err != nil {
 		t.Fatalf("unable to create channel edge: %v", err)
 	}
 
-	if err := graph.AddChannelEdge(&edgeInfo2); err != nil {
+	if err := graph.AddChannelEdge(edgeInfo2); err != nil {
 		t.Fatalf("unable to create channel edge: %v", err)
 	}
 
-	if err := graph.AddChannelEdge(&edgeInfo3); err != nil {
+	if err := graph.AddChannelEdge(edgeInfo3); err != nil {
 		t.Fatalf("unable to create channel edge: %v", err)
 	}
-	assertEdgeWithNoPoliciesInCache(t, graph, &edgeInfo)
-	assertEdgeWithNoPoliciesInCache(t, graph, &edgeInfo2)
-	assertEdgeWithNoPoliciesInCache(t, graph, &edgeInfo3)
+	assertEdgeWithNoPoliciesInCache(t, graph, edgeInfo)
+	assertEdgeWithNoPoliciesInCache(t, graph, edgeInfo2)
+	assertEdgeWithNoPoliciesInCache(t, graph, edgeInfo3)
 
 	// Call DisconnectBlockAtHeight, which should prune every channel
 	// that has a funding height of 'height' or greater.
@@ -500,7 +544,7 @@ func TestDisconnectBlockAtHeight(t *testing.T) {
 	}
 	assertNoEdge(t, graph, edgeInfo.ChannelID)
 	assertNoEdge(t, graph, edgeInfo2.ChannelID)
-	assertEdgeWithNoPoliciesInCache(t, graph, &edgeInfo3)
+	assertEdgeWithNoPoliciesInCache(t, graph, edgeInfo3)
 
 	// The two edges should have been removed.
 	if len(removed) != 2 {
@@ -561,9 +605,28 @@ func assertEdgeInfoEqual(t *testing.T, e1, e2 models.ChannelEdgeInfo) {
 		require.True(t, ok)
 
 		assertEdgeInfo1Equal(t, edge1, edge2)
+	case *ChannelEdgeInfo2:
+		edge2, ok := e2.(*ChannelEdgeInfo2)
+		require.True(t, ok)
+
+		assertEdgeInfo2Equal(t, edge1, edge2)
 	default:
 		t.Fatalf("unhandled ChannelEdgeInfo type: %T", e1)
 	}
+}
+
+func assertEdgeInfo2Equal(t *testing.T, e1 *ChannelEdgeInfo2,
+	e2 *ChannelEdgeInfo2) {
+
+	if e1.Features.IsEmpty() {
+		require.True(t, e2.Features.IsEmpty())
+	} else {
+		require.Equal(t, e1.Features, e2.Features)
+	}
+	e1.Features = lnwire.RawFeatureVector{}
+	e2.Features = lnwire.RawFeatureVector{}
+
+	require.Equal(t, e1, e2)
 }
 
 func assertEdgeInfo1Equal(t *testing.T, e1 *ChannelEdgeInfo1,
@@ -1628,10 +1691,10 @@ func TestHighestChanID(t *testing.T) {
 	edge1, _ := createEdge(10, 0, 0, 0, node1, node2)
 	edge2, chanID2 := createEdge(100, 0, 0, 0, node1, node2)
 
-	if err := graph.AddChannelEdge(&edge1); err != nil {
+	if err := graph.AddChannelEdge(edge1); err != nil {
 		t.Fatalf("unable to create channel edge: %v", err)
 	}
-	if err := graph.AddChannelEdge(&edge2); err != nil {
+	if err := graph.AddChannelEdge(edge2); err != nil {
 		t.Fatalf("unable to create channel edge: %v", err)
 	}
 
@@ -1648,7 +1711,7 @@ func TestHighestChanID(t *testing.T) {
 	// If we add another edge, then the current best chan ID should be
 	// updated as well.
 	edge3, chanID3 := createEdge(1000, 0, 0, 0, node1, node2)
-	if err := graph.AddChannelEdge(&edge3); err != nil {
+	if err := graph.AddChannelEdge(edge3); err != nil {
 		t.Fatalf("unable to create channel edge: %v", err)
 	}
 	bestID, err = graph.HighestChanID()
@@ -1703,7 +1766,7 @@ func TestChanUpdatesInHorizon(t *testing.T) {
 			uint32(i*10), 0, 0, 0, node1, node2,
 		)
 
-		if err := graph.AddChannelEdge(&channel); err != nil {
+		if err := graph.AddChannelEdge(channel); err != nil {
 			t.Fatalf("unable to create channel edge: %v", err)
 		}
 
@@ -1732,7 +1795,7 @@ func TestChanUpdatesInHorizon(t *testing.T) {
 		}
 
 		edges = append(edges, ChannelEdge{
-			Info:    &channel,
+			Info:    channel,
 			Policy1: edge1,
 			Policy2: edge2,
 		})
@@ -1974,7 +2037,7 @@ func TestFilterKnownChanIDs(t *testing.T) {
 			uint32(i*10), 0, 0, 0, node1, node2,
 		)
 
-		if err := graph.AddChannelEdge(&channel); err != nil {
+		if err := graph.AddChannelEdge(channel); err != nil {
 			t.Fatalf("unable to create channel edge: %v", err)
 		}
 
@@ -1987,7 +2050,7 @@ func TestFilterKnownChanIDs(t *testing.T) {
 		channel, chanID := createEdge(
 			uint32(i*10+1), 0, 0, 0, node1, node2,
 		)
-		if err := graph.AddChannelEdge(&channel); err != nil {
+		if err := graph.AddChannelEdge(channel); err != nil {
 			t.Fatalf("unable to create channel edge: %v", err)
 		}
 		err := graph.DeleteChannelEdges(false, true, channel.ChannelID)
@@ -2082,14 +2145,14 @@ func TestFilterChannelRange(t *testing.T) {
 		channel1, chanID1 := createEdge(
 			chanHeight, uint32(i+1), 0, 0, node1, node2,
 		)
-		if err := graph.AddChannelEdge(&channel1); err != nil {
+		if err := graph.AddChannelEdge(channel1); err != nil {
 			t.Fatalf("unable to create channel edge: %v", err)
 		}
 
 		channel2, chanID2 := createEdge(
 			chanHeight, uint32(i+2), 0, 0, node1, node2,
 		)
-		if err := graph.AddChannelEdge(&channel2); err != nil {
+		if err := graph.AddChannelEdge(channel2); err != nil {
 			t.Fatalf("unable to create channel edge: %v", err)
 		}
 
@@ -2194,11 +2257,21 @@ func TestFetchChanInfos(t *testing.T) {
 	edges := make([]ChannelEdge, 0, numChans)
 	edgeQuery := make([]uint64, 0, numChans)
 	for i := 0; i < numChans; i++ {
-		channel, chanID := createEdge(
-			uint32(i*10), 0, 0, 0, node1, node2,
+		var (
+			channel models.ChannelEdgeInfo
+			chanID  lnwire.ShortChannelID
 		)
+		if i%2 == 0 {
+			channel, chanID = createEdge(
+				uint32(i*10), 0, 0, 0, node1, node2,
+			)
+		} else {
+			channel, chanID = createEdge2(
+				uint32(i*10), 0, 0, 0, node1, node2,
+			)
+		}
 
-		if err := graph.AddChannelEdge(&channel); err != nil {
+		if err := graph.AddChannelEdge(channel); err != nil {
 			t.Fatalf("unable to create channel edge: %v", err)
 		}
 
@@ -2211,9 +2284,7 @@ func TestFetchChanInfos(t *testing.T) {
 		edge1.ChannelFlags = 0
 		edge1.ToNode = node2.PubKeyBytes
 		edge1.SigBytes = testSig.Serialize()
-		if err := graph.UpdateEdgePolicy(edge1); err != nil {
-			t.Fatalf("unable to update edge: %v", err)
-		}
+		require.NoError(t, graph.UpdateEdgePolicy(edge1))
 
 		edge2 := newEdgePolicy(
 			chanID.ToUint64(), graph.db, updateTime.Unix(),
@@ -2226,7 +2297,7 @@ func TestFetchChanInfos(t *testing.T) {
 		}
 
 		edges = append(edges, ChannelEdge{
-			Info:    &channel,
+			Info:    channel,
 			Policy1: edge1,
 			Policy2: edge2,
 		})
@@ -2243,7 +2314,7 @@ func TestFetchChanInfos(t *testing.T) {
 	zombieChan, zombieChanID := createEdge(
 		666, 0, 0, 0, node1, node2,
 	)
-	if err := graph.AddChannelEdge(&zombieChan); err != nil {
+	if err := graph.AddChannelEdge(zombieChan); err != nil {
 		t.Fatalf("unable to create channel edge: %v", err)
 	}
 	err = graph.DeleteChannelEdges(false, true, zombieChan.ChannelID)
@@ -2298,7 +2369,7 @@ func TestIncompleteChannelPolicies(t *testing.T) {
 		uint32(0), 0, 0, 0, node1, node2,
 	)
 
-	if err := graph.AddChannelEdge(&channel); err != nil {
+	if err := graph.AddChannelEdge(channel); err != nil {
 		t.Fatalf("unable to create channel edge: %v", err)
 	}
 
@@ -2404,7 +2475,7 @@ func TestChannelEdgePruningUpdateIndexDeletion(t *testing.T) {
 	// With the two nodes created, we'll now create a random channel, as
 	// well as two edges in the database with distinct update times.
 	edgeInfo, chanID := createEdge(100, 0, 0, 0, node1, node2)
-	if err := graph.AddChannelEdge(&edgeInfo); err != nil {
+	if err := graph.AddChannelEdge(edgeInfo); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
@@ -2555,7 +2626,7 @@ func TestPruneGraphNodes(t *testing.T) {
 	// We'll now add a new edge to the graph, but only actually advertise
 	// the edge of *one* of the nodes.
 	edgeInfo, chanID := createEdge(100, 0, 0, 0, node1, node2)
-	if err := graph.AddChannelEdge(&edgeInfo); err != nil {
+	if err := graph.AddChannelEdge(edgeInfo); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
@@ -2610,7 +2681,7 @@ func TestAddChannelEdgeShellNodes(t *testing.T) {
 	// We'll now create an edge between the two nodes, as a result, node2
 	// should be inserted into the database as a shell node.
 	edgeInfo, _ := createEdge(100, 0, 0, 0, node1, node2)
-	if err := graph.AddChannelEdge(&edgeInfo); err != nil {
+	if err := graph.AddChannelEdge(edgeInfo); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
@@ -2724,7 +2795,7 @@ func TestNodeIsPublic(t *testing.T) {
 	// After creating all of our nodes and edges, we'll add them to each
 	// participant's graph.
 	nodes := []*LightningNode{aliceNode, bobNode, carolNode}
-	edges := []*ChannelEdgeInfo1{&aliceBobEdge, &bobCarolEdge}
+	edges := []*ChannelEdgeInfo1{aliceBobEdge, bobCarolEdge}
 	graphs := []*ChannelGraph{aliceGraph, bobGraph, carolGraph}
 	for _, graph := range graphs {
 		for _, node := range nodes {
@@ -2805,7 +2876,7 @@ func TestNodeIsPublic(t *testing.T) {
 		}
 
 		bobCarolEdge.AuthProof = nil
-		if err := graph.AddChannelEdge(&bobCarolEdge); err != nil {
+		if err := graph.AddChannelEdge(bobCarolEdge); err != nil {
 			t.Fatalf("unable to add edge: %v", err)
 		}
 	}
@@ -3342,7 +3413,7 @@ func TestBatchedAddChannelEdge(t *testing.T) {
 	// Create a third edge, this with a block height of 155.
 	edgeInfo3, _ := createEdge(height-1, 0, 0, 2, node1, node2)
 
-	edges := []ChannelEdgeInfo1{edgeInfo, edgeInfo2, edgeInfo3}
+	edges := []*ChannelEdgeInfo1{edgeInfo, edgeInfo2, edgeInfo3}
 	errChan := make(chan error, len(edges))
 	errTimeout := errors.New("timeout adding batched channel")
 
@@ -3350,11 +3421,11 @@ func TestBatchedAddChannelEdge(t *testing.T) {
 	var wg sync.WaitGroup
 	for _, edge := range edges {
 		wg.Add(1)
-		go func(edge ChannelEdgeInfo1) {
+		go func(edge *ChannelEdgeInfo1) {
 			defer wg.Done()
 
 			select {
-			case errChan <- graph.AddChannelEdge(&edge):
+			case errChan <- graph.AddChannelEdge(edge):
 			case <-time.After(2 * time.Second):
 				errChan <- errTimeout
 			}
