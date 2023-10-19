@@ -10,7 +10,6 @@ import (
 
 	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -383,8 +382,7 @@ type Config struct {
 	//
 	// TODO(roasbeef): should instead pass on this responsibility to a
 	// distinct sub-system?
-	SignMessage func(keyLoc keychain.KeyLocator,
-		msg []byte, doubleHash bool) (*ecdsa.Signature, error)
+	MessageSigner keychain.MessageSignerRing
 
 	// CurrentNodeAnnouncement should return the latest, fully signed node
 	// announcement from the backing Lightning Network node with a fresh
@@ -3335,7 +3333,7 @@ func (f *Manager) extractAnnounceParams(c *channeldb.OpenChannel) (
 func (f *Manager) addToRouterGraph(completeChan *channeldb.OpenChannel,
 	shortChanID *lnwire.ShortChannelID,
 	peerAlias *lnwire.ShortChannelID,
-	ourPolicy *channeldb.ChannelEdgePolicy1) error {
+	ourPolicy *channeldb.ChannelEdgePolicyWithNode) error {
 
 	chanID := lnwire.NewChanIDFromOutPoint(&completeChan.FundingOutpoint)
 
@@ -3524,8 +3522,7 @@ func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
 			}
 
 			err = f.addToRouterGraph(
-				completeChan, &baseScid, nil,
-				&ourPolicy.ChannelEdgePolicy1,
+				completeChan, &baseScid, nil, ourPolicy,
 			)
 			if err != nil {
 				return fmt.Errorf("failed to re-add to "+
@@ -3616,8 +3613,7 @@ func (f *Manager) waitForZeroConfChannel(c *channeldb.OpenChannel,
 		// alias since we'll be using the confirmed SCID from now on
 		// regardless if it's public or not.
 		err = f.addToRouterGraph(
-			c, &confChan.shortChanID, nil,
-			&ourPolicy.ChannelEdgePolicy1,
+			c, &confChan.shortChanID, nil, ourPolicy,
 		)
 		if err != nil {
 			return fmt.Errorf("failed adding confirmed zero-conf "+
@@ -4069,7 +4065,7 @@ func (f *Manager) newChanAnnouncement(localPubKey,
 	remotePubKey *btcec.PublicKey, localFundingKey *keychain.KeyDescriptor,
 	remoteFundingKey *btcec.PublicKey, shortChanID lnwire.ShortChannelID,
 	chanID lnwire.ChannelID, fwdMinHTLC, fwdMaxHTLC lnwire.MilliSatoshi,
-	ourPolicy *channeldb.ChannelEdgePolicy1,
+	ourPolicy *channeldb.ChannelEdgePolicyWithNode,
 	chanType channeldb.ChannelType) (*chanAnnouncement, error) {
 
 	chainHash := *f.cfg.Wallet.Cfg.NetParams.GenesisHash
@@ -4208,7 +4204,9 @@ func (f *Manager) newChanAnnouncement(localPubKey,
 	if err != nil {
 		return nil, err
 	}
-	sig, err := f.cfg.SignMessage(f.cfg.IDKeyLoc, chanUpdateMsg, true)
+	sig, err := f.cfg.MessageSigner.SignMessage(
+		f.cfg.IDKeyLoc, chanUpdateMsg, true,
+	)
 	if err != nil {
 		return nil, errors.Errorf("unable to generate channel "+
 			"update announcement signature: %v", err)
@@ -4230,12 +4228,14 @@ func (f *Manager) newChanAnnouncement(localPubKey,
 	if err != nil {
 		return nil, err
 	}
-	nodeSig, err := f.cfg.SignMessage(f.cfg.IDKeyLoc, chanAnnMsg, true)
+	nodeSig, err := f.cfg.MessageSigner.SignMessage(
+		f.cfg.IDKeyLoc, chanAnnMsg, true,
+	)
 	if err != nil {
 		return nil, errors.Errorf("unable to generate node "+
 			"signature for channel announcement: %v", err)
 	}
-	bitcoinSig, err := f.cfg.SignMessage(
+	bitcoinSig, err := f.cfg.MessageSigner.SignMessage(
 		localFundingKey.KeyLocator, chanAnnMsg, true,
 	)
 	if err != nil {
