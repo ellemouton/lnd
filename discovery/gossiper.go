@@ -531,7 +531,7 @@ type EdgeWithInfo struct {
 	Info models.ChannelEdgeInfo
 
 	// Edge describes the policy in one direction of the channel.
-	Edge *channeldb.ChannelEdgePolicy1
+	Edge *channeldb.ChannelEdgePolicyWithNode
 }
 
 // PropagateChanPolicyUpdate signals the AuthenticatedGossiper to perform the
@@ -1581,7 +1581,7 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 	// within the prune interval or re-broadcast interval.
 	type updateTuple struct {
 		info models.ChannelEdgeInfo
-		edge *channeldb.ChannelEdgePolicy1
+		edge *channeldb.ChannelEdgePolicyWithNode
 	}
 
 	var (
@@ -1590,7 +1590,7 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 	)
 	err := d.cfg.Router.ForAllOutgoingChannels(func(
 		_ kvdb.RTx, info models.ChannelEdgeInfo,
-		edge *channeldb.ChannelEdgePolicy1) error {
+		edge *channeldb.ChannelEdgePolicyWithNode) error {
 
 		// If there's no auth proof attached to this edge, it means
 		// that it is a private channel not meant to be announced to
@@ -2131,7 +2131,7 @@ func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
 		// Otherwise, we'll retrieve the correct policy that we
 		// currently have stored within our graph to check if this
 		// message is stale by comparing its timestamp.
-		var p *channeldb.ChannelEdgePolicy1
+		var p *channeldb.ChannelEdgePolicyWithNode
 		if msg.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
 			p = p1
 		} else {
@@ -2157,7 +2157,7 @@ func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
 // updateChannel creates a new fully signed update for the channel, and updates
 // the underlying graph with the new state.
 func (d *AuthenticatedGossiper) updateChannel(edgeInfo models.ChannelEdgeInfo,
-	edge *channeldb.ChannelEdgePolicy1) (lnwire.ChannelAnnouncement,
+	edge *channeldb.ChannelEdgePolicyWithNode) (lnwire.ChannelAnnouncement,
 	*lnwire.ChannelUpdate1, error) {
 
 	// Parse the unsigned edge into a channel update.
@@ -2836,10 +2836,14 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 	switch direction {
 	case 0:
 		pubKey, _ = chanInfo.NodeKey1()
-		edgeToUpdate = e1
+		if e1 != nil {
+			edgeToUpdate = &e1.ChannelEdgePolicy1
+		}
 	case 1:
 		pubKey, _ = chanInfo.NodeKey2()
-		edgeToUpdate = e2
+		if e2 != nil {
+			edgeToUpdate = &e2.ChannelEdgePolicy1
+		}
 	}
 
 	log.Debugf("Validating ChannelUpdate1: channel=%v, from node=%x, has "+
@@ -2921,18 +2925,20 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 	// different alias. This might mean that SigBytes is incorrect as it
 	// signs a different SCID than the database SCID, but since there will
 	// only be a difference if AuthProof == nil, this is fine.
-	update := &channeldb.ChannelEdgePolicy1{
-		SigBytes:                  upd.Signature.ToSignatureBytes(),
-		ChannelID:                 chanInfo.GetChanID(),
-		LastUpdate:                timestamp,
-		MessageFlags:              upd.MessageFlags,
-		ChannelFlags:              upd.ChannelFlags,
-		TimeLockDelta:             upd.TimeLockDelta,
-		MinHTLC:                   upd.HtlcMinimumMsat,
-		MaxHTLC:                   upd.HtlcMaximumMsat,
-		FeeBaseMSat:               lnwire.MilliSatoshi(upd.BaseFee),
-		FeeProportionalMillionths: lnwire.MilliSatoshi(upd.FeeRate),
-		ExtraOpaqueData:           upd.ExtraOpaqueData,
+	update := &channeldb.ChannelEdgePolicyWithNode{
+		ChannelEdgePolicy1: channeldb.ChannelEdgePolicy1{
+			SigBytes:                  upd.Signature.ToSignatureBytes(),
+			ChannelID:                 chanInfo.GetChanID(),
+			LastUpdate:                timestamp,
+			MessageFlags:              upd.MessageFlags,
+			ChannelFlags:              upd.ChannelFlags,
+			TimeLockDelta:             upd.TimeLockDelta,
+			MinHTLC:                   upd.HtlcMinimumMsat,
+			MaxHTLC:                   upd.HtlcMaximumMsat,
+			FeeBaseMSat:               lnwire.MilliSatoshi(upd.BaseFee),
+			FeeProportionalMillionths: lnwire.MilliSatoshi(upd.FeeRate),
+			ExtraOpaqueData:           upd.ExtraOpaqueData,
+		},
 	}
 
 	if err := d.cfg.Router.UpdateEdge(update, ops...); err != nil {

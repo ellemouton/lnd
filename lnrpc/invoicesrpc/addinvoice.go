@@ -490,7 +490,7 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 // chanCanBeHopHint returns true if the target channel is eligible to be a hop
 // hint.
 func chanCanBeHopHint(channel *HopHintInfo, cfg *SelectHopHintsCfg) (
-	*channeldb.ChannelEdgePolicy1, bool) {
+	*channeldb.ChannelEdgePolicyWithNode, bool) {
 
 	// Since we're only interested in our private channels, we'll skip
 	// public ones.
@@ -546,7 +546,7 @@ func chanCanBeHopHint(channel *HopHintInfo, cfg *SelectHopHintsCfg) (
 	// Now, we'll need to determine which is the correct policy for HTLCs
 	// being sent from the remote node.
 	var (
-		remotePolicy *channeldb.ChannelEdgePolicy1
+		remotePolicy *channeldb.ChannelEdgePolicyWithNode
 		node1Bytes   = info.Node1Bytes()
 	)
 	if bytes.Equal(remotePub[:], node1Bytes[:]) {
@@ -632,8 +632,8 @@ type SelectHopHintsCfg struct {
 	// FetchChannelEdgesByID attempts to lookup the two directed edges for
 	// the channel identified by the channel ID.
 	FetchChannelEdgesByID func(chanID uint64) (models.ChannelEdgeInfo,
-		*channeldb.ChannelEdgePolicy1, *channeldb.ChannelEdgePolicy1,
-		error)
+		*channeldb.ChannelEdgePolicyWithNode,
+		*channeldb.ChannelEdgePolicyWithNode, error)
 
 	// GetAlias allows the peer's alias SCID to be retrieved for private
 	// option_scid_alias channels.
@@ -760,7 +760,8 @@ func shouldIncludeChannel(cfg *SelectHopHintsCfg,
 
 	// Now that we know this channel use usable, add it as a hop hint and
 	// the indexes we'll use later.
-	hopHint := newHopHint(hopHintInfo, edgePolicy)
+	hopHint := newHopHint(hopHintInfo, &edgePolicy.ChannelEdgePolicy1)
+
 	return hopHint, hopHintInfo.RemoteBalance, true
 }
 

@@ -74,18 +74,20 @@ func createTestNode() (*channeldb.LightningNode, error) {
 }
 
 func randEdgePolicy(chanID *lnwire.ShortChannelID,
-	node *channeldb.LightningNode) *channeldb.ChannelEdgePolicy1 {
+	node *channeldb.LightningNode) *channeldb.ChannelEdgePolicyWithNode {
 
-	return &channeldb.ChannelEdgePolicy1{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 chanID.ToUint64(),
-		LastUpdate:                time.Unix(int64(prand.Int31()), 0),
-		TimeLockDelta:             uint16(prand.Int63()),
-		MinHTLC:                   lnwire.MilliSatoshi(prand.Int31()),
-		MaxHTLC:                   lnwire.MilliSatoshi(prand.Int31()),
-		FeeBaseMSat:               lnwire.MilliSatoshi(prand.Int31()),
-		FeeProportionalMillionths: lnwire.MilliSatoshi(prand.Int31()),
-		Node:                      node,
+	return &channeldb.ChannelEdgePolicyWithNode{
+		ChannelEdgePolicy1: channeldb.ChannelEdgePolicy1{
+			SigBytes:                  testSig.Serialize(),
+			ChannelID:                 chanID.ToUint64(),
+			LastUpdate:                time.Unix(int64(prand.Int31()), 0),
+			TimeLockDelta:             uint16(prand.Int63()),
+			MinHTLC:                   lnwire.MilliSatoshi(prand.Int31()),
+			MaxHTLC:                   lnwire.MilliSatoshi(prand.Int31()),
+			FeeBaseMSat:               lnwire.MilliSatoshi(prand.Int31()),
+			FeeProportionalMillionths: lnwire.MilliSatoshi(prand.Int31()),
+		},
+		Node: node,
 	}
 }
 
@@ -455,7 +457,7 @@ func TestEdgeUpdateNotification(t *testing.T) {
 	}
 
 	assertEdgeCorrect := func(t *testing.T, edgeUpdate *ChannelEdgeUpdate,
-		edgeAnn *channeldb.ChannelEdgePolicy1) {
+		edgeAnn *channeldb.ChannelEdgePolicyWithNode) {
 		if edgeUpdate.ChanID != edgeAnn.ChannelID {
 			t.Fatalf("channel ID of edge doesn't match: "+
 				"expected %v, got %v", chanID.ToUint64(), edgeUpdate.ChanID)

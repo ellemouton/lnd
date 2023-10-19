@@ -44,9 +44,11 @@ func TestManager(t *testing.T) {
 		MaxHTLC:       5000,
 	}
 
-	currentPolicy := channeldb.ChannelEdgePolicy1{
-		MinHTLC:      minHTLC,
-		MessageFlags: lnwire.ChanUpdateRequiredMaxHtlc,
+	currentPolicy := channeldb.ChannelEdgePolicyWithNode{
+		ChannelEdgePolicy1: channeldb.ChannelEdgePolicy1{
+			MinHTLC:      minHTLC,
+			MessageFlags: lnwire.ChanUpdateRequiredMaxHtlc,
+		},
 	}
 
 	updateForwardingPolicies := func(
@@ -108,7 +110,7 @@ func TestManager(t *testing.T) {
 
 	forAllOutgoingChannels := func(cb func(kvdb.RTx,
 		models.ChannelEdgeInfo,
-		*channeldb.ChannelEdgePolicy1) error) error {
+		*channeldb.ChannelEdgePolicyWithNode) error) error {
 
 		for _, c := range channelSet {
 			if err := cb(nil, c.edgeInfo, &currentPolicy); err != nil {
@@ -152,7 +154,7 @@ func TestManager(t *testing.T) {
 
 	tests := []struct {
 		name                   string
-		currentPolicy          channeldb.ChannelEdgePolicy1
+		currentPolicy          channeldb.ChannelEdgePolicyWithNode
 		newPolicy              routing.ChannelPolicy
 		channelSet             []channel
 		specifiedChanPoints    []wire.OutPoint

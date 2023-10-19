@@ -29,7 +29,8 @@ type GraphCacheNode interface {
 	// to the caller.
 	ForEachChannel(kvdb.Backend, kvdb.RTx,
 		func(kvdb.Backend, kvdb.RTx, models.ChannelEdgeInfo,
-			*ChannelEdgePolicy1, *ChannelEdgePolicy1) error) error
+			*ChannelEdgePolicyWithNode,
+			*ChannelEdgePolicyWithNode) error) error
 }
 
 // CachedEdgePolicy is a struct that only caches the information of a
@@ -105,7 +106,7 @@ func (c *CachedEdgePolicy) ComputeFeeFromIncoming(
 }
 
 // NewCachedPolicy turns a full policy into a minimal one that can be cached.
-func NewCachedPolicy(policy *ChannelEdgePolicy1) *CachedEdgePolicy {
+func NewCachedPolicy(policy *ChannelEdgePolicyWithNode) *CachedEdgePolicy {
 	return &CachedEdgePolicy{
 		ChannelID:                 policy.ChannelID,
 		MessageFlags:              policy.MessageFlags,
@@ -224,8 +225,8 @@ func (c *GraphCache) AddNode(tx kvdb.RTx, node GraphCacheNode) error {
 	c.AddNodeFeatures(node)
 
 	return node.ForEachChannel(nil, tx, func(_ kvdb.Backend, tx kvdb.RTx,
-		info models.ChannelEdgeInfo, outPolicy *ChannelEdgePolicy1,
-		inPolicy *ChannelEdgePolicy1) error {
+		info models.ChannelEdgeInfo, outPolicy,
+		inPolicy *ChannelEdgePolicyWithNode) error {
 
 		c.AddChannel(info, outPolicy, inPolicy)
 
@@ -238,7 +239,7 @@ func (c *GraphCache) AddNode(tx kvdb.RTx, node GraphCacheNode) error {
 // and policy flags automatically. The policy will be set as the outgoing policy
 // on one node and the incoming policy on the peer's side.
 func (c *GraphCache) AddChannel(info models.ChannelEdgeInfo,
-	policy1 *ChannelEdgePolicy1, policy2 *ChannelEdgePolicy1) {
+	policy1, policy2 *ChannelEdgePolicyWithNode) {
 
 	if info == nil {
 		return
@@ -300,7 +301,7 @@ func (c *GraphCache) updateOrAddEdge(node route.Vertex, edge *DirectedChannel) {
 // of the from and to node is not strictly important. But we assume that a
 // channel edge was added beforehand so that the directed channel struct already
 // exists in the cache.
-func (c *GraphCache) UpdatePolicy(policy *ChannelEdgePolicy1, fromNode,
+func (c *GraphCache) UpdatePolicy(policy *ChannelEdgePolicyWithNode, fromNode,
 	toNode route.Vertex, edge1 bool) {
 
 	c.mtx.Lock()

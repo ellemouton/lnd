@@ -339,7 +339,7 @@ func addToTopologyChange(graph *channeldb.ChannelGraph, update *TopologyChange,
 
 	// Any new ChannelUpdateAnnouncements will generate a corresponding
 	// ChannelEdgeUpdate notification.
-	case *channeldb.ChannelEdgePolicy1:
+	case *channeldb.ChannelEdgePolicyWithNode:
 		// We'll need to fetch the edge's information from the database
 		// in order to get the information concerning which nodes are
 		// being connected.

@@ -1335,14 +1335,16 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 		BitcoinKey2Bytes: pub2,
 		AuthProof:        nil,
 	}
-	edgePolicy := &channeldb.ChannelEdgePolicy1{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 edge.ChannelID,
-		LastUpdate:                testTime,
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
+	edgePolicy := &channeldb.ChannelEdgePolicyWithNode{
+		ChannelEdgePolicy1: channeldb.ChannelEdgePolicy1{
+			SigBytes:                  testSig.Serialize(),
+			ChannelID:                 edge.ChannelID,
+			LastUpdate:                testTime,
+			TimeLockDelta:             10,
+			MinHTLC:                   1,
+			FeeBaseMSat:               10,
+			FeeProportionalMillionths: 10000,
+		},
 	}
 
 	// Attempt to update the edge. This should be ignored, since the edge
@@ -1420,14 +1422,16 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 
 	// We must add the edge policy to be able to use the edge for route
 	// finding.
-	edgePolicy := &channeldb.ChannelEdgePolicy1{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 edge.ChannelID,
-		LastUpdate:                testTime,
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
+	edgePolicy := &channeldb.ChannelEdgePolicyWithNode{
+		ChannelEdgePolicy1: channeldb.ChannelEdgePolicy1{
+			SigBytes:                  testSig.Serialize(),
+			ChannelID:                 edge.ChannelID,
+			LastUpdate:                testTime,
+			TimeLockDelta:             10,
+			MinHTLC:                   1,
+			FeeBaseMSat:               10,
+			FeeProportionalMillionths: 10000,
+		},
 		Node: &channeldb.LightningNode{
 			PubKeyBytes: edge.NodeKey2Bytes,
 		},
@@ -1439,14 +1443,16 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 	}
 
 	// Create edge in the other direction as well.
-	edgePolicy = &channeldb.ChannelEdgePolicy1{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 edge.ChannelID,
-		LastUpdate:                testTime,
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
+	edgePolicy = &channeldb.ChannelEdgePolicyWithNode{
+		ChannelEdgePolicy1: channeldb.ChannelEdgePolicy1{
+			SigBytes:                  testSig.Serialize(),
+			ChannelID:                 edge.ChannelID,
+			LastUpdate:                testTime,
+			TimeLockDelta:             10,
+			MinHTLC:                   1,
+			FeeBaseMSat:               10,
+			FeeProportionalMillionths: 10000,
+		},
 		Node: &channeldb.LightningNode{
 			PubKeyBytes: edge.NodeKey1Bytes,
 		},
@@ -1517,14 +1523,16 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 		t.Fatalf("unable to add edge to the channel graph: %v.", err)
 	}
 
-	edgePolicy = &channeldb.ChannelEdgePolicy1{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 edge.ChannelID,
-		LastUpdate:                testTime,
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
+	edgePolicy = &channeldb.ChannelEdgePolicyWithNode{
+		ChannelEdgePolicy1: channeldb.ChannelEdgePolicy1{
+			SigBytes:                  testSig.Serialize(),
+			ChannelID:                 edge.ChannelID,
+			LastUpdate:                testTime,
+			TimeLockDelta:             10,
+			MinHTLC:                   1,
+			FeeBaseMSat:               10,
+			FeeProportionalMillionths: 10000,
+		},
 		Node: &channeldb.LightningNode{
 			PubKeyBytes: edge.NodeKey2Bytes,
 		},
@@ -1535,14 +1543,16 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 		t.Fatalf("unable to update edge policy: %v", err)
 	}
 
-	edgePolicy = &channeldb.ChannelEdgePolicy1{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 edge.ChannelID,
-		LastUpdate:                testTime,
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
+	edgePolicy = &channeldb.ChannelEdgePolicyWithNode{
+		ChannelEdgePolicy1: channeldb.ChannelEdgePolicy1{
+			SigBytes:                  testSig.Serialize(),
+			ChannelID:                 edge.ChannelID,
+			LastUpdate:                testTime,
+			TimeLockDelta:             10,
+			MinHTLC:                   1,
+			FeeBaseMSat:               10,
+			FeeProportionalMillionths: 10000,
+		},
 		Node: &channeldb.LightningNode{
 			PubKeyBytes: edge.NodeKey1Bytes,
 		},
@@ -2650,28 +2660,32 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 	}
 
 	// We'll also add two edge policies, one for each direction.
-	edgePolicy := &channeldb.ChannelEdgePolicy1{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 edge.ChannelID,
-		LastUpdate:                updateTimeStamp,
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
+	edgePolicy := &channeldb.ChannelEdgePolicyWithNode{
+		ChannelEdgePolicy1: channeldb.ChannelEdgePolicy1{
+			SigBytes:                  testSig.Serialize(),
+			ChannelID:                 edge.ChannelID,
+			LastUpdate:                updateTimeStamp,
+			TimeLockDelta:             10,
+			MinHTLC:                   1,
+			FeeBaseMSat:               10,
+			FeeProportionalMillionths: 10000,
+		},
 	}
 	edgePolicy.ChannelFlags = 0
 	if err := ctx.router.UpdateEdge(edgePolicy); err != nil {
 		t.Fatalf("unable to update edge policy: %v", err)
 	}
 
-	edgePolicy = &channeldb.ChannelEdgePolicy1{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 edge.ChannelID,
-		LastUpdate:                updateTimeStamp,
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
+	edgePolicy = &channeldb.ChannelEdgePolicyWithNode{
+		ChannelEdgePolicy1: channeldb.ChannelEdgePolicy1{
+			SigBytes:                  testSig.Serialize(),
+			ChannelID:                 edge.ChannelID,
+			LastUpdate:                updateTimeStamp,
+			TimeLockDelta:             10,
+			MinHTLC:                   1,
+			FeeBaseMSat:               10,
+			FeeProportionalMillionths: 10000,
+		},
 	}
 	edgePolicy.ChannelFlags = 1
 	if err := ctx.router.UpdateEdge(edgePolicy); err != nil {

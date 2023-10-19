@@ -376,17 +376,19 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 			targetNode = edgeInfo.NodeKey2Bytes
 		}
 
-		edgePolicy := &channeldb.ChannelEdgePolicy1{
-			SigBytes:                  testSig.Serialize(),
-			MessageFlags:              lnwire.ChanUpdateMsgFlags(edge.MessageFlags),
-			ChannelFlags:              channelFlags,
-			ChannelID:                 edge.ChannelID,
-			LastUpdate:                testTime,
-			TimeLockDelta:             edge.Expiry,
-			MinHTLC:                   lnwire.MilliSatoshi(edge.MinHTLC),
-			MaxHTLC:                   lnwire.MilliSatoshi(edge.MaxHTLC),
-			FeeBaseMSat:               lnwire.MilliSatoshi(edge.FeeBaseMsat),
-			FeeProportionalMillionths: lnwire.MilliSatoshi(edge.FeeRate),
+		edgePolicy := &channeldb.ChannelEdgePolicyWithNode{
+			ChannelEdgePolicy1: channeldb.ChannelEdgePolicy1{
+				SigBytes:                  testSig.Serialize(),
+				MessageFlags:              lnwire.ChanUpdateMsgFlags(edge.MessageFlags),
+				ChannelFlags:              channelFlags,
+				ChannelID:                 edge.ChannelID,
+				LastUpdate:                testTime,
+				TimeLockDelta:             edge.Expiry,
+				MinHTLC:                   lnwire.MilliSatoshi(edge.MinHTLC),
+				MaxHTLC:                   lnwire.MilliSatoshi(edge.MaxHTLC),
+				FeeBaseMSat:               lnwire.MilliSatoshi(edge.FeeBaseMsat),
+				FeeProportionalMillionths: lnwire.MilliSatoshi(edge.FeeRate),
+			},
 			Node: &channeldb.LightningNode{
 				Alias:       aliasForNode(targetNode),
 				PubKeyBytes: targetNode,
@@ -689,17 +691,19 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 				node2Features = node2.Features
 			}
 
-			edgePolicy := &channeldb.ChannelEdgePolicy1{
-				SigBytes:                  testSig.Serialize(),
-				MessageFlags:              msgFlags,
-				ChannelFlags:              channelFlags,
-				ChannelID:                 channelID,
-				LastUpdate:                node1.LastUpdate,
-				TimeLockDelta:             node1.Expiry,
-				MinHTLC:                   node1.MinHTLC,
-				MaxHTLC:                   node1.MaxHTLC,
-				FeeBaseMSat:               node1.FeeBaseMsat,
-				FeeProportionalMillionths: node1.FeeRate,
+			edgePolicy := &channeldb.ChannelEdgePolicyWithNode{
+				ChannelEdgePolicy1: channeldb.ChannelEdgePolicy1{
+					SigBytes:                  testSig.Serialize(),
+					MessageFlags:              msgFlags,
+					ChannelFlags:              channelFlags,
+					ChannelID:                 channelID,
+					LastUpdate:                node1.LastUpdate,
+					TimeLockDelta:             node1.Expiry,
+					MinHTLC:                   node1.MinHTLC,
+					MaxHTLC:                   node1.MaxHTLC,
+					FeeBaseMSat:               node1.FeeBaseMsat,
+					FeeProportionalMillionths: node1.FeeRate,
+				},
 				Node: &channeldb.LightningNode{
 					Alias:       node2.Alias,
 					PubKeyBytes: node2Vertex,
@@ -727,17 +731,19 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 				node1Features = node1.Features
 			}
 
-			edgePolicy := &channeldb.ChannelEdgePolicy1{
-				SigBytes:                  testSig.Serialize(),
-				MessageFlags:              msgFlags,
-				ChannelFlags:              channelFlags,
-				ChannelID:                 channelID,
-				LastUpdate:                node2.LastUpdate,
-				TimeLockDelta:             node2.Expiry,
-				MinHTLC:                   node2.MinHTLC,
-				MaxHTLC:                   node2.MaxHTLC,
-				FeeBaseMSat:               node2.FeeBaseMsat,
-				FeeProportionalMillionths: node2.FeeRate,
+			edgePolicy := &channeldb.ChannelEdgePolicyWithNode{
+				ChannelEdgePolicy1: channeldb.ChannelEdgePolicy1{
+					SigBytes:                  testSig.Serialize(),
+					MessageFlags:              msgFlags,
+					ChannelFlags:              channelFlags,
+					ChannelID:                 channelID,
+					LastUpdate:                node2.LastUpdate,
+					TimeLockDelta:             node2.Expiry,
+					MinHTLC:                   node2.MinHTLC,
+					MaxHTLC:                   node2.MaxHTLC,
+					FeeBaseMSat:               node2.FeeBaseMsat,
+					FeeProportionalMillionths: node2.FeeRate,
+				},
 				Node: &channeldb.LightningNode{
 					Alias:       node1.Alias,
 					PubKeyBytes: node1Vertex,

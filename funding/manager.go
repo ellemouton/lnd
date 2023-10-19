@@ -524,7 +524,7 @@ type Config struct {
 	// DeleteAliasEdge allows the Manager to delete an alias channel edge
 	// from the graph. It also returns our local to-be-deleted policy.
 	DeleteAliasEdge func(scid lnwire.ShortChannelID) (
-		*channeldb.ChannelEdgePolicy1, error)
+		*channeldb.ChannelEdgePolicyWithNode, error)
 
 	// AliasManager is an implementation of the aliasHandler interface that
 	// abstracts away the handling of many alias functions.
@@ -3524,7 +3524,8 @@ func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
 			}
 
 			err = f.addToRouterGraph(
-				completeChan, &baseScid, nil, ourPolicy,
+				completeChan, &baseScid, nil,
+				&ourPolicy.ChannelEdgePolicy1,
 			)
 			if err != nil {
 				return fmt.Errorf("failed to re-add to "+
@@ -3615,7 +3616,8 @@ func (f *Manager) waitForZeroConfChannel(c *channeldb.OpenChannel,
 		// alias since we'll be using the confirmed SCID from now on
 		// regardless if it's public or not.
 		err = f.addToRouterGraph(
-			c, &confChan.shortChanID, nil, ourPolicy,
+			c, &confChan.shortChanID, nil,
+			&ourPolicy.ChannelEdgePolicy1,
 		)
 		if err != nil {
 			return fmt.Errorf("failed adding confirmed zero-conf "+

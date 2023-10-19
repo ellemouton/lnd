@@ -30,8 +30,8 @@ type node struct {
 	features *lnwire.FeatureVector
 
 	edgeInfos   []*ChannelEdgeInfo1
-	outPolicies []*ChannelEdgePolicy1
-	inPolicies  []*ChannelEdgePolicy1
+	outPolicies []*ChannelEdgePolicyWithNode
+	inPolicies  []*ChannelEdgePolicyWithNode
 }
 
 func (n *node) PubKey() route.Vertex {
@@ -43,7 +43,8 @@ func (n *node) Features() *lnwire.FeatureVector {
 
 func (n *node) ForEachChannel(db kvdb.Backend, tx kvdb.RTx,
 	cb func(kvdb.Backend, kvdb.RTx, models.ChannelEdgeInfo,
-		*ChannelEdgePolicy1, *ChannelEdgePolicy1) error) error {
+		*ChannelEdgePolicyWithNode,
+		*ChannelEdgePolicyWithNode) error) error {
 
 	for idx := range n.edgeInfos {
 		err := cb(
@@ -71,17 +72,25 @@ func TestGraphCacheAddNode(t *testing.T) {
 			channelFlagA, channelFlagB = 1, 0
 		}
 
-		outPolicy1 := &ChannelEdgePolicy1{
-			ChannelID:    1000,
-			ChannelFlags: lnwire.ChanUpdateChanFlags(channelFlagA),
+		outPolicy1 := &ChannelEdgePolicyWithNode{
+			ChannelEdgePolicy1: ChannelEdgePolicy1{
+				ChannelID: 1000,
+				ChannelFlags: lnwire.ChanUpdateChanFlags(
+					channelFlagA,
+				),
+			},
 			Node: &LightningNode{
 				PubKeyBytes: nodeB,
 				Features:    lnwire.EmptyFeatureVector(),
 			},
 		}
-		inPolicy1 := &ChannelEdgePolicy1{
-			ChannelID:    1000,
-			ChannelFlags: lnwire.ChanUpdateChanFlags(channelFlagB),
+		inPolicy1 := &ChannelEdgePolicyWithNode{
+			ChannelEdgePolicy1: ChannelEdgePolicy1{
+				ChannelID: 1000,
+				ChannelFlags: lnwire.ChanUpdateChanFlags(
+					channelFlagB,
+				),
+			},
 			Node: &LightningNode{
 				PubKeyBytes: nodeA,
 				Features:    lnwire.EmptyFeatureVector(),
@@ -97,8 +106,8 @@ func TestGraphCacheAddNode(t *testing.T) {
 				NodeKey2Bytes: pubKey2,
 				Capacity:      500,
 			}},
-			outPolicies: []*ChannelEdgePolicy1{outPolicy1},
-			inPolicies:  []*ChannelEdgePolicy1{inPolicy1},
+			outPolicies: []*ChannelEdgePolicyWithNode{outPolicy1},
+			inPolicies:  []*ChannelEdgePolicyWithNode{inPolicy1},
 		}
 		cache := NewGraphCache(10)
 		require.NoError(t, cache.AddNode(nil, node))
@@ -145,7 +154,7 @@ func TestGraphCacheAddNode(t *testing.T) {
 	runTest(pubKey2, pubKey1)
 }
 
-func assertCachedPolicyEqual(t *testing.T, original *ChannelEdgePolicy1,
+func assertCachedPolicyEqual(t *testing.T, original *ChannelEdgePolicyWithNode,
 	cached *CachedEdgePolicy) {
 
 	require.Equal(t, original.ChannelID, cached.ChannelID)

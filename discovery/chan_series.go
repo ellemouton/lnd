@@ -329,7 +329,9 @@ func (c *ChanSeries) FetchChanUpdates(chain chainhash.Hash,
 
 	chanUpdates := make([]*lnwire.ChannelUpdate1, 0, 2)
 	if e1 != nil {
-		chanUpdate, err := netann.ChannelUpdateFromEdge(chanInfo, e1)
+		chanUpdate, err := netann.ChannelUpdateFromEdge(
+			chanInfo, e1,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -337,7 +339,9 @@ func (c *ChanSeries) FetchChanUpdates(chain chainhash.Hash,
 		chanUpdates = append(chanUpdates, chanUpdate)
 	}
 	if e2 != nil {
-		chanUpdate, err := netann.ChannelUpdateFromEdge(chanInfo, e2)
+		chanUpdate, err := netann.ChannelUpdateFromEdge(
+			chanInfo, e2,
+		)
 		if err != nil {
 			return nil, err
 		}

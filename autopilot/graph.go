@@ -91,7 +91,7 @@ func (d dbNode) Addrs() []net.Addr {
 func (d dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 	return d.node.ForEachChannel(d.db, d.tx, func(db kvdb.Backend,
 		tx kvdb.RTx, ei models.ChannelEdgeInfo, ep,
-		_ *channeldb.ChannelEdgePolicy1) error {
+		_ *channeldb.ChannelEdgePolicyWithNode) error {
 
 		// Skip channels for which no outgoing edge policy is available.
 		//
@@ -236,33 +236,41 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 	if err := d.db.AddChannelEdge(edge); err != nil {
 		return nil, nil, err
 	}
-	edgePolicy := &channeldb.ChannelEdgePolicy1{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 chanID.ToUint64(),
-		LastUpdate:                time.Now(),
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		MaxHTLC:                   lnwire.NewMSatFromSatoshis(capacity),
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
-		MessageFlags:              1,
-		ChannelFlags:              0,
+	edgePolicy := &channeldb.ChannelEdgePolicyWithNode{
+		ChannelEdgePolicy1: channeldb.ChannelEdgePolicy1{
+			SigBytes:      testSig.Serialize(),
+			ChannelID:     chanID.ToUint64(),
+			LastUpdate:    time.Now(),
+			TimeLockDelta: 10,
+			MinHTLC:       1,
+			MaxHTLC: lnwire.NewMSatFromSatoshis(
+				capacity,
+			),
+			FeeBaseMSat:               10,
+			FeeProportionalMillionths: 10000,
+			MessageFlags:              1,
+			ChannelFlags:              0,
+		},
 	}
 
 	if err := d.db.UpdateEdgePolicy(edgePolicy); err != nil {
 		return nil, nil, err
 	}
-	edgePolicy = &channeldb.ChannelEdgePolicy1{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 chanID.ToUint64(),
-		LastUpdate:                time.Now(),
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		MaxHTLC:                   lnwire.NewMSatFromSatoshis(capacity),
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
-		MessageFlags:              1,
-		ChannelFlags:              1,
+	edgePolicy = &channeldb.ChannelEdgePolicyWithNode{
+		ChannelEdgePolicy1: channeldb.ChannelEdgePolicy1{
+			SigBytes:      testSig.Serialize(),
+			ChannelID:     chanID.ToUint64(),
+			LastUpdate:    time.Now(),
+			TimeLockDelta: 10,
+			MinHTLC:       1,
+			MaxHTLC: lnwire.NewMSatFromSatoshis(
+				capacity,
+			),
+			FeeBaseMSat:               10,
+			FeeProportionalMillionths: 10000,
+			MessageFlags:              1,
+			ChannelFlags:              1,
+		},
 	}
 	if err := d.db.UpdateEdgePolicy(edgePolicy); err != nil {
 		return nil, nil, err

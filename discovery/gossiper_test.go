@@ -93,7 +93,7 @@ type mockGraphSource struct {
 	mu            sync.Mutex
 	nodes         []channeldb.LightningNode
 	infos         map[uint64]models.ChannelEdgeInfo
-	edges         map[uint64][]channeldb.ChannelEdgePolicy1
+	edges         map[uint64][]channeldb.ChannelEdgePolicyWithNode
 	zombies       map[uint64][][33]byte
 	chansToReject map[uint64]struct{}
 }
@@ -102,7 +102,7 @@ func newMockRouter(height uint32) *mockGraphSource {
 	return &mockGraphSource{
 		bestHeight:    height,
 		infos:         make(map[uint64]models.ChannelEdgeInfo),
-		edges:         make(map[uint64][]channeldb.ChannelEdgePolicy1),
+		edges:         make(map[uint64][]channeldb.ChannelEdgePolicyWithNode),
 		zombies:       make(map[uint64][][33]byte),
 		chansToReject: make(map[uint64]struct{}),
 	}
@@ -146,14 +146,16 @@ func (r *mockGraphSource) queueValidationFail(chanID uint64) {
 	r.chansToReject[chanID] = struct{}{}
 }
 
-func (r *mockGraphSource) UpdateEdge(edge *channeldb.ChannelEdgePolicy1,
+func (r *mockGraphSource) UpdateEdge(edge *channeldb.ChannelEdgePolicyWithNode,
 	_ ...batch.SchedulerOption) error {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if len(r.edges[edge.ChannelID]) == 0 {
-		r.edges[edge.ChannelID] = make([]channeldb.ChannelEdgePolicy1, 2)
+		r.edges[edge.ChannelID] = make(
+			[]channeldb.ChannelEdgePolicyWithNode, 2,
+		)
 	}
 
 	if edge.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
@@ -198,7 +200,8 @@ func (r *mockGraphSource) ForEachNode(func(node *channeldb.LightningNode) error)
 }
 
 func (r *mockGraphSource) ForAllOutgoingChannels(cb func(tx kvdb.RTx,
-	i models.ChannelEdgeInfo, c *channeldb.ChannelEdgePolicy1) error) error {
+	i models.ChannelEdgeInfo,
+	c *channeldb.ChannelEdgePolicyWithNode) error) error {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -235,8 +238,8 @@ func (r *mockGraphSource) ForEachChannel(_ func(chanInfo models.ChannelEdgeInfo,
 }
 
 func (r *mockGraphSource) GetChannelByID(chanID lnwire.ShortChannelID) (
-	models.ChannelEdgeInfo, *channeldb.ChannelEdgePolicy1,
-	*channeldb.ChannelEdgePolicy1, error) {
+	models.ChannelEdgeInfo, *channeldb.ChannelEdgePolicyWithNode,
+	*channeldb.ChannelEdgePolicyWithNode, error) {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -262,13 +265,13 @@ func (r *mockGraphSource) GetChannelByID(chanID lnwire.ShortChannelID) (
 		return chanInfoCP, nil, nil, nil
 	}
 
-	var edge1 *channeldb.ChannelEdgePolicy1
-	if !reflect.DeepEqual(edges[0], channeldb.ChannelEdgePolicy1{}) {
+	var edge1 *channeldb.ChannelEdgePolicyWithNode
+	if !reflect.DeepEqual(edges[0], channeldb.ChannelEdgePolicyWithNode{}) {
 		edge1 = &edges[0]
 	}
 
-	var edge2 *channeldb.ChannelEdgePolicy1
-	if !reflect.DeepEqual(edges[1], channeldb.ChannelEdgePolicy1{}) {
+	var edge2 *channeldb.ChannelEdgePolicyWithNode
+	if !reflect.DeepEqual(edges[1], channeldb.ChannelEdgePolicyWithNode{}) {
 		edge2 = &edges[1]
 	}
 
@@ -3456,7 +3459,7 @@ out:
 	err = ctx.router.ForAllOutgoingChannels(func(
 		_ kvdb.RTx,
 		info models.ChannelEdgeInfo,
-		edge *channeldb.ChannelEdgePolicy1) error {
+		edge *channeldb.ChannelEdgePolicyWithNode) error {
 
 		edge.TimeLockDelta = uint16(newTimeLockDelta)
 		edgesToUpdate = append(edgesToUpdate, EdgeWithInfo{

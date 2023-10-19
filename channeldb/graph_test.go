@@ -692,7 +692,8 @@ func assertEdgeInfo1Equal(t *testing.T, e1 *ChannelEdgeInfo1,
 }
 
 func createChannelEdge(db kvdb.Backend, node1, node2 *LightningNode) (
-	*ChannelEdgeInfo1, *ChannelEdgePolicy1, *ChannelEdgePolicy1) {
+	*ChannelEdgeInfo1, *ChannelEdgePolicyWithNode,
+	*ChannelEdgePolicyWithNode) {
 
 	var (
 		firstNode  *LightningNode
@@ -734,33 +735,39 @@ func createChannelEdge(db kvdb.Backend, node1, node2 *LightningNode) (
 	copy(edgeInfo.BitcoinKey1Bytes[:], firstNode.PubKeyBytes[:])
 	copy(edgeInfo.BitcoinKey2Bytes[:], secondNode.PubKeyBytes[:])
 
-	edge1 := &ChannelEdgePolicy1{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 chanID,
-		LastUpdate:                time.Unix(433453, 0),
-		MessageFlags:              1,
-		ChannelFlags:              0,
-		TimeLockDelta:             99,
-		MinHTLC:                   2342135,
-		MaxHTLC:                   13928598,
-		FeeBaseMSat:               4352345,
-		FeeProportionalMillionths: 3452352,
-		Node:                      secondNode,
-		ExtraOpaqueData:           []byte("new unknown feature2"),
+	edge1 := &ChannelEdgePolicyWithNode{
+		ChannelEdgePolicy1: ChannelEdgePolicy1{
+			SigBytes:                  testSig.Serialize(),
+			ChannelID:                 chanID,
+			LastUpdate:                time.Unix(433453, 0),
+			MessageFlags:              1,
+			ChannelFlags:              0,
+			TimeLockDelta:             99,
+			MinHTLC:                   2342135,
+			MaxHTLC:                   13928598,
+			FeeBaseMSat:               4352345,
+			FeeProportionalMillionths: 3452352,
+			ExtraOpaqueData:           []byte("new unknown feature2"),
+		},
+		Node: secondNode,
 	}
-	edge2 := &ChannelEdgePolicy1{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 chanID,
-		LastUpdate:                time.Unix(124234, 0),
-		MessageFlags:              1,
-		ChannelFlags:              1,
-		TimeLockDelta:             99,
-		MinHTLC:                   2342135,
-		MaxHTLC:                   13928598,
-		FeeBaseMSat:               4352345,
-		FeeProportionalMillionths: 90392423,
-		Node:                      firstNode,
-		ExtraOpaqueData:           []byte("new unknown feature1"),
+	edge2 := &ChannelEdgePolicyWithNode{
+		ChannelEdgePolicy1: ChannelEdgePolicy1{
+			SigBytes:                  testSig.Serialize(),
+			ChannelID:                 chanID,
+			LastUpdate:                time.Unix(124234, 0),
+			MessageFlags:              1,
+			ChannelFlags:              1,
+			TimeLockDelta:             99,
+			MinHTLC:                   2342135,
+			MaxHTLC:                   13928598,
+			FeeBaseMSat:               4352345,
+			FeeProportionalMillionths: 90392423,
+			ExtraOpaqueData: []byte(
+				"new unknown feature1",
+			),
+		},
+		Node: firstNode,
 	}
 
 	return edgeInfo, edge1, edge2
@@ -976,7 +983,7 @@ func assertNoEdge(t *testing.T, g *ChannelGraph, chanID uint64) {
 }
 
 func assertEdgeWithPolicyInCache(t *testing.T, g *ChannelGraph,
-	e models.ChannelEdgeInfo, p *ChannelEdgePolicy1, policy1 bool) {
+	e models.ChannelEdgeInfo, p *ChannelEdgePolicyWithNode, policy1 bool) {
 
 	var (
 		node1Bytes = e.Node1Bytes()
@@ -1058,25 +1065,27 @@ func assertEdgeWithPolicyInCache(t *testing.T, g *ChannelGraph,
 	}
 }
 
-func randEdgePolicy(chanID uint64, db kvdb.Backend) *ChannelEdgePolicy1 {
+func randEdgePolicy(chanID uint64, db kvdb.Backend) *ChannelEdgePolicyWithNode {
 	update := prand.Int63()
 
 	return newEdgePolicy(chanID, db, update)
 }
 
 func newEdgePolicy(chanID uint64, db kvdb.Backend,
-	updateTime int64) *ChannelEdgePolicy1 {
+	updateTime int64) *ChannelEdgePolicyWithNode {
 
-	return &ChannelEdgePolicy1{
-		ChannelID:                 chanID,
-		LastUpdate:                time.Unix(updateTime, 0),
-		MessageFlags:              1,
-		ChannelFlags:              0,
-		TimeLockDelta:             uint16(prand.Int63()),
-		MinHTLC:                   lnwire.MilliSatoshi(prand.Int63()),
-		MaxHTLC:                   lnwire.MilliSatoshi(prand.Int63()),
-		FeeBaseMSat:               lnwire.MilliSatoshi(prand.Int63()),
-		FeeProportionalMillionths: lnwire.MilliSatoshi(prand.Int63()),
+	return &ChannelEdgePolicyWithNode{
+		ChannelEdgePolicy1: ChannelEdgePolicy1{
+			ChannelID:                 chanID,
+			LastUpdate:                time.Unix(updateTime, 0),
+			MessageFlags:              1,
+			ChannelFlags:              0,
+			TimeLockDelta:             uint16(prand.Int63()),
+			MinHTLC:                   lnwire.MilliSatoshi(prand.Int63()),
+			MaxHTLC:                   lnwire.MilliSatoshi(prand.Int63()),
+			FeeBaseMSat:               lnwire.MilliSatoshi(prand.Int63()),
+			FeeProportionalMillionths: lnwire.MilliSatoshi(prand.Int63()),
+		},
 	}
 }
 
@@ -1125,7 +1134,8 @@ func TestGraphTraversal(t *testing.T) {
 	// again if the map is empty that indicates that all edges have
 	// properly been reached.
 	err = graph.ForEachChannel(func(ei models.ChannelEdgeInfo,
-		_ *ChannelEdgePolicy1, _ *ChannelEdgePolicy1) error {
+		_ *ChannelEdgePolicyWithNode,
+		_ *ChannelEdgePolicyWithNode) error {
 
 		delete(chanIndex, ei.GetChanID())
 		return nil
@@ -1139,7 +1149,7 @@ func TestGraphTraversal(t *testing.T) {
 	firstNode, secondNode := nodeList[0], nodeList[1]
 	err = firstNode.ForEachChannel(graph.DB(), nil,
 		func(_ kvdb.Backend, _ kvdb.RTx, _ models.ChannelEdgeInfo,
-			outEdge, inEdge *ChannelEdgePolicy1) error {
+			outEdge, inEdge *ChannelEdgePolicyWithNode) error {
 
 			// All channels between first and second node should
 			// have fully (both sides) specified policies.
@@ -1222,8 +1232,8 @@ func TestGraphTraversalCacheable(t *testing.T) {
 			err := node.ForEachChannel(
 				graph.db, tx, func(_ kvdb.Backend, _ kvdb.RTx,
 					info models.ChannelEdgeInfo,
-					_ *ChannelEdgePolicy1,
-					_ *ChannelEdgePolicy1) error {
+					_ *ChannelEdgePolicyWithNode,
+					_ *ChannelEdgePolicyWithNode) error {
 
 					delete(chanIndex, info.GetChanID())
 
@@ -1407,7 +1417,7 @@ func assertPruneTip(t *testing.T, graph *ChannelGraph, blockHash *chainhash.Hash
 func assertNumChans(t *testing.T, graph *ChannelGraph, n int) {
 	numChans := 0
 	if err := graph.ForEachChannel(func(models.ChannelEdgeInfo,
-		*ChannelEdgePolicy1, *ChannelEdgePolicy1) error {
+		*ChannelEdgePolicyWithNode, *ChannelEdgePolicyWithNode) error {
 
 		numChans++
 		return nil
@@ -2382,7 +2392,7 @@ func TestIncompleteChannelPolicies(t *testing.T) {
 		err := node.ForEachChannel(graph.DB(), nil,
 			func(_ kvdb.Backend, _ kvdb.RTx,
 				_ models.ChannelEdgeInfo, outEdge,
-				inEdge *ChannelEdgePolicy1) error {
+				inEdge *ChannelEdgePolicyWithNode) error {
 
 				if !expectedOut && outEdge != nil {
 					t.Fatalf("Expected no outgoing policy")
@@ -3014,7 +3024,7 @@ func TestEdgePolicyMissingMaxHtcl(t *testing.T) {
 	edge1.ExtraOpaqueData = nil
 
 	var b bytes.Buffer
-	err = serializeChanEdgePolicy(&b, edge1, to)
+	err = serializeChanEdgePolicy(&b, &edge1.ChannelEdgePolicy1, to)
 	if err != nil {
 		t.Fatalf("unable to serialize policy")
 	}
@@ -3024,7 +3034,7 @@ func TestEdgePolicyMissingMaxHtcl(t *testing.T) {
 	edge1.MessageFlags = lnwire.ChanUpdateRequiredMaxHtlc
 	edge1.MaxHTLC = 13928598
 	var b2 bytes.Buffer
-	err = serializeChanEdgePolicy(&b2, edge1, to)
+	err = serializeChanEdgePolicy(&b2, &edge1.ChannelEdgePolicy1, to)
 	if err != nil {
 		t.Fatalf("unable to serialize policy")
 	}
@@ -3251,7 +3261,7 @@ func compareNodes(a, b *LightningNode) error {
 
 // compareEdgePolicies is used to compare two ChannelEdgePolices using
 // compareNodes, so as to exclude comparisons of the Nodes' Features struct.
-func compareEdgePolicies(a, b *ChannelEdgePolicy1) error {
+func compareEdgePolicies(a, b *ChannelEdgePolicyWithNode) error {
 	if a.ChannelID != b.ChannelID {
 		return fmt.Errorf("ChannelID doesn't match: expected %v, "+
 			"got %v", a.ChannelID, b.ChannelID)
@@ -3474,7 +3484,7 @@ func TestBatchedUpdateEdgePolicy(t *testing.T) {
 
 	errTimeout := errors.New("timeout adding batched channel")
 
-	updates := []*ChannelEdgePolicy1{edge1, edge2}
+	updates := []*ChannelEdgePolicyWithNode{edge1, edge2}
 
 	errChan := make(chan error, len(updates))
 
@@ -3482,7 +3492,7 @@ func TestBatchedUpdateEdgePolicy(t *testing.T) {
 	var wg sync.WaitGroup
 	for _, update := range updates {
 		wg.Add(1)
-		go func(update *ChannelEdgePolicy1) {
+		go func(update *ChannelEdgePolicyWithNode) {
 			defer wg.Done()
 
 			select {
@@ -3534,8 +3544,8 @@ func BenchmarkForEachChannel(b *testing.B) {
 					graph.db, tx, func(_ kvdb.Backend,
 						_ kvdb.RTx,
 						info models.ChannelEdgeInfo,
-						policy *ChannelEdgePolicy1,
-						policy2 *ChannelEdgePolicy1) error {
+						policy *ChannelEdgePolicyWithNode,
+						policy2 *ChannelEdgePolicyWithNode) error {
 
 						// We need to do something with
 						// the data here, otherwise the

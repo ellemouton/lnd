@@ -5924,7 +5924,7 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// similar response which details both the edge information as well as
 	// the routing policies of th nodes connecting the two edges.
 	err = graph.ForEachChannel(func(edgeInfo models.ChannelEdgeInfo,
-		c1, c2 *channeldb.ChannelEdgePolicy1) error {
+		c1, c2 *channeldb.ChannelEdgePolicyWithNode) error {
 
 		// Do not include unannounced channels unless specifically
 		// requested. Unannounced channels include both private channels as
@@ -5934,7 +5934,10 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 			return nil
 		}
 
-		edge, err := marshalDBEdge(edgeInfo, c1, c2)
+		edge, err := marshalDBEdge(
+			edgeInfo, &c1.ChannelEdgePolicy1,
+			&c2.ChannelEdgePolicy1,
+		)
 		if err != nil {
 			return err
 		}
@@ -6132,7 +6135,9 @@ func (r *rpcServer) GetChanInfo(ctx context.Context,
 	// Convert the database's edge format into the network/RPC edge format
 	// which couples the edge itself along with the directional node
 	// routing policies of each node involved within the channel.
-	channelEdge, err := marshalDBEdge(edgeInfo, edge1, edge2)
+	channelEdge, err := marshalDBEdge(
+		edgeInfo, &edge1.ChannelEdgePolicy1, &edge2.ChannelEdgePolicy1,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -6175,7 +6180,7 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 
 	if err := node.ForEachChannel(graph.DB(), nil, func(_ kvdb.Backend,
 		_ kvdb.RTx, edge models.ChannelEdgeInfo,
-		c1, c2 *channeldb.ChannelEdgePolicy1) error {
+		c1, c2 *channeldb.ChannelEdgePolicyWithNode) error {
 
 		numChannels++
 		totalCapacity += edge.GetCapacity()
@@ -6191,7 +6196,10 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 
 			// Convert the database's edge format into the
 			// network/RPC edge format.
-			channelEdge, err := marshalDBEdge(edge, c1, c2)
+			channelEdge, err := marshalDBEdge(
+				edge, &c1.ChannelEdgePolicy1,
+				&c2.ChannelEdgePolicy1,
+			)
 			if err != nil {
 				return err
 			}
@@ -6792,7 +6800,8 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 	err = selfNode.ForEachChannel(channelGraph.DB(), nil,
 		func(_ kvdb.Backend, _ kvdb.RTx,
 			chanInfo models.ChannelEdgeInfo,
-			edgePolicy, _ *channeldb.ChannelEdgePolicy1) error {
+			edgePolicy,
+			_ *channeldb.ChannelEdgePolicyWithNode) error {
 
 			// Self node should always have policies for its
 			// channels.
