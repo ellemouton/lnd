@@ -3,9 +3,11 @@ package netann
 import (
 	"fmt"
 
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/lightningnetwork/lnd/keychain"
-	"github.com/lightningnetwork/lnd/lnwallet"
 )
 
 // NodeSigner is an implementation of the MessageSigner interface backed by the
@@ -43,15 +45,58 @@ func (n *NodeSigner) SignMessage(keyLoc keychain.KeyLocator,
 	return sig, nil
 }
 
-// SignMessageCompact signs a single or double sha256 digest of the msg
+// SignMsgCompact signs a single or double sha256 digest of the msg
 // parameter under the resident node's private key. The returned signature is a
 // pubkey-recoverable signature.
-func (n *NodeSigner) SignMessageCompact(msg []byte, doubleHash bool) ([]byte,
+func (n *NodeSigner) SignMsgCompact(msg []byte, doubleHash bool) ([]byte,
 	error) {
 
 	return n.keySigner.SignMessageCompact(msg, doubleHash)
 }
 
+func (n *NodeSigner) SignMessageCompact(keyLoc keychain.KeyLocator, msg []byte,
+	doubleHash bool) ([]byte, error) {
+
+	// If this isn't our identity public key, then we'll exit early with an
+	// error as we can't sign with this key.
+	if keyLoc != n.keySigner.KeyLocator() {
+		return nil, fmt.Errorf("unknown public key locator")
+	}
+
+	return n.keySigner.SignMessageCompact(msg, doubleHash)
+}
+
+func (n *NodeSigner) SignMessageSchnorr(keyLoc keychain.KeyLocator, msg []byte,
+	doubleHash bool, taprootTweak []byte) (*schnorr.Signature, error) {
+
+	// If this isn't our identity public key, then we'll exit early with an
+	// error as we can't sign with this key.
+	if keyLoc != n.keySigner.KeyLocator() {
+		return nil, fmt.Errorf("unknown public key locator")
+	}
+
+	return n.keySigner.SignMessageSchnorr(
+		keyLoc, msg, doubleHash, taprootTweak,
+	)
+}
+
+func (n *NodeSigner) SignMuSig2(secNonce [97]byte, keyLoc keychain.KeyLocator,
+	otherNonces [][66]byte, combinedNonce [66]byte,
+	pubKeys []*btcec.PublicKey, msg [32]byte, opts ...musig2.SignOption) (
+	*musig2.PartialSignature, error) {
+
+	// If this isn't our identity public key, then we'll exit early with an
+	// error as we can't sign with this key.
+	if keyLoc != n.keySigner.KeyLocator() {
+		return nil, fmt.Errorf("unknown public key locator")
+	}
+
+	return n.keySigner.SignMuSig2(
+		secNonce, keyLoc, otherNonces, combinedNonce, pubKeys, msg,
+		opts...,
+	)
+}
+
 // A compile time check to ensure that NodeSigner implements the MessageSigner
 // interface.
-var _ lnwallet.MessageSigner = (*NodeSigner)(nil)
+var _ keychain.MessageSignerRing = (*NodeSigner)(nil)

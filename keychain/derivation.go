@@ -279,6 +279,9 @@ type SingleKeyMessageSigner interface {
 		combinedNonce [musig2.PubNonceSize]byte,
 		pubKeys []*btcec.PublicKey, msg [32]byte,
 		opts ...musig2.SignOption) (*musig2.PartialSignature, error)
+
+	SignMessageSchnorr(keyLoc KeyLocator, msg []byte, doubleHash bool,
+		taprootTweak []byte) (*schnorr.Signature, error)
 }
 
 // ECDHRing is an interface that abstracts away basic low-level ECDH shared key
