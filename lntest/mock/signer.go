@@ -109,6 +109,27 @@ type SingleSigner struct {
 	*input.MusigSessionManager
 }
 
+func (s *SingleSigner) SignMessageCompact(keyLoc keychain.KeyLocator,
+	msg []byte, doubleHash bool) ([]byte, error) {
+
+	return nil, nil
+}
+
+func (s *SingleSigner) SignMessageSchnorr(keyLoc keychain.KeyLocator,
+	msg []byte, doubleHash bool, taprootTweak []byte) (*schnorr.Signature,
+	error) {
+
+	return nil, nil
+}
+
+func (s *SingleSigner) SignMuSig2(secNonce [97]byte,
+	keyLoc keychain.KeyLocator, otherNonces [][66]byte,
+	combinedNonce [66]byte, pubKeys []*btcec.PublicKey, msg [32]byte,
+	opts ...musig2.SignOption) (*musig2.PartialSignature, error) {
+
+	return nil, nil
+}
+
 func NewSingleSigner(privkey *btcec.PrivateKey) *SingleSigner {
 	signer := &SingleSigner{
 		Privkey: privkey,

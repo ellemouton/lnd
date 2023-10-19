@@ -8,7 +8,6 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/lightningnetwork/lnd/keychain"
-	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/netann"
 	"github.com/lightningnetwork/lnd/routing"
@@ -16,6 +15,8 @@ import (
 
 type mockSigner struct {
 	err error
+
+	keychain.MessageSignerRing
 }
 
 func (m *mockSigner) SignMessage(_ keychain.KeyLocator,
@@ -28,7 +29,7 @@ func (m *mockSigner) SignMessage(_ keychain.KeyLocator,
 	return nil, nil
 }
 
-var _ lnwallet.MessageSigner = (*mockSigner)(nil)
+var _ keychain.MessageSignerRing = (*mockSigner)(nil)
 
 var (
 	privKey, _    = btcec.NewPrivateKey()
@@ -44,7 +45,7 @@ type updateDisableTest struct {
 	startEnabled bool
 	disable      bool
 	startTime    time.Time
-	signer       lnwallet.MessageSigner
+	signer       keychain.MessageSignerRing
 	expErr       error
 }
 

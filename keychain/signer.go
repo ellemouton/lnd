@@ -3,8 +3,10 @@ package keychain
 import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/txscript"
 )
 
 func NewPubKeyMessageSigner(pubKey *btcec.PublicKey, keyLoc KeyLocator,
@@ -51,6 +53,14 @@ func (p *PubKeyMessageSigner) SignMuSig2(secNonce [97]byte, keyLoc KeyLocator,
 	return p.digestSigner.SignMuSig2(
 		secNonce, keyLoc, otherNonces, combinedNonce, pubKeys, msg,
 		opts...,
+	)
+}
+
+func (p *PubKeyMessageSigner) SignMessageSchnorr(keyLoc KeyLocator, msg []byte,
+	doubleHash bool, taprootTweak []byte) (*schnorr.Signature, error) {
+
+	return p.digestSigner.SignMessageSchnorr(
+		keyLoc, msg, doubleHash, taprootTweak,
 	)
 }
 
@@ -108,6 +118,24 @@ func (p *PrivKeyMessageSigner) SignMuSig2(secNonce [97]byte, _ KeyLocator,
 	return musig2.Sign(
 		secNonce, p.privKey, combinedNonce, pubKeys, msg, opts...,
 	)
+}
+
+func (p *PrivKeyMessageSigner) SignMessageSchnorr(_ KeyLocator, msg []byte,
+	doubleHash bool, taprootTweak []byte) (*schnorr.Signature, error) {
+
+	var digest []byte
+	if doubleHash {
+		digest = chainhash.DoubleHashB(msg)
+	} else {
+		digest = chainhash.HashB(msg)
+	}
+
+	privKey := p.privKey
+	if len(taprootTweak) > 0 {
+		privKey = txscript.TweakTaprootPrivKey(*privKey, taprootTweak)
+	}
+
+	return schnorr.Sign(privKey, digest)
 }
 
 var _ SingleKeyMessageSigner = (*PubKeyMessageSigner)(nil)
