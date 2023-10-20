@@ -50,3 +50,6 @@ type ChannelEdgeInfo interface { //nolint:interfacebloat
 
 type ChannelAuthProof interface {
 }
+
+type ChannelEdgePolicy interface {
+}

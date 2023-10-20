@@ -173,6 +173,13 @@ const (
 	// with either 0x02 or 0x03 due to the fact that the encoding would
 	// start with a node's compressed public key.
 	chanEdgeNewEncodingPrefix = 0xff
+
+	// chanEdgePolicyNewEncodingPrefix is a byte used in the channel edge
+	// policy encoding to signal that the new style encoding which is
+	// prefixed with a type byte is being used instead of the legacy
+	// encoding which would start with 0x02 due to the fact that the
+	// encoding would start with a DER encoded ecdsa signature.
+	chanEdgePolicyNewEncodingPrefix = 0xff
 )
 
 // ChannelGraph is a persistent, on-disk graph representation of the Lightning
@@ -2601,10 +2608,6 @@ func updateEdgePolicy(tx kvdb.RwTx, edge *ChannelEdgePolicyWithNode,
 	if edgeIndex == nil {
 		return false, ErrEdgeNotFound
 	}
-	nodes, err := tx.CreateTopLevelBucket(nodeBucket)
-	if err != nil {
-		return false, err
-	}
 
 	// Create the channelID key be converting the channel ID
 	// integer into a byte slice.
@@ -2644,7 +2647,7 @@ func updateEdgePolicy(tx kvdb.RwTx, edge *ChannelEdgePolicyWithNode,
 	// Finally, with the direction of the edge being updated
 	// identified, we update the on-disk edge representation.
 	err = putChanEdgePolicy(
-		edges, nodes, &edge.ChannelEdgePolicy1, fromNode, toNode,
+		edges, &edge.ChannelEdgePolicy1, fromNode, toNode,
 	)
 	if err != nil {
 		return false, err
@@ -3675,6 +3678,8 @@ type ChannelEdgePolicy1 struct {
 	// compatible manner.
 	ExtraOpaqueData []byte
 }
+
+var _ models.ChannelEdgePolicy = (*ChannelEdgePolicy1)(nil)
 
 // Signature is a channel announcement signature, which is needed for proper
 // edge policy announcement.
@@ -4784,8 +4789,14 @@ func deserializeChanEdgeInfo1(r io.Reader) (*ChannelEdgeInfo1, error) {
 	return &edgeInfo, nil
 }
 
-func putChanEdgePolicy(edges, nodes kvdb.RwBucket, edge *ChannelEdgePolicy1,
+func putChanEdgePolicy(edges kvdb.RwBucket, edgePolicy models.ChannelEdgePolicy,
 	from, to []byte) error {
+
+	edge, ok := edgePolicy.(*ChannelEdgePolicy1)
+	if !ok {
+		return fmt.Errorf("unhandled implementation of "+
+			"ChannelEdgePolicy: %T", edgePolicy)
+	}
 
 	var edgeKey [33 + 8]byte
 	copy(edgeKey[:], from)
@@ -4824,8 +4835,8 @@ func putChanEdgePolicy(edges, nodes kvdb.RwBucket, edge *ChannelEdgePolicy1,
 		// the channel ID and update time to delete the entry.
 		// TODO(halseth): get rid of these invalid policies in a
 		// migration.
-		oldEdgePolicy, err := deserializeChanEdgePolicy(
-			bytes.NewReader(edgeBytes), nodes,
+		oldEdgePolicy, _, err := deserializeChanEdgePolicyRaw(
+			bytes.NewReader(edgeBytes),
 		)
 		if err != nil && err != ErrEdgePolicyOptionalFieldNotFound {
 			return err
@@ -5066,12 +5077,34 @@ func deserializeChanEdgePolicy(r io.Reader,
 	return &policy, deserializeErr
 }
 
-func deserializeChanEdgePolicyRaw(r io.Reader) (*ChannelEdgePolicy1, []byte,
+func deserializeChanEdgePolicyRaw(reader io.Reader) (*ChannelEdgePolicy1,
+	[]byte, error) {
+
+	// Wrap the io.Reader in a bufio.Reader so that we can peak the first
+	// byte of the stream without actually consuming from the stream.
+	r := bufio.NewReader(reader)
+
+	firstByte, err := r.Peek(1)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if firstByte[0] != chanEdgePolicyNewEncodingPrefix {
+		return deserializeChanEdgePolicy1Raw(r)
+	}
+
+	return nil, nil, fmt.Errorf("unknown channel edge policy encoding "+
+		"type: %x", firstByte[0])
+}
+
+func deserializeChanEdgePolicy1Raw(r io.Reader) (*ChannelEdgePolicy1, []byte,
 	error) {
 
-	edge := &ChannelEdgePolicy1{}
+	var (
+		edge ChannelEdgePolicy1
+		err  error
+	)
 
-	var err error
 	edge.SigBytes, err = wire.ReadVarBytes(r, 0, 80, "sig")
 	if err != nil {
 		return nil, nil, err
@@ -5141,7 +5174,7 @@ func deserializeChanEdgePolicyRaw(r io.Reader) (*ChannelEdgePolicy1, []byte,
 		// stored before this field was validated. We'll return the
 		// edge along with an error.
 		if len(opq) < 8 {
-			return edge, pub[:], ErrEdgePolicyOptionalFieldNotFound
+			return &edge, pub[:], ErrEdgePolicyOptionalFieldNotFound
 		}
 
 		maxHtlc := byteOrder.Uint64(opq[:8])
@@ -5151,7 +5184,7 @@ func deserializeChanEdgePolicyRaw(r io.Reader) (*ChannelEdgePolicy1, []byte,
 		edge.ExtraOpaqueData = opq[8:]
 	}
 
-	return edge, pub[:], nil
+	return &edge, pub[:], nil
 }
 
 const (
