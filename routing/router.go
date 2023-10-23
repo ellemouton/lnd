@@ -144,7 +144,7 @@ type ChannelGraphSource interface {
 
 	// UpdateEdge is used to update edge information, without this message
 	// edge considered as not fully constructed.
-	UpdateEdge(policy *channeldb.ChannelEdgePolicy,
+	UpdateEdge(policy *channeldb.ChannelEdgePolicy1,
 		op ...batch.SchedulerOption) error
 
 	// IsStaleNode returns true if the graph source has a node announcement
@@ -176,7 +176,7 @@ type ChannelGraphSource interface {
 	// star-graph.
 	ForAllOutgoingChannels(cb func(tx kvdb.RTx,
 		c models.ChannelEdgeInfo,
-		e *channeldb.ChannelEdgePolicy) error) error
+		e *channeldb.ChannelEdgePolicy1) error) error
 
 	// CurrentBlockHeight returns the block height from POV of the router
 	// subsystem.
@@ -184,8 +184,8 @@ type ChannelGraphSource interface {
 
 	// GetChannelByID return the channel by the channel id.
 	GetChannelByID(chanID lnwire.ShortChannelID) (
-		models.ChannelEdgeInfo, *channeldb.ChannelEdgePolicy,
-		*channeldb.ChannelEdgePolicy, error)
+		models.ChannelEdgeInfo, *channeldb.ChannelEdgePolicy1,
+		*channeldb.ChannelEdgePolicy1, error)
 
 	// FetchLightningNode attempts to look up a target node by its identity
 	// public key. channeldb.ErrGraphNodeNotFound is returned if the node
@@ -472,7 +472,7 @@ type ChannelRouter struct {
 	ntfnClientUpdates chan *topologyClientUpdate
 
 	// channelEdgeMtx is a mutex we use to make sure we process only one
-	// ChannelEdgePolicy at a time for a given channelID, to ensure
+	// ChannelEdgePolicy1 at a time for a given channelID, to ensure
 	// consistency between the various database accesses.
 	channelEdgeMtx *multimutex.Mutex[uint64]
 
@@ -904,7 +904,7 @@ func (r *ChannelRouter) pruneZombieChans() error {
 	// First, we'll collect all the channels which are eligible for garbage
 	// collection due to being zombies.
 	filterPruneChans := func(info models.ChannelEdgeInfo,
-		e1, e2 *channeldb.ChannelEdgePolicy) error {
+		e1, e2 *channeldb.ChannelEdgePolicy1) error {
 
 		chanID := info.GetChanID()
 
@@ -1654,8 +1654,8 @@ func (r *ChannelRouter) processUpdate(msg interface{},
 				"view: %v", err)
 		}
 
-	case *channeldb.ChannelEdgePolicy:
-		log.Debugf("Received ChannelEdgePolicy for channel %v",
+	case *channeldb.ChannelEdgePolicy1:
+		log.Debugf("Received ChannelEdgePolicy1 for channel %v",
 			msg.ChannelID)
 
 		// We make sure to hold the mutex for this channel ID,
@@ -2616,7 +2616,7 @@ func (r *ChannelRouter) applyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 		return false
 	}
 
-	err = r.UpdateEdge(&channeldb.ChannelEdgePolicy{
+	err = r.UpdateEdge(&channeldb.ChannelEdgePolicy1{
 		SigBytes:                  msg.Signature.ToSignatureBytes(),
 		ChannelID:                 msg.ShortChannelID.ToUint64(),
 		LastUpdate:                time.Unix(int64(msg.Timestamp), 0),
@@ -2694,7 +2694,7 @@ func (r *ChannelRouter) AddEdge(edge models.ChannelEdgeInfo,
 // considered as not fully constructed.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (r *ChannelRouter) UpdateEdge(update *channeldb.ChannelEdgePolicy,
+func (r *ChannelRouter) UpdateEdge(update *channeldb.ChannelEdgePolicy1,
 	op ...batch.SchedulerOption) error {
 
 	rMsg := &routingMsg{
@@ -2735,8 +2735,8 @@ func (r *ChannelRouter) SyncedHeight() uint32 {
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (r *ChannelRouter) GetChannelByID(chanID lnwire.ShortChannelID) (
-	models.ChannelEdgeInfo, *channeldb.ChannelEdgePolicy,
-	*channeldb.ChannelEdgePolicy, error) {
+	models.ChannelEdgeInfo, *channeldb.ChannelEdgePolicy1,
+	*channeldb.ChannelEdgePolicy1, error) {
 
 	return r.cfg.Graph.FetchChannelEdgesByID(chanID.ToUint64())
 }
@@ -2769,12 +2769,12 @@ func (r *ChannelRouter) ForEachNode(
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (r *ChannelRouter) ForAllOutgoingChannels(cb func(kvdb.RTx,
-	models.ChannelEdgeInfo, *channeldb.ChannelEdgePolicy) error) error {
+	models.ChannelEdgeInfo, *channeldb.ChannelEdgePolicy1) error) error {
 
 	return r.cfg.Graph.ForEachNodeChannel(nil, r.selfNode.PubKeyBytes,
 		func(tx kvdb.RTx, c models.ChannelEdgeInfo,
-			e *channeldb.ChannelEdgePolicy,
-			_ *channeldb.ChannelEdgePolicy) error {
+			e *channeldb.ChannelEdgePolicy1,
+			_ *channeldb.ChannelEdgePolicy1) error {
 
 			if e == nil {
 				return fmt.Errorf("channel from self node " +

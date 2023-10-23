@@ -16,7 +16,7 @@ import (
 // peer's initial routing table upon connect.
 func CreateChanAnnouncement(chanProof models.ChannelAuthProof,
 	chanInfo models.ChannelEdgeInfo,
-	e1, e2 *channeldb.ChannelEdgePolicy) (lnwire.ChannelAnnouncement,
+	e1, e2 *channeldb.ChannelEdgePolicy1) (lnwire.ChannelAnnouncement,
 	*lnwire.ChannelUpdate1, *lnwire.ChannelUpdate1, error) {
 
 	switch proof := chanProof.(type) {
@@ -38,7 +38,7 @@ func CreateChanAnnouncement(chanProof models.ChannelAuthProof,
 
 func createChanAnnouncement1(chanProof *channeldb.ChannelAuthProof1,
 	chanInfo *channeldb.ChannelEdgeInfo1,
-	e1, e2 *channeldb.ChannelEdgePolicy) (lnwire.ChannelAnnouncement,
+	e1, e2 *channeldb.ChannelEdgePolicy1) (lnwire.ChannelAnnouncement,
 	*lnwire.ChannelUpdate1, *lnwire.ChannelUpdate1, error) {
 
 	// First, using the parameters of the channel, along with the channel
