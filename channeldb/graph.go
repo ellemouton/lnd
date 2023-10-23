@@ -173,6 +173,13 @@ const (
 	// with either 0x02 or 0x03 due to the fact that the encoding would
 	// start with a node's compressed public key.
 	chanEdgeNewEncodingPrefix = 0xff
+
+	// chanEdgePolicyNewEncodingPrefix is a byte used in the channel edge
+	// policy encoding to signal that the new style encoding which is
+	// prefixed with a type byte is being used instead of the legacy
+	// encoding which would start with 0x02 due to the fact that the
+	// encoding would start with a DER encoded ecdsa signature.
+	chanEdgePolicyNewEncodingPrefix = 0xff
 )
 
 // ChannelGraph is a persistent, on-disk graph representation of the Lightning
@@ -4799,8 +4806,14 @@ func deserializeChanEdgeInfo1(r io.Reader) (*ChannelEdgeInfo1, error) {
 	return &edgeInfo, nil
 }
 
-func putChanEdgePolicy(edges kvdb.RwBucket, edge *ChannelEdgePolicy1, from,
-	to []byte) error {
+func putChanEdgePolicy(edges kvdb.RwBucket, edgePolicy models.ChannelEdgePolicy,
+	from, to []byte) error {
+
+	edge, ok := edgePolicy.(*ChannelEdgePolicy1)
+	if !ok {
+		return fmt.Errorf("unhandled implementation of "+
+			"ChannelEdgePolicy: %T", edgePolicy)
+	}
 
 	var edgeKey [33 + 8]byte
 	copy(edgeKey[:], from)
@@ -5066,7 +5079,27 @@ func deserializeChanEdgePolicy(r io.Reader) (*ChannelEdgePolicy1, error) {
 	return edge, deserializeErr
 }
 
-func deserializeChanEdgePolicyRaw(r io.Reader) (*ChannelEdgePolicy1, error) {
+func deserializeChanEdgePolicyRaw(reader io.Reader) (*ChannelEdgePolicy1,
+	error) {
+
+	// Wrap the io.Reader in a bufio.Reader so that we can peak the first
+	// byte of the stream without actually consuming from the stream.
+	r := bufio.NewReader(reader)
+
+	firstByte, err := r.Peek(1)
+	if err != nil {
+		return nil, err
+	}
+
+	if firstByte[0] != chanEdgePolicyNewEncodingPrefix {
+		return deserializeChanEdgePolicy1Raw(r)
+	}
+
+	return nil, fmt.Errorf("unknown channel edge policy encoding type: %x",
+		firstByte[0])
+}
+
+func deserializeChanEdgePolicy1Raw(r io.Reader) (*ChannelEdgePolicy1, error) {
 	edge := &ChannelEdgePolicy1{}
 
 	var err error
