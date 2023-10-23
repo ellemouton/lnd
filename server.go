@@ -3109,7 +3109,7 @@ func (s *server) establishPersistentConnections() error {
 
 		// We'll now fetch the peer opposite from us within this
 		// channel so we can queue up a direct connection to them.
-		channelPeer, err := chanInfo.FetchOtherNode(tx, selfPub)
+		channelPeer, err := chanInfo.FetchOtherNode(nil, tx, selfPub)
 		if err != nil {
 			return fmt.Errorf("unable to fetch channel peer for "+
 				"ChannelPoint(%v): %v", chanInfo.ChannelPoint,
