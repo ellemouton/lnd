@@ -105,6 +105,13 @@ func (d dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 				return nil
 			}
 
+			node, err := d.db.FetchLightningNodeWithTx(
+				tx, ep.ToNode,
+			)
+			if err != nil {
+				return err
+			}
+
 			edge := ChannelEdge{
 				ChanID: lnwire.NewShortChanIDFromInt(
 					ep.ChannelID,
@@ -112,7 +119,7 @@ func (d dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 				Capacity: ei.Capacity,
 				Peer: dbNode{
 					tx:   tx,
-					node: ep.Node,
+					node: node,
 				},
 			}
 

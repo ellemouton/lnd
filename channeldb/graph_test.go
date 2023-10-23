@@ -619,15 +619,15 @@ func createChannelEdge(db kvdb.Backend, node1, node2 *LightningNode) (*ChannelEd
 	*ChannelEdgePolicy, *ChannelEdgePolicy) {
 
 	var (
-		firstNode  *LightningNode
-		secondNode *LightningNode
+		firstNode  [33]byte
+		secondNode [33]byte
 	)
 	if bytes.Compare(node1.PubKeyBytes[:], node2.PubKeyBytes[:]) == -1 {
-		firstNode = node1
-		secondNode = node2
+		firstNode = node1.PubKeyBytes
+		secondNode = node2.PubKeyBytes
 	} else {
-		firstNode = node2
-		secondNode = node1
+		firstNode = node2.PubKeyBytes
+		secondNode = node1.PubKeyBytes
 	}
 
 	// In addition to the fake vertexes we create some fake channel
@@ -653,10 +653,10 @@ func createChannelEdge(db kvdb.Backend, node1, node2 *LightningNode) (*ChannelEd
 		Capacity:        1000,
 		ExtraOpaqueData: []byte("new unknown feature"),
 	}
-	copy(edgeInfo.NodeKey1Bytes[:], firstNode.PubKeyBytes[:])
-	copy(edgeInfo.NodeKey2Bytes[:], secondNode.PubKeyBytes[:])
-	copy(edgeInfo.BitcoinKey1Bytes[:], firstNode.PubKeyBytes[:])
-	copy(edgeInfo.BitcoinKey2Bytes[:], secondNode.PubKeyBytes[:])
+	copy(edgeInfo.NodeKey1Bytes[:], firstNode[:])
+	copy(edgeInfo.NodeKey2Bytes[:], secondNode[:])
+	copy(edgeInfo.BitcoinKey1Bytes[:], firstNode[:])
+	copy(edgeInfo.BitcoinKey2Bytes[:], secondNode[:])
 
 	edge1 := &ChannelEdgePolicy{
 		SigBytes:                  testSig.Serialize(),
@@ -669,7 +669,7 @@ func createChannelEdge(db kvdb.Backend, node1, node2 *LightningNode) (*ChannelEd
 		MaxHTLC:                   13928598,
 		FeeBaseMSat:               4352345,
 		FeeProportionalMillionths: 3452352,
-		Node:                      secondNode,
+		ToNode:                    secondNode,
 		ExtraOpaqueData:           []byte("new unknown feature2"),
 	}
 	edge2 := &ChannelEdgePolicy{
@@ -683,7 +683,7 @@ func createChannelEdge(db kvdb.Backend, node1, node2 *LightningNode) (*ChannelEd
 		MaxHTLC:                   13928598,
 		FeeBaseMSat:               4352345,
 		FeeProportionalMillionths: 90392423,
-		Node:                      firstNode,
+		ToNode:                    firstNode,
 		ExtraOpaqueData:           []byte("new unknown feature1"),
 	}
 
@@ -1062,13 +1062,13 @@ func TestGraphTraversal(t *testing.T) {
 
 			// Each should indicate that it's outgoing (pointed
 			// towards the second node).
-			if !bytes.Equal(outEdge.Node.PubKeyBytes[:], secondNode.PubKeyBytes[:]) {
+			if !bytes.Equal(outEdge.ToNode[:], secondNode.PubKeyBytes[:]) {
 				return fmt.Errorf("wrong outgoing edge")
 			}
 
 			// The incoming edge should also indicate that it's pointing to
 			// the origin node.
-			if !bytes.Equal(inEdge.Node.PubKeyBytes[:], firstNode.PubKeyBytes[:]) {
+			if !bytes.Equal(inEdge.ToNode[:], firstNode.PubKeyBytes[:]) {
 				return fmt.Errorf("wrong outgoing edge")
 			}
 
@@ -1267,7 +1267,7 @@ func fillTestGraph(t require.TestingT, graph *ChannelGraph, numNodes,
 			// from node1 -> node2.
 			edge := randEdgePolicy(chanID, graph.db)
 			edge.ChannelFlags = 0
-			edge.Node = node2
+			edge.ToNode = node2.PubKeyBytes
 			edge.SigBytes = testSig.Serialize()
 			require.NoError(t, graph.UpdateEdgePolicy(edge))
 
@@ -1275,7 +1275,7 @@ func fillTestGraph(t require.TestingT, graph *ChannelGraph, numNodes,
 			// node2 -> node1 this time.
 			edge = randEdgePolicy(chanID, graph.db)
 			edge.ChannelFlags = 1
-			edge.Node = node1
+			edge.ToNode = node1.PubKeyBytes
 			edge.SigBytes = testSig.Serialize()
 			require.NoError(t, graph.UpdateEdgePolicy(edge))
 
@@ -1460,7 +1460,7 @@ func TestGraphPruning(t *testing.T) {
 		// node_i -> node_i+1
 		edge := randEdgePolicy(chanID, graph.db)
 		edge.ChannelFlags = 0
-		edge.Node = graphNodes[i]
+		edge.ToNode = graphNodes[i].PubKeyBytes
 		edge.SigBytes = testSig.Serialize()
 		if err := graph.UpdateEdgePolicy(edge); err != nil {
 			t.Fatalf("unable to update edge: %v", err)
@@ -1470,7 +1470,7 @@ func TestGraphPruning(t *testing.T) {
 		// node_i this time.
 		edge = randEdgePolicy(chanID, graph.db)
 		edge.ChannelFlags = 1
-		edge.Node = graphNodes[i]
+		edge.ToNode = graphNodes[i].PubKeyBytes
 		edge.SigBytes = testSig.Serialize()
 		if err := graph.UpdateEdgePolicy(edge); err != nil {
 			t.Fatalf("unable to update edge: %v", err)
@@ -1685,7 +1685,7 @@ func TestChanUpdatesInHorizon(t *testing.T) {
 			chanID.ToUint64(), graph.db, edge1UpdateTime.Unix(),
 		)
 		edge1.ChannelFlags = 0
-		edge1.Node = node2
+		edge1.ToNode = node2.PubKeyBytes
 		edge1.SigBytes = testSig.Serialize()
 		if err := graph.UpdateEdgePolicy(edge1); err != nil {
 			t.Fatalf("unable to update edge: %v", err)
@@ -1695,7 +1695,7 @@ func TestChanUpdatesInHorizon(t *testing.T) {
 			chanID.ToUint64(), graph.db, edge2UpdateTime.Unix(),
 		)
 		edge2.ChannelFlags = 1
-		edge2.Node = node1
+		edge2.ToNode = node1.PubKeyBytes
 		edge2.SigBytes = testSig.Serialize()
 		if err := graph.UpdateEdgePolicy(edge2); err != nil {
 			t.Fatalf("unable to update edge: %v", err)
@@ -2179,7 +2179,7 @@ func TestFetchChanInfos(t *testing.T) {
 			chanID.ToUint64(), graph.db, updateTime.Unix(),
 		)
 		edge1.ChannelFlags = 0
-		edge1.Node = node2
+		edge1.ToNode = node2.PubKeyBytes
 		edge1.SigBytes = testSig.Serialize()
 		if err := graph.UpdateEdgePolicy(edge1); err != nil {
 			t.Fatalf("unable to update edge: %v", err)
@@ -2189,7 +2189,7 @@ func TestFetchChanInfos(t *testing.T) {
 			chanID.ToUint64(), graph.db, updateTime.Unix(),
 		)
 		edge2.ChannelFlags = 1
-		edge2.Node = node1
+		edge2.ToNode = node1.PubKeyBytes
 		edge2.SigBytes = testSig.Serialize()
 		if err := graph.UpdateEdgePolicy(edge2); err != nil {
 			t.Fatalf("unable to update edge: %v", err)
@@ -2318,7 +2318,7 @@ func TestIncompleteChannelPolicies(t *testing.T) {
 		chanID.ToUint64(), graph.db, updateTime.Unix(),
 	)
 	edgePolicy.ChannelFlags = 0
-	edgePolicy.Node = node2
+	edgePolicy.ToNode = node2.PubKeyBytes
 	edgePolicy.SigBytes = testSig.Serialize()
 	if err := graph.UpdateEdgePolicy(edgePolicy); err != nil {
 		t.Fatalf("unable to update edge: %v", err)
@@ -2333,7 +2333,7 @@ func TestIncompleteChannelPolicies(t *testing.T) {
 		chanID.ToUint64(), graph.db, updateTime.Unix(),
 	)
 	edgePolicy.ChannelFlags = 1
-	edgePolicy.Node = node1
+	edgePolicy.ToNode = node1.PubKeyBytes
 	edgePolicy.SigBytes = testSig.Serialize()
 	if err := graph.UpdateEdgePolicy(edgePolicy); err != nil {
 		t.Fatalf("unable to update edge: %v", err)
@@ -2380,7 +2380,7 @@ func TestChannelEdgePruningUpdateIndexDeletion(t *testing.T) {
 
 	edge1 := randEdgePolicy(chanID.ToUint64(), graph.db)
 	edge1.ChannelFlags = 0
-	edge1.Node = node1
+	edge1.ToNode = node1.PubKeyBytes
 	edge1.SigBytes = testSig.Serialize()
 	if err := graph.UpdateEdgePolicy(edge1); err != nil {
 		t.Fatalf("unable to update edge: %v", err)
@@ -2388,7 +2388,7 @@ func TestChannelEdgePruningUpdateIndexDeletion(t *testing.T) {
 
 	edge2 := randEdgePolicy(chanID.ToUint64(), graph.db)
 	edge2.ChannelFlags = 1
-	edge2.Node = node2
+	edge2.ToNode = node2.PubKeyBytes
 	edge2.SigBytes = testSig.Serialize()
 	if err := graph.UpdateEdgePolicy(edge2); err != nil {
 		t.Fatalf("unable to update edge: %v", err)
@@ -2533,7 +2533,7 @@ func TestPruneGraphNodes(t *testing.T) {
 	// points from the first to the second node.
 	edge1 := randEdgePolicy(chanID.ToUint64(), graph.db)
 	edge1.ChannelFlags = 0
-	edge1.Node = node1
+	edge1.ToNode = node1.PubKeyBytes
 	edge1.SigBytes = testSig.Serialize()
 	if err := graph.UpdateEdgePolicy(edge1); err != nil {
 		t.Fatalf("unable to update edge: %v", err)
@@ -2900,8 +2900,8 @@ func TestEdgePolicyMissingMaxHtcl(t *testing.T) {
 	}
 
 	chanID := edgeInfo.ChannelID
-	from := edge2.Node.PubKeyBytes[:]
-	to := edge1.Node.PubKeyBytes[:]
+	from := edge2.ToNode
+	to := edge1.ToNode
 
 	// We'll remove the no max_htlc field from the first edge policy, and
 	// all other opaque data, and serialize it.
@@ -2909,7 +2909,7 @@ func TestEdgePolicyMissingMaxHtcl(t *testing.T) {
 	edge1.ExtraOpaqueData = nil
 
 	var b bytes.Buffer
-	err = serializeChanEdgePolicy(&b, edge1, to)
+	err = serializeChanEdgePolicy(&b, edge1, to[:])
 	if err != nil {
 		t.Fatalf("unable to serialize policy")
 	}
@@ -2919,7 +2919,7 @@ func TestEdgePolicyMissingMaxHtcl(t *testing.T) {
 	edge1.MessageFlags = lnwire.ChanUpdateRequiredMaxHtlc
 	edge1.MaxHTLC = 13928598
 	var b2 bytes.Buffer
-	err = serializeChanEdgePolicy(&b2, edge1, to)
+	err = serializeChanEdgePolicy(&b2, edge1, to[:])
 	if err != nil {
 		t.Fatalf("unable to serialize policy")
 	}
@@ -2932,12 +2932,7 @@ func TestEdgePolicyMissingMaxHtcl(t *testing.T) {
 	// Attempting to deserialize these bytes should return an error.
 	r := bytes.NewReader(stripped)
 	err = kvdb.View(graph.db, func(tx kvdb.RTx) error {
-		nodes := tx.ReadBucket(nodeBucket)
-		if nodes == nil {
-			return ErrGraphNotFound
-		}
-
-		_, err = deserializeChanEdgePolicy(r, nodes)
+		_, err = deserializeChanEdgePolicy(r)
 		if err != ErrEdgePolicyOptionalFieldNotFound {
 			t.Fatalf("expected "+
 				"ErrEdgePolicyOptionalFieldNotFound, got %v",
@@ -2961,7 +2956,7 @@ func TestEdgePolicyMissingMaxHtcl(t *testing.T) {
 		}
 
 		var edgeKey [33 + 8]byte
-		copy(edgeKey[:], from)
+		copy(edgeKey[:], from[:])
 		byteOrder.PutUint64(edgeKey[33:], edge1.ChannelID)
 
 		var scratch [8]byte
@@ -3188,9 +3183,11 @@ func compareEdgePolicies(a, b *ChannelEdgePolicy) error {
 		return fmt.Errorf("extra data doesn't match: %v vs %v",
 			a.ExtraOpaqueData, b.ExtraOpaqueData)
 	}
-	if err := compareNodes(a.Node, b.Node); err != nil {
-		return err
+	if !bytes.Equal(a.ToNode[:], b.ToNode[:]) {
+		return fmt.Errorf("ToNode doesn't match: expected %x, got %x",
+			a.ToNode, b.ToNode)
 	}
+
 	return nil
 }
 
