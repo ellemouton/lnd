@@ -341,6 +341,11 @@ func (c *ChannelGraph) Wipe() error {
 	return initChannelGraph(c.db)
 }
 
+// DB returns the underlying kvdb Backend.
+func (c *ChannelGraph) DB() kvdb.Backend {
+	return c.db
+}
+
 // createChannelDB creates and initializes a fresh version of channeldb. In
 // the case that the target path has not yet been created or doesn't yet exist,
 // then the path is created. Additionally, all required top-level buckets used
@@ -557,7 +562,7 @@ func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
 	return c.ForEachNode(func(tx kvdb.RTx, node *LightningNode) error {
 		channels := make(map[uint64]*DirectedChannel)
 
-		err := node.ForEachChannel(tx, func(tx kvdb.RTx,
+		err := node.ForEachChannel(nil, tx, func(tx kvdb.RTx,
 			e *ChannelEdgeInfo, p1 *ChannelEdgePolicy,
 			p2 *ChannelEdgePolicy) error {
 
@@ -679,7 +684,6 @@ func (c *ChannelGraph) ForEachNode(
 			if err != nil {
 				return err
 			}
-			node.db = c.db
 
 			// Execute the callback, the transaction will abort if
 			// this returns an error.
@@ -777,7 +781,6 @@ func (c *ChannelGraph) sourceNode(nodes kvdb.RBucket) (*LightningNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	node.db = c.db
 
 	return &node, nil
 }
@@ -2035,7 +2038,6 @@ func (c *ChannelGraph) NodeUpdatesInHorizon(startTime,
 			if err != nil {
 				return err
 			}
-			node.db = c.db
 
 			nodesInHorizon = append(nodesInHorizon, node)
 		}
@@ -2657,8 +2659,6 @@ type LightningNode struct {
 	// compatible manner.
 	ExtraOpaqueData []byte
 
-	db kvdb.Backend
-
 	// TODO(roasbeef): discovery will need storage to keep it's last IP
 	// address and re-announce if interface changes?
 
@@ -2747,7 +2747,7 @@ func (l *LightningNode) isPublic(tx kvdb.RTx, sourcePubKey []byte) (bool, error)
 	// used to terminate the check early.
 	nodeIsPublic := false
 	errDone := errors.New("done")
-	err := l.ForEachChannel(tx, func(_ kvdb.RTx, info *ChannelEdgeInfo,
+	err := l.ForEachChannel(nil, tx, func(_ kvdb.RTx, info *ChannelEdgeInfo,
 		_, _ *ChannelEdgePolicy) error {
 
 		// If this edge doesn't extend to the source node, we'll
@@ -2807,7 +2807,6 @@ func (c *ChannelGraph) FetchLightningNode(nodePub route.Vertex) (
 		if err != nil {
 			return err
 		}
-		n.db = c.db
 
 		node = &n
 
@@ -3013,15 +3012,15 @@ func nodeTraversal(tx kvdb.RTx, nodePub []byte, db kvdb.Backend,
 // Unknown policies are passed into the callback as nil values.
 //
 // If the caller wishes to re-use an existing boltdb transaction, then it
-// should be passed as the first argument.  Otherwise the first argument should
-// be nil and a fresh transaction will be created to execute the graph
-// traversal.
-func (l *LightningNode) ForEachChannel(tx kvdb.RTx,
+// should be passed as the second argument (tx) and the first argument (db) may
+// be nil. Otherwise, the first argument be should the kvdb.Backend to be used
+// to create a fresh transaction to execute the graph traversal and the second
+// argument can be nil.
+func (l *LightningNode) ForEachChannel(db kvdb.Backend, tx kvdb.RTx,
 	cb func(kvdb.RTx, *ChannelEdgeInfo, *ChannelEdgePolicy,
 		*ChannelEdgePolicy) error) error {
 
 	nodePub := l.PubKeyBytes[:]
-	db := l.db
 
 	return nodeTraversal(tx, nodePub, db, cb)
 }
@@ -3236,7 +3235,6 @@ func (c *ChannelEdgeInfo) FetchOtherNode(tx kvdb.RTx,
 		if err != nil {
 			return err
 		}
-		node.db = c.db
 
 		targetNode = &node
 
@@ -4639,7 +4637,6 @@ func fetchChanEdgePolicies(edgeIndex kvdb.RBucket, edges kvdb.RBucket,
 	// only fill in the database pointers if the edge is found.
 	if edge1 != nil {
 		edge1.db = db
-		edge1.Node.db = db
 	}
 
 	// Similarly, the second node is contained within the latter
@@ -4652,7 +4649,6 @@ func fetchChanEdgePolicies(edgeIndex kvdb.RBucket, edges kvdb.RBucket,
 
 	if edge2 != nil {
 		edge2.db = db
-		edge2.Node.db = db
 	}
 
 	return edge1, edge2, nil

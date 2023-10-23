@@ -95,7 +95,6 @@ func createLightningNode(db kvdb.Backend, priv *btcec.PrivateKey) (*LightningNod
 		Alias:                "kek" + string(pub[:]),
 		Features:             testFeatures,
 		Addresses:            testAddrs,
-		db:                   db,
 	}
 	copy(n.PubKeyBytes[:], priv.PubKey().SerializeCompressed())
 
@@ -129,7 +128,6 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 		Addresses:            testAddrs,
 		ExtraOpaqueData:      []byte("extra new data"),
 		PubKeyBytes:          testPub,
-		db:                   graph.db,
 	}
 
 	// First, insert the node into the graph DB. This should succeed
@@ -207,7 +205,6 @@ func TestPartialNode(t *testing.T) {
 		HaveNodeAnnouncement: false,
 		LastUpdate:           time.Unix(0, 0),
 		PubKeyBytes:          testPub,
-		db:                   graph.db,
 	}
 
 	if err := compareNodes(node, dbNode); err != nil {
@@ -1056,30 +1053,31 @@ func TestGraphTraversal(t *testing.T) {
 	// outgoing channels for a particular node.
 	numNodeChans := 0
 	firstNode, secondNode := nodeList[0], nodeList[1]
-	err = firstNode.ForEachChannel(nil, func(_ kvdb.RTx, _ *ChannelEdgeInfo,
-		outEdge, inEdge *ChannelEdgePolicy) error {
+	err = firstNode.ForEachChannel(graph.db, nil,
+		func(_ kvdb.RTx, _ *ChannelEdgeInfo, outEdge,
+			inEdge *ChannelEdgePolicy) error {
 
-		// All channels between first and second node should have fully
-		// (both sides) specified policies.
-		if inEdge == nil || outEdge == nil {
-			return fmt.Errorf("channel policy not present")
-		}
+			// All channels between first and second node should have fully
+			// (both sides) specified policies.
+			if inEdge == nil || outEdge == nil {
+				return fmt.Errorf("channel policy not present")
+			}
 
-		// Each should indicate that it's outgoing (pointed
-		// towards the second node).
-		if !bytes.Equal(outEdge.Node.PubKeyBytes[:], secondNode.PubKeyBytes[:]) {
-			return fmt.Errorf("wrong outgoing edge")
-		}
+			// Each should indicate that it's outgoing (pointed
+			// towards the second node).
+			if !bytes.Equal(outEdge.Node.PubKeyBytes[:], secondNode.PubKeyBytes[:]) {
+				return fmt.Errorf("wrong outgoing edge")
+			}
 
-		// The incoming edge should also indicate that it's pointing to
-		// the origin node.
-		if !bytes.Equal(inEdge.Node.PubKeyBytes[:], firstNode.PubKeyBytes[:]) {
-			return fmt.Errorf("wrong outgoing edge")
-		}
+			// The incoming edge should also indicate that it's pointing to
+			// the origin node.
+			if !bytes.Equal(inEdge.Node.PubKeyBytes[:], firstNode.PubKeyBytes[:]) {
+				return fmt.Errorf("wrong outgoing edge")
+			}
 
-		numNodeChans++
-		return nil
-	})
+			numNodeChans++
+			return nil
+		})
 	require.NoError(t, err)
 	require.Equal(t, numChannels, numNodeChans)
 }
@@ -2280,29 +2278,30 @@ func TestIncompleteChannelPolicies(t *testing.T) {
 	// Ensure that channel is reported with unknown policies.
 	checkPolicies := func(node *LightningNode, expectedIn, expectedOut bool) {
 		calls := 0
-		err := node.ForEachChannel(nil, func(_ kvdb.RTx, _ *ChannelEdgeInfo,
-			outEdge, inEdge *ChannelEdgePolicy) error {
+		err := node.ForEachChannel(graph.db, nil,
+			func(_ kvdb.RTx, _ *ChannelEdgeInfo, outEdge,
+				inEdge *ChannelEdgePolicy) error {
 
-			if !expectedOut && outEdge != nil {
-				t.Fatalf("Expected no outgoing policy")
-			}
+				if !expectedOut && outEdge != nil {
+					t.Fatalf("Expected no outgoing policy")
+				}
 
-			if expectedOut && outEdge == nil {
-				t.Fatalf("Expected an outgoing policy")
-			}
+				if expectedOut && outEdge == nil {
+					t.Fatalf("Expected an outgoing policy")
+				}
 
-			if !expectedIn && inEdge != nil {
-				t.Fatalf("Expected no incoming policy")
-			}
+				if !expectedIn && inEdge != nil {
+					t.Fatalf("Expected no incoming policy")
+				}
 
-			if expectedIn && inEdge == nil {
-				t.Fatalf("Expected an incoming policy")
-			}
+				if expectedIn && inEdge == nil {
+					t.Fatalf("Expected an incoming policy")
+				}
 
-			calls++
+				calls++
 
-			return nil
-		})
+				return nil
+			})
 		if err != nil {
 			t.Fatalf("unable to scan channels: %v", err)
 		}
@@ -2701,15 +2700,13 @@ func TestNodeIsPublic(t *testing.T) {
 	edges := []*ChannelEdgeInfo{&aliceBobEdge, &bobCarolEdge}
 	dbs := []kvdb.Backend{aliceGraph.db, bobGraph.db, carolGraph.db}
 	graphs := []*ChannelGraph{aliceGraph, bobGraph, carolGraph}
-	for i, graph := range graphs {
+	for _, graph := range graphs {
 		for _, node := range nodes {
-			node.db = dbs[i]
 			if err := graph.AddLightningNode(node); err != nil {
 				t.Fatalf("unable to add node: %v", err)
 			}
 		}
 		for _, edge := range edges {
-			edge.db = dbs[i]
 			if err := graph.AddChannelEdge(edge); err != nil {
 				t.Fatalf("unable to add edge: %v", err)
 			}
@@ -3139,10 +3136,6 @@ func compareNodes(a, b *LightningNode) error {
 	if !reflect.DeepEqual(a.Alias, b.Alias) {
 		return fmt.Errorf("Alias doesn't match: expected %#v, \n "+
 			"got %#v", a.Alias, b.Alias)
-	}
-	if !reflect.DeepEqual(a.db, b.db) {
-		return fmt.Errorf("db doesn't match: expected %#v, \n "+
-			"got %#v", a.db, b.db)
 	}
 	if !reflect.DeepEqual(a.HaveNodeAnnouncement, b.HaveNodeAnnouncement) {
 		return fmt.Errorf("HaveNodeAnnouncement doesn't match: expected %#v, \n "+

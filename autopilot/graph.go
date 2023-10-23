@@ -53,6 +53,8 @@ func ChannelGraphFromDatabase(db *channeldb.ChannelGraph) ChannelGraph {
 // channeldb.LightningNode. The wrapper method implement the autopilot.Node
 // interface.
 type dbNode struct {
+	db kvdb.Backend
+
 	tx kvdb.RTx
 
 	node *channeldb.LightningNode
@@ -86,8 +88,9 @@ func (d dbNode) Addrs() []net.Addr {
 //
 // NOTE: Part of the autopilot.Node interface.
 func (d dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
-	return d.node.ForEachChannel(d.tx, func(tx kvdb.RTx,
-		ei *channeldb.ChannelEdgeInfo, ep, _ *channeldb.ChannelEdgePolicy) error {
+	return d.node.ForEachChannel(d.db, d.tx, func(tx kvdb.RTx,
+		ei *channeldb.ChannelEdgeInfo, ep,
+		_ *channeldb.ChannelEdgePolicy) error {
 
 		// Skip channels for which no outgoing edge policy is available.
 		//
@@ -266,6 +269,7 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 			ChanID:   chanID,
 			Capacity: capacity,
 			Peer: dbNode{
+				db:   d.db.DB(),
 				node: vertex1,
 			},
 		},
@@ -273,6 +277,7 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 			ChanID:   chanID,
 			Capacity: capacity,
 			Peer: dbNode{
+				db:   d.db.DB(),
 				node: vertex2,
 			},
 		},

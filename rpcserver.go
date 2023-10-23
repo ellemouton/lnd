@@ -6151,7 +6151,7 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 		channels      []*lnrpc.ChannelEdge
 	)
 
-	if err := node.ForEachChannel(nil, func(_ kvdb.RTx,
+	if err := node.ForEachChannel(graph.DB(), nil, func(_ kvdb.RTx,
 		edge *channeldb.ChannelEdgeInfo,
 		c1, c2 *channeldb.ChannelEdgePolicy) error {
 
@@ -6763,34 +6763,35 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 	}
 
 	var feeReports []*lnrpc.ChannelFeeReport
-	err = selfNode.ForEachChannel(nil, func(_ kvdb.RTx, chanInfo *channeldb.ChannelEdgeInfo,
-		edgePolicy, _ *channeldb.ChannelEdgePolicy) error {
+	err = selfNode.ForEachChannel(channelGraph.DB(), nil,
+		func(_ kvdb.RTx, chanInfo *channeldb.ChannelEdgeInfo,
+			edgePolicy, _ *channeldb.ChannelEdgePolicy) error {
 
-		// Self node should always have policies for its channels.
-		if edgePolicy == nil {
-			return fmt.Errorf("no policy for outgoing channel %v ",
-				chanInfo.ChannelID)
-		}
+			// Self node should always have policies for its channels.
+			if edgePolicy == nil {
+				return fmt.Errorf("no policy for outgoing channel %v ",
+					chanInfo.ChannelID)
+			}
 
-		// We'll compute the effective fee rate by converting from a
-		// fixed point fee rate to a floating point fee rate. The fee
-		// rate field in the database the amount of mSAT charged per
-		// 1mil mSAT sent, so will divide by this to get the proper fee
-		// rate.
-		feeRateFixedPoint := edgePolicy.FeeProportionalMillionths
-		feeRate := float64(feeRateFixedPoint) / feeBase
+			// We'll compute the effective fee rate by converting from a
+			// fixed point fee rate to a floating point fee rate. The fee
+			// rate field in the database the amount of mSAT charged per
+			// 1mil mSAT sent, so will divide by this to get the proper fee
+			// rate.
+			feeRateFixedPoint := edgePolicy.FeeProportionalMillionths
+			feeRate := float64(feeRateFixedPoint) / feeBase
 
-		// TODO(roasbeef): also add stats for revenue for each channel
-		feeReports = append(feeReports, &lnrpc.ChannelFeeReport{
-			ChanId:       chanInfo.ChannelID,
-			ChannelPoint: chanInfo.ChannelPoint.String(),
-			BaseFeeMsat:  int64(edgePolicy.FeeBaseMSat),
-			FeePerMil:    int64(feeRateFixedPoint),
-			FeeRate:      feeRate,
+			// TODO(roasbeef): also add stats for revenue for each channel
+			feeReports = append(feeReports, &lnrpc.ChannelFeeReport{
+				ChanId:       chanInfo.ChannelID,
+				ChannelPoint: chanInfo.ChannelPoint.String(),
+				BaseFeeMsat:  int64(edgePolicy.FeeBaseMSat),
+				FeePerMil:    int64(feeRateFixedPoint),
+				FeeRate:      feeRate,
+			})
+
+			return nil
 		})
-
-		return nil
-	})
 	if err != nil {
 		return nil, err
 	}
