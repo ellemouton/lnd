@@ -101,6 +101,9 @@
   eliminate the use of `ScanInvoices`.
 
 ## Code Health
+
+* [Remove database pointers]() from channeldb schema structs.
+
 ## Tooling and Documentation
 
 # Contributors (Alphabetical Order)
