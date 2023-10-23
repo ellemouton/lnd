@@ -3,6 +3,7 @@ package routing
 import (
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/htlcswitch"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -50,15 +51,16 @@ func newBandwidthManager(graph routingGraph, sourceNode route.Vertex,
 	// First, we'll collect the set of outbound edges from the target
 	// source node and add them to our bandwidth manager's map of channels.
 	err := graph.forEachNodeChannel(sourceNode,
-		func(channel *channeldb.DirectedChannel) error {
-			shortID := lnwire.NewShortChanIDFromInt(
-				channel.ChannelID,
-			)
+		func(tx kvdb.RTx, info *channeldb.ChannelEdgeInfo,
+			_ *channeldb.ChannelEdgePolicy,
+			_ *channeldb.ChannelEdgePolicy) error {
+
+			shortID := lnwire.NewShortChanIDFromInt(info.ChannelID)
 			manager.localChans[shortID] = struct{}{}
 
 			return nil
-		})
-
+		},
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -3,6 +3,7 @@ package routing
 import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -70,17 +71,21 @@ func (u *nodeEdgeUnifier) addPolicy(fromNode route.Vertex,
 // addGraphPolicies adds all policies that are known for the toNode in the
 // graph.
 func (u *nodeEdgeUnifier) addGraphPolicies(g routingGraph) error {
-	cb := func(channel *channeldb.DirectedChannel) error {
+	cb := func(tx kvdb.RTx, edge *channeldb.ChannelEdgeInfo,
+		policy1 *channeldb.ChannelEdgePolicy,
+		policy2 *channeldb.ChannelEdgePolicy) error {
+
 		// If there is no edge policy for this candidate node, skip.
 		// Note that we are searching backwards so this node would have
 		// come prior to the pivot node in the route.
-		if channel.InPolicy == nil {
+		if policy2 == nil {
 			return nil
 		}
 
 		// Add this policy to the corresponding edgeUnifier.
 		u.addPolicy(
-			channel.OtherNode, channel.InPolicy, channel.Capacity,
+			edge.NodeKey2Bytes, channeldb.NewCachedPolicy(policy2),
+			edge.Capacity,
 		)
 
 		return nil

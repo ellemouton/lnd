@@ -71,15 +71,15 @@ type CachedEdgePolicy struct {
 
 	// ToNodePubKey is a function that returns the to node of a policy.
 	// Since we only ever store the inbound policy, this is always the node
-	// that we query the channels for in ForEachChannel(). Therefore, we can
+	// that we query the channels for in ForEachNodeChannel(). Therefore, we can
 	// save a lot of space by not storing this information in the memory and
 	// instead just set this function when we copy the policy from cache in
-	// ForEachChannel().
+	// ForEachNodeChannel().
 	ToNodePubKey func() route.Vertex
 
 	// ToNodeFeatures are the to node's features. They are never set while
 	// the edge is in the cache, only on the copy that is returned in
-	// ForEachChannel().
+	// ForEachNodeChannel().
 	ToNodeFeatures *lnwire.FeatureVector
 }
 
@@ -208,7 +208,7 @@ func (c *GraphCache) Stats() string {
 func (c *GraphCache) AddNodeFeatures(node GraphCacheNode) {
 	nodePubKey := node.PubKey()
 
-	// Only hold the lock for a short time. The `ForEachChannel()` below is
+	// Only hold the lock for a short time. The `ForEachNodeChannel()` below is
 	// possibly slow as it has to go to the backend, so we can unlock
 	// between the calls. And the AddChannel() method will acquire its own
 	// lock anyway.

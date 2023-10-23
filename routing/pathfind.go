@@ -12,6 +12,7 @@ import (
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/feature"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/record"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -438,12 +439,16 @@ func getOutgoingBalance(node route.Vertex, outgoingChans map[uint64]struct{},
 	g routingGraph) (lnwire.MilliSatoshi, lnwire.MilliSatoshi, error) {
 
 	var max, total lnwire.MilliSatoshi
-	cb := func(channel *channeldb.DirectedChannel) error {
-		if !channel.OutPolicySet {
+	cb := func(tx kvdb.RTx, edge *channeldb.ChannelEdgeInfo,
+		policy1 *channeldb.ChannelEdgePolicy,
+		policy2 *channeldb.ChannelEdgePolicy) error {
+
+		// Exit if our policy is not yet set.
+		if policy1 == nil {
 			return nil
 		}
 
-		chanID := channel.ChannelID
+		chanID := edge.ChannelID
 
 		// Enforce outgoing channel restriction.
 		if outgoingChans != nil {
@@ -460,7 +465,7 @@ func getOutgoingBalance(node route.Vertex, outgoingChans map[uint64]struct{},
 		// This can happen when a channel is added to the graph after
 		// we've already queried the bandwidth hints.
 		if !ok {
-			bandwidth = lnwire.NewMSatFromSatoshis(channel.Capacity)
+			bandwidth = lnwire.NewMSatFromSatoshis(edge.Capacity)
 		}
 
 		if bandwidth > max {
@@ -477,6 +482,7 @@ func getOutgoingBalance(node route.Vertex, outgoingChans map[uint64]struct{},
 	if err != nil {
 		return 0, 0, err
 	}
+
 	return max, total, err
 }
 

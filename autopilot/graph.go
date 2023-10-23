@@ -53,7 +53,7 @@ func ChannelGraphFromDatabase(db *channeldb.ChannelGraph) ChannelGraph {
 // channeldb.LightningNode. The wrapper method implement the autopilot.Node
 // interface.
 type dbNode struct {
-	db kvdb.Backend
+	db *channeldb.ChannelGraph
 
 	tx kvdb.RTx
 
@@ -88,32 +88,36 @@ func (d dbNode) Addrs() []net.Addr {
 //
 // NOTE: Part of the autopilot.Node interface.
 func (d dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
-	return d.node.ForEachChannel(d.db, d.tx, func(tx kvdb.RTx,
-		ei *channeldb.ChannelEdgeInfo, ep,
-		_ *channeldb.ChannelEdgePolicy) error {
+	return d.db.ForEachNodeChannel(d.node.PubKeyBytes, d.tx,
+		func(tx kvdb.RTx, ei *channeldb.ChannelEdgeInfo,
+			ep *channeldb.ChannelEdgePolicy,
+			_ *channeldb.ChannelEdgePolicy) error {
 
-		// Skip channels for which no outgoing edge policy is available.
-		//
-		// TODO(joostjager): Ideally the case where channels have a nil
-		// policy should be supported, as autopilot is not looking at
-		// the policies. For now, it is not easily possible to get a
-		// reference to the other end LightningNode object without
-		// retrieving the policy.
-		if ep == nil {
-			return nil
-		}
+			// Skip channels for which no outgoing edge policy is
+			// available.
+			//
+			// TODO(joostjager): Ideally the case where channels
+			// have a nil policy should be supported, as autopilot
+			// is not looking at the policies. For now, it is not
+			// easily possible to get a reference to the other end
+			// LightningNode object without retrieving the policy.
+			if ep == nil {
+				return nil
+			}
 
-		edge := ChannelEdge{
-			ChanID:   lnwire.NewShortChanIDFromInt(ep.ChannelID),
-			Capacity: ei.Capacity,
-			Peer: dbNode{
-				tx:   tx,
-				node: ep.Node,
-			},
-		}
+			edge := ChannelEdge{
+				ChanID: lnwire.NewShortChanIDFromInt(
+					ep.ChannelID,
+				),
+				Capacity: ei.Capacity,
+				Peer: dbNode{
+					tx:   tx,
+					node: ep.Node,
+				},
+			}
 
-		return cb(edge)
-	})
+			return cb(edge)
+		})
 }
 
 // ForEachNode is a higher-order function that should be called once for each
@@ -269,7 +273,7 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 			ChanID:   chanID,
 			Capacity: capacity,
 			Peer: dbNode{
-				db:   d.db.DB(),
+				db:   d.db,
 				node: vertex1,
 			},
 		},
@@ -277,7 +281,7 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 			ChanID:   chanID,
 			Capacity: capacity,
 			Peer: dbNode{
-				db:   d.db.DB(),
+				db:   d.db,
 				node: vertex2,
 			},
 		},

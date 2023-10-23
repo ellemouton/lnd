@@ -1053,7 +1053,7 @@ func TestGraphTraversal(t *testing.T) {
 	// outgoing channels for a particular node.
 	numNodeChans := 0
 	firstNode, secondNode := nodeList[0], nodeList[1]
-	err = firstNode.ForEachChannel(graph.db, nil,
+	err = graph.ForEachNodeChannel(firstNode.PubKeyBytes, nil,
 		func(_ kvdb.RTx, _ *ChannelEdgeInfo, outEdge,
 			inEdge *ChannelEdgePolicy) error {
 
@@ -2247,7 +2247,7 @@ func TestFetchChanInfos(t *testing.T) {
 }
 
 // TestIncompleteChannelPolicies tests that a channel that only has a policy
-// specified on one end is properly returned in ForEachChannel calls from
+// specified on one end is properly returned in ForEachNodeChannel calls from
 // both sides.
 func TestIncompleteChannelPolicies(t *testing.T) {
 	t.Parallel()
@@ -2278,7 +2278,7 @@ func TestIncompleteChannelPolicies(t *testing.T) {
 	// Ensure that channel is reported with unknown policies.
 	checkPolicies := func(node *LightningNode, expectedIn, expectedOut bool) {
 		calls := 0
-		err := node.ForEachChannel(graph.db, nil,
+		err := graph.ForEachNodeChannel(node.PubKeyBytes, nil,
 			func(_ kvdb.RTx, _ *ChannelEdgeInfo, outEdge,
 				inEdge *ChannelEdgePolicy) error {
 
@@ -3491,11 +3491,15 @@ func TestGraphCacheForEachNodeChannel(t *testing.T) {
 	// We should be able to accumulate the single channel added, even
 	// though we have a nil edge policy here.
 	var numChans int
-	err = graph.ForEachNodeChannel(nil, node1.PubKeyBytes,
-		func(channel *DirectedChannel) error {
+	err = graph.ForEachNodeChannel(node1.PubKeyBytes, nil,
+		func(tx kvdb.RTx, info *ChannelEdgeInfo,
+			policy *ChannelEdgePolicy,
+			policy2 *ChannelEdgePolicy) error {
+
 			numChans++
 			return nil
-		})
+		},
+	)
 	require.NoError(t, err)
 
 	require.Equal(t, numChans, 1)

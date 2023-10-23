@@ -16,7 +16,9 @@ type routingGraph interface {
 	// forEachNodeChannel calls the callback for every channel of the given
 	// node.
 	forEachNodeChannel(nodePub route.Vertex,
-		cb func(channel *channeldb.DirectedChannel) error) error
+		cb func(kvdb.RTx, *channeldb.ChannelEdgeInfo,
+			*channeldb.ChannelEdgePolicy,
+			*channeldb.ChannelEdgePolicy) error) error
 
 	// sourceNode returns the source node of the graph.
 	sourceNode() route.Vertex
@@ -73,9 +75,11 @@ func (g *CachedGraph) Close() error {
 //
 // NOTE: Part of the routingGraph interface.
 func (g *CachedGraph) forEachNodeChannel(nodePub route.Vertex,
-	cb func(channel *channeldb.DirectedChannel) error) error {
+	cb func(kvdb.RTx, *channeldb.ChannelEdgeInfo,
+		*channeldb.ChannelEdgePolicy,
+		*channeldb.ChannelEdgePolicy) error) error {
 
-	return g.graph.ForEachNodeChannel(g.tx, nodePub, cb)
+	return g.graph.ForEachNodeChannel(nodePub, g.tx, cb)
 }
 
 // sourceNode returns the source node of the graph.
