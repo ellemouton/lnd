@@ -161,7 +161,7 @@ func (g *mockGraph) FetchAllOpenChannels() ([]*channeldb.OpenChannel, error) {
 
 func (g *mockGraph) FetchChannelEdgesByOutpoint(
 	op *wire.OutPoint) (models.ChannelEdgeInfo,
-	*channeldb.ChannelEdgePolicy1, *channeldb.ChannelEdgePolicy1, error) {
+	models.ChannelEdgePolicy, models.ChannelEdgePolicy, error) {
 
 	g.mu.Lock()
 	defer g.mu.Unlock()

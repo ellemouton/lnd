@@ -113,13 +113,13 @@ func SignChannelUpdate(signer keychain.MessageSignerRing,
 // NOTE: The passed policies can be nil.
 func ExtractChannelUpdate(ownerPubKey []byte,
 	info models.ChannelEdgeInfo,
-	policies ...*channeldb.ChannelEdgePolicy1) (
+	policies ...models.ChannelEdgePolicy) (
 	*lnwire.ChannelUpdate1, error) {
 
 	// Helper function to extract the owner of the given policy.
-	owner := func(edge *channeldb.ChannelEdgePolicy1) []byte {
+	owner := func(edge models.ChannelEdgePolicy) []byte {
 		var pubKey *btcec.PublicKey
-		if edge.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
+		if edge.IsNode1() {
 			pubKey, _ = info.NodeKey1()
 		} else {
 			pubKey, _ = info.NodeKey2()
@@ -166,13 +166,18 @@ func UnsignedChannelUpdateFromEdge(chainHash chainhash.Hash,
 // ChannelUpdateFromEdge reconstructs a signed ChannelUpdate1 from the given edge
 // info and policy.
 func ChannelUpdateFromEdge(info models.ChannelEdgeInfo,
-	policy *channeldb.ChannelEdgePolicy1) (*lnwire.ChannelUpdate1, error) {
+	policy models.ChannelEdgePolicy) (*lnwire.ChannelUpdate1, error) {
 
-	update := UnsignedChannelUpdateFromEdge(info.GetChainHash(), policy)
+	p, ok := policy.(*channeldb.ChannelEdgePolicy1)
+	if !ok {
+		return nil, fmt.Errorf("expected chan edge policy 1")
+	}
+
+	update := UnsignedChannelUpdateFromEdge(info.GetChainHash(), p)
 
 	var err error
 	update.Signature, err = lnwire.NewSigFromECDSARawSignature(
-		policy.SigBytes,
+		p.SigBytes,
 	)
 	if err != nil {
 		return nil, err

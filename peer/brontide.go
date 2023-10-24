@@ -949,11 +949,11 @@ func (p *Brontide) loadActiveChannels(chans []*channeldb.OpenChannel) (
 		var forwardingPolicy *models.ForwardingPolicy
 		if selfPolicy != nil {
 			forwardingPolicy = &models.ForwardingPolicy{
-				MinHTLCOut:    selfPolicy.MinHTLC,
-				MaxHTLC:       selfPolicy.MaxHTLC,
-				BaseFee:       selfPolicy.FeeBaseMSat,
-				FeeRate:       selfPolicy.FeeProportionalMillionths,
-				TimeLockDelta: uint32(selfPolicy.TimeLockDelta),
+				MinHTLCOut:    selfPolicy.MinimumHTLC(),
+				MaxHTLC:       selfPolicy.MaximumHTLC(),
+				BaseFee:       selfPolicy.BaseFee(),
+				FeeRate:       selfPolicy.FeeRate(),
+				TimeLockDelta: uint32(selfPolicy.CLTVDelta()),
 			}
 		} else {
 			p.log.Warnf("Unable to find our forwarding policy "+

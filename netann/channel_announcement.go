@@ -16,7 +16,7 @@ import (
 // peer's initial routing table upon connect.
 func CreateChanAnnouncement(chanProof models.ChannelAuthProof,
 	chanInfo models.ChannelEdgeInfo,
-	e1, e2 *channeldb.ChannelEdgePolicy1) (lnwire.ChannelAnnouncement,
+	edge1, edge2 models.ChannelEdgePolicy) (lnwire.ChannelAnnouncement,
 	*lnwire.ChannelUpdate1, *lnwire.ChannelUpdate1, error) {
 
 	switch proof := chanProof.(type) {
@@ -26,6 +26,28 @@ func CreateChanAnnouncement(chanProof models.ChannelAuthProof,
 			return nil, nil, nil, fmt.Errorf("expected type "+
 				"ChannelEdgeInfo1 to be paired with "+
 				"ChannelAuthProof1, got: %T", chanInfo)
+		}
+
+		var e1, e2 *channeldb.ChannelEdgePolicy1
+		if edge1 != nil {
+			e1, ok = edge1.(*channeldb.ChannelEdgePolicy1)
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("expected "+
+					"type ChannelEdgePolicy1 to be "+
+					"paired with ChannelEdgeInfo1, "+
+					"got: %T", edge1)
+			}
+
+		}
+
+		if edge2 != nil {
+			e2, ok = edge2.(*channeldb.ChannelEdgePolicy1)
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("expected "+
+					"type ChannelEdgePolicy1 to be "+
+					"paired with ChannelEdgeInfo1, "+
+					"got: %T", edge2)
+			}
 		}
 
 		return createChanAnnouncement1(proof, info, e1, e2)
@@ -38,7 +60,7 @@ func CreateChanAnnouncement(chanProof models.ChannelAuthProof,
 
 func createChanAnnouncement1(chanProof *channeldb.ChannelAuthProof1,
 	chanInfo *channeldb.ChannelEdgeInfo1,
-	e1, e2 *channeldb.ChannelEdgePolicy1) (lnwire.ChannelAnnouncement,
+	e1, e2 *channeldb.ChannelEdgePolicy1) (*lnwire.ChannelAnnouncement1,
 	*lnwire.ChannelUpdate1, *lnwire.ChannelUpdate1, error) {
 
 	// First, using the parameters of the channel, along with the channel

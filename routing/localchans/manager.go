@@ -31,8 +31,7 @@ type Manager struct {
 	// ForAllOutgoingChannels is required to iterate over all our local
 	// channels.
 	ForAllOutgoingChannels func(cb func(kvdb.RTx,
-		models.ChannelEdgeInfo,
-		*channeldb.ChannelEdgePolicy1) error) error
+		models.ChannelEdgeInfo, models.ChannelEdgePolicy) error) error
 
 	// FetchChannel is used to query local channel parameters. Optionally an
 	// existing db tx can be supplied.
@@ -72,9 +71,8 @@ func (r *Manager) UpdatePolicy(newSchema routing.ChannelPolicy,
 	// If we have a filter then we'll only collected those channels,
 	// otherwise we'll collect them all.
 	err := r.ForAllOutgoingChannels(func(
-		tx kvdb.RTx,
-		info models.ChannelEdgeInfo,
-		edge *channeldb.ChannelEdgePolicy1) error {
+		tx kvdb.RTx, info models.ChannelEdgeInfo,
+		edge models.ChannelEdgePolicy) error {
 
 		chanPoint := info.GetChanPoint()
 
@@ -109,11 +107,11 @@ func (r *Manager) UpdatePolicy(newSchema routing.ChannelPolicy,
 
 		// Add updated policy to list of policies to send to switch.
 		policiesToUpdate[chanPoint] = models.ForwardingPolicy{
-			BaseFee:       edge.FeeBaseMSat,
-			FeeRate:       edge.FeeProportionalMillionths,
-			TimeLockDelta: uint32(edge.TimeLockDelta),
-			MinHTLCOut:    edge.MinHTLC,
-			MaxHTLC:       edge.MaxHTLC,
+			BaseFee:       edge.BaseFee(),
+			FeeRate:       edge.FeeRate(),
+			TimeLockDelta: uint32(edge.CLTVDelta()),
+			MinHTLCOut:    edge.MinimumHTLC(),
+			MaxHTLC:       edge.MaximumHTLC(),
 		}
 
 		return nil
@@ -174,8 +172,13 @@ func (r *Manager) UpdatePolicy(newSchema routing.ChannelPolicy,
 
 // updateEdge updates the given edge with the new schema.
 func (r *Manager) updateEdge(tx kvdb.RTx, chanPoint wire.OutPoint,
-	edge *channeldb.ChannelEdgePolicy1,
+	edgePolicy models.ChannelEdgePolicy,
 	newSchema routing.ChannelPolicy) error {
+
+	edge, ok := edgePolicy.(*channeldb.ChannelEdgePolicy1)
+	if !ok {
+		return fmt.Errorf("wanted edge policy 1")
+	}
 
 	// Update forwarding fee scheme and required time lock delta.
 	edge.FeeBaseMSat = newSchema.BaseFee

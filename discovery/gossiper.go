@@ -530,7 +530,7 @@ type EdgeWithInfo struct {
 	Info models.ChannelEdgeInfo
 
 	// Edge describes the policy in one direction of the channel.
-	Edge *channeldb.ChannelEdgePolicy1
+	Edge models.ChannelEdgePolicy
 }
 
 // PropagateChanPolicyUpdate signals the AuthenticatedGossiper to perform the
@@ -1580,7 +1580,7 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 	// within the prune interval or re-broadcast interval.
 	type updateTuple struct {
 		info models.ChannelEdgeInfo
-		edge *channeldb.ChannelEdgePolicy1
+		edge models.ChannelEdgePolicy
 	}
 
 	var (
@@ -1589,7 +1589,7 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 	)
 	err := d.cfg.Router.ForAllOutgoingChannels(func(
 		_ kvdb.RTx, info models.ChannelEdgeInfo,
-		edge *channeldb.ChannelEdgePolicy1) error {
+		edge models.ChannelEdgePolicy) error {
 
 		// If there's no auth proof attached to this edge, it means
 		// that it is a private channel not meant to be announced to
@@ -1610,22 +1610,33 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 		// If this edge has a ChannelUpdate1 that was created before the
 		// introduction of the MaxHTLC field, then we'll update this
 		// edge to propagate this information in the network.
-		if !edge.MessageFlags.HasMaxHtlc() {
-			// We'll make sure we support the new max_htlc field if
-			// not already present.
-			edge.MessageFlags |= lnwire.ChanUpdateRequiredMaxHtlc
-			edge.MaxHTLC = lnwire.NewMSatFromSatoshis(
-				info.GetCapacity(),
-			)
+		if e, ok := edge.(*channeldb.ChannelEdgePolicy1); ok {
+			if !e.MessageFlags.HasMaxHtlc() {
+				// We'll make sure we support the new max_htlc
+				// field if not already present.
+				e.MessageFlags |=
+					lnwire.ChanUpdateRequiredMaxHtlc
 
-			edgesToUpdate = append(edgesToUpdate, updateTuple{
-				info: info,
-				edge: edge,
-			})
-			return nil
+				e.MaxHTLC = lnwire.NewMSatFromSatoshis(
+					info.GetCapacity(),
+				)
+
+				edgesToUpdate = append(
+					edgesToUpdate, updateTuple{
+						info: info,
+						edge: e,
+					},
+				)
+				return nil
+			}
 		}
 
-		timeElapsed := now.Sub(edge.LastUpdate)
+		e, ok := edge.(*channeldb.ChannelEdgePolicy1)
+		if !ok {
+			return fmt.Errorf("expected channel edge policy 1")
+		}
+
+		timeElapsed := now.Sub(e.LastUpdate)
 
 		// If it's been longer than RebroadcastInterval since we've
 		// re-broadcasted the channel, add the channel to the set of
@@ -1633,7 +1644,7 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 		if timeElapsed >= d.cfg.RebroadcastInterval {
 			edgesToUpdate = append(edgesToUpdate, updateTuple{
 				info: info,
-				edge: edge,
+				edge: e,
 			})
 		}
 
@@ -2130,8 +2141,8 @@ func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
 		// Otherwise, we'll retrieve the correct policy that we
 		// currently have stored within our graph to check if this
 		// message is stale by comparing its timestamp.
-		var p *channeldb.ChannelEdgePolicy1
-		if msg.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
+		var p models.ChannelEdgePolicy
+		if msg.IsNode1() {
 			p = p1
 		} else {
 			p = p2
@@ -2143,8 +2154,16 @@ func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
 			return false
 		}
 
-		timestamp := time.Unix(int64(msg.Timestamp), 0)
-		return p.LastUpdate.After(timestamp)
+		after, err := p.AfterUpdateMsg(msg)
+		if err != nil {
+			log.Errorf("Unable to check if stored policy is "+
+				"after message for channel=%v: %v",
+				msg.ShortChannelID, err)
+
+			return false
+		}
+
+		return after
 
 	default:
 		// We'll make sure to not mark any unsupported messages as stale
@@ -2156,8 +2175,13 @@ func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
 // updateChannel creates a new fully signed update for the channel, and updates
 // the underlying graph with the new state.
 func (d *AuthenticatedGossiper) updateChannel(edgeInfo models.ChannelEdgeInfo,
-	edge *channeldb.ChannelEdgePolicy1) (lnwire.ChannelAnnouncement,
+	edgePolicy models.ChannelEdgePolicy) (lnwire.ChannelAnnouncement,
 	*lnwire.ChannelUpdate1, error) {
+
+	edge, ok := edgePolicy.(*channeldb.ChannelEdgePolicy1)
+	if !ok {
+		return nil, nil, fmt.Errorf("expected chan edge policy 1")
+	}
 
 	// Parse the unsigned edge into a channel update.
 	chanUpdate := netann.UnsignedChannelUpdateFromEdge(
@@ -2829,7 +2853,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 	// being updated.
 	var (
 		pubKey       *btcec.PublicKey
-		edgeToUpdate *channeldb.ChannelEdgePolicy1
+		edgeToUpdate models.ChannelEdgePolicy
 	)
 	direction := upd.ChannelFlags & lnwire.ChanUpdateDirection
 	switch direction {
@@ -2864,12 +2888,22 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 	// If we have a previous version of the edge being updated, we'll want
 	// to rate limit its updates to prevent spam throughout the network.
 	if nMsg.isRemote && edgeToUpdate != nil {
+		edge, ok := edgeToUpdate.(*channeldb.ChannelEdgePolicy1)
+		if !ok {
+			rErr := fmt.Errorf("expected channel edge policy 1")
+
+			log.Error(rErr)
+			nMsg.err <- rErr
+
+			return nil, false
+		}
+
 		// If it's a keep-alive update, we'll only propagate one if
 		// it's been a day since the previous. This follows our own
 		// heuristic of sending keep-alive updates after the same
 		// duration (see retransmitStaleAnns).
-		timeSinceLastUpdate := timestamp.Sub(edgeToUpdate.LastUpdate)
-		if IsKeepAliveUpdate(upd, edgeToUpdate) {
+		timeSinceLastUpdate := timestamp.Sub(edge.LastUpdate)
+		if IsKeepAliveUpdate(upd, edge) {
 			if timeSinceLastUpdate < d.cfg.RebroadcastInterval {
 				log.Debugf("Ignoring keep alive update not "+
 					"within %v period for channel %v",

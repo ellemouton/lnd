@@ -5,6 +5,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/lightningnetwork/lnd/lnwire"
 )
 
 type ChannelEdgeInfo interface { //nolint:interfacebloat
@@ -52,4 +53,16 @@ type ChannelAuthProof interface {
 }
 
 type ChannelEdgePolicy interface {
+	SCID() lnwire.ShortChannelID
+	IsDisabled() bool
+	IsNode1() bool
+	GetToNode() [33]byte
+	FeeRate() lnwire.MilliSatoshi
+	BaseFee() lnwire.MilliSatoshi
+	MinimumHTLC() lnwire.MilliSatoshi
+	MaximumHTLC() lnwire.MilliSatoshi
+	CLTVDelta() uint16
+	HasMaxHtlc() bool
+	Before(policy ChannelEdgePolicy) (bool, error)
+	AfterUpdateMsg(msg lnwire.ChannelUpdate) (bool, error)
 }

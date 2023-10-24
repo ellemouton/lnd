@@ -490,7 +490,7 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 // chanCanBeHopHint returns true if the target channel is eligible to be a hop
 // hint.
 func chanCanBeHopHint(channel *HopHintInfo, cfg *SelectHopHintsCfg) (
-	*channeldb.ChannelEdgePolicy1, bool) {
+	models.ChannelEdgePolicy, bool) {
 
 	// Since we're only interested in our private channels, we'll skip
 	// public ones.
@@ -546,7 +546,7 @@ func chanCanBeHopHint(channel *HopHintInfo, cfg *SelectHopHintsCfg) (
 	// Now, we'll need to determine which is the correct policy for HTLCs
 	// being sent from the remote node.
 	var (
-		remotePolicy *channeldb.ChannelEdgePolicy1
+		remotePolicy models.ChannelEdgePolicy
 		node1Bytes   = info.Node1Bytes()
 	)
 	if bytes.Equal(remotePub[:], node1Bytes[:]) {
@@ -608,16 +608,16 @@ func newHopHintInfo(c *channeldb.OpenChannel, isActive bool) *HopHintInfo {
 // newHopHint returns a new hop hint using the relevant data from a hopHintInfo
 // and a ChannelEdgePolicy1.
 func newHopHint(hopHintInfo *HopHintInfo,
-	chanPolicy *channeldb.ChannelEdgePolicy1) zpay32.HopHint {
+	chanPolicy models.ChannelEdgePolicy) zpay32.HopHint {
 
 	return zpay32.HopHint{
 		NodeID:      hopHintInfo.RemotePubkey,
 		ChannelID:   hopHintInfo.ShortChannelID,
-		FeeBaseMSat: uint32(chanPolicy.FeeBaseMSat),
+		FeeBaseMSat: uint32(chanPolicy.BaseFee()),
 		FeeProportionalMillionths: uint32(
-			chanPolicy.FeeProportionalMillionths,
+			chanPolicy.FeeRate(),
 		),
-		CLTVExpiryDelta: chanPolicy.TimeLockDelta,
+		CLTVExpiryDelta: chanPolicy.CLTVDelta(),
 	}
 }
 
@@ -632,7 +632,7 @@ type SelectHopHintsCfg struct {
 	// FetchChannelEdgesByID attempts to lookup the two directed edges for
 	// the channel identified by the channel ID.
 	FetchChannelEdgesByID func(chanID uint64) (models.ChannelEdgeInfo,
-		*channeldb.ChannelEdgePolicy1, *channeldb.ChannelEdgePolicy1,
+		models.ChannelEdgePolicy, models.ChannelEdgePolicy,
 		error)
 
 	// GetAlias allows the peer's alias SCID to be retrieved for private
