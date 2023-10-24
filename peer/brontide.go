@@ -1725,7 +1725,7 @@ out:
 					nextMsg.MsgType())
 			}
 
-		case *lnwire.ChannelUpdate1,
+		case lnwire.ChannelUpdate,
 			lnwire.ChannelAnnouncement,
 			*lnwire.NodeAnnouncement,
 			*lnwire.AnnounceSignatures,

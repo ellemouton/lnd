@@ -164,8 +164,8 @@ type ChannelGraphSource interface {
 	// IsStaleEdgePolicy returns true if the graph source has a channel
 	// edge for the passed channel ID (and flags) that have a more recent
 	// timestamp.
-	IsStaleEdgePolicy(chanID lnwire.ShortChannelID, timestamp time.Time,
-		flags lnwire.ChanUpdateChanFlags) bool
+	IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
+		policy lnwire.ChannelUpdate) bool
 
 	// MarkEdgeLive clears an edge from our zombie index, deeming it as
 	// live.
@@ -2854,7 +2854,21 @@ func (r *ChannelRouter) IsKnownEdge(chanID lnwire.ShortChannelID) bool {
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (r *ChannelRouter) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
-	timestamp time.Time, flags lnwire.ChanUpdateChanFlags) bool {
+	update lnwire.ChannelUpdate) bool {
+
+	var (
+		disabled = update.IsDisabled()
+		isNode1  = update.IsNode1()
+	)
+
+	upd, ok := update.(*lnwire.ChannelUpdate1)
+	if !ok {
+		log.Error("Expected Chan update 1")
+
+		return false
+	}
+
+	timestamp := time.Unix(int64(upd.Timestamp), 0)
 
 	edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
 		r.cfg.Graph.HasChannelEdge(chanID.ToUint64())
@@ -2871,9 +2885,7 @@ func (r *ChannelRouter) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 		// if both of their edges are disabled. We'll mark the new
 		// policy as stale if it remains disabled.
 		if r.cfg.AssumeChannelValid {
-			isDisabled := flags&lnwire.ChanUpdateDisabled ==
-				lnwire.ChanUpdateDisabled
-			if isDisabled {
+			if disabled {
 				return true
 			}
 		}
@@ -2893,14 +2905,10 @@ func (r *ChannelRouter) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 	// already have the most up to date information for that edge. If so,
 	// then we can exit early.
 	switch {
-	// A flag set of 0 indicates this is an announcement for the "first"
-	// node in the channel.
-	case flags&lnwire.ChanUpdateDirection == 0:
+	case isNode1:
 		return !edge1Timestamp.Before(timestamp)
 
-	// Similarly, a flag set of 1 indicates this is an announcement for the
-	// "second" node in the channel.
-	case flags&lnwire.ChanUpdateDirection == 1:
+	case !isNode1:
 		return !edge2Timestamp.Before(timestamp)
 	}
 

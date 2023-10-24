@@ -1013,7 +1013,10 @@ func (d *deDupedAnnouncements) addMsg(message networkMsg) {
 			msg.IsNode1(),
 		}
 
-		var older, newer bool
+		var (
+			older = false
+			newer = true
+		)
 		mws, ok := d.channelUpdates[deDupKey]
 		if ok {
 			// If we already have seen this message, record its
@@ -1032,6 +1035,7 @@ func (d *deDupedAnnouncements) addMsg(message networkMsg) {
 				return
 			}
 
+			newer = false
 			switch cmp {
 			case -1:
 				older = true
@@ -2041,11 +2045,7 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(
 // processZombieUpdate determines whether the provided channel update should
 // resurrect a given zombie edge.
 func (d *AuthenticatedGossiper) processZombieUpdate(
-	chanInfo models.ChannelEdgeInfo, msg *lnwire.ChannelUpdate1) error {
-
-	// The least-significant bit in the flag on the channel update tells us
-	// which edge is being updated.
-	isNode1 := msg.ChannelFlags&lnwire.ChanUpdateDirection == 0
+	chanInfo models.ChannelEdgeInfo, msg lnwire.ChannelUpdate) error {
 
 	// Since we've deemed the update as not stale above, before marking it
 	// live, we'll make sure it has been signed by the correct party. If we
@@ -2054,14 +2054,14 @@ func (d *AuthenticatedGossiper) processZombieUpdate(
 	// will only have the pubkey of the node with the oldest timestamp.
 	var pubKey *btcec.PublicKey
 	switch {
-	case isNode1 && chanInfo.Node1Bytes() != emptyPubkey:
+	case msg.IsNode1() && chanInfo.Node1Bytes() != emptyPubkey:
 		pubKey, _ = chanInfo.NodeKey1()
-	case !isNode1 && chanInfo.Node2Bytes() != emptyPubkey:
+	case !msg.IsNode1() && chanInfo.Node2Bytes() != emptyPubkey:
 		pubKey, _ = chanInfo.NodeKey2()
 	}
 	if pubKey == nil {
 		return fmt.Errorf("incorrect pubkey to resurrect zombie "+
-			"with chan_id=%v", msg.ShortChannelID)
+			"with chan_id=%v", msg.SCID())
 	}
 
 	err := routing.VerifyChannelUpdateSignature(msg, pubKey)
@@ -2078,11 +2078,11 @@ func (d *AuthenticatedGossiper) processZombieUpdate(
 	if err != nil {
 		return fmt.Errorf("unable to remove edge with "+
 			"chan_id=%v from zombie index: %v",
-			msg.ShortChannelID, err)
+			msg.SCID(), err)
 	}
 
 	log.Debugf("Removed edge with chan_id=%v from zombie "+
-		"index", msg.ShortChannelID)
+		"index", msg.SCID())
 
 	return nil
 }
@@ -2305,48 +2305,106 @@ func (d *AuthenticatedGossiper) SyncManager() *SyncManager {
 // IsKeepAliveUpdate determines whether this channel update is considered a
 // keep-alive update based on the previous channel update processed for the same
 // direction.
-func IsKeepAliveUpdate(update *lnwire.ChannelUpdate1,
-	prev *channeldb.ChannelEdgePolicy1) bool {
+func IsKeepAliveUpdate(update lnwire.ChannelUpdate,
+	prevPolicy models.ChannelEdgePolicy) (bool, error) {
 
-	// Both updates should be from the same direction.
-	if update.ChannelFlags&lnwire.ChanUpdateDirection !=
-		prev.ChannelFlags&lnwire.ChanUpdateDirection {
+	switch upd := update.(type) {
+	case *lnwire.ChannelUpdate1:
+		prev, ok := prevPolicy.(*channeldb.ChannelEdgePolicy1)
+		if !ok {
+			return false, fmt.Errorf("expected chan edge policy 1")
+		}
 
-		return false
-	}
+		// Both updates should be from the same direction.
+		if upd.ChannelFlags&lnwire.ChanUpdateDirection !=
+			prev.ChannelFlags&lnwire.ChanUpdateDirection {
 
-	// The timestamp should always increase for a keep-alive update.
-	timestamp := time.Unix(int64(update.Timestamp), 0)
-	if !timestamp.After(prev.LastUpdate) {
-		return false
-	}
+			return false, nil
+		}
 
-	// None of the remaining fields should change for a keep-alive update.
-	if update.ChannelFlags.IsDisabled() != prev.ChannelFlags.IsDisabled() {
-		return false
+		// The timestamp should always increase for a keep-alive update.
+		timestamp := time.Unix(int64(upd.Timestamp), 0)
+		if !timestamp.After(prev.LastUpdate) {
+			return false, nil
+		}
+
+		// None of the remaining fields should change for a keep-alive update.
+		if upd.ChannelFlags.IsDisabled() !=
+			prev.ChannelFlags.IsDisabled() {
+
+			return false, nil
+		}
+		if lnwire.MilliSatoshi(upd.BaseFee) != prev.FeeBaseMSat {
+			return false, nil
+		}
+		if lnwire.MilliSatoshi(upd.FeeRate) !=
+			prev.FeeProportionalMillionths {
+
+			return false, nil
+		}
+		if upd.TimeLockDelta != prev.TimeLockDelta {
+			return false, nil
+		}
+		if upd.HtlcMinimumMsat != prev.MinHTLC {
+			return false, nil
+		}
+		if upd.MessageFlags.HasMaxHtlc() &&
+			!prev.MessageFlags.HasMaxHtlc() {
+			return false, nil
+		}
+		if upd.HtlcMaximumMsat != prev.MaxHTLC {
+			return false, nil
+		}
+		if !bytes.Equal(upd.ExtraOpaqueData, prev.ExtraOpaqueData) {
+			return false, nil
+		}
+		return true, nil
+
+	case *lnwire.ChannelUpdate2:
+		prev, ok := prevPolicy.(*channeldb.ChannelEdgePolicy2)
+		if !ok {
+			return false, fmt.Errorf("expected chan edge policy 2")
+		}
+
+		// Both updates should be from the same direction.
+		if upd.IsNode1() != prev.IsNode1() {
+			return false, nil
+		}
+
+		// The block-height should always increase for a keep-alive
+		// update.
+		if upd.BlockHeight <= prev.BlockHeight {
+			return false, nil
+		}
+
+		// None of the remaining fields should change for a keep-alive update.
+		if upd.IsDisabled() != prev.IsDisabled() {
+			return false, nil
+		}
+		if upd.GetBaseFee() != prev.BaseFee() {
+			return false, nil
+		}
+		if upd.GetFeeRate() != prev.FeeRate() {
+			return false, nil
+		}
+		if upd.GetTimeLock() != prev.CLTVExpiryDelta {
+			return false, nil
+		}
+		if upd.HTLCMinimumMsat != prev.HTLCMinimumMsat {
+			return false, nil
+		}
+		if upd.HTLCMaximumMsat != prev.HTLCMaximumMsat {
+			return false, nil
+		}
+		if !bytes.Equal(upd.ExtraOpaqueData, prev.ExtraOpaqueData) {
+			return false, nil
+		}
+		return true, nil
+
+	default:
+		return false, fmt.Errorf("unhandled implementation of "+
+			"ChannelUpdate: %T", update)
 	}
-	if lnwire.MilliSatoshi(update.BaseFee) != prev.FeeBaseMSat {
-		return false
-	}
-	if lnwire.MilliSatoshi(update.FeeRate) != prev.FeeProportionalMillionths {
-		return false
-	}
-	if update.TimeLockDelta != prev.TimeLockDelta {
-		return false
-	}
-	if update.HtlcMinimumMsat != prev.MinHTLC {
-		return false
-	}
-	if update.MessageFlags.HasMaxHtlc() && !prev.MessageFlags.HasMaxHtlc() {
-		return false
-	}
-	if update.HtlcMaximumMsat != prev.MaxHTLC {
-		return false
-	}
-	if !bytes.Equal(update.ExtraOpaqueData, prev.ExtraOpaqueData) {
-		return false
-	}
-	return true
 }
 
 // latestHeight returns the gossiper's latest height known of the chain.
@@ -2688,24 +2746,61 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 	return announcements, true
 }
 
+func (d *AuthenticatedGossiper) updateWithinRebroadcastInterval(
+	upd lnwire.ChannelUpdate, policy models.ChannelEdgePolicy) (bool,
+	error) {
+
+	switch update := upd.(type) {
+	case *lnwire.ChannelUpdate1:
+		pol, ok := policy.(*channeldb.ChannelEdgePolicy1)
+		if !ok {
+			return false, fmt.Errorf("expected chan edge policy 1")
+		}
+
+		timestamp := time.Unix(int64(update.Timestamp), 0)
+		timeSinceLastUpdate := timestamp.Sub(pol.LastUpdate)
+
+		return timeSinceLastUpdate >= d.cfg.RebroadcastInterval, nil
+
+	case *lnwire.ChannelUpdate2:
+		pol, ok := policy.(*channeldb.ChannelEdgePolicy2)
+		if !ok {
+			return false, fmt.Errorf("expected chan edge policy 2")
+		}
+
+		blocksSinceLastUpdate := update.BlockHeight - pol.BlockHeight
+
+		return blocksSinceLastUpdate >=
+			uint32(d.cfg.RebroadcastInterval.Hours()*6), nil
+
+	default:
+		return false, fmt.Errorf("unhandled impl of Chan Update")
+	}
+}
+
 // handleChanUpdate processes a new channel update.
 func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
-	upd *lnwire.ChannelUpdate1,
-	ops []batch.SchedulerOption) ([]networkMsg, bool) {
+	upd lnwire.ChannelUpdate, ops []batch.SchedulerOption) ([]networkMsg,
+	bool) {
+
+	var (
+		scid      = upd.SCID()
+		chainHash = upd.GetChainHash()
+	)
 
 	log.Debugf("Processing ChannelUpdate1: peer=%v, short_chan_id=%v, ",
-		nMsg.peer, upd.ShortChannelID.ToUint64())
+		nMsg.peer, scid)
 
 	// We'll ignore any channel updates that target any chain other than
 	// the set of chains we know of.
-	if !bytes.Equal(upd.ChainHash[:], d.cfg.ChainHash[:]) {
-		err := fmt.Errorf("ignoring ChannelUpdate1 from chain=%v, "+
-			"gossiper on chain=%v", upd.ChainHash, d.cfg.ChainHash)
+	if !bytes.Equal(chainHash[:], d.cfg.ChainHash[:]) {
+		err := fmt.Errorf("ignoring %s from chain=%v, "+
+			"gossiper on chain=%v", upd.MsgType(), chainHash,
+			d.cfg.ChainHash)
 		log.Errorf(err.Error())
 
 		key := newRejectCacheKey(
-			upd.ShortChannelID.ToUint64(),
-			sourceToPub(nMsg.source),
+			scid.ToUint64(), sourceToPub(nMsg.source),
 		)
 		_, _ = d.recentRejects.Put(key, &cachedReject{})
 
@@ -2713,8 +2808,8 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 		return nil, false
 	}
 
-	blockHeight := upd.ShortChannelID.BlockHeight
-	shortChanID := upd.ShortChannelID.ToUint64()
+	blockHeight := upd.SCID().BlockHeight
+	shortChanID := upd.SCID().ToUint64()
 
 	// If the advertised inclusionary block is beyond our knowledge of the
 	// chain tip, then we'll put the announcement in limbo to be fully
@@ -2722,8 +2817,8 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 	// alias SCID, we'll skip the isPremature check. This is necessary
 	// since aliases start at block height 16_000_000.
 	d.Lock()
-	if nMsg.isRemote && !d.cfg.IsAlias(upd.ShortChannelID) &&
-		d.isPremature(upd.ShortChannelID, 0, nMsg) {
+	if nMsg.isRemote && !d.cfg.IsAlias(scid) &&
+		d.isPremature(scid, 0, nMsg) {
 
 		log.Warnf("Update announcement for short_chan_id(%v), is "+
 			"premature: advertises height %v, only height %v is "+
@@ -2734,27 +2829,22 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 	}
 	d.Unlock()
 
-	// Before we perform any of the expensive checks below, we'll check
-	// whether this update is stale or is for a zombie channel in order to
-	// quickly reject it.
-	timestamp := time.Unix(int64(upd.Timestamp), 0)
-
 	// Fetch the SCID we should be using to lock the channelMtx and make
 	// graph queries with.
-	graphScid, err := d.cfg.FindBaseByAlias(upd.ShortChannelID)
+	graphScid, err := d.cfg.FindBaseByAlias(scid)
 	if err != nil {
 		// Fallback and set the graphScid to the peer-provided SCID.
 		// This will occur for non-option-scid-alias channels and for
 		// public option-scid-alias channels after 6 confirmations.
 		// Once public option-scid-alias channels have 6 confs, we'll
 		// ignore ChannelUpdates with one of their aliases.
-		graphScid = upd.ShortChannelID
+		graphScid = scid
 	}
 
-	if d.cfg.Router.IsStaleEdgePolicy(
-		graphScid, timestamp, upd.ChannelFlags,
-	) {
-
+	// Before we perform any of the expensive checks below, we'll check
+	// whether this update is stale or is for a zombie channel in order to
+	// quickly reject it.
+	if d.cfg.Router.IsStaleEdgePolicy(graphScid, upd) {
 		log.Debugf("Ignored stale edge policy for short_chan_id(%v): "+
 			"peer=%v, msg=%s, is_remote=%v", shortChanID,
 			nMsg.peer, nMsg.msg.MsgType(), nMsg.isRemote,
@@ -2855,7 +2945,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 		nMsg.err <- err
 
 		key := newRejectCacheKey(
-			upd.ShortChannelID.ToUint64(),
+			scid.ToUint64(),
 			sourceToPub(nMsg.source),
 		)
 		_, _ = d.recentRejects.Put(key, &cachedReject{})
@@ -2869,15 +2959,16 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 	var (
 		pubKey       *btcec.PublicKey
 		edgeToUpdate models.ChannelEdgePolicy
+		direction    int
 	)
-	direction := upd.ChannelFlags & lnwire.ChanUpdateDirection
-	switch direction {
-	case 0:
+	if upd.IsNode1() {
 		pubKey, _ = chanInfo.NodeKey1()
 		edgeToUpdate = e1
-	case 1:
+		direction = 0
+	} else {
 		pubKey, _ = chanInfo.NodeKey2()
 		edgeToUpdate = e2
+		direction = 1
 	}
 
 	log.Debugf("Validating ChannelUpdate1: channel=%v, from node=%x, has "+
@@ -2893,7 +2984,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 	if err != nil {
 		rErr := fmt.Errorf("unable to validate channel update "+
 			"announcement for short_chan_id=%v: %v",
-			spew.Sdump(upd.ShortChannelID), err)
+			spew.Sdump(scid), err)
 
 		log.Error(rErr)
 		nMsg.err <- rErr
@@ -2903,23 +2994,32 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 	// If we have a previous version of the edge being updated, we'll want
 	// to rate limit its updates to prevent spam throughout the network.
 	if nMsg.isRemote && edgeToUpdate != nil {
-		edge, ok := edgeToUpdate.(*channeldb.ChannelEdgePolicy1)
-		if !ok {
-			rErr := fmt.Errorf("expected channel edge policy 1")
-
-			log.Error(rErr)
-			nMsg.err <- rErr
-
-			return nil, false
-		}
-
 		// If it's a keep-alive update, we'll only propagate one if
 		// it's been a day since the previous. This follows our own
 		// heuristic of sending keep-alive updates after the same
 		// duration (see retransmitStaleAnns).
-		timeSinceLastUpdate := timestamp.Sub(edge.LastUpdate)
-		if IsKeepAliveUpdate(upd, edge) {
-			if timeSinceLastUpdate < d.cfg.RebroadcastInterval {
+		isKeepAlive, err := IsKeepAliveUpdate(upd, edgeToUpdate)
+		if err != nil {
+			log.Errorf("Could not determine if update is "+
+				"keepalive: %v", err)
+			nMsg.err <- err
+
+			return nil, false
+		}
+
+		if isKeepAlive {
+			within, err := d.updateWithinRebroadcastInterval(
+				upd, edgeToUpdate,
+			)
+			if err != nil {
+				log.Errorf("Could not determine if update is "+
+					"within rebroadcast interval: %v", err)
+				nMsg.err <- err
+
+				return nil, false
+			}
+
+			if !within {
 				log.Debugf("Ignoring keep alive update not "+
 					"within %v period for channel %v",
 					d.cfg.RebroadcastInterval, shortChanID)
@@ -2969,18 +3069,15 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 	// different alias. This might mean that SigBytes is incorrect as it
 	// signs a different SCID than the database SCID, but since there will
 	// only be a difference if AuthProof == nil, this is fine.
-	update := &channeldb.ChannelEdgePolicy1{
-		SigBytes:                  upd.Signature.ToSignatureBytes(),
-		ChannelID:                 chanInfo.GetChanID(),
-		LastUpdate:                timestamp,
-		MessageFlags:              upd.MessageFlags,
-		ChannelFlags:              upd.ChannelFlags,
-		TimeLockDelta:             upd.TimeLockDelta,
-		MinHTLC:                   upd.HtlcMinimumMsat,
-		MaxHTLC:                   upd.HtlcMaximumMsat,
-		FeeBaseMSat:               lnwire.MilliSatoshi(upd.BaseFee),
-		FeeProportionalMillionths: lnwire.MilliSatoshi(upd.FeeRate),
-		ExtraOpaqueData:           upd.ExtraOpaqueData,
+	update, err := channeldb.EdgePolicyFromUpdate(upd)
+	if err != nil {
+		rErr := fmt.Errorf("unable to convert update to policy for "+
+			"short_chan_id=%v: %v", spew.Sdump(scid), err)
+
+		log.Error(rErr)
+		nMsg.err <- rErr
+		return nil, false
+
 	}
 
 	if err := d.cfg.Router.UpdateEdge(update, ops...); err != nil {
@@ -3025,7 +3122,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 			// required for option-scid-alias feature-bit
 			// negotiated channels.
 			remoteAlias := nMsg.optionalMsgFields.remoteAlias
-			upd.ShortChannelID = *remoteAlias
+			upd.SetSCID(*remoteAlias)
 
 			err := d.cfg.SignAliasUpdate(upd)
 			if err != nil {
@@ -3048,7 +3145,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 		if err != nil {
 			err := fmt.Errorf("unable to reliably send %v for "+
 				"channel=%v to peer=%x: %v", upd.MsgType(),
-				upd.ShortChannelID, remotePubKey, err)
+				scid, remotePubKey, err)
 			nMsg.err <- err
 			return nil, false
 		}
@@ -3061,7 +3158,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 	// contains an alias because the network would reject this.
 	var announcements []networkMsg
 	if chanInfo.GetAuthProof() != nil &&
-		!d.cfg.IsAlias(upd.ShortChannelID) {
+		!d.cfg.IsAlias(scid) {
 
 		announcements = append(announcements, networkMsg{
 			peer:     nMsg.peer,
@@ -3073,9 +3170,9 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 
 	nMsg.err <- nil
 
-	log.Debugf("Processed ChannelUpdate1: peer=%v, short_chan_id=%v, "+
-		"timestamp=%v", nMsg.peer, upd.ShortChannelID.ToUint64(),
-		timestamp)
+	log.Debugf("Processed %s: peer=%v, short_chan_id=%v, ", upd.MsgType(),
+		nMsg.peer, scid.ToUint64())
+
 	return announcements, true
 }
 
