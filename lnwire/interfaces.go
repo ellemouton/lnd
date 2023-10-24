@@ -41,6 +41,7 @@ type ChannelUpdate interface { //nolint:interfacebloat
 	GetBaseFee() MilliSatoshi
 	GetFeeRate() MilliSatoshi
 	GetSignature() Sig
+	CmpAge(update ChannelUpdate) (int, error)
 
 	Message
 }

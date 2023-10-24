@@ -121,9 +121,21 @@ type ChannelUpdate1 struct {
 	ExtraOpaqueData ExtraOpaqueData
 }
 
-func (a *ChannelUpdate1) SetSigFromBytes(i []byte) error {
-	//TODO implement me
-	panic("implement me")
+func (a *ChannelUpdate1) CmpAge(update ChannelUpdate) (int, error) {
+	other, ok := update.(*ChannelUpdate1)
+	if !ok {
+		return 0, fmt.Errorf("expected *ChannelUpdate1, got: %T",
+			update)
+	}
+
+	switch {
+	case a.Timestamp > other.Timestamp:
+		return 1, nil
+	case a.Timestamp < other.Timestamp:
+		return -1, nil
+	default:
+		return 0, nil
+	}
 }
 
 // A compile time check to ensure ChannelUpdate1 implements the lnwire.Message

@@ -895,10 +895,8 @@ type channelUpdateID struct {
 	// retrieve all necessary data to validate the channel existence.
 	channelID lnwire.ShortChannelID
 
-	// Flags least-significant bit must be set to 0 if the creating node
-	// corresponds to the first node in the previously sent channel
-	// announcement and 1 otherwise.
-	flags lnwire.ChanUpdateChanFlags
+	disabled  bool
+	direction bool
 }
 
 // msgWithSenders is a wrapper struct around a message, and the set of peers
@@ -1007,24 +1005,45 @@ func (d *deDupedAnnouncements) addMsg(message networkMsg) {
 
 	// Channel updates are identified by the (short channel id,
 	// channelflags) tuple.
-	case *lnwire.ChannelUpdate1:
+	case lnwire.ChannelUpdate:
 		sender := route.NewVertex(message.source)
 		deDupKey := channelUpdateID{
-			msg.ShortChannelID,
-			msg.ChannelFlags,
+			msg.SCID(),
+			msg.IsDisabled(),
+			msg.IsNode1(),
 		}
 
-		oldTimestamp := uint32(0)
+		var older, newer bool
 		mws, ok := d.channelUpdates[deDupKey]
 		if ok {
 			// If we already have seen this message, record its
 			// timestamp.
-			oldTimestamp = mws.msg.(*lnwire.ChannelUpdate1).Timestamp
+			oldMsg, ok := mws.msg.(lnwire.ChannelUpdate)
+			if !ok {
+				log.Errorf("expected type "+
+					"lnwire.ChannelUpdate, got: %T",
+					mws.msg)
+
+				return
+			}
+
+			cmp, err := msg.CmpAge(oldMsg)
+			if err != nil {
+				return
+			}
+
+			switch cmp {
+			case -1:
+				older = true
+			case 1:
+				newer = true
+			default:
+			}
 		}
 
 		// If we already had this message with a strictly newer
 		// timestamp, then we'll just discard the message we got.
-		if oldTimestamp > msg.Timestamp {
+		if older {
 			log.Debugf("Ignored outdated network message: "+
 				"peer=%v, msg=%s", message.peer, msg.MsgType())
 			return
@@ -1033,7 +1052,7 @@ func (d *deDupedAnnouncements) addMsg(message networkMsg) {
 		// If the message we just got is newer than what we previously
 		// have seen, or this is the first time we see it, then we'll
 		// add it to our map of announcements.
-		if oldTimestamp < msg.Timestamp {
+		if newer {
 			mws = msgWithSenders{
 				msg:     msg,
 				isLocal: !message.isRemote,

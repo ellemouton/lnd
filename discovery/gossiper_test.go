@@ -1858,7 +1858,8 @@ func TestDeDuplicatedAnnouncements(t *testing.T) {
 	assertChannelUpdate := func(channelUpdate *lnwire.ChannelUpdate1) {
 		channelKey := channelUpdateID{
 			ua3.ShortChannelID,
-			ua3.ChannelFlags,
+			ua3.IsDisabled(),
+			ua3.IsNode1(),
 		}
 
 		mws, ok := announcements.channelUpdates[channelKey]

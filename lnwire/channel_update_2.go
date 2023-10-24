@@ -121,6 +121,25 @@ type ChannelUpdate2 struct {
 	ExtraOpaqueData ExtraOpaqueData
 }
 
+var _ ChannelUpdate = (*ChannelUpdate2)(nil)
+
+func (c *ChannelUpdate2) CmpAge(update ChannelUpdate) (int, error) {
+	other, ok := update.(*ChannelUpdate2)
+	if !ok {
+		return 0, fmt.Errorf("expected *ChannelUpdate2, got: %T",
+			update)
+	}
+
+	switch {
+	case c.BlockHeight > other.BlockHeight:
+		return 1, nil
+	case c.BlockHeight < other.BlockHeight:
+		return -1, nil
+	default:
+		return 0, nil
+	}
+}
+
 func (c *ChannelUpdate2) SCID() ShortChannelID {
 	return c.ShortChannelID
 }
