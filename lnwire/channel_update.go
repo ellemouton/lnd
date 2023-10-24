@@ -121,6 +121,11 @@ type ChannelUpdate1 struct {
 	ExtraOpaqueData ExtraOpaqueData
 }
 
+func (a *ChannelUpdate1) SetSigFromBytes(i []byte) error {
+	//TODO implement me
+	panic("implement me")
+}
+
 // A compile time check to ensure ChannelUpdate1 implements the lnwire.Message
 // interface.
 var _ Message = (*ChannelUpdate1)(nil)

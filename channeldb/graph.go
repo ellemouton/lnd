@@ -3759,6 +3759,10 @@ type ChannelEdgePolicy1 struct {
 	ExtraOpaqueData []byte
 }
 
+func (c *ChannelEdgePolicy1) Sig() (input.Signature, error) {
+	return c.Signature()
+}
+
 func (c *ChannelEdgePolicy1) AfterUpdateMsg(msg lnwire.ChannelUpdate) (bool,
 	error) {
 
@@ -5181,6 +5185,10 @@ type ChannelEdgePolicy2 struct {
 	lnwire.ChannelUpdate2
 
 	ToNode [33]byte
+}
+
+func (c *ChannelEdgePolicy2) Sig() (input.Signature, error) {
+	return c.Signature.ToSignature()
 }
 
 func (c *ChannelEdgePolicy2) AfterUpdateMsg(msg lnwire.ChannelUpdate) (bool, error) {

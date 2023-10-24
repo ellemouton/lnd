@@ -1273,7 +1273,7 @@ func (g *GossipSyncer) FilterGossipMsgs(msgs ...msgWithSenders) {
 	// set of channel announcements and channel updates. This will allow us
 	// to quickly check if we should forward a chan ann, based on the known
 	// channel updates for a channel.
-	chanUpdateIndex := make(map[lnwire.ShortChannelID][]*lnwire.ChannelUpdate1)
+	chanUpdateIndex := make(map[lnwire.ShortChannelID][]lnwire.ChannelUpdate)
 	for _, msg := range msgs {
 		chanUpdate, ok := msg.msg.(*lnwire.ChannelUpdate1)
 		if !ok {
@@ -1333,7 +1333,12 @@ func (g *GossipSyncer) FilterGossipMsgs(msgs ...msgWithSenders) {
 			}
 
 			for _, chanUpdate := range chanUpdates {
-				if passesFilter(chanUpdate.Timestamp) {
+				update, ok := chanUpdate.(*lnwire.ChannelUpdate1)
+				if !ok {
+					continue
+				}
+
+				if passesFilter(update.Timestamp) {
 					msgsToSend = append(msgsToSend, msg)
 					break
 				}

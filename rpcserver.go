@@ -5997,7 +5997,7 @@ func marshalDBEdge(edgeInfo models.ChannelEdgeInfo,
 	}
 
 	if edge2 != nil {
-		if c2, ok = edge1.(*channeldb.ChannelEdgePolicy1); !ok {
+		if c2, ok = edge2.(*channeldb.ChannelEdgePolicy1); !ok {
 			return nil, fmt.Errorf("wanted edge policy 1")
 		}
 	}

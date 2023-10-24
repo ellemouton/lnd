@@ -178,7 +178,7 @@ func initSwitchWithDB(startingHeight uint32, db *channeldb.DB) (*Switch, error) 
 			events: make(map[time.Time]channeldb.ForwardingEvent),
 		},
 		FetchLastChannelUpdate: func(scid lnwire.ShortChannelID) (
-			*lnwire.ChannelUpdate1, error) {
+			lnwire.ChannelUpdate, error) {
 
 			return &lnwire.ChannelUpdate1{
 				ShortChannelID: scid,
@@ -728,7 +728,7 @@ type mockChannelLink struct {
 	checkHtlcForwardResult *LinkError
 
 	failAliasUpdate func(sid lnwire.ShortChannelID,
-		incoming bool) *lnwire.ChannelUpdate1
+		incoming bool) lnwire.ChannelUpdate
 
 	confirmedZC bool
 }
@@ -857,7 +857,7 @@ func (f *mockChannelLink) AttachMailBox(mailBox MailBox) {
 }
 
 func (f *mockChannelLink) attachFailAliasUpdate(closure func(
-	sid lnwire.ShortChannelID, incoming bool) *lnwire.ChannelUpdate1) {
+	sid lnwire.ShortChannelID, incoming bool) lnwire.ChannelUpdate) {
 
 	f.failAliasUpdate = closure
 }

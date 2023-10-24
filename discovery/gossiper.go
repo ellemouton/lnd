@@ -2159,22 +2159,17 @@ func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
 // updateChannel creates a new fully signed update for the channel, and updates
 // the underlying graph with the new state.
 func (d *AuthenticatedGossiper) updateChannel(edgeInfo models.ChannelEdgeInfo,
-	edgePolicy models.ChannelEdgePolicy) (lnwire.ChannelAnnouncement,
+	edge models.ChannelEdgePolicy) (lnwire.ChannelAnnouncement,
 	lnwire.ChannelUpdate, error) {
 
-	edge, ok := edgePolicy.(*channeldb.ChannelEdgePolicy1)
-	if !ok {
-		return nil, nil, fmt.Errorf("expected chan edge policy 1")
-	}
-
 	// Parse the unsigned edge into a channel update.
-	chanUpdate := netann.UnsignedChannelUpdateFromEdge(
+	chanUpdate, err := netann.UnsignedChannelUpdateFromEdge(
 		edgeInfo.GetChainHash(), edge,
 	)
 
 	// We'll generate a new signature over a digest of the channel
 	// announcement itself and update the timestamp to ensure it propagate.
-	err := netann.SignChannelUpdate(
+	err = netann.SignChannelUpdate(
 		d.cfg.AnnSigner, d.selfKeyLoc, chanUpdate,
 		netann.ChanUpdSetTimestamp,
 	)
@@ -2184,8 +2179,25 @@ func (d *AuthenticatedGossiper) updateChannel(edgeInfo models.ChannelEdgeInfo,
 
 	// Next, we'll set the new signature in place, and update the reference
 	// in the backing slice.
-	edge.LastUpdate = time.Unix(int64(chanUpdate.Timestamp), 0)
-	edge.SigBytes = chanUpdate.Signature.ToSignatureBytes()
+	switch e := edge.(type) {
+	case *channeldb.ChannelEdgePolicy1:
+		chanUpd, ok := chanUpdate.(*lnwire.ChannelUpdate1)
+		if !ok {
+			return nil, nil, fmt.Errorf("wanted chan update 1")
+		}
+
+		e.LastUpdate = time.Unix(int64(chanUpd.Timestamp), 0)
+		e.SigBytes = chanUpd.Signature.ToSignatureBytes()
+
+	case *channeldb.ChannelEdgePolicy2:
+		chanUpd, ok := chanUpdate.(*lnwire.ChannelUpdate2)
+		if !ok {
+			return nil, nil, fmt.Errorf("wanted chan update 2")
+		}
+
+		e.BlockHeight = chanUpd.BlockHeight
+		e.Signature = chanUpd.Signature
+	}
 
 	// To ensure that our signature is valid, we'll verify it ourself
 	// before committing it to the slice returned.

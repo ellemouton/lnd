@@ -12,8 +12,10 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/davecgh/go-spew/spew"
 	sphinx "github.com/lightningnetwork/lightning-onion"
@@ -21,6 +23,7 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/htlcswitch"
+	"github.com/lightningnetwork/lnd/keychain"
 	lnmock "github.com/lightningnetwork/lnd/lntest/mock"
 	"github.com/lightningnetwork/lnd/lntest/wait"
 	"github.com/lightningnetwork/lnd/lntypes"
@@ -237,16 +240,46 @@ func createTestCtxFromFile(t *testing.T,
 // Add valid signature to channel update simulated as error received from the
 // network.
 func signErrChanUpdate(t *testing.T, key *btcec.PrivateKey,
-	errChanUpdate *lnwire.ChannelUpdate1) {
+	errChanUpdate lnwire.ChannelUpdate) {
 
-	chanUpdateMsg, err := errChanUpdate.DataToSign()
-	require.NoError(t, err, "failed to retrieve data to sign")
+	signer := &mockSigner{key: key}
+	err := netann.SignChannelUpdate(
+		signer, keychain.KeyLocator{}, errChanUpdate,
+	)
+	require.NoError(t, err)
+}
 
-	digest := chainhash.DoubleHashB(chanUpdateMsg)
-	sig := ecdsa.Sign(key, digest)
+type mockSigner struct {
+	key *btcec.PrivateKey
+	keychain.MessageSignerRing
+}
 
-	errChanUpdate.Signature, err = lnwire.NewSigFromSignature(sig)
-	require.NoError(t, err, "failed to create new signature")
+func (s *mockSigner) SignMessage(keyLoc keychain.KeyLocator, msg []byte,
+	doubleHash bool) (*ecdsa.Signature, error) {
+
+	digest := chainhash.DoubleHashB(msg)
+	sig := ecdsa.Sign(s.key, digest)
+
+	return sig, nil
+}
+
+func (s *mockSigner) SignMessageSchnorr(keyLoc keychain.KeyLocator, msg []byte,
+	doubleHash bool, taprootTweak []byte) (*schnorr.Signature,
+	error) {
+
+	var digest []byte
+	if doubleHash {
+		digest = chainhash.DoubleHashB(msg)
+	} else {
+		digest = chainhash.HashB(msg)
+	}
+
+	privKey := s.key
+	if len(taprootTweak) > 0 {
+		privKey = txscript.TweakTaprootPrivKey(*privKey, taprootTweak)
+	}
+
+	return schnorr.Sign(privKey, digest)
 }
 
 // TestFindRoutesWithFeeLimit asserts that routes found by the FindRoutes method
@@ -633,23 +666,10 @@ func TestSendPaymentErrorRepeatedFeeInsufficient(t *testing.T) {
 	edgeUpdToFail, ok := edgeUpdateToFail.(*channeldb.ChannelEdgePolicy1)
 	require.True(t, ok)
 
-	errChanUpdate := netann.UnsignedChannelUpdateFromEdge(
+	errChanUpdate, err := netann.UnsignedChannelUpdateFromEdge(
 		chainhash.Hash{}, edgeUpdToFail,
 	)
-	//
-	//errChanUpdate := lnwire.ChannelUpdate1{
-	//	ShortChannelID: lnwire.NewShortChanIDFromInt(
-	//		songokuSophonChanID,
-	//	),
-	//	Timestamp:       uint32(edgeUpdateToFail.LastUpdate.Unix()),
-	//	MessageFlags:    edgeUpdateToFail.MessageFlags,
-	//	ChannelFlags:    edgeUpdateToFail.ChannelFlags,
-	//	TimeLockDelta:   edgeUpdateToFail.TimeLockDelta,
-	//	HtlcMinimumMsat: edgeUpdateToFail.MinHTLC,
-	//	HtlcMaximumMsat: edgeUpdateToFail.MaxHTLC,
-	//	BaseFee:         uint32(edgeUpdateToFail.FeeBaseMSat),
-	//	FeeRate:         uint32(edgeUpdateToFail.FeeProportionalMillionths),
-	//}
+	require.NoError(t, err)
 
 	signErrChanUpdate(t, ctx.privKeys["songoku"], errChanUpdate)
 
@@ -992,10 +1012,10 @@ func TestSendPaymentErrorNonFinalTimeLockErrors(t *testing.T) {
 	edgeUpdToFail, ok := edgeUpdateToFail.(*channeldb.ChannelEdgePolicy1)
 	require.True(t, ok)
 
-	var errChanUpdate lnwire.ChannelUpdate
-	errChanUpdate = netann.UnsignedChannelUpdateFromEdge(
+	errChanUpdate, err := netann.UnsignedChannelUpdateFromEdge(
 		chainhash.Hash{}, edgeUpdToFail,
 	)
+	require.NoError(t, err)
 
 	//errChanUpdate := lnwire.ChannelUpdate1{
 	//	ShortChannelID:  lnwire.NewShortChanIDFromInt(chanID),

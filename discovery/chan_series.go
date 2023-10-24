@@ -3,6 +3,7 @@ package discovery
 import (
 	"time"
 
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -59,7 +60,7 @@ type ChannelGraphTimeSeries interface {
 	// specified short channel ID. If no channel updates are known for the
 	// channel, then an empty slice will be returned.
 	FetchChanUpdates(chain chainhash.Hash,
-		shortChanID lnwire.ShortChannelID) ([]*lnwire.ChannelUpdate1, error)
+		shortChanID lnwire.ShortChannelID) ([]lnwire.ChannelUpdate, error)
 }
 
 // ChanSeries is an implementation of the ChannelGraphTimeSeries
@@ -130,11 +131,18 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 			return nil, err
 		}
 
+		var capacity btcutil.Amount
+		if ann, ok := chanAnn.(*lnwire.ChannelAnnouncement2); ok {
+			capacity = btcutil.Amount(ann.Capacity)
+		}
+
 		updates = append(updates, chanAnn)
 		if edge1 != nil {
 			// We don't want to send channel updates that don't
 			// conform to the spec (anymore).
-			err := routing.ValidateChannelUpdateFields(0, edge1)
+			err := routing.ValidateChannelUpdateFields(
+				capacity, edge1,
+			)
 			if err != nil {
 				log.Errorf("not sending invalid channel "+
 					"update %v: %v", edge1, err)
@@ -143,7 +151,9 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 			}
 		}
 		if edge2 != nil {
-			err := routing.ValidateChannelUpdateFields(0, edge2)
+			err := routing.ValidateChannelUpdateFields(
+				capacity, edge2,
+			)
 			if err != nil {
 				log.Errorf("not sending invalid channel "+
 					"update %v: %v", edge2, err)
@@ -322,7 +332,7 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 //
 // NOTE: This is part of the ChannelGraphTimeSeries interface.
 func (c *ChanSeries) FetchChanUpdates(chain chainhash.Hash,
-	shortChanID lnwire.ShortChannelID) ([]*lnwire.ChannelUpdate1, error) {
+	shortChanID lnwire.ShortChannelID) ([]lnwire.ChannelUpdate, error) {
 
 	chanInfo, e1, e2, err := c.graph.FetchChannelEdgesByID(
 		shortChanID.ToUint64(),
@@ -331,7 +341,7 @@ func (c *ChanSeries) FetchChanUpdates(chain chainhash.Hash,
 		return nil, err
 	}
 
-	chanUpdates := make([]*lnwire.ChannelUpdate1, 0, 2)
+	chanUpdates := make([]lnwire.ChannelUpdate, 0, 2)
 	if e1 != nil {
 		chanUpdate, err := netann.ChannelUpdateFromEdge(chanInfo, e1)
 		if err != nil {

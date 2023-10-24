@@ -248,27 +248,51 @@ func verifyChannelUpdate1Signature(msg *lnwire.ChannelUpdate1,
 // ValidateChannelUpdateFields validates a channel update's message flags and
 // corresponding update fields.
 func ValidateChannelUpdateFields(capacity btcutil.Amount,
-	msg *lnwire.ChannelUpdate1) error {
+	msg lnwire.ChannelUpdate) error {
 
-	// The maxHTLC flag is mandatory.
-	if !msg.MessageFlags.HasMaxHtlc() {
-		return errors.Errorf("max htlc flag not set for channel "+
-			"update %v", spew.Sdump(msg))
-	}
+	switch m := msg.(type) {
+	case *lnwire.ChannelUpdate1:
+		// The maxHTLC flag is mandatory.
+		if !m.MessageFlags.HasMaxHtlc() {
+			return errors.Errorf("max htlc flag not set for "+
+				"channel update %v", spew.Sdump(m))
+		}
 
-	maxHtlc := msg.HtlcMaximumMsat
-	if maxHtlc == 0 || maxHtlc < msg.HtlcMinimumMsat {
-		return errors.Errorf("invalid max htlc for channel "+
-			"update %v", spew.Sdump(msg))
-	}
+		maxHtlc := m.HtlcMaximumMsat
+		if maxHtlc == 0 || maxHtlc < m.HtlcMinimumMsat {
+			return errors.Errorf("invalid max htlc for channel "+
+				"update %v", spew.Sdump(m))
+		}
 
-	// For light clients, the capacity will not be set so we'll skip
-	// checking whether the MaxHTLC value respects the channel's
-	// capacity.
-	capacityMsat := lnwire.NewMSatFromSatoshis(capacity)
-	if capacityMsat != 0 && maxHtlc > capacityMsat {
-		return errors.Errorf("max_htlc (%v) for channel update "+
-			"greater than capacity (%v)", maxHtlc, capacityMsat)
+		// For light clients, the capacity will not be set so we'll skip
+		// checking whether the MaxHTLC value respects the channel's
+		// capacity.
+		capacityMsat := lnwire.NewMSatFromSatoshis(capacity)
+		if capacityMsat != 0 && maxHtlc > capacityMsat {
+			return errors.Errorf("max_htlc (%v) for channel "+
+				"update greater than capacity (%v)", maxHtlc,
+				capacityMsat)
+		}
+
+	case *lnwire.ChannelUpdate2:
+		maxHtlc := m.HTLCMaximumMsat
+		if maxHtlc == 0 || maxHtlc < m.HTLCMinimumMsat {
+			return errors.Errorf("invalid max htlc for channel "+
+				"update %v", spew.Sdump(m))
+		}
+
+		// Checking whether the MaxHTLC value respects the channel's
+		// capacity.
+		capacityMsat := lnwire.NewMSatFromSatoshis(capacity)
+		if maxHtlc > capacityMsat {
+			return errors.Errorf("max_htlc (%v) for channel "+
+				"update greater than capacity (%v)", maxHtlc,
+				capacityMsat)
+		}
+
+	default:
+		return fmt.Errorf("unhandled implementation of "+
+			"lnwire.ChannelUpdate: %T", msg)
 	}
 
 	return nil
