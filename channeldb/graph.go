@@ -3906,8 +3906,8 @@ func (c *ChannelEdgePolicy1) ComputeFeeFromIncoming(
 	)
 }
 
-func EdgePolicyFromUpdate(update lnwire.ChannelUpdate) (*ChannelEdgePolicy1,
-	error) {
+func EdgePolicyFromUpdate(update lnwire.ChannelUpdate) (
+	models.ChannelEdgePolicy, error) {
 
 	switch upd := update.(type) {
 	case *lnwire.ChannelUpdate1:
@@ -3924,6 +3924,12 @@ func EdgePolicyFromUpdate(update lnwire.ChannelUpdate) (*ChannelEdgePolicy1,
 			FeeBaseMSat:               lnwire.MilliSatoshi(upd.BaseFee),
 			FeeProportionalMillionths: lnwire.MilliSatoshi(upd.FeeRate),
 		}, nil
+
+	case *lnwire.ChannelUpdate2:
+		return &ChannelEdgePolicy2{
+			ChannelUpdate2: *upd,
+		}, nil
+
 	default:
 		return nil, fmt.Errorf("unhandled implementation of "+
 			"lnwire.ChannelUpdate: %T", update)

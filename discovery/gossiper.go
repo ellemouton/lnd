@@ -1554,8 +1554,8 @@ func (d *AuthenticatedGossiper) isRecentlyRejectedMsg(msg lnwire.Message,
 
 	var scid uint64
 	switch m := msg.(type) {
-	case *lnwire.ChannelUpdate1:
-		scid = m.ShortChannelID.ToUint64()
+	case lnwire.ChannelUpdate:
+		scid = m.SCID().ToUint64()
 
 	case lnwire.ChannelAnnouncement:
 		scid = m.SCID().ToUint64()

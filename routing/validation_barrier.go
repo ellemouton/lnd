@@ -144,9 +144,9 @@ func (v *ValidationBarrier) InitJobDependencies(job interface{}) {
 
 	// These other types don't have any dependants, so no further
 	// initialization needs to be done beyond just occupying a job slot.
-	case *channeldb.ChannelEdgePolicy1:
+	case models.ChannelEdgePolicy:
 		return
-	case *lnwire.ChannelUpdate1:
+	case lnwire.ChannelUpdate:
 		return
 	case *lnwire.NodeAnnouncement:
 		// TODO(roasbeef): node ann needs to wait on existing channel updates
@@ -188,12 +188,12 @@ func (v *ValidationBarrier) WaitForDependants(job interface{}) error {
 	switch msg := job.(type) {
 	// Any ChannelUpdate1 or NodeAnnouncement jobs will need to wait on the
 	// completion of any active ChannelAnnouncement1 jobs related to them.
-	case *channeldb.ChannelEdgePolicy1:
-		shortID := lnwire.NewShortChanIDFromInt(msg.ChannelID)
+	case models.ChannelEdgePolicy:
+		shortID := lnwire.NewShortChanIDFromInt(msg.SCID().ToUint64())
 		signals, ok = v.chanEdgeDependencies[shortID]
 
 		jobDesc = fmt.Sprintf("job=lnwire.ChannelEdgePolicy1, scid=%v",
-			msg.ChannelID)
+			msg.SCID().ToUint64())
 
 	case *channeldb.LightningNode:
 		vertex := route.Vertex(msg.PubKeyBytes)
@@ -202,11 +202,11 @@ func (v *ValidationBarrier) WaitForDependants(job interface{}) error {
 		jobDesc = fmt.Sprintf("job=channeldb.LightningNode, pub=%s",
 			vertex)
 
-	case *lnwire.ChannelUpdate1:
-		signals, ok = v.chanEdgeDependencies[msg.ShortChannelID]
+	case lnwire.ChannelUpdate:
+		signals, ok = v.chanEdgeDependencies[msg.SCID()]
 
-		jobDesc = fmt.Sprintf("job=lnwire.ChannelUpdate1, scid=%v",
-			msg.ShortChannelID.ToUint64())
+		jobDesc = fmt.Sprintf("job=%s, scid=%v",
+			msg.MsgType(), msg.SCID().ToUint64())
 
 	case *lnwire.NodeAnnouncement:
 		vertex := route.Vertex(msg.NodeID)
@@ -297,10 +297,10 @@ func (v *ValidationBarrier) SignalDependants(job interface{}, allow bool) {
 		delete(v.nodeAnnDependencies, route.Vertex(msg.PubKeyBytes))
 	case *lnwire.NodeAnnouncement:
 		delete(v.nodeAnnDependencies, route.Vertex(msg.NodeID))
-	case *lnwire.ChannelUpdate1:
-		delete(v.chanEdgeDependencies, msg.ShortChannelID)
-	case *channeldb.ChannelEdgePolicy1:
-		shortID := lnwire.NewShortChanIDFromInt(msg.ChannelID)
+	case lnwire.ChannelUpdate:
+		delete(v.chanEdgeDependencies, msg.SCID())
+	case models.ChannelEdgePolicy:
+		shortID := lnwire.NewShortChanIDFromInt(msg.SCID().ToUint64())
 		delete(v.chanEdgeDependencies, shortID)
 
 	case *lnwire.AnnounceSignatures:
