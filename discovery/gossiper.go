@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
@@ -311,8 +310,7 @@ type Config struct {
 
 	// SignAliasUpdate is used to re-sign a channel update using the
 	// remote's alias if the option-scid-alias feature bit was negotiated.
-	SignAliasUpdate func(u *lnwire.ChannelUpdate1) (*ecdsa.Signature,
-		error)
+	SignAliasUpdate func(u lnwire.ChannelUpdate) error
 
 	// FindBaseByAlias finds the SCID stored in the graph by an alias SCID.
 	// This is used for channels that have negotiated the option-scid-alias
@@ -1758,27 +1756,18 @@ func (d *AuthenticatedGossiper) processChanPolicyUpdate(
 			var defaultAlias lnwire.ShortChannelID
 			foundAlias, _ := d.cfg.GetAlias(chanID)
 			if foundAlias != defaultAlias {
-				chanUpdate.ShortChannelID = foundAlias
+				chanUpdate.SetSCID(foundAlias)
 
-				sig, err := d.cfg.SignAliasUpdate(chanUpdate)
+				err := d.cfg.SignAliasUpdate(chanUpdate)
 				if err != nil {
 					log.Errorf("Unable to sign alias "+
 						"update: %v", err)
 					continue
 				}
-
-				lnSig, err := lnwire.NewSigFromSignature(sig)
-				if err != nil {
-					log.Errorf("Unable to create sig: %v",
-						err)
-					continue
-				}
-
-				chanUpdate.Signature = lnSig
 			}
 
 			remotePubKey := remotePubFromChanInfo(
-				edgeInfo.Info, chanUpdate.ChannelFlags,
+				edgeInfo.Info, chanUpdate.IsNode1(),
 			)
 			err := d.reliableSender.sendMessage(
 				chanUpdate, remotePubKey,
@@ -1787,7 +1776,7 @@ func (d *AuthenticatedGossiper) processChanPolicyUpdate(
 				log.Errorf("Unable to reliably send %v for "+
 					"channel=%v to peer=%x: %v",
 					chanUpdate.MsgType(),
-					chanUpdate.ShortChannelID,
+					chanUpdate.SCID(),
 					remotePubKey, err)
 			}
 			continue
@@ -1807,18 +1796,13 @@ func (d *AuthenticatedGossiper) processChanPolicyUpdate(
 
 // remotePubFromChanInfo returns the public key of the remote peer given a
 // ChannelEdgeInfo1 that describe a channel we have with them.
-func remotePubFromChanInfo(chanInfo models.ChannelEdgeInfo,
-	chanFlags lnwire.ChanUpdateChanFlags) [33]byte {
+func remotePubFromChanInfo(chanInfo models.ChannelEdgeInfo, isNode1 bool) [33]byte {
 
-	var remotePubKey [33]byte
-	switch {
-	case chanFlags&lnwire.ChanUpdateDirection == 0:
-		remotePubKey = chanInfo.Node2Bytes()
-	case chanFlags&lnwire.ChanUpdateDirection == 1:
-		remotePubKey = chanInfo.Node1Bytes()
+	if isNode1 {
+		return chanInfo.Node2Bytes()
 	}
 
-	return remotePubKey
+	return chanInfo.Node1Bytes()
 }
 
 // processRejectedEdge examines a rejected edge to see if we can extract any
@@ -2176,7 +2160,7 @@ func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
 // the underlying graph with the new state.
 func (d *AuthenticatedGossiper) updateChannel(edgeInfo models.ChannelEdgeInfo,
 	edgePolicy models.ChannelEdgePolicy) (lnwire.ChannelAnnouncement,
-	*lnwire.ChannelUpdate1, error) {
+	lnwire.ChannelUpdate, error) {
 
 	edge, ok := edgePolicy.(*channeldb.ChannelEdgePolicy1)
 	if !ok {
@@ -3012,27 +2996,16 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 			remoteAlias := nMsg.optionalMsgFields.remoteAlias
 			upd.ShortChannelID = *remoteAlias
 
-			sig, err := d.cfg.SignAliasUpdate(upd)
+			err := d.cfg.SignAliasUpdate(upd)
 			if err != nil {
 				log.Error(err)
 				nMsg.err <- err
 				return nil, false
 			}
-
-			lnSig, err := lnwire.NewSigFromSignature(sig)
-			if err != nil {
-				log.Error(err)
-				nMsg.err <- err
-				return nil, false
-			}
-
-			upd.Signature = lnSig
 		}
 
 		// Get our peer's public key.
-		remotePubKey := remotePubFromChanInfo(
-			chanInfo, upd.ChannelFlags,
-		)
+		remotePubKey := remotePubFromChanInfo(chanInfo, upd.IsNode1())
 
 		log.Debugf("The message %v has no AuthProof, sending the "+
 			"update to remote peer %x", upd.MsgType(), remotePubKey)

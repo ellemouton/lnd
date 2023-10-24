@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/davecgh/go-spew/spew"
@@ -217,8 +216,7 @@ type Config struct {
 	// option_scid_alias channels. This avoids a potential privacy leak by
 	// replacing the public, confirmed SCID with the alias in the
 	// ChannelUpdate1.
-	SignAliasUpdate func(u *lnwire.ChannelUpdate1) (*ecdsa.Signature,
-		error)
+	SignAliasUpdate func(u lnwire.ChannelUpdate) error
 
 	// IsAlias returns whether or not a given SCID is an alias.
 	IsAlias func(scid lnwire.ShortChannelID) bool
@@ -2886,12 +2884,7 @@ func (s *Switch) failAliasUpdate(scid lnwire.ShortChannelID,
 
 			// Replace the baseScid with the passed-in alias.
 			update.ShortChannelID = scid
-			sig, err := s.cfg.SignAliasUpdate(update)
-			if err != nil {
-				return nil
-			}
-
-			update.Signature, err = lnwire.NewSigFromSignature(sig)
+			err = s.cfg.SignAliasUpdate(update)
 			if err != nil {
 				return nil
 			}
@@ -2912,12 +2905,7 @@ func (s *Switch) failAliasUpdate(scid lnwire.ShortChannelID,
 		// the UTXO in case the channel is private. In the outgoing
 		// case, since the alias was used, we do the same thing.
 		update.ShortChannelID = scid
-		sig, err := s.cfg.SignAliasUpdate(update)
-		if err != nil {
-			return nil
-		}
-
-		update.Signature, err = lnwire.NewSigFromSignature(sig)
+		err = s.cfg.SignAliasUpdate(update)
 		if err != nil {
 			return nil
 		}
@@ -2967,12 +2955,7 @@ func (s *Switch) failAliasUpdate(scid lnwire.ShortChannelID,
 		// Since this happens on the incoming side, it's not actually
 		// possible to know what the sender used in the onion.
 		update.ShortChannelID = aliases[0]
-		sig, err := s.cfg.SignAliasUpdate(update)
-		if err != nil {
-			return nil
-		}
-
-		update.Signature, err = lnwire.NewSigFromSignature(sig)
+		err := s.cfg.SignAliasUpdate(update)
 		if err != nil {
 			return nil
 		}
