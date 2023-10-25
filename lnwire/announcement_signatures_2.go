@@ -41,7 +41,7 @@ type AnnouncementSignatures2 struct {
 // lnwire.Message interface.
 var _ Message = (*AnnouncementSignatures2)(nil)
 
-// Decode deserializes a serialized AnnounceSignatures stored in the passed
+// Decode deserializes a serialized AnnounceSignatures1 stored in the passed
 // io.Reader observing the specified protocol version.
 //
 // This is part of the lnwire.Message interface.
@@ -54,7 +54,7 @@ func (a *AnnouncementSignatures2) Decode(r io.Reader, _ uint32) error {
 	)
 }
 
-// Encode serializes the target AnnounceSignatures into the passed io.Writer
+// Encode serializes the target AnnounceSignatures1 into the passed io.Writer
 // observing the protocol version specified.
 //
 // This is part of the lnwire.Message interface.

@@ -123,7 +123,7 @@ func (t MessageType) String() string {
 	case MsgPing:
 		return "Ping"
 	case MsgAnnounceSignatures:
-		return "AnnounceSignatures"
+		return "AnnounceSignatures1"
 	case MsgPong:
 		return "Pong"
 	case MsgUpdateFee:
@@ -235,7 +235,7 @@ func makeEmptyMessage(msgType MessageType) (Message, error) {
 	case MsgPing:
 		msg = &Ping{}
 	case MsgAnnounceSignatures:
-		msg = &AnnounceSignatures{}
+		msg = &AnnounceSignatures1{}
 	case MsgPong:
 		msg = &Pong{}
 	case MsgQueryShortChanIDs:

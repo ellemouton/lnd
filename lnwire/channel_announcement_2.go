@@ -106,7 +106,7 @@ type ChannelAnnouncement2 struct {
 	ExtraOpaqueData ExtraOpaqueData
 }
 
-// Decode deserializes a serialized AnnounceSignatures stored in the passed
+// Decode deserializes a serialized AnnounceSignatures1 stored in the passed
 // io.Reader observing the specified protocol version.
 //
 // This is part of the lnwire.Message interface.
@@ -192,7 +192,7 @@ func (c *ChannelAnnouncement2) DecodeTLVRecords(r io.Reader) error {
 	return nil
 }
 
-// Encode serializes the target AnnounceSignatures into the passed io.Writer
+// Encode serializes the target AnnounceSignatures1 into the passed io.Writer
 // observing the protocol version specified.
 //
 // This is part of the lnwire.Message interface.

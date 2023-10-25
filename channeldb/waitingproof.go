@@ -235,7 +235,7 @@ type WaitingProofInterface interface {
 // LegacyWaitingProof is an implementation of the WaitingProofInterface to be
 // used for legacy, P2WSH channels.
 type LegacyWaitingProof struct {
-	lnwire.AnnounceSignatures
+	lnwire.AnnounceSignatures1
 }
 
 // SCID returns the short channel ID of the channel that the waiting
@@ -346,7 +346,7 @@ type WaitingProof struct {
 // NewLegacyWaitingProof constructs a new waiting prof instance for a legacy,
 // P2WSH channel.
 func NewLegacyWaitingProof(isRemote bool,
-	proof *lnwire.AnnounceSignatures) *WaitingProof {
+	proof *lnwire.AnnounceSignatures1) *WaitingProof {
 
 	return &WaitingProof{
 		WaitingProofInterface: &LegacyWaitingProof{*proof},

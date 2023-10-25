@@ -204,7 +204,7 @@ func (c *ChannelUpdate2) HasMaxHTLCSet() bool {
 	return true
 }
 
-// Decode deserializes a serialized AnnounceSignatures stored in the passed
+// Decode deserializes a serialized AnnounceSignatures1 stored in the passed
 // io.Reader observing the specified protocol version.
 //
 // This is part of the lnwire.Message interface.
@@ -319,7 +319,7 @@ func (c *ChannelUpdate2) Decode(r io.Reader, _ uint32) error {
 	return nil
 }
 
-// Encode serializes the target AnnounceSignatures into the passed io.Writer
+// Encode serializes the target AnnounceSignatures1 into the passed io.Writer
 // observing the protocol version specified.
 //
 // This is part of the lnwire.Message interface.
