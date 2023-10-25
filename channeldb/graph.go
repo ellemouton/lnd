@@ -2893,24 +2893,23 @@ func (c *ChannelGraph) updateEdgeCache(e models.ChannelEdgePolicy,
 	if entry, ok := c.rejectCache.get(chanID); ok {
 		switch pol := e.(type) {
 		case *ChannelEdgePolicy1:
+			if entry.times == nil {
+				entry.times = &updateTimes{}
+			}
+
 			if isUpdate1 {
-				entry.times = &updateTimes{
-					upd1Time: pol.LastUpdate.Unix(),
-				}
+				entry.times.upd1Time = pol.LastUpdate.Unix()
 			} else {
-				entry.times = &updateTimes{
-					upd2Time: pol.LastUpdate.Unix(),
-				}
+				entry.times.upd2Time = pol.LastUpdate.Unix()
 			}
 		case *ChannelEdgePolicy2:
+			if entry.blocks == nil {
+				entry.blocks = &updateBlocks{}
+			}
 			if isUpdate1 {
-				entry.blocks = &updateBlocks{
-					updBlock1: pol.BlockHeight,
-				}
+				entry.blocks.updBlock1 = pol.BlockHeight
 			} else {
-				entry.blocks = &updateBlocks{
-					updBlock2: pol.BlockHeight,
-				}
+				entry.blocks.updBlock2 = pol.BlockHeight
 			}
 		}
 

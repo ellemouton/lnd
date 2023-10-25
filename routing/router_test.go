@@ -2684,12 +2684,8 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 		Timestamp:    uint32(time1),
 		ChannelFlags: lnwire.ChanUpdateDirection,
 	}
-	if ctx.router.IsStaleEdgePolicy(*chanID, update1) {
-		t.Fatalf("router failed to detect fresh edge policy")
-	}
-	if ctx.router.IsStaleEdgePolicy(*chanID, update2) {
-		t.Fatalf("router failed to detect fresh edge policy")
-	}
+	require.False(t, ctx.router.IsStaleEdgePolicy(*chanID, update1))
+	require.False(t, ctx.router.IsStaleEdgePolicy(*chanID, update2))
 
 	edge := &channeldb.ChannelEdgeInfo1{
 		ChannelID:        chanID.ToUint64(),
