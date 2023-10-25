@@ -1275,6 +1275,7 @@ func (g *GossipSyncer) FilterGossipMsgs(msgs ...msgWithSenders) {
 	// channel updates for a channel.
 	chanUpdateIndex := make(map[lnwire.ShortChannelID][]lnwire.ChannelUpdate)
 	for _, msg := range msgs {
+		// TODO(elle): here
 		chanUpdate, ok := msg.msg.(*lnwire.ChannelUpdate1)
 		if !ok {
 			continue
@@ -1333,6 +1334,7 @@ func (g *GossipSyncer) FilterGossipMsgs(msgs ...msgWithSenders) {
 			}
 
 			for _, chanUpdate := range chanUpdates {
+				// TODO(elle): here
 				update, ok := chanUpdate.(*lnwire.ChannelUpdate1)
 				if !ok {
 					continue
@@ -1354,6 +1356,8 @@ func (g *GossipSyncer) FilterGossipMsgs(msgs ...msgWithSenders) {
 			if passesFilter(msg.Timestamp) {
 				msgsToSend = append(msgsToSend, msg)
 			}
+
+		// TODO(elle): here
 
 		// Similarly, we only send node announcements if the update
 		// timestamp ifs between our set gossip filter time range.

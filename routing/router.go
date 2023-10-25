@@ -2861,6 +2861,7 @@ func (r *ChannelRouter) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 		isNode1  = update.IsNode1()
 	)
 
+	// TODO(elle): here
 	upd, ok := update.(*lnwire.ChannelUpdate1)
 	if !ok {
 		log.Error("Expected Chan update 1")

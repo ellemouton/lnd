@@ -33,6 +33,7 @@ func ChanUpdSetDisable(disabled bool) ChannelUpdateModifier {
 // update to the current time, or increments it if the timestamp is already in
 // the future.
 func ChanUpdSetTimestamp(update lnwire.ChannelUpdate) {
+	// TODO(elle): here
 	switch upd := update.(type) {
 	case *lnwire.ChannelUpdate1:
 		newTimestamp := uint32(time.Now().Unix())

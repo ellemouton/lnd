@@ -118,8 +118,8 @@ func TestMessageStoreMessages(t *testing.T) {
 			switch msg := msg.(type) {
 			case *lnwire.AnnounceSignatures:
 				shortChanID = msg.ShortChannelID.ToUint64()
-			case *lnwire.ChannelUpdate1:
-				shortChanID = msg.ShortChannelID.ToUint64()
+			case lnwire.ChannelUpdate:
+				shortChanID = msg.SCID().ToUint64()
 			default:
 				t.Fatalf("found unexpected message type %T", msg)
 			}
