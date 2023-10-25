@@ -86,7 +86,7 @@ func CreateChanAnnouncement(chanProof models.ChannelAuthProof,
 
 	default:
 		return nil, nil, nil, fmt.Errorf("unhandled "+
-			"channeldb.ChannelAuthProof type: %T", chanProof)
+			"models.ChannelAuthProof type: %T", chanProof)
 	}
 }
 

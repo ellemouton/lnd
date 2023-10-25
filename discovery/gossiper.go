@@ -1421,7 +1421,7 @@ func (d *AuthenticatedGossiper) networkHandler() {
 			switch announcement.msg.(type) {
 			// Channel announcement signatures are amongst the only
 			// messages that we'll process serially.
-			case *lnwire.AnnounceSignatures1:
+			case lnwire.AnnounceSignatures:
 				emittedAnnouncements, _ := d.processNetworkAnnouncement(
 					announcement,
 				)
@@ -2136,9 +2136,9 @@ func (d *AuthenticatedGossiper) fetchNodeAnn(
 // MessageStore is seen as stale by the current graph.
 func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
 	switch msg := msg.(type) {
-	case *lnwire.AnnounceSignatures1:
+	case lnwire.AnnounceSignatures:
 		chanInfo, _, _, err := d.cfg.Router.GetChannelByID(
-			msg.ShortChannelID,
+			msg.SCID(),
 		)
 
 		// If the channel cannot be found, it is most likely a leftover
@@ -3504,13 +3504,13 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 		// Now aggregate the partial sigs.
 		s := musig2.CombineSigs(aggNonce, []*musig2.PartialSignature{&ps1, &ps2})
 
-		dbProof = channeldb.ChannelAuthProof2{
+		dbProof = &channeldb.ChannelAuthProof2{
 			SchnorrSigBytes: s.Serialize(),
 		}
 	}
 
 	chanAnn, e1Ann, e2Ann, err := netann.CreateChanAnnouncement(
-		&dbProof, chanInfo, e1, e2,
+		dbProof, chanInfo, e1, e2,
 	)
 	if err != nil {
 		log.Error(err)
@@ -3535,7 +3535,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 	// attest to the bitcoin keys by validating the signatures of
 	// announcement. If proof is valid then we'll populate the channel edge
 	// with it, so we can announce it on peer connect.
-	err = d.cfg.Router.AddProof(scid, &dbProof)
+	err = d.cfg.Router.AddProof(scid, dbProof)
 	if err != nil {
 		err := fmt.Errorf("unable add proof to the channel chanID=%v:"+
 			" %v", chanID, err)

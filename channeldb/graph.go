@@ -3854,6 +3854,9 @@ type ChannelAuthProof1 struct {
 	BitcoinSig2Bytes []byte
 }
 
+func (c *ChannelAuthProof1) IsChanAuthProof() {
+}
+
 // A compile-time check to ensure that ChannelAuthProof1 implements the
 // models.ChannelAuthProof interface.
 var _ models.ChannelAuthProof = (*ChannelAuthProof1)(nil)
@@ -6066,6 +6069,11 @@ type ChannelAuthProof2 struct {
 	// schnorrSig is the cached instance of the schnorr signature.
 	schnorrSig *schnorr.Signature
 }
+
+func (c *ChannelAuthProof2) IsChanAuthProof() {
+}
+
+var _ models.ChannelAuthProof = (*ChannelAuthProof2)(nil)
 
 // A compile-time check to ensure that ChannelEdgeInfo2 implements
 // models.ChannelEdgeInfo.
