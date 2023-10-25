@@ -922,6 +922,7 @@ func (r *ChannelRouter) pruneZombieChans() error {
 			return nil
 		}
 
+		// TODO(elle)
 		var (
 			e1, e2 *channeldb.ChannelEdgePolicy1
 			ok     bool
@@ -1682,6 +1683,7 @@ func (r *ChannelRouter) processUpdate(msg interface{},
 		r.channelEdgeMtx.Lock(msg.ChannelID)
 		defer r.channelEdgeMtx.Unlock(msg.ChannelID)
 
+		// TODO(elle): here
 		edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
 			r.cfg.Graph.HasChannelEdge(msg.ChannelID)
 		if err != nil && err != channeldb.ErrGraphNoEdgesFound {

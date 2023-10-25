@@ -2788,7 +2788,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 		chainHash = upd.GetChainHash()
 	)
 
-	log.Debugf("Processing ChannelUpdate1: peer=%v, short_chan_id=%v, ",
+	log.Debugf("Processing ChannelUpdate: peer=%v, short_chan_id=%v, ",
 		nMsg.peer, scid)
 
 	// We'll ignore any channel updates that target any chain other than
@@ -2929,7 +2929,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 				})
 		}
 
-		log.Debugf("Got ChannelUpdate1 for edge not found in graph"+
+		log.Debugf("Got ChannelUpdate for edge not found in graph"+
 			"(shortChanID=%v), saving for reprocessing later",
 			shortChanID)
 
@@ -3077,7 +3077,14 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 		log.Error(rErr)
 		nMsg.err <- rErr
 		return nil, false
-
+	}
+	switch upd := update.(type) {
+	case *channeldb.ChannelEdgePolicy1:
+		upd.ChannelID = chanInfo.GetChanID()
+	case *channeldb.ChannelEdgePolicy2:
+		upd.ShortChannelID = lnwire.NewShortChanIDFromInt(
+			chanInfo.GetChanID(),
+		)
 	}
 
 	if err := d.cfg.Router.UpdateEdge(update, ops...); err != nil {

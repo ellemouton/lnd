@@ -611,7 +611,7 @@ func (s *Switch) SendHTLC(firstHop lnwire.ShortChannelID, attemptID uint64,
 func (s *Switch) UpdateForwardingPolicies(
 	chanPolicies map[wire.OutPoint]models.ForwardingPolicy) {
 
-	log.Tracef("Updating link policies: %v", newLogClosure(func() string {
+	log.Debugf("Updating link policies: %v", newLogClosure(func() string {
 		return spew.Sdump(chanPolicies)
 	}))
 

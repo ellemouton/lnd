@@ -192,7 +192,7 @@ func (v *ValidationBarrier) WaitForDependants(job interface{}) error {
 		shortID := lnwire.NewShortChanIDFromInt(msg.SCID().ToUint64())
 		signals, ok = v.chanEdgeDependencies[shortID]
 
-		jobDesc = fmt.Sprintf("job=lnwire.ChannelEdgePolicy1, scid=%v",
+		jobDesc = fmt.Sprintf("job=lnwire.ChannelEdgePolicy, scid=%v",
 			msg.SCID().ToUint64())
 
 	case *channeldb.LightningNode:

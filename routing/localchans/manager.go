@@ -175,6 +175,7 @@ func (r *Manager) updateEdge(tx kvdb.RTx, chanPoint wire.OutPoint,
 	edgePolicy models.ChannelEdgePolicy,
 	newSchema routing.ChannelPolicy) error {
 
+	// TODO(elle): here
 	edge, ok := edgePolicy.(*channeldb.ChannelEdgePolicy1)
 	if !ok {
 		return fmt.Errorf("wanted edge policy 1")
