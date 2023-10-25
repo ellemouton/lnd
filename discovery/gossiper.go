@@ -3504,6 +3504,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 		// Now aggregate the partial sigs.
 		s := musig2.CombineSigs(aggNonce, []*musig2.PartialSignature{&ps1, &ps2})
 
+		log.Info("ELLE: setting sig: ", s.Serialize())
 		dbProof = &channeldb.ChannelAuthProof2{
 			SchnorrSigBytes: s.Serialize(),
 		}

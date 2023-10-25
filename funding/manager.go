@@ -4501,6 +4501,7 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 		ChainHash:      chainHash,
 		BitcoinKey1:    &[33]byte{},
 		BitcoinKey2:    &[33]byte{},
+		Capacity:       uint64(channel.Capacity),
 	}
 
 	var direction int
@@ -4627,6 +4628,8 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 	if err != nil {
 		return nil, err
 	}
+	log.Info("ELLE: degist to sign: ", chanAnnMsg.String())
+	log.Infof("ELLE: ann to sign: %+v", chanAnn)
 
 	pubKeys := []*btcec.PublicKey{
 		localPubKey,

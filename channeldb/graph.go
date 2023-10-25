@@ -1164,7 +1164,6 @@ func (c *ChannelGraph) HasChannelEdge(chanID uint64) (bool, bool, error) {
 	// exclusive lock and check the cache again in case another method added
 	// the entry to the cache while no lock was held.
 	if entry, ok := c.rejectCache.get(chanID); ok && entry.times != nil {
-		c.cacheMu.RUnlock()
 		exists, isZombie = entry.flags.unpack()
 
 		return exists, isZombie, nil
@@ -5472,7 +5471,7 @@ func (c *ChannelEdgePolicy2) updateBucketKey() []byte {
 func (c *ChannelEdgePolicy2) updateKey() []byte {
 	indexKey := make([]byte, 4+8)
 	byteOrder.PutUint32(indexKey[:4], c.BlockHeight)
-	byteOrder.PutUint64(indexKey[8:], c.ShortChannelID.ToUint64())
+	byteOrder.PutUint64(indexKey[4:], c.ShortChannelID.ToUint64())
 
 	return indexKey
 }

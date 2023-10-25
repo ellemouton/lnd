@@ -11,6 +11,7 @@ import (
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/netann"
 	"github.com/lightningnetwork/lnd/routing"
+	"github.com/stretchr/testify/require"
 )
 
 type mockSigner struct {
@@ -192,4 +193,20 @@ func TestUpdateDisableFlag(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTemp(t *testing.T) {
+	signer := netann.NewNodeSigner(privKeySigner)
+	update := &lnwire.ChannelUpdate2{
+		BlockHeight: 13,
+	}
+	err := netann.SignChannelUpdate(
+		signer, testKeyLoc, update,
+	)
+	require.NoError(t, err)
+
+	err = routing.VerifyChannelUpdateSignature(
+		update, pubKey,
+	)
+	require.NoError(t, err)
 }

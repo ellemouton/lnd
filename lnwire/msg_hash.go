@@ -19,6 +19,9 @@ func MsgHash(msgName, fieldName string, msg []byte) *chainhash.Hash {
 
 func MsgHashPreFinalHash(msgName, fieldName string, msg []byte) []byte {
 	tag := []byte(MsgHashTag)
+	tag = append(tag, []byte(msgName)...)
+	tag = append(tag, []byte(fieldName)...)
+
 	shaTag := sha256.Sum256(tag)
 
 	var b bytes.Buffer

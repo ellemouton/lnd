@@ -179,6 +179,7 @@ func createChanAnnouncement2(chanProof *channeldb.ChannelAuthProof2,
 		BitcoinKey1:     chanInfo.BitcoinKey1,
 		BitcoinKey2:     chanInfo.BitcoinKey2,
 		Features:        chanInfo.Features,
+		Capacity:        chanInfo.Capacity,
 		ExtraOpaqueData: chanInfo.ExtraOpaqueData,
 	}
 
