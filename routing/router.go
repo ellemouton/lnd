@@ -1509,9 +1509,7 @@ func (r *ChannelRouter) processUpdate(msg interface{},
 
 		// Prior to processing the announcement we first check if we
 		// already know of this channel, if so, then we can exit early.
-		_, _, exists, isZombie, err := r.cfg.Graph.HasChannelEdge(
-			chanID,
-		)
+		exists, isZombie, err := r.cfg.Graph.HasChannelEdge(chanID)
 		if err != nil && err != channeldb.ErrGraphNoEdgesFound {
 			return errors.Errorf("unable to check for edge "+
 				"existence: %v", err)
@@ -1640,6 +1638,8 @@ func (r *ChannelRouter) processUpdate(msg interface{},
 		case *channeldb.ChannelEdgeInfo1:
 			m.Capacity = btcutil.Amount(chanUtxo.Value)
 			m.ChannelPoint = *fundingPoint
+		case *channeldb.ChannelEdgeInfo2:
+			m.ChannelPoint = *fundingPoint
 		default:
 			return errors.Errorf("unhandled implementation of "+
 				"ChannelEdgeInfo: %T", msg)
@@ -1673,6 +1673,89 @@ func (r *ChannelRouter) processUpdate(msg interface{},
 				"view: %v", err)
 		}
 
+	case *channeldb.ChannelEdgePolicy2:
+		chanID := msg.ShortChannelID.ToUint64()
+
+		log.Debugf("Received ChannelEdgePolicy2 for channel %v",
+			chanID)
+
+		// We make sure to hold the mutex for this channel ID,
+		// such that no other goroutine is concurrently doing
+		// database accesses for the same channel ID.
+		r.channelEdgeMtx.Lock(chanID)
+		defer r.channelEdgeMtx.Unlock(chanID)
+
+		edge1Height, edge2Height, exists, isZombie, err :=
+			r.cfg.Graph.HasChannelEdge2(chanID)
+		if err != nil && err != channeldb.ErrGraphNoEdgesFound {
+			return errors.Errorf("unable to check for edge "+
+				"existence: %v", err)
+
+		}
+
+		// If the channel is marked as a zombie in our database, and
+		// we consider this a stale update, then we should not apply the
+		// policy.
+		blocksSinceMsg := r.SyncedHeight() - msg.BlockHeight
+		isStaleUpdate := blocksSinceMsg > uint32(
+			r.cfg.ChannelPruneExpiry.Hours()*6,
+		)
+		if isZombie && isStaleUpdate {
+			return newErrf(ErrIgnored, "ignoring stale update "+
+				"(is_node_1=%v|disable_flags=%v) for zombie "+
+				"chan_id=%v", msg.IsNode1(), msg.DisabledFlags,
+				chanID)
+		}
+
+		// If the channel doesn't exist in our database, we cannot
+		// apply the updated policy.
+		if !exists {
+			return newErrf(ErrIgnored, "ignoring update "+
+				"(is_node_1=%v|disable_flags=%v) for unknown "+
+				"chan_id=%v", msg.IsNode1(), msg.DisabledFlags,
+				chanID)
+		}
+
+		// As edges are directional edge node has a unique policy for
+		// the direction of the edge they control. Therefore we first
+		// check if we already have the most up to date information for
+		// that edge. If this message has a timestamp not strictly
+		// newer than what we already know of we can exit early.
+		switch {
+		case msg.IsNode1():
+			// Ignore outdated message.
+			if edge1Height >= msg.BlockHeight {
+				return newErrf(ErrOutdated, "Ignoring "+
+					"outdated update "+
+					"(is_node_1=%v|disable_flags=%v) for "+
+					"known chan_id=%v", msg.IsNode1(),
+					msg.DisabledFlags, chanID)
+			}
+
+		case !msg.IsNode1():
+			// Ignore outdated message.
+			if edge2Height >= msg.BlockHeight {
+				return newErrf(ErrOutdated, "Ignoring "+
+					"outdated update "+
+					"(is_node_1=%v|disable_flags=%v) for "+
+					"known chan_id=%v", msg.IsNode1(),
+					msg.DisabledFlags, chanID)
+			}
+		}
+
+		// Now that we know this isn't a stale update, we'll apply the
+		// new edge policy to the proper directional edge within the
+		// channel graph.
+		if err = r.cfg.Graph.UpdateEdgePolicy(msg, op...); err != nil {
+			err := errors.Errorf("unable to add channel: %v", err)
+			log.Error(err)
+			return err
+		}
+
+		log.Tracef("New channel update applied: %v",
+			newLogClosure(func() string { return spew.Sdump(msg) }))
+		r.stats.incNumChannelUpdates()
+
 	case *channeldb.ChannelEdgePolicy1:
 		log.Debugf("Received ChannelEdgePolicy1 for channel %v",
 			msg.ChannelID)
@@ -1683,9 +1766,8 @@ func (r *ChannelRouter) processUpdate(msg interface{},
 		r.channelEdgeMtx.Lock(msg.ChannelID)
 		defer r.channelEdgeMtx.Unlock(msg.ChannelID)
 
-		// TODO(elle): here
 		edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
-			r.cfg.Graph.HasChannelEdge(msg.ChannelID)
+			r.cfg.Graph.HasChannelEdge1(msg.ChannelID)
 		if err != nil && err != channeldb.ErrGraphNoEdgesFound {
 			return errors.Errorf("unable to check for edge "+
 				"existence: %v", err)
@@ -2845,9 +2927,8 @@ func (r *ChannelRouter) IsPublicNode(node route.Vertex) (bool, error) {
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (r *ChannelRouter) IsKnownEdge(chanID lnwire.ShortChannelID) bool {
-	_, _, exists, isZombie, _ := r.cfg.Graph.HasChannelEdge(
-		chanID.ToUint64(),
-	)
+	exists, isZombie, _ := r.cfg.Graph.HasChannelEdge(chanID.ToUint64())
+
 	return exists || isZombie
 }
 
@@ -2874,7 +2955,7 @@ func (r *ChannelRouter) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 	timestamp := time.Unix(int64(upd.Timestamp), 0)
 
 	edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
-		r.cfg.Graph.HasChannelEdge(chanID.ToUint64())
+		r.cfg.Graph.HasChannelEdge1(chanID.ToUint64())
 	if err != nil {
 		log.Debugf("Check stale edge policy got error: %v", err)
 		return false

@@ -41,13 +41,23 @@ func (f rejectFlags) unpack() (bool, bool) {
 // including the timestamps of its latest edge policies and whether or not the
 // channel exists in the graph.
 type rejectCacheEntry struct {
+	times  *updateTimes
+	blocks *updateBlocks
+	flags  rejectFlags
+}
+
+type updateTimes struct {
 	upd1Time int64
 	upd2Time int64
-	flags    rejectFlags
+}
+
+type updateBlocks struct {
+	updBlock1 uint32
+	updBlock2 uint32
 }
 
 // rejectCache is an in-memory cache used to improve the performance of
-// HasChannelEdge. It caches information about the whether or channel exists, as
+// HasChannelEdge1. It caches information about the whether or channel exists, as
 // well as the most recent timestamps for each policy (if they exists).
 type rejectCache struct {
 	n     int
