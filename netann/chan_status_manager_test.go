@@ -15,6 +15,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/keychain"
@@ -345,9 +346,18 @@ func newManagerCfg(t *testing.T, numChannels int,
 		ApplyChannelUpdate:       graph.ApplyChannelUpdate,
 		DB:                       graph,
 		Graph:                    graph,
+		BestBlockView:            &mockBlockView{},
 	}
 
 	return cfg, graph, htlcSwitch
+}
+
+type mockBlockView struct {
+	chainntnfs.BestBlockView
+}
+
+func (m *mockBlockView) BestHeight() (uint32, error) {
+	return 0, nil
 }
 
 type testHarness struct {
