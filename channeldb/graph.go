@@ -3596,61 +3596,18 @@ func (c *ChannelEdgeInfo1) GetChanPoint() wire.OutPoint {
 //
 // NOTE: this is part of the models.ChannelEdgeInfo interface.
 func (c *ChannelEdgeInfo1) FundingScript() ([]byte, error) {
-	legacyFundingScript := func() ([]byte, error) {
-		witnessScript, err := input.GenMultiSigScript(
-			c.BitcoinKey1Bytes[:], c.BitcoinKey2Bytes[:],
-		)
-		if err != nil {
-			return nil, err
-		}
-		pkScript, err := input.WitnessScriptHash(witnessScript)
-		if err != nil {
-			return nil, err
-		}
-
-		return pkScript, nil
-	}
-
-	if len(c.Features) == 0 {
-		return legacyFundingScript()
-	}
-
-	// In order to make the correct funding script, we'll need to parse the
-	// chanFeatures bytes into a feature vector we can interact with.
-	rawFeatures := lnwire.NewRawFeatureVector()
-	err := rawFeatures.Decode(bytes.NewReader(c.Features))
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse chan feature "+
-			"bits: %w", err)
-	}
-
-	chanFeatureBits := lnwire.NewFeatureVector(
-		rawFeatures, lnwire.Features,
+	witnessScript, err := input.GenMultiSigScript(
+		c.BitcoinKey1Bytes[:], c.BitcoinKey2Bytes[:],
 	)
-	if chanFeatureBits.HasFeature(
-		lnwire.SimpleTaprootChannelsOptionalStaging,
-	) {
-
-		pubKey1, err := btcec.ParsePubKey(c.BitcoinKey1Bytes[:])
-		if err != nil {
-			return nil, err
-		}
-		pubKey2, err := btcec.ParsePubKey(c.BitcoinKey2Bytes[:])
-		if err != nil {
-			return nil, err
-		}
-
-		fundingScript, _, err := input.GenTaprootFundingScript(
-			pubKey1, pubKey2, 0,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		return fundingScript, nil
+	if err != nil {
+		return nil, err
+	}
+	pkScript, err := input.WitnessScriptHash(witnessScript)
+	if err != nil {
+		return nil, err
 	}
 
-	return legacyFundingScript()
+	return pkScript, nil
 }
 
 // AddNodeKeys is a setter-like method that can be used to replace the set of
