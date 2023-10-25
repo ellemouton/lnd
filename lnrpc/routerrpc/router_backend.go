@@ -1421,13 +1421,14 @@ func marshallWireError(msg lnwire.FailureMessage,
 		response.Code = lnrpc.Failure_INVALID_REALM
 
 	case *lnwire.FailExpiryTooSoon:
-		update, err := marshallChannelUpdate(onionErr.Update)
+		update1, update2, err := marshallChannelUpdate(onionErr.Update)
 		if err != nil {
 			return err
 		}
 
 		response.Code = lnrpc.Failure_EXPIRY_TOO_SOON
-		response.ChannelUpdate = update
+		response.ChannelUpdate = update1
+		response.ChannelUpdate_2 = update2
 
 	case *lnwire.FailExpiryTooFar:
 		response.Code = lnrpc.Failure_EXPIRY_TOO_FAR
@@ -1445,55 +1446,60 @@ func marshallWireError(msg lnwire.FailureMessage,
 		response.OnionSha_256 = onionErr.OnionSHA256[:]
 
 	case *lnwire.FailAmountBelowMinimum:
-		update, err := marshallChannelUpdate(onionErr.Update)
+		update1, update2, err := marshallChannelUpdate(onionErr.Update)
 		if err != nil {
 			return err
 
 		}
 
 		response.Code = lnrpc.Failure_AMOUNT_BELOW_MINIMUM
-		response.ChannelUpdate = update
+		response.ChannelUpdate = update1
+		response.ChannelUpdate_2 = update2
 		response.HtlcMsat = uint64(onionErr.HtlcMsat)
 
 	case *lnwire.FailFeeInsufficient:
-		update, err := marshallChannelUpdate(onionErr.Update)
+		update1, update2, err := marshallChannelUpdate(onionErr.Update)
 		if err != nil {
 			return err
 
 		}
 
 		response.Code = lnrpc.Failure_FEE_INSUFFICIENT
-		response.ChannelUpdate = update
+		response.ChannelUpdate = update1
+		response.ChannelUpdate_2 = update2
 		response.HtlcMsat = uint64(onionErr.HtlcMsat)
 
 	case *lnwire.FailIncorrectCltvExpiry:
-		update, err := marshallChannelUpdate(onionErr.Update)
+		update1, update2, err := marshallChannelUpdate(onionErr.Update)
 		if err != nil {
 			return err
 		}
 
 		response.Code = lnrpc.Failure_INCORRECT_CLTV_EXPIRY
-		response.ChannelUpdate = update
+		response.ChannelUpdate = update1
+		response.ChannelUpdate_2 = update2
 		response.CltvExpiry = onionErr.CltvExpiry
 
 	case *lnwire.FailChannelDisabled:
-		update, err := marshallChannelUpdate(onionErr.Update)
+		update1, update2, err := marshallChannelUpdate(onionErr.Update)
 		if err != nil {
 			return err
 		}
 
 		response.Code = lnrpc.Failure_CHANNEL_DISABLED
-		response.ChannelUpdate = update
+		response.ChannelUpdate = update1
+		response.ChannelUpdate_2 = update2
 		response.Flags = uint32(onionErr.Flags)
 
 	case *lnwire.FailTemporaryChannelFailure:
-		update, err := marshallChannelUpdate(onionErr.Update)
+		update1, update2, err := marshallChannelUpdate(onionErr.Update)
 		if err != nil {
 			return err
 		}
 
 		response.Code = lnrpc.Failure_TEMPORARY_CHANNEL_FAILURE
-		response.ChannelUpdate = update
+		response.ChannelUpdate = update1
+		response.ChannelUpdate_2 = update2
 
 	case *lnwire.FailRequiredNodeFeatureMissing:
 		response.Code = lnrpc.Failure_REQUIRED_NODE_FEATURE_MISSING
@@ -1532,10 +1538,10 @@ func marshallWireError(msg lnwire.FailureMessage,
 // marshallChannelUpdate marshalls a channel update as received over the wire to
 // the router rpc format.
 func marshallChannelUpdate(update lnwire.ChannelUpdate) (*lnrpc.ChannelUpdate,
-	error) {
+	*lnrpc.ChannelUpdate2, error) {
 
 	if update == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	switch upd := update.(type) {
@@ -1553,10 +1559,26 @@ func marshallChannelUpdate(update lnwire.ChannelUpdate) (*lnrpc.ChannelUpdate,
 			FeeRate:         upd.FeeRate,
 			HtlcMaximumMsat: uint64(upd.HtlcMaximumMsat),
 			ExtraOpaqueData: upd.ExtraOpaqueData,
+		}, nil, nil
+
+	case *lnwire.ChannelUpdate2:
+		return nil, &lnrpc.ChannelUpdate2{
+			Signature:       upd.Signature.RawBytes(),
+			ChainHash:       upd.ChainHash[:],
+			ChanId:          upd.ShortChannelID.ToUint64(),
+			BlockHeight:     upd.BlockHeight,
+			DisabledFlags:   uint32(upd.DisabledFlags),
+			Direction:       upd.Direction,
+			TimeLockDelta:   uint32(upd.CLTVExpiryDelta),
+			BaseFee:         upd.FeeBaseMsat,
+			FeeRate:         upd.FeeProportionalMillionths,
+			HtlcMinimumMsat: uint64(upd.HTLCMinimumMsat),
+			HtlcMaximumMsat: uint64(upd.HTLCMaximumMsat),
+			ExtraOpaqueData: upd.ExtraOpaqueData,
 		}, nil
 
 	default:
-		return nil, fmt.Errorf("unhandled implementation of "+
+		return nil, nil, fmt.Errorf("unhandled implementation of "+
 			"lnwire.ChannelUpdate: %T", update)
 	}
 }
