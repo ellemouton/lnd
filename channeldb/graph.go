@@ -286,6 +286,7 @@ func (c *ChannelGraph) getChannelMap(edges kvdb.RBucket) (
 		// Skip embedded buckets.
 		if bytes.Equal(k, edgeIndexBucket) ||
 			bytes.Equal(k, edgeUpdateIndexBucket) ||
+			bytes.Equal(k, edgeUpdateIndex2Bucket) ||
 			bytes.Equal(k, zombieBucket) ||
 			bytes.Equal(k, disabledEdgePolicyBucket) ||
 			bytes.Equal(k, channelPointBucket) {
@@ -388,6 +389,10 @@ func initChannelGraph(db kvdb.Backend) error {
 			return err
 		}
 		_, err = edges.CreateBucketIfNotExists(edgeUpdateIndexBucket)
+		if err != nil {
+			return err
+		}
+		_, err = edges.CreateBucketIfNotExists(edgeUpdateIndex2Bucket)
 		if err != nil {
 			return err
 		}
@@ -1242,7 +1247,6 @@ func (c *ChannelGraph) HasChannelEdge1(
 	// exclusive lock and check the cache again in case another method added
 	// the entry to the cache while no lock was held.
 	if entry, ok := c.rejectCache.get(chanID); ok && entry.times != nil {
-		c.cacheMu.RUnlock()
 		upd1Time = time.Unix(entry.times.upd1Time, 0)
 		upd2Time = time.Unix(entry.times.upd2Time, 0)
 		exists, isZombie = entry.flags.unpack()
@@ -1359,7 +1363,6 @@ func (c *ChannelGraph) HasChannelEdge2(
 	// exclusive lock and check the cache again in case another method added
 	// the entry to the cache while no lock was held.
 	if entry, ok := c.rejectCache.get(chanID); ok && entry.blocks != nil {
-		c.cacheMu.RUnlock()
 		exists, isZombie = entry.flags.unpack()
 
 		return entry.blocks.updBlock1, entry.blocks.updBlock2, exists,
@@ -2121,6 +2124,7 @@ func (c *ChannelGraph) ChanUpdatesInHorizon(startTime,
 		if edgeIndex == nil {
 			return ErrGraphNoEdgesFound
 		}
+		// TODO(elle)
 		edgeUpdateIndex := edges.NestedReadBucket(edgeUpdateIndexBucket)
 		if edgeUpdateIndex == nil {
 			return ErrGraphNoEdgesFound

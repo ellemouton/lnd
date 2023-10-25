@@ -169,6 +169,8 @@ type Config struct {
 	// order to be included in the LN graph.
 	Router routing.ChannelGraphSource
 
+	BestBlockView chainntnfs.BestBlockView
+
 	// ChanSeries is an interfaces that provides access to a time series
 	// view of the current known channel graph. Each GossipSyncer enabled
 	// peer will utilize this in order to create and respond to channel
@@ -1652,21 +1654,43 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 			}
 		}
 
-		e, ok := edge.(*channeldb.ChannelEdgePolicy1)
-		if !ok {
-			return fmt.Errorf("expected channel edge policy 1")
-		}
+		switch e := edge.(type) {
+		case *channeldb.ChannelEdgePolicy1:
+			timeElapsed := now.Sub(e.LastUpdate)
 
-		timeElapsed := now.Sub(e.LastUpdate)
+			// If it's been longer than RebroadcastInterval since
+			// we've re-broadcasted the channel, add the channel to
+			// the set of edges we need to update.
+			if timeElapsed >= d.cfg.RebroadcastInterval {
+				edgesToUpdate = append(edgesToUpdate,
+					updateTuple{
+						info: info,
+						edge: e,
+					},
+				)
+			}
 
-		// If it's been longer than RebroadcastInterval since we've
-		// re-broadcasted the channel, add the channel to the set of
-		// edges we need to update.
-		if timeElapsed >= d.cfg.RebroadcastInterval {
-			edgesToUpdate = append(edgesToUpdate, updateTuple{
-				info: info,
-				edge: e,
-			})
+		case *channeldb.ChannelEdgePolicy2:
+			bestHeight, err := d.cfg.BestBlockView.BestHeight()
+			if err != nil {
+				return err
+			}
+
+			blocksSince := bestHeight - e.BlockHeight
+
+			// If it's been longer than RebroadcastInterval since
+			// we've re-broadcasted the channel, add the channel to
+			// the set of edges we need to update.
+			if blocksSince >=
+				uint32(d.cfg.RebroadcastInterval.Hours()*6) {
+
+				edgesToUpdate = append(edgesToUpdate,
+					updateTuple{
+						info: info,
+						edge: e,
+					},
+				)
+			}
 		}
 
 		return nil
@@ -2186,11 +2210,16 @@ func (d *AuthenticatedGossiper) updateChannel(edgeInfo models.ChannelEdgeInfo,
 		edgeInfo.GetChainHash(), edge,
 	)
 
+	bestHeight, err := d.cfg.BestBlockView.BestHeight()
+	if err != nil {
+		return nil, nil, err
+	}
+
 	// We'll generate a new signature over a digest of the channel
 	// announcement itself and update the timestamp to ensure it propagate.
 	err = netann.SignChannelUpdate(
 		d.cfg.AnnSigner, d.selfKeyLoc, chanUpdate,
-		netann.ChanUpdSetTimestamp,
+		netann.ChanUpdSetTimestamp(bestHeight),
 	)
 	if err != nil {
 		return nil, nil, err

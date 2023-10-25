@@ -702,6 +702,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		ApplyChannelUpdate:       s.applyChannelUpdate,
 		DB:                       s.chanStateDB,
 		Graph:                    dbs.GraphDB.ChannelGraph(),
+		BestBlockView:            cc.BestBlockTracker,
 	}
 
 	chanStatusMgr, err := netann.NewChanStatusManager(chanStatusMgrCfg)
@@ -1030,6 +1031,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		FindBaseByAlias:         s.aliasMgr.FindBaseSCID,
 		GetAlias:                s.aliasMgr.GetPeerAlias,
 		FindChannel:             s.findChannel,
+		BestBlockView:           cc.BestBlockTracker,
 	}, nodeKeyDesc)
 
 	s.localChanMgr = &localchans.Manager{

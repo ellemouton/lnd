@@ -32,22 +32,33 @@ func ChanUpdSetDisable(disabled bool) ChannelUpdateModifier {
 // ChanUpdSetTimestamp is a functional option that sets the timestamp of the
 // update to the current time, or increments it if the timestamp is already in
 // the future.
-func ChanUpdSetTimestamp(update lnwire.ChannelUpdate) {
-	// TODO(elle): here
-	switch upd := update.(type) {
-	case *lnwire.ChannelUpdate1:
-		newTimestamp := uint32(time.Now().Unix())
-		if newTimestamp <= upd.Timestamp {
-			// Increment the prior value to ensure the timestamp
-			// monotonically increases, otherwise the update won't
-			// propagate.
-			newTimestamp = upd.Timestamp + 1
-		}
-		upd.Timestamp = newTimestamp
+func ChanUpdSetTimestamp(bestBlockHeight uint32) ChannelUpdateModifier {
+	return func(update lnwire.ChannelUpdate) {
+		switch upd := update.(type) {
+		case *lnwire.ChannelUpdate1:
+			newTimestamp := uint32(time.Now().Unix())
+			if newTimestamp <= upd.Timestamp {
+				// Increment the prior value to ensure the
+				// timestamp monotonically increases, otherwise
+				// the update won't propagate.
+				newTimestamp = upd.Timestamp + 1
+			}
+			upd.Timestamp = newTimestamp
 
-	default:
-		log.Errorf("unhandled implementation of "+
-			"lnwire.ChannelUpdate: %T", update)
+		case *lnwire.ChannelUpdate2:
+			newBlockHeight := bestBlockHeight
+			if newBlockHeight <= upd.BlockHeight {
+				// Increment the prior value to ensure the
+				// blockHeight monotonically increases,
+				// otherwise the update won't propagate.
+				newBlockHeight = upd.BlockHeight + 1
+			}
+			upd.BlockHeight = newBlockHeight
+
+		default:
+			log.Errorf("unhandled implementation of "+
+				"lnwire.ChannelUpdate: %T", update)
+		}
 	}
 }
 
