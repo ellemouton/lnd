@@ -28,9 +28,11 @@ var (
 )
 
 type horizonQuery struct {
-	chain chainhash.Hash
-	start time.Time
-	end   time.Time
+	chain      chainhash.Hash
+	start      time.Time
+	end        time.Time
+	startBlock uint32
+	endBlock   uint32
 }
 type filterRangeReq struct {
 	startHeight, endHeight uint32
@@ -82,10 +84,11 @@ func (m *mockChannelGraphTimeSeries) HighestChanID(chain chainhash.Hash) (*lnwir
 	return &m.highestID, nil
 }
 func (m *mockChannelGraphTimeSeries) UpdatesInHorizon(chain chainhash.Hash,
-	startTime time.Time, endTime time.Time) ([]lnwire.Message, error) {
+	startTime time.Time, endTime time.Time, startBlock, endBlock uint32) (
+	[]lnwire.Message, error) {
 
 	m.horizonReq <- horizonQuery{
-		chain, startTime, endTime,
+		chain, startTime, endTime, startBlock, endBlock,
 	}
 
 	return <-m.horizonResp, nil
@@ -2166,10 +2169,14 @@ func TestGossipSyncerSyncTransitions(t *testing.T) {
 				// horizon sent to the remote peer indicating
 				// that it would like to receive any future
 				// updates.
+				firstBlock := uint32(latestKnownHeight)
+				blockRange := uint32(math.MaxUint32)
 				firstTimestamp := uint32(time.Now().Unix())
 				assertMsgSent(t, msgChan, &lnwire.GossipTimestampRange{
-					FirstTimestamp: firstTimestamp,
-					TimestampRange: math.MaxUint32,
+					FirstTimestamp:   firstTimestamp,
+					TimestampRange:   math.MaxUint32,
+					FirstBlockHeight: &firstBlock,
+					BlockRange:       &blockRange,
 				})
 
 				syncState := g.syncState()

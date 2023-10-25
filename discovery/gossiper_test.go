@@ -731,6 +731,14 @@ func mockFindChannel(node *btcec.PublicKey, chanID lnwire.ChannelID) (
 	return nil, nil
 }
 
+type mockBestBlockView struct {
+	chainntnfs.BestBlockView
+}
+
+func (m *mockBestBlockView) BestHeight() (uint32, error) {
+	return 0, nil
+}
+
 type testCtx struct {
 	gossiper           *AuthenticatedGossiper
 	router             *mockGraphSource
@@ -832,6 +840,7 @@ func createTestCtx(t *testing.T, startHeight uint32) (*testCtx, error) {
 		FindBaseByAlias:       findBaseByAlias,
 		GetAlias:              getAlias,
 		FindChannel:           mockFindChannel,
+		BestBlockView:         &mockBestBlockView{},
 	}, selfKeyDesc)
 
 	if err := gossiper.Start(); err != nil {
