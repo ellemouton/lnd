@@ -43,9 +43,22 @@ type AnnounceSignatures1 struct {
 	ExtraOpaqueData ExtraOpaqueData
 }
 
+func (a *AnnounceSignatures1) isAnnouncementSig() {
+}
+
+func (a *AnnounceSignatures1) SCID() ShortChannelID {
+	return a.ShortChannelID
+}
+
+func (a *AnnounceSignatures1) ChanID() ChannelID {
+	return a.ChannelID
+}
+
 // A compile time check to ensure AnnounceSignatures1 implements the
 // lnwire.Message interface.
 var _ Message = (*AnnounceSignatures1)(nil)
+
+var _ AnnounceSignatures = (*AnnounceSignatures1)(nil)
 
 // Decode deserializes a serialized AnnounceSignatures1 stored in the passed
 // io.Reader observing the specified protocol version.

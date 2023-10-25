@@ -52,3 +52,12 @@ type ChannelUpdate interface { //nolint:interfacebloat
 
 	Message
 }
+
+type AnnounceSignatures interface {
+	SCID() ShortChannelID
+	ChanID() ChannelID
+
+	isAnnouncementSig()
+
+	Message
+}

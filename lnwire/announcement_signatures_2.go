@@ -74,3 +74,14 @@ func (a *AnnouncementSignatures2) Encode(w *bytes.Buffer, _ uint32) error {
 func (a *AnnouncementSignatures2) MsgType() MessageType {
 	return MsgAnnouncementSignatures2
 }
+
+func (a *AnnouncementSignatures2) SCID() ShortChannelID {
+	return a.ShortChannelID
+}
+
+func (a *AnnouncementSignatures2) ChanID() ChannelID {
+	return a.ChannelID
+}
+
+func (a *AnnouncementSignatures2) isAnnouncementSig() {
+}
