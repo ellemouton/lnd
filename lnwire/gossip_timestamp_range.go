@@ -5,6 +5,12 @@ import (
 	"io"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/lightningnetwork/lnd/tlv"
+)
+
+const (
+	TimeStampRangeFirstBlockType tlv.Type = 2
+	TimeStampRangeBlockRangeType tlv.Type = 4
 )
 
 // GossipTimestampRange is a message that allows the sender to restrict the set
@@ -26,6 +32,9 @@ type GossipTimestampRange struct {
 	// FirstTimestamp + TimestampRange.
 	TimestampRange uint32
 
+	FirstBlockHeight *uint32
+	BlockRange       *uint32
+
 	// ExtraData is the set of data that was appended to this message to
 	// fill out the full maximum transport message size. These fields can
 	// be used to specify optional data such as custom TLV fields.
@@ -46,12 +55,51 @@ var _ Message = (*GossipTimestampRange)(nil)
 //
 // This is part of the lnwire.Message interface.
 func (g *GossipTimestampRange) Decode(r io.Reader, pver uint32) error {
-	return ReadElements(r,
+	err := ReadElements(r,
 		g.ChainHash[:],
 		&g.FirstTimestamp,
 		&g.TimestampRange,
-		&g.ExtraData,
 	)
+	if err != nil {
+		return err
+	}
+
+	var (
+		firstBlock uint32
+		blockRange uint32
+	)
+	records := []tlv.Record{
+		tlv.MakePrimitiveRecord(
+			TimeStampRangeFirstBlockType, &firstBlock,
+		),
+		tlv.MakePrimitiveRecord(
+			TimeStampRangeBlockRangeType, &blockRange,
+		),
+	}
+
+	var tlvRecords ExtraOpaqueData
+	if err := ReadElements(r, &tlvRecords); err != nil {
+		return err
+	}
+
+	typeMap, err := tlvRecords.ExtractRecords(records...)
+	if err != nil {
+		return err
+	}
+
+	if _, ok := typeMap[TimeStampRangeFirstBlockType]; ok {
+		g.FirstBlockHeight = &firstBlock
+	}
+
+	if _, ok := typeMap[TimeStampRangeBlockRangeType]; ok {
+		g.BlockRange = &blockRange
+	}
+
+	if len(tlvRecords) != 0 {
+		g.ExtraData = tlvRecords
+	}
+
+	return nil
 }
 
 // Encode serializes the target GossipTimestampRange into the passed io.Writer
@@ -68,6 +116,27 @@ func (g *GossipTimestampRange) Encode(w *bytes.Buffer, pver uint32) error {
 	}
 
 	if err := WriteUint32(w, g.TimestampRange); err != nil {
+		return err
+	}
+
+	var records []tlv.Record
+
+	if g.FirstBlockHeight != nil {
+		records = append(records, tlv.MakePrimitiveRecord(
+			TimeStampRangeFirstBlockType,
+			g.FirstBlockHeight,
+		))
+	}
+
+	if g.BlockRange != nil {
+		records = append(records, tlv.MakePrimitiveRecord(
+			TimeStampRangeBlockRangeType,
+			g.BlockRange,
+		))
+	}
+
+	err := EncodeMessageExtraDataFromRecords(&g.ExtraData, records...)
+	if err != nil {
 		return err
 	}
 

@@ -984,6 +984,28 @@ func TestLightningWireProtocol(t *testing.T) {
 
 			v[0] = reflect.ValueOf(req)
 		},
+		MsgGossipTimestampRange: func(v []reflect.Value, r *rand.Rand) {
+			req := GossipTimestampRange{
+				FirstTimestamp:   rand.Uint32(),
+				TimestampRange:   rand.Uint32(),
+				FirstBlockHeight: nil,
+				BlockRange:       nil,
+				ExtraData:        make([]byte, 0),
+			}
+
+			_, err := rand.Read(req.ChainHash[:])
+			require.NoError(t, err)
+
+			// Sometimes add a block range.
+			if r.Int31()%2 == 0 {
+				firstBlock := rand.Uint32()
+				blockRange := rand.Uint32()
+				req.FirstBlockHeight = &firstBlock
+				req.BlockRange = &blockRange
+			}
+
+			v[0] = reflect.ValueOf(req)
+		},
 		MsgQueryShortChanIDs: func(v []reflect.Value, r *rand.Rand) {
 			req := QueryShortChanIDs{
 				ExtraData: make([]byte, 0),
