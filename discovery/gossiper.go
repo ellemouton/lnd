@@ -2026,7 +2026,7 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(
 	// A new authenticated channel edge update has arrived. This indicates
 	// that the directional information for an already known channel has
 	// been updated.
-	case *lnwire.ChannelUpdate1:
+	case lnwire.ChannelUpdate:
 		return d.handleChanUpdate(nMsg, msg, schedulerOp)
 
 	// A new signature announcement has been received. This indicates
@@ -2126,8 +2126,8 @@ func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
 		// can safely delete the local proof from the database.
 		return chanInfo.GetAuthProof() != nil
 
-	case *lnwire.ChannelUpdate1:
-		_, p1, p2, err := d.cfg.Router.GetChannelByID(msg.ShortChannelID)
+	case lnwire.ChannelUpdate:
+		_, p1, p2, err := d.cfg.Router.GetChannelByID(msg.SCID())
 
 		// If the channel cannot be found, it is most likely a leftover
 		// message for a channel that was closed, so we can consider it
@@ -2137,7 +2137,7 @@ func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
 		}
 		if err != nil {
 			log.Debugf("Unable to retrieve channel=%v from graph: "+
-				"%v", msg.ShortChannelID, err)
+				"%v", msg.SCID(), err)
 			return false
 		}
 
@@ -2161,7 +2161,7 @@ func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
 		if err != nil {
 			log.Errorf("Unable to check if stored policy is "+
 				"after message for channel=%v: %v",
-				msg.ShortChannelID, err)
+				msg.SCID(), err)
 
 			return false
 		}
@@ -2704,10 +2704,10 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 			// Reprocess the message, making sure we return an
 			// error to the original caller in case the gossiper
 			// shuts down.
-			case *lnwire.ChannelUpdate1:
-				log.Debugf("Reprocessing ChannelUpdate1 for "+
+			case lnwire.ChannelUpdate:
+				log.Debugf("Reprocessing ChannelUpdate for "+
 					"shortChanID=%v",
-					msg.ShortChannelID.ToUint64())
+					msg.SCID().ToUint64())
 
 				select {
 				case d.networkMsgs <- updMsg:

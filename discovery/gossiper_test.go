@@ -2801,7 +2801,7 @@ func TestRetransmit(t *testing.T) {
 			switch msg.(type) {
 			case *lnwire.ChannelAnnouncement1:
 				chanAnn++
-			case *lnwire.ChannelUpdate1:
+			case lnwire.ChannelUpdate:
 				chanUpd++
 			case *lnwire.NodeAnnouncement:
 				nodeAnn++
@@ -3286,7 +3286,7 @@ func TestSendChannelUpdateReliably(t *testing.T) {
 		}
 
 		switch msg := msg.(type) {
-		case *lnwire.ChannelUpdate1:
+		case lnwire.ChannelUpdate:
 			assertMessage(t, staleChannelUpdate, msg)
 		case *lnwire.AnnounceSignatures:
 			assertMessage(t, batch.localProofAnn, msg)

@@ -121,6 +121,18 @@ type ChannelUpdate1 struct {
 	ExtraOpaqueData ExtraOpaqueData
 }
 
+func (a *ChannelUpdate1) GetMinHTLC() MilliSatoshi {
+	return a.HtlcMinimumMsat
+}
+
+func (a *ChannelUpdate1) GetMaxHTLC() MilliSatoshi {
+	return a.HtlcMaximumMsat
+}
+
+func (a *ChannelUpdate1) HasMaxHTLCSet() bool {
+	return a.MessageFlags.HasMaxHtlc()
+}
+
 func (a *ChannelUpdate1) CmpAge(update ChannelUpdate) (int, error) {
 	other, ok := update.(*ChannelUpdate1)
 	if !ok {

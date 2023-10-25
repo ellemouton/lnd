@@ -1989,6 +1989,12 @@ func messageSummary(msg lnwire.Message) string {
 			msg.ShortChannelID.ToUint64(), msg.MessageFlags,
 			msg.ChannelFlags, time.Unix(int64(msg.Timestamp), 0))
 
+	case *lnwire.ChannelUpdate2:
+		return fmt.Sprintf("chain_hash=%v, short_chan_id=%v, "+
+			"id_disabled=%v, is_node_1=%v, block_height=%v",
+			msg.ChainHash, msg.ShortChannelID.ToUint64(),
+			msg.IsDisabled(), msg.IsNode1(), msg.BlockHeight)
+
 	case *lnwire.NodeAnnouncement:
 		return fmt.Sprintf("node=%x, update_time=%v",
 			msg.NodeID, time.Unix(int64(msg.Timestamp), 0))

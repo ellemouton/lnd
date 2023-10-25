@@ -34,12 +34,15 @@ type ChannelUpdate interface { //nolint:interfacebloat
 	IsNode1() bool
 	SetDisabled(bool)
 	IsDisabled() bool
+	HasMaxHTLCSet() bool
 	GetChainHash() chainhash.Hash
 	SetSig(signature input.Signature) error
 	SetSCID(scid ShortChannelID)
 	GetTimeLock() uint16
 	GetBaseFee() MilliSatoshi
 	GetFeeRate() MilliSatoshi
+	GetMinHTLC() MilliSatoshi
+	GetMaxHTLC() MilliSatoshi
 	GetSignature() Sig
 	CmpAge(update ChannelUpdate) (int, error)
 

@@ -121,6 +121,14 @@ type ChannelUpdate2 struct {
 	ExtraOpaqueData ExtraOpaqueData
 }
 
+func (c *ChannelUpdate2) GetMinHTLC() MilliSatoshi {
+	return c.HTLCMinimumMsat
+}
+
+func (c *ChannelUpdate2) GetMaxHTLC() MilliSatoshi {
+	return c.HTLCMaximumMsat
+}
+
 var _ ChannelUpdate = (*ChannelUpdate2)(nil)
 
 func (c *ChannelUpdate2) CmpAge(update ChannelUpdate) (int, error) {
@@ -190,6 +198,10 @@ func (c *ChannelUpdate2) GetFeeRate() MilliSatoshi {
 
 func (c *ChannelUpdate2) GetSignature() Sig {
 	return c.Signature
+}
+
+func (c *ChannelUpdate2) HasMaxHTLCSet() bool {
+	return true
 }
 
 // Decode deserializes a serialized AnnounceSignatures stored in the passed
