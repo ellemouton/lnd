@@ -349,6 +349,19 @@ func (c *ChannelUpdate2) DigestToSignNoHash() ([]byte, error) {
 	), nil
 }
 
+func (c *ChannelUpdate2) DigestToSign() ([]byte, error) {
+	data, err := c.DataToSign()
+	if err != nil {
+		return nil, err
+	}
+
+	hash := MsgHash(
+		"channel_announcement_2", "announcement_signature", data,
+	)
+
+	return hash[:], nil
+}
+
 func (c *ChannelUpdate2) DataToSign() ([]byte, error) {
 	// The chain-hash record is only included if it is _not_ equal to the
 	// bitcoin mainnet genisis block hash.

@@ -181,6 +181,28 @@ func (s *MessageStore) DeleteMessage(msg lnwire.Message,
 			}
 		}
 
+		if msg, ok := msg.(*lnwire.ChannelUpdate2); ok {
+			// Deleting a value from a bucket that doesn't exist
+			// acts as a NOP, so we'll return if a message doesn't
+			// exist under this key.
+			v := messageStore.Get(msgKey)
+			if v == nil {
+				return nil
+			}
+
+			dbMsg, err := lnwire.ReadMessage(bytes.NewReader(v), 0)
+			if err != nil {
+				return err
+			}
+
+			// If the block heights don't match, then the update
+			// stored should be the latest one, so we'll avoid
+			// deleting it.
+			if msg.BlockHeight != dbMsg.(*lnwire.ChannelUpdate2).BlockHeight {
+				return nil
+			}
+		}
+
 		return messageStore.Delete(msgKey)
 	})
 }

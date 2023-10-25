@@ -194,13 +194,7 @@ func ValidateNodeAnn(a *lnwire.NodeAnnouncement) error {
 // signed by the node's private key, and (2) that the announcement's message
 // flags and optional fields are sane.
 func ValidateChannelUpdateAnn(pubKey *btcec.PublicKey, capacity btcutil.Amount,
-	a lnwire.ChannelUpdate) error {
-
-	update, ok := a.(*lnwire.ChannelUpdate1)
-	if !ok {
-		return fmt.Errorf("unhandled implementation of "+
-			"lnwire.ChannelUpdate: %T", a)
-	}
+	update lnwire.ChannelUpdate) error {
 
 	if err := ValidateChannelUpdateFields(capacity, update); err != nil {
 		return err
@@ -217,6 +211,8 @@ func VerifyChannelUpdateSignature(msg lnwire.ChannelUpdate,
 	switch m := msg.(type) {
 	case *lnwire.ChannelUpdate1:
 		return verifyChannelUpdate1Signature(m, pubKey)
+	case *lnwire.ChannelUpdate2:
+		return verifyChannelUpdate2Signature(m, pubKey)
 	default:
 		return fmt.Errorf("unhandled implementation of "+
 			"lnwire.ChannelUpdate: %T", msg)
@@ -238,6 +234,27 @@ func verifyChannelUpdate1Signature(msg *lnwire.ChannelUpdate1,
 	}
 
 	if !nodeSig.Verify(dataHash, pubKey) {
+		return fmt.Errorf("invalid signature for channel update %v",
+			spew.Sdump(msg))
+	}
+
+	return nil
+}
+
+func verifyChannelUpdate2Signature(msg *lnwire.ChannelUpdate2,
+	pubKey *btcec.PublicKey) error {
+
+	digest, err := msg.DigestToSign()
+	if err != nil {
+		return fmt.Errorf("unable to reconstruct message data: %v", err)
+	}
+
+	nodeSig, err := msg.Signature.ToSignature()
+	if err != nil {
+		return err
+	}
+
+	if !nodeSig.Verify(digest, pubKey) {
 		return fmt.Errorf("invalid signature for channel update %v",
 			spew.Sdump(msg))
 	}
