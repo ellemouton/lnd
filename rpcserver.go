@@ -5986,45 +5986,43 @@ func marshalExtraOpaqueData(data []byte) map[uint64][]byte {
 func marshalDBEdge(edgeInfo models.ChannelEdgeInfo,
 	edge1, edge2 models.ChannelEdgePolicy) (*lnrpc.ChannelEdge, error) {
 
-	var (
-		c1, c2 *channeldb.ChannelEdgePolicy1
-		ok     bool
-	)
-	if edge1 != nil {
-		if c1, ok = edge1.(*channeldb.ChannelEdgePolicy1); !ok {
-			return nil, fmt.Errorf("wanted edge policy 1")
-		}
-	}
-
-	if edge2 != nil {
-		if c2, ok = edge2.(*channeldb.ChannelEdgePolicy1); !ok {
-			return nil, fmt.Errorf("wanted edge policy 1")
-		}
-	}
-
-	// Make sure the policies match the node they belong to. c1 should point
-	// to the policy for NodeKey1, and c2 for NodeKey2.
-	if c1 != nil && c1.ChannelFlags&lnwire.ChanUpdateDirection == 1 ||
-		c2 != nil && c2.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
-
-		c2, c1 = c1, c2
-	}
-
-	var lastUpdate int64
-	if c1 != nil {
-		lastUpdate = c1.LastUpdate.Unix()
-	}
-	if c2 != nil && c2.LastUpdate.Unix() > lastUpdate {
-		lastUpdate = c2.LastUpdate.Unix()
-	}
-
-	var edge *lnrpc.ChannelEdge
-
 	switch info := edgeInfo.(type) {
 	case *channeldb.ChannelEdgeInfo1:
+		var (
+			c1, c2 *channeldb.ChannelEdgePolicy1
+			ok     bool
+		)
+		if edge1 != nil {
+			if c1, ok = edge1.(*channeldb.ChannelEdgePolicy1); !ok {
+				return nil, fmt.Errorf("wanted edge policy 1")
+			}
+		}
+
+		if edge2 != nil {
+			if c2, ok = edge2.(*channeldb.ChannelEdgePolicy1); !ok {
+				return nil, fmt.Errorf("wanted edge policy 1")
+			}
+		}
+
+		// Make sure the policies match the node they belong to. c1 should point
+		// to the policy for NodeKey1, and c2 for NodeKey2.
+		if c1 != nil && c1.ChannelFlags&lnwire.ChanUpdateDirection == 1 ||
+			c2 != nil && c2.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
+
+			c2, c1 = c1, c2
+		}
+
+		var lastUpdate int64
+		if c1 != nil {
+			lastUpdate = c1.LastUpdate.Unix()
+		}
+		if c2 != nil && c2.LastUpdate.Unix() > lastUpdate {
+			lastUpdate = c2.LastUpdate.Unix()
+		}
+
 		customRecords := marshalExtraOpaqueData(info.ExtraOpaqueData)
 
-		edge = &lnrpc.ChannelEdge{
+		edge := &lnrpc.ChannelEdge{
 			ChannelId: info.ChannelID,
 			ChanPoint: info.ChannelPoint.String(),
 			// TODO(roasbeef): update should be on edge info itself
@@ -6040,22 +6038,73 @@ func marshalDBEdge(edgeInfo models.ChannelEdgeInfo,
 		}
 
 		if c1 != nil {
-			edge.Node1Policy = marshalDBRoutingPolicy(c1)
+			edge.Node1Policy = marshalDBRoutingPolicy1(c1)
 		}
 
 		if c2 != nil {
-			edge.Node2Policy = marshalDBRoutingPolicy(c2)
+			edge.Node2Policy = marshalDBRoutingPolicy1(c2)
 		}
 
+		return edge, nil
+
+	case *channeldb.ChannelEdgeInfo2:
+		var (
+			c1, c2 *channeldb.ChannelEdgePolicy2
+			ok     bool
+		)
+		if edge1 != nil {
+			if c1, ok = edge1.(*channeldb.ChannelEdgePolicy2); !ok {
+				return nil, fmt.Errorf("wanted edge policy 2")
+			}
+		}
+
+		if edge2 != nil {
+			if c2, ok = edge2.(*channeldb.ChannelEdgePolicy2); !ok {
+				return nil, fmt.Errorf("wanted edge policy 2")
+			}
+		}
+
+		// Make sure the policies match the node they belong to. c1
+		// should point to the policy for NodeKey1, and c2 for NodeKey2.
+		if c1 != nil && !c1.IsNode1() || c2 != nil && c2.IsNode1() {
+			c2, c1 = c1, c2
+		}
+
+		var lastUpdateBlock uint32
+		if c1 != nil {
+			lastUpdateBlock = c1.BlockHeight
+		}
+		if c2 != nil && c2.BlockHeight > lastUpdateBlock {
+			lastUpdateBlock = c2.BlockHeight
+		}
+
+		customRecords := marshalExtraOpaqueData(info.ExtraOpaqueData)
+
+		edge := &lnrpc.ChannelEdge{
+			ChannelId:     info.ShortChannelID.ToUint64(),
+			ChanPoint:     info.ChannelPoint.String(),
+			Node1Pub:      hex.EncodeToString(info.NodeID1[:]),
+			Node2Pub:      hex.EncodeToString(info.NodeID2[:]),
+			Capacity:      int64(edgeInfo.GetCapacity()),
+			CustomRecords: customRecords,
+		}
+
+		if c1 != nil {
+			edge.Node1Policy = marshalDBRoutingPolicy2(c1)
+		}
+
+		if c2 != nil {
+			edge.Node2Policy = marshalDBRoutingPolicy2(c2)
+		}
+
+		return edge, nil
 	default:
 		return nil, fmt.Errorf("unhandled implementation of "+
-			"channeldb.ChannelEdgeInfo: %T", edgeInfo)
+			"models.ChannelEdgePolicy: %T", edgeInfo)
 	}
-
-	return edge, nil
 }
 
-func marshalDBRoutingPolicy(
+func marshalDBRoutingPolicy1(
 	policy *channeldb.ChannelEdgePolicy1) *lnrpc.RoutingPolicy {
 
 	disabled := policy.ChannelFlags&lnwire.ChanUpdateDisabled != 0
@@ -6070,6 +6119,23 @@ func marshalDBRoutingPolicy(
 		FeeRateMilliMsat: int64(policy.FeeProportionalMillionths),
 		Disabled:         disabled,
 		LastUpdate:       uint32(policy.LastUpdate.Unix()),
+		CustomRecords:    customRecords,
+	}
+}
+
+func marshalDBRoutingPolicy2(
+	policy *channeldb.ChannelEdgePolicy2) *lnrpc.RoutingPolicy {
+
+	customRecords := marshalExtraOpaqueData(policy.ExtraOpaqueData)
+
+	return &lnrpc.RoutingPolicy{
+		TimeLockDelta:    uint32(policy.CLTVExpiryDelta),
+		MinHtlc:          int64(policy.HTLCMinimumMsat),
+		MaxHtlcMsat:      uint64(policy.HTLCMaximumMsat),
+		FeeBaseMsat:      int64(policy.FeeBaseMsat),
+		FeeRateMilliMsat: int64(policy.FeeProportionalMillionths),
+		Disabled:         policy.IsDisabled(),
+		BlockHeight:      policy.BlockHeight,
 		CustomRecords:    customRecords,
 	}
 }

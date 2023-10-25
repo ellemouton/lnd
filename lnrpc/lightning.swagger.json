@@ -6823,6 +6823,10 @@
           "type": "integer",
           "format": "int64"
         },
+        "block_height": {
+          "type": "integer",
+          "format": "int64"
+        },
         "custom_records": {
           "type": "object",
           "additionalProperties": {
