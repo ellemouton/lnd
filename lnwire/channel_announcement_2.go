@@ -223,6 +223,9 @@ func (c *ChannelAnnouncement2) DigestToSign() (*chainhash.Hash, error) {
 	return hash, nil
 }
 
+func (a *ChannelAnnouncement2) isChannelAnnouncement() {
+}
+
 func (c *ChannelAnnouncement2) DataToSign() ([]byte, error) {
 	// The chain-hash record is only included if it is _not_ equal to the
 	// bitcoin mainnet genisis block hash.

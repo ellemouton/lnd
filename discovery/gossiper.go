@@ -1860,8 +1860,8 @@ func remotePubFromChanInfo(chanInfo models.ChannelEdgeInfo, isNode1 bool) [33]by
 // to receive the remote peer's proof, while the remote peer is able to fully
 // assemble the proof and craft the ChannelAnnouncement1.
 func (d *AuthenticatedGossiper) processRejectedEdge(
-	chanAnnMsg lnwire.ChannelAnnouncement,
-	proof *channeldb.ChannelAuthProof1) ([]networkMsg, error) {
+	chanAnnMsg lnwire.ChannelAnnouncement, proof models.ChannelAuthProof) (
+	[]networkMsg, error) {
 
 	scid := chanAnnMsg.SCID()
 
@@ -2525,7 +2525,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 		chainHash = ann.GetChainHash()
 	)
 
-	log.Debugf("Processing ChannelAnnouncement1: peer=%v, short_chan_id=%v",
+	log.Debugf("Processing ChannelAnnouncement: peer=%v, short_chan_id=%v",
 		nMsg.peer, scid.ToUint64())
 
 	// We'll ignore any channel announcements that target any chain other
@@ -2582,7 +2582,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 
 	// If this is a remote channel announcement, then we'll validate all
 	// the signatures within the proof as it should be well formed.
-	var proof *channeldb.ChannelAuthProof1
+	var proof models.ChannelAuthProof
 	if nMsg.isRemote {
 		if err := routing.ValidateChannelAnn(ann); err != nil {
 			err := fmt.Errorf("unable to validate announcement: "+
@@ -3535,8 +3535,8 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 	return announcements, true
 }
 
-func buildChanProof(ann lnwire.ChannelAnnouncement) (
-	*channeldb.ChannelAuthProof1, error) {
+func buildChanProof(ann lnwire.ChannelAnnouncement) (models.ChannelAuthProof,
+	error) {
 
 	switch a := ann.(type) {
 	case *lnwire.ChannelAnnouncement1:
@@ -3545,6 +3545,11 @@ func buildChanProof(ann lnwire.ChannelAnnouncement) (
 			NodeSig2Bytes:    a.NodeSig2.ToSignatureBytes(),
 			BitcoinSig1Bytes: a.BitcoinSig1.ToSignatureBytes(),
 			BitcoinSig2Bytes: a.BitcoinSig2.ToSignatureBytes(),
+		}, nil
+
+	case *lnwire.ChannelAnnouncement2:
+		return &channeldb.ChannelAuthProof2{
+			SchnorrSigBytes: a.Signature.ToSignatureBytes(),
 		}, nil
 	default:
 		return nil, fmt.Errorf("unhandled lnwire.ChannelAnnouncement "+
@@ -3587,6 +3592,22 @@ func buildEdgeInfo(ann lnwire.ChannelAnnouncement, opts *optionalMsgFields) (
 
 		return edge, nil
 
+	case *lnwire.ChannelAnnouncement2:
+		edge := &channeldb.ChannelEdgeInfo2{
+			ChannelAnnouncement2: *a,
+			ChannelPoint:         wire.OutPoint{},
+		}
+
+		// If there were any optional message fields provided, we'll
+		// include them in its serialized disk representation now.
+		if opts != nil {
+			if opts.channelPoint != nil {
+				cp := *opts.channelPoint
+				edge.ChannelPoint = cp
+			}
+		}
+
+		return edge, nil
 	default:
 		return nil, fmt.Errorf("unhandled lnwire.ChannelAnnouncement "+
 			"implementation: %T", a)

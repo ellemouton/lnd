@@ -25,6 +25,10 @@ type ChannelAnnouncement interface {
 	// 2 in the channel.
 	Node2KeyBytes() [33]byte
 
+	// Unexported method to ensure that other types can't implement this
+	// interface without explicit knowledge thereof.
+	isChannelAnnouncement()
+
 	Message
 }
 

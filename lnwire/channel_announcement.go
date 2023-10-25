@@ -62,6 +62,9 @@ type ChannelAnnouncement1 struct {
 // lnwire.Message interface.
 var _ Message = (*ChannelAnnouncement1)(nil)
 
+func (a *ChannelAnnouncement1) isChannelAnnouncement() {
+}
+
 // Decode deserializes a serialized ChannelAnnouncement1 stored in the passed
 // io.Reader observing the specified protocol version.
 //
