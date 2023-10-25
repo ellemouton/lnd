@@ -1275,14 +1275,13 @@ func (g *GossipSyncer) FilterGossipMsgs(msgs ...msgWithSenders) {
 	// channel updates for a channel.
 	chanUpdateIndex := make(map[lnwire.ShortChannelID][]lnwire.ChannelUpdate)
 	for _, msg := range msgs {
-		// TODO(elle): here
-		chanUpdate, ok := msg.msg.(*lnwire.ChannelUpdate1)
+		chanUpdate, ok := msg.msg.(lnwire.ChannelUpdate)
 		if !ok {
 			continue
 		}
 
-		chanUpdateIndex[chanUpdate.ShortChannelID] = append(
-			chanUpdateIndex[chanUpdate.ShortChannelID], chanUpdate,
+		chanUpdateIndex[chanUpdate.SCID()] = append(
+			chanUpdateIndex[chanUpdate.SCID()], chanUpdate,
 		)
 	}
 
