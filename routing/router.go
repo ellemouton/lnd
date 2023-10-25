@@ -2944,56 +2944,101 @@ func (r *ChannelRouter) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 		isNode1  = update.IsNode1()
 	)
 
-	// TODO(elle): here
-	upd, ok := update.(*lnwire.ChannelUpdate1)
-	if !ok {
-		log.Error("Expected Chan update 1")
+	switch upd := update.(type) {
+	case *lnwire.ChannelUpdate1:
+		timestamp := time.Unix(int64(upd.Timestamp), 0)
 
-		return false
-	}
+		edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
+			r.cfg.Graph.HasChannelEdge1(chanID.ToUint64())
+		if err != nil {
+			log.Debugf("Check stale edge policy got error: %v", err)
+			return false
 
-	timestamp := time.Unix(int64(upd.Timestamp), 0)
-
-	edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
-		r.cfg.Graph.HasChannelEdge1(chanID.ToUint64())
-	if err != nil {
-		log.Debugf("Check stale edge policy got error: %v", err)
-		return false
-
-	}
-
-	// If we know of the edge as a zombie, then we'll make some additional
-	// checks to determine if the new policy is fresh.
-	if isZombie {
-		// When running with AssumeChannelValid, we also prune channels
-		// if both of their edges are disabled. We'll mark the new
-		// policy as stale if it remains disabled.
-		if r.cfg.AssumeChannelValid {
-			if disabled {
-				return true
-			}
 		}
 
-		// Otherwise, we'll fall back to our usual ChannelPruneExpiry.
-		return time.Since(timestamp) > r.cfg.ChannelPruneExpiry
-	}
+		// If we know of the edge as a zombie, then we'll make some
+		// additional checks to determine if the new policy is fresh.
+		if isZombie {
+			// When running with AssumeChannelValid, we also prune
+			// channels if both of their edges are disabled. We'll
+			// mark the new policy as stale if it remains disabled.
+			if r.cfg.AssumeChannelValid {
+				if disabled {
+					return true
+				}
+			}
 
-	// If we don't know of the edge, then it means it's fresh (thus not
-	// stale).
-	if !exists {
-		return false
-	}
+			// Otherwise, we'll fall back to our usual
+			// ChannelPruneExpiry.
+			return time.Since(timestamp) > r.cfg.ChannelPruneExpiry
+		}
 
-	// As edges are directional edge node has a unique policy for the
-	// direction of the edge they control. Therefore we first check if we
-	// already have the most up to date information for that edge. If so,
-	// then we can exit early.
-	switch {
-	case isNode1:
-		return !edge1Timestamp.Before(timestamp)
+		// If we don't know of the edge, then it means it's fresh (thus
+		// not stale).
+		if !exists {
+			return false
+		}
 
-	case !isNode1:
-		return !edge2Timestamp.Before(timestamp)
+		// As edges are directional edge node has a unique policy for the
+		// direction of the edge they control. Therefore we first check if we
+		// already have the most up to date information for that edge. If so,
+		// then we can exit early.
+		switch {
+		case isNode1:
+			return !edge1Timestamp.Before(timestamp)
+
+		case !isNode1:
+			return !edge2Timestamp.Before(timestamp)
+		}
+
+	case *lnwire.ChannelUpdate2:
+		height := upd.BlockHeight
+
+		edge1Height, edge2Height, exists, isZombie, err :=
+			r.cfg.Graph.HasChannelEdge2(chanID.ToUint64())
+		if err != nil {
+			log.Debugf("Check stale edge policy got error: %v", err)
+			return false
+
+		}
+
+		// If we know of the edge as a zombie, then we'll make some
+		// additional checks to determine if the new policy is fresh.
+		if isZombie {
+			// When running with AssumeChannelValid, we also prune
+			// channels if both of their edges are disabled. We'll
+			// mark the new policy as stale if it remains disabled.
+			if r.cfg.AssumeChannelValid {
+				if disabled {
+					return true
+				}
+			}
+
+			// Otherwise, we'll fall back to our usual
+			// ChannelPruneExpiry.
+			blocksSince := r.SyncedHeight() - height
+
+			return blocksSince >
+				uint32(r.cfg.ChannelPruneExpiry.Hours()*6)
+		}
+
+		// If we don't know of the edge, then it means it's fresh (thus
+		// not stale).
+		if !exists {
+			return false
+		}
+
+		// As edges are directional edge node has a unique policy for the
+		// direction of the edge they control. Therefore we first check if we
+		// already have the most up to date information for that edge. If so,
+		// then we can exit early.
+		switch {
+		case isNode1:
+			return edge1Height >= height
+
+		case !isNode1:
+			return edge2Height >= height
+		}
 	}
 
 	return false
