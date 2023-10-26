@@ -152,7 +152,7 @@ func (v *ValidationBarrier) InitJobDependencies(job interface{}) {
 		return
 	case *channeldb.LightningNode:
 		return
-	case *lnwire.AnnounceSignatures:
+	case *lnwire.AnnounceSignatures1:
 		// TODO(roasbeef): need to wait on chan ann?
 		return
 	}
@@ -215,7 +215,7 @@ func (v *ValidationBarrier) WaitForDependants(job interface{}) error {
 
 	// Other types of jobs can be executed immediately, so we'll just
 	// return directly.
-	case *lnwire.AnnounceSignatures:
+	case *lnwire.AnnounceSignatures1:
 		// TODO(roasbeef): need to wait on chan ann?
 	case *channeldb.ChannelEdgeInfo:
 	case *lnwire.ChannelAnnouncement:
@@ -300,7 +300,7 @@ func (v *ValidationBarrier) SignalDependants(job interface{}, allow bool) {
 		shortID := lnwire.NewShortChanIDFromInt(msg.ChannelID)
 		delete(v.chanEdgeDependencies, shortID)
 
-	case *lnwire.AnnounceSignatures:
+	case *lnwire.AnnounceSignatures1:
 		return
 	}
 }
