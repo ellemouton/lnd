@@ -52,7 +52,7 @@ type mockChannelGraphTimeSeries struct {
 	annResp chan []lnwire.Message
 
 	updateReq  chan lnwire.ShortChannelID
-	updateResp chan []*lnwire.ChannelUpdate
+	updateResp chan []*lnwire.ChannelUpdate1
 }
 
 func newMockChannelGraphTimeSeries(
@@ -74,7 +74,7 @@ func newMockChannelGraphTimeSeries(
 		annResp: make(chan []lnwire.Message, 1),
 
 		updateReq:  make(chan lnwire.ShortChannelID, 1),
-		updateResp: make(chan []*lnwire.ChannelUpdate, 1),
+		updateResp: make(chan []*lnwire.ChannelUpdate1, 1),
 	}
 }
 
@@ -149,7 +149,7 @@ func (m *mockChannelGraphTimeSeries) FetchChanAnns(chain chainhash.Hash,
 	return <-m.annResp, nil
 }
 func (m *mockChannelGraphTimeSeries) FetchChanUpdates(chain chainhash.Hash,
-	shortChanID lnwire.ShortChannelID) ([]*lnwire.ChannelUpdate, error) {
+	shortChanID lnwire.ShortChannelID) ([]*lnwire.ChannelUpdate1, error) {
 
 	m.updateReq <- shortChanID
 
@@ -307,7 +307,7 @@ func TestGossipSyncerFilterGossipMsgsAllInMemory(t *testing.T) {
 			},
 		},
 		{
-			msg: &lnwire.ChannelUpdate{
+			msg: &lnwire.ChannelUpdate1{
 				ShortChannelID: lnwire.NewShortChanIDFromInt(10),
 				Timestamp:      unixStamp(5),
 			},
@@ -319,7 +319,7 @@ func TestGossipSyncerFilterGossipMsgsAllInMemory(t *testing.T) {
 			},
 		},
 		{
-			msg: &lnwire.ChannelUpdate{
+			msg: &lnwire.ChannelUpdate1{
 				ShortChannelID: lnwire.NewShortChanIDFromInt(15),
 				Timestamp:      unixStamp(25002),
 			},
@@ -331,7 +331,7 @@ func TestGossipSyncerFilterGossipMsgsAllInMemory(t *testing.T) {
 			},
 		},
 		{
-			msg: &lnwire.ChannelUpdate{
+			msg: &lnwire.ChannelUpdate1{
 				ShortChannelID: lnwire.NewShortChanIDFromInt(20),
 				Timestamp:      unixStamp(999999),
 			},
@@ -365,7 +365,7 @@ func TestGossipSyncerFilterGossipMsgsAllInMemory(t *testing.T) {
 			}
 
 			// If so, then we'll send back the missing update.
-			chanSeries.updateResp <- []*lnwire.ChannelUpdate{
+			chanSeries.updateResp <- []*lnwire.ChannelUpdate1{
 				{
 					ShortChannelID: lnwire.NewShortChanIDFromInt(25),
 					Timestamp:      unixStamp(5),
@@ -547,7 +547,7 @@ func TestGossipSyncerApplyGossipFilter(t *testing.T) {
 			// For this first response, we'll send back a proper
 			// set of messages that should be echoed back.
 			chanSeries.horizonResp <- []lnwire.Message{
-				&lnwire.ChannelUpdate{
+				&lnwire.ChannelUpdate1{
 					ShortChannelID: lnwire.NewShortChanIDFromInt(25),
 					Timestamp:      unixStamp(5),
 				},
@@ -705,7 +705,7 @@ func TestGossipSyncerReplyShortChanIDs(t *testing.T) {
 		&lnwire.ChannelAnnouncement1{
 			ShortChannelID: lnwire.NewShortChanIDFromInt(20),
 		},
-		&lnwire.ChannelUpdate{
+		&lnwire.ChannelUpdate1{
 			ShortChannelID: lnwire.NewShortChanIDFromInt(20),
 			Timestamp:      unixStamp(999999),
 		},
