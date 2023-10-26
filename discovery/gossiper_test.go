@@ -466,8 +466,8 @@ type annBatch struct {
 
 	chanAnn *lnwire.ChannelAnnouncement1
 
-	chanUpdAnn1 *lnwire.ChannelUpdate
-	chanUpdAnn2 *lnwire.ChannelUpdate
+	chanUpdAnn1 *lnwire.ChannelUpdate1
+	chanUpdAnn2 *lnwire.ChannelUpdate1
 
 	localProofAnn  *lnwire.AnnounceSignatures1
 	remoteProofAnn *lnwire.AnnounceSignatures1
@@ -573,12 +573,12 @@ func createNodeAnnouncement(priv *btcec.PrivateKey,
 func createUpdateAnnouncement(blockHeight uint32,
 	flags lnwire.ChanUpdateChanFlags,
 	nodeKey *btcec.PrivateKey, timestamp uint32,
-	extraBytes ...[]byte) (*lnwire.ChannelUpdate, error) {
+	extraBytes ...[]byte) (*lnwire.ChannelUpdate1, error) {
 
 	var err error
 
 	htlcMinMsat := lnwire.MilliSatoshi(prand.Int63())
-	a := &lnwire.ChannelUpdate{
+	a := &lnwire.ChannelUpdate1{
 		ShortChannelID: lnwire.ShortChannelID{
 			BlockHeight: blockHeight,
 		},
@@ -606,7 +606,7 @@ func createUpdateAnnouncement(blockHeight uint32,
 	return a, nil
 }
 
-func signUpdate(nodeKey *btcec.PrivateKey, a *lnwire.ChannelUpdate) error {
+func signUpdate(nodeKey *btcec.PrivateKey, a *lnwire.ChannelUpdate1) error {
 	signer := mock.SingleSigner{Privkey: nodeKey}
 	sig, err := netann.SignAnnouncement(&signer, testKeyLoc, a)
 	if err != nil {
@@ -735,7 +735,7 @@ func createTestCtx(t *testing.T, startHeight uint32) (*testCtx, error) {
 		return false
 	}
 
-	signAliasUpdate := func(*lnwire.ChannelUpdate) (*ecdsa.Signature,
+	signAliasUpdate := func(*lnwire.ChannelUpdate1) (*ecdsa.Signature,
 		error) {
 
 		return nil, nil
@@ -1437,7 +1437,7 @@ func TestSignatureAnnouncementRetryAtStartup(t *testing.T) {
 		return false
 	}
 
-	signAliasUpdate := func(*lnwire.ChannelUpdate) (*ecdsa.Signature,
+	signAliasUpdate := func(*lnwire.ChannelUpdate1) (*ecdsa.Signature,
 		error) {
 
 		return nil, nil
@@ -1513,7 +1513,7 @@ out:
 	for {
 		select {
 		case msg := <-sentToPeer:
-			// Since the ChannelUpdate will also be resent as it is
+			// Since the ChannelUpdate1 will also be resent as it is
 			// sent reliably, we'll need to filter it out.
 			if _, ok := msg.(*lnwire.AnnounceSignatures1); !ok {
 				continue
@@ -1816,7 +1816,7 @@ func TestDeDuplicatedAnnouncements(t *testing.T) {
 	}
 
 	// Adding the very same announcement shouldn't cause an increase in the
-	// number of ChannelUpdate announcements stored.
+	// number of ChannelUpdate1 announcements stored.
 	ua2, err := createUpdateAnnouncement(0, 0, remoteKeyPriv1, timestamp)
 	require.NoError(t, err, "can't create update announcement")
 	announcements.AddMsgs(networkMsg{
@@ -1841,7 +1841,7 @@ func TestDeDuplicatedAnnouncements(t *testing.T) {
 		t.Fatal("channel update not replaced in batch")
 	}
 
-	assertChannelUpdate := func(channelUpdate *lnwire.ChannelUpdate) {
+	assertChannelUpdate := func(channelUpdate *lnwire.ChannelUpdate1) {
 		channelKey := channelUpdateID{
 			ua3.ShortChannelID,
 			ua3.ChannelFlags,
@@ -2360,7 +2360,7 @@ func TestProcessZombieEdgeNowLive(t *testing.T) {
 	}
 }
 
-// TestReceiveRemoteChannelUpdateFirst tests that if we receive a ChannelUpdate
+// TestReceiveRemoteChannelUpdateFirst tests that if we receive a ChannelUpdate1
 // from the remote before we have processed our own ChannelAnnouncement1, it will
 // be reprocessed later, after our ChannelAnnouncement1.
 func TestReceiveRemoteChannelUpdateFirst(t *testing.T) {
@@ -2408,7 +2408,7 @@ func TestReceiveRemoteChannelUpdateFirst(t *testing.T) {
 	case <-time.After(2 * trickleDelay):
 	}
 
-	// Since the remote ChannelUpdate was added for an edge that
+	// Since the remote ChannelUpdate1 was added for an edge that
 	// we did not already know about, it should have been added
 	// to the map of premature ChannelUpdates. Check that nothing
 	// was added to the graph.
@@ -2468,7 +2468,7 @@ func TestReceiveRemoteChannelUpdateFirst(t *testing.T) {
 		t.Fatal("gossiper did not send channel update to peer")
 	}
 
-	// At this point the remote ChannelUpdate we received earlier should
+	// At this point the remote ChannelUpdate1 we received earlier should
 	// be reprocessed, as we now have the necessary edge entry in the graph.
 	select {
 	case err := <-errRemoteAnn:
@@ -2588,7 +2588,7 @@ func TestExtraDataChannelAnnouncementValidation(t *testing.T) {
 }
 
 // TestExtraDataChannelUpdateValidation tests that we're able to properly
-// validate a ChannelUpdate that includes opaque bytes that we don't currently
+// validate a ChannelUpdate1 that includes opaque bytes that we don't currently
 // know of.
 func TestExtraDataChannelUpdateValidation(t *testing.T) {
 	t.Parallel()
@@ -2779,7 +2779,7 @@ func TestRetransmit(t *testing.T) {
 			switch msg.(type) {
 			case *lnwire.ChannelAnnouncement1:
 				chanAnn++
-			case *lnwire.ChannelUpdate:
+			case *lnwire.ChannelUpdate1:
 				chanUpd++
 			case *lnwire.NodeAnnouncement:
 				nodeAnn++
@@ -2900,7 +2900,7 @@ func TestNodeAnnouncementNoChannels(t *testing.T) {
 }
 
 // TestOptionalFieldsChannelUpdateValidation tests that we're able to properly
-// validate the msg flags and max HTLC field of a ChannelUpdate.
+// validate the msg flags and max HTLC field of a ChannelUpdate1.
 func TestOptionalFieldsChannelUpdateValidation(t *testing.T) {
 	t.Parallel()
 
@@ -3210,7 +3210,7 @@ func TestSendChannelUpdateReliably(t *testing.T) {
 	// already been announced. We'll keep track of the old message that is
 	// now stale to use later on.
 	staleChannelUpdate := batch.chanUpdAnn1
-	newChannelUpdate := &lnwire.ChannelUpdate{}
+	newChannelUpdate := &lnwire.ChannelUpdate1{}
 	*newChannelUpdate = *staleChannelUpdate
 	newChannelUpdate.Timestamp++
 	if err := signUpdate(selfKeyPriv, newChannelUpdate); err != nil {
@@ -3254,7 +3254,7 @@ func TestSendChannelUpdateReliably(t *testing.T) {
 	peerChan <- remotePeer
 
 	// At this point, we should have sent both the AnnounceSignatures1 and
-	// stale ChannelUpdate.
+	// stale ChannelUpdate1.
 	for i := 0; i < 2; i++ {
 		var msg lnwire.Message
 		select {
@@ -3264,7 +3264,7 @@ func TestSendChannelUpdateReliably(t *testing.T) {
 		}
 
 		switch msg := msg.(type) {
-		case *lnwire.ChannelUpdate:
+		case *lnwire.ChannelUpdate1:
 			assertMessage(t, staleChannelUpdate, msg)
 		case *lnwire.AnnounceSignatures1:
 			assertMessage(t, batch.localProofAnn, msg)
@@ -3374,7 +3374,7 @@ func TestPropagateChanPolicyUpdate(t *testing.T) {
 	sentMsgs := make(chan lnwire.Message, 10)
 	remotePeer := &mockPeer{remoteKey, sentMsgs, ctx.gossiper.quit}
 
-	// The forced code path for sending the private ChannelUpdate to the
+	// The forced code path for sending the private ChannelUpdate1 to the
 	// remote peer will be hit, forcing it to request a notification that
 	// the remote peer is active. We'll ensure that it targets the proper
 	// pubkey, and hand it our mock peer above.
@@ -3466,7 +3466,7 @@ out:
 	// being the channel our first private channel.
 	for i := 0; i < numChannels-1; i++ {
 		assertBroadcastMsg(t, ctx, func(msg lnwire.Message) error {
-			upd, ok := msg.(*lnwire.ChannelUpdate)
+			upd, ok := msg.(*lnwire.ChannelUpdate1)
 			if !ok {
 				return fmt.Errorf("channel update not "+
 					"broadcast, instead %T was", msg)
@@ -3486,11 +3486,11 @@ out:
 		})
 	}
 
-	// Finally the ChannelUpdate should have been sent directly to the
+	// Finally the ChannelUpdate1 should have been sent directly to the
 	// remote peer via the reliable sender.
 	select {
 	case msg := <-sentMsgs:
-		upd, ok := msg.(*lnwire.ChannelUpdate)
+		upd, ok := msg.(*lnwire.ChannelUpdate1)
 		if !ok {
 			t.Fatalf("channel update not "+
 				"broadcast, instead %T was", msg)
@@ -3508,13 +3508,13 @@ out:
 		t.Fatalf("message not sent directly to peer")
 	}
 
-	// At this point, no other ChannelUpdate messages should be broadcast
+	// At this point, no other ChannelUpdate1 messages should be broadcast
 	// as we sent the two public ones to the network, and the private one
 	// was sent directly to the peer.
 	for {
 		select {
 		case msg := <-ctx.broadcastedMessage:
-			if upd, ok := msg.msg.(*lnwire.ChannelUpdate); ok {
+			if upd, ok := msg.msg.(*lnwire.ChannelUpdate1); ok {
 				if upd.ShortChannelID == firstChanID {
 					t.Fatalf("chan update msg received: %v",
 						spew.Sdump(msg))
@@ -3840,7 +3840,7 @@ func TestRateLimitChannelUpdates(t *testing.T) {
 
 	// We'll define a helper to assert whether updates should be rate
 	// limited or not depending on their contents.
-	assertRateLimit := func(update *lnwire.ChannelUpdate, peer lnpeer.Peer,
+	assertRateLimit := func(update *lnwire.ChannelUpdate1, peer lnpeer.Peer,
 		shouldRateLimit bool) {
 
 		t.Helper()
