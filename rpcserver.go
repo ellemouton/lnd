@@ -38,6 +38,7 @@ import (
 	"github.com/lightningnetwork/lnd/chanbackup"
 	"github.com/lightningnetwork/lnd/chanfitness"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/channelnotifier"
 	"github.com/lightningnetwork/lnd/contractcourt"
 	"github.com/lightningnetwork/lnd/discovery"
@@ -5921,8 +5922,8 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// Next, for each active channel we know of within the graph, create a
 	// similar response which details both the edge information as well as
 	// the routing policies of th nodes connecting the two edges.
-	err = graph.ForEachChannel(func(edgeInfo *channeldb.ChannelEdgeInfo1,
-		c1, c2 *channeldb.ChannelEdgePolicy1) error {
+	err = graph.ForEachChannel(func(edgeInfo *models.ChannelEdgeInfo1,
+		c1, c2 *models.ChannelEdgePolicy1) error {
 
 		// Do not include unannounced channels unless specifically
 		// requested. Unannounced channels include both private channels as
@@ -5977,8 +5978,8 @@ func marshalExtraOpaqueData(data []byte) map[uint64][]byte {
 	return records
 }
 
-func marshalDbEdge(edgeInfo *channeldb.ChannelEdgeInfo1,
-	c1, c2 *channeldb.ChannelEdgePolicy1) *lnrpc.ChannelEdge {
+func marshalDbEdge(edgeInfo *models.ChannelEdgeInfo1,
+	c1, c2 *models.ChannelEdgePolicy1) *lnrpc.ChannelEdge {
 
 	// Make sure the policies match the node they belong to. c1 should point
 	// to the policy for NodeKey1, and c2 for NodeKey2.
@@ -6021,7 +6022,7 @@ func marshalDbEdge(edgeInfo *channeldb.ChannelEdgeInfo1,
 }
 
 func marshalDBRoutingPolicy(
-	policy *channeldb.ChannelEdgePolicy1) *lnrpc.RoutingPolicy {
+	policy *models.ChannelEdgePolicy1) *lnrpc.RoutingPolicy {
 
 	disabled := policy.ChannelFlags&lnwire.ChanUpdateDisabled != 0
 
@@ -6152,8 +6153,8 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 	)
 
 	if err := graph.ForEachNodeChannel(nil, node.PubKeyBytes,
-		func(_ kvdb.RTx, edge *channeldb.ChannelEdgeInfo1,
-			c1, c2 *channeldb.ChannelEdgePolicy1) error {
+		func(_ kvdb.RTx, edge *models.ChannelEdgeInfo1,
+			c1, c2 *models.ChannelEdgePolicy1) error {
 
 			numChannels++
 			totalCapacity += edge.Capacity
@@ -6765,8 +6766,8 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 
 	var feeReports []*lnrpc.ChannelFeeReport
 	err = channelGraph.ForEachNodeChannel(nil, selfNode.PubKeyBytes,
-		func(_ kvdb.RTx, chanInfo *channeldb.ChannelEdgeInfo1,
-			edgePolicy, _ *channeldb.ChannelEdgePolicy1) error {
+		func(_ kvdb.RTx, chanInfo *models.ChannelEdgeInfo1,
+			edgePolicy, _ *models.ChannelEdgePolicy1) error {
 
 			// Self node should always have policies for its
 			// channels.

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
@@ -84,12 +84,12 @@ func SignChannelUpdate(signer keychain.MessageSignerRing,
 //
 // NOTE: The passed policies can be nil.
 func ExtractChannelUpdate(ownerPubKey []byte,
-	info *channeldb.ChannelEdgeInfo1,
-	policies ...*channeldb.ChannelEdgePolicy1) (
+	info *models.ChannelEdgeInfo1,
+	policies ...*models.ChannelEdgePolicy1) (
 	*lnwire.ChannelUpdate1, error) {
 
 	// Helper function to extract the owner of the given policy.
-	owner := func(edge *channeldb.ChannelEdgePolicy1) []byte {
+	owner := func(edge *models.ChannelEdgePolicy1) []byte {
 		var pubKey *btcec.PublicKey
 		if edge.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
 			pubKey, _ = info.NodeKey1()
@@ -117,8 +117,8 @@ func ExtractChannelUpdate(ownerPubKey []byte,
 
 // UnsignedChannelUpdateFromEdge reconstructs an unsigned ChannelUpdate1 from
 // the given edge info and policy.
-func UnsignedChannelUpdateFromEdge(info *channeldb.ChannelEdgeInfo1,
-	policy *channeldb.ChannelEdgePolicy1) *lnwire.ChannelUpdate1 {
+func UnsignedChannelUpdateFromEdge(info *models.ChannelEdgeInfo1,
+	policy *models.ChannelEdgePolicy1) *lnwire.ChannelUpdate1 {
 
 	return &lnwire.ChannelUpdate1{
 		ChainHash:       info.ChainHash,
@@ -137,8 +137,8 @@ func UnsignedChannelUpdateFromEdge(info *channeldb.ChannelEdgeInfo1,
 
 // ChannelUpdateFromEdge reconstructs a signed ChannelUpdate1 from the given
 // edge info and policy.
-func ChannelUpdateFromEdge(info *channeldb.ChannelEdgeInfo1,
-	policy *channeldb.ChannelEdgePolicy1) (*lnwire.ChannelUpdate1, error) {
+func ChannelUpdateFromEdge(info *models.ChannelEdgeInfo1,
+	policy *models.ChannelEdgePolicy1) (*lnwire.ChannelUpdate1, error) {
 
 	update := UnsignedChannelUpdateFromEdge(info, policy)
 
