@@ -91,7 +91,7 @@ type mockGraphSource struct {
 
 	mu            sync.Mutex
 	nodes         []channeldb.LightningNode
-	infos         map[uint64]channeldb.ChannelEdgeInfo
+	infos         map[uint64]channeldb.ChannelEdgeInfo1
 	edges         map[uint64][]channeldb.ChannelEdgePolicy1
 	zombies       map[uint64][][33]byte
 	chansToReject map[uint64]struct{}
@@ -100,7 +100,7 @@ type mockGraphSource struct {
 func newMockRouter(height uint32) *mockGraphSource {
 	return &mockGraphSource{
 		bestHeight:    height,
-		infos:         make(map[uint64]channeldb.ChannelEdgeInfo),
+		infos:         make(map[uint64]channeldb.ChannelEdgeInfo1),
 		edges:         make(map[uint64][]channeldb.ChannelEdgePolicy1),
 		zombies:       make(map[uint64][][33]byte),
 		chansToReject: make(map[uint64]struct{}),
@@ -119,7 +119,7 @@ func (r *mockGraphSource) AddNode(node *channeldb.LightningNode,
 	return nil
 }
 
-func (r *mockGraphSource) AddEdge(info *channeldb.ChannelEdgeInfo,
+func (r *mockGraphSource) AddEdge(info *channeldb.ChannelEdgeInfo1,
 	_ ...batch.SchedulerOption) error {
 
 	r.mu.Lock()
@@ -190,7 +190,7 @@ func (r *mockGraphSource) ForEachNode(func(node *channeldb.LightningNode) error)
 }
 
 func (r *mockGraphSource) ForAllOutgoingChannels(cb func(tx kvdb.RTx,
-	i *channeldb.ChannelEdgeInfo,
+	i *channeldb.ChannelEdgeInfo1,
 	c *channeldb.ChannelEdgePolicy1) error) error {
 
 	r.mu.Lock()
@@ -221,13 +221,13 @@ func (r *mockGraphSource) ForAllOutgoingChannels(cb func(tx kvdb.RTx,
 	return nil
 }
 
-func (r *mockGraphSource) ForEachChannel(func(chanInfo *channeldb.ChannelEdgeInfo,
+func (r *mockGraphSource) ForEachChannel(func(chanInfo *channeldb.ChannelEdgeInfo1,
 	e1, e2 *channeldb.ChannelEdgePolicy1) error) error {
 	return nil
 }
 
 func (r *mockGraphSource) GetChannelByID(chanID lnwire.ShortChannelID) (
-	*channeldb.ChannelEdgeInfo,
+	*channeldb.ChannelEdgeInfo1,
 	*channeldb.ChannelEdgePolicy1,
 	*channeldb.ChannelEdgePolicy1, error) {
 
@@ -242,7 +242,7 @@ func (r *mockGraphSource) GetChannelByID(chanID lnwire.ShortChannelID) (
 			return nil, nil, nil, channeldb.ErrEdgeNotFound
 		}
 
-		return &channeldb.ChannelEdgeInfo{
+		return &channeldb.ChannelEdgeInfo1{
 			NodeKey1Bytes: pubKeys[0],
 			NodeKey2Bytes: pubKeys[1],
 		}, nil, nil, channeldb.ErrZombieEdge
@@ -3445,7 +3445,7 @@ out:
 	var edgesToUpdate []EdgeWithInfo
 	err = ctx.router.ForAllOutgoingChannels(func(
 		_ kvdb.RTx,
-		info *channeldb.ChannelEdgeInfo,
+		info *channeldb.ChannelEdgeInfo1,
 		edge *channeldb.ChannelEdgePolicy1) error {
 
 		edge.TimeLockDelta = uint16(newTimeLockDelta)

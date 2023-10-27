@@ -1241,7 +1241,7 @@ func TestAddProof(t *testing.T) {
 	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
 	// After utxo was recreated adding the edge without the proof.
-	edge := &channeldb.ChannelEdgeInfo{
+	edge := &channeldb.ChannelEdgeInfo1{
 		ChannelID:     chanID.ToUint64(),
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
@@ -1330,7 +1330,7 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 	}
 	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
-	edge := &channeldb.ChannelEdgeInfo{
+	edge := &channeldb.ChannelEdgeInfo1{
 		ChannelID:        chanID.ToUint64(),
 		NodeKey1Bytes:    pub1,
 		NodeKey2Bytes:    pub2,
@@ -1408,7 +1408,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 	}
 	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
-	edge := &channeldb.ChannelEdgeInfo{
+	edge := &channeldb.ChannelEdgeInfo1{
 		ChannelID:        chanID.ToUint64(),
 		NodeKey1Bytes:    pub1,
 		NodeKey2Bytes:    pub2,
@@ -1503,7 +1503,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 	}
 	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
-	edge = &channeldb.ChannelEdgeInfo{
+	edge = &channeldb.ChannelEdgeInfo1{
 		ChannelID: chanID.ToUint64(),
 		AuthProof: nil,
 	}
@@ -1702,7 +1702,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 	node2, err := createTestNode()
 	require.NoError(t, err, "unable to create test node")
 
-	edge1 := &channeldb.ChannelEdgeInfo{
+	edge1 := &channeldb.ChannelEdgeInfo1{
 		ChannelID:     chanID1,
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
@@ -1720,7 +1720,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
-	edge2 := &channeldb.ChannelEdgeInfo{
+	edge2 := &channeldb.ChannelEdgeInfo1{
 		ChannelID:     chanID2,
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
@@ -1910,7 +1910,7 @@ func TestDisconnectedBlocks(t *testing.T) {
 	node2, err := createTestNode()
 	require.NoError(t, err, "unable to create test node")
 
-	edge1 := &channeldb.ChannelEdgeInfo{
+	edge1 := &channeldb.ChannelEdgeInfo1{
 		ChannelID:        chanID1,
 		NodeKey1Bytes:    node1.PubKeyBytes,
 		NodeKey2Bytes:    node2.PubKeyBytes,
@@ -1930,7 +1930,7 @@ func TestDisconnectedBlocks(t *testing.T) {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
-	edge2 := &channeldb.ChannelEdgeInfo{
+	edge2 := &channeldb.ChannelEdgeInfo1{
 		ChannelID:        chanID2,
 		NodeKey1Bytes:    node1.PubKeyBytes,
 		NodeKey2Bytes:    node2.PubKeyBytes,
@@ -2061,7 +2061,7 @@ func TestRouterChansClosedOfflinePruneGraph(t *testing.T) {
 	require.NoError(t, err, "unable to create test node")
 	node2, err := createTestNode()
 	require.NoError(t, err, "unable to create test node")
-	edge1 := &channeldb.ChannelEdgeInfo{
+	edge1 := &channeldb.ChannelEdgeInfo1{
 		ChannelID:     chanID1.ToUint64(),
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
@@ -2500,7 +2500,7 @@ func TestIsStaleNode(t *testing.T) {
 	}
 	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
-	edge := &channeldb.ChannelEdgeInfo{
+	edge := &channeldb.ChannelEdgeInfo1{
 		ChannelID:        chanID.ToUint64(),
 		NodeKey1Bytes:    pub1,
 		NodeKey2Bytes:    pub2,
@@ -2576,7 +2576,7 @@ func TestIsKnownEdge(t *testing.T) {
 	}
 	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
-	edge := &channeldb.ChannelEdgeInfo{
+	edge := &channeldb.ChannelEdgeInfo1{
 		ChannelID:        chanID.ToUint64(),
 		NodeKey1Bytes:    pub1,
 		NodeKey2Bytes:    pub2,
@@ -2632,7 +2632,7 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 		t.Fatalf("router failed to detect fresh edge policy")
 	}
 
-	edge := &channeldb.ChannelEdgeInfo{
+	edge := &channeldb.ChannelEdgeInfo1{
 		ChannelID:        chanID.ToUint64(),
 		NodeKey1Bytes:    pub1,
 		NodeKey2Bytes:    pub2,
@@ -3257,7 +3257,7 @@ const (
 // newChannelEdgeInfo is a helper function used to create a new channel edge,
 // possibly skipping adding it to parts of the chain/state as well.
 func newChannelEdgeInfo(ctx *testCtx, fundingHeight uint32,
-	ecm edgeCreationModifier) (*channeldb.ChannelEdgeInfo, error) {
+	ecm edgeCreationModifier) (*channeldb.ChannelEdgeInfo1, error) {
 
 	node1, err := createTestNode()
 	if err != nil {
@@ -3276,7 +3276,7 @@ func newChannelEdgeInfo(ctx *testCtx, fundingHeight uint32,
 		return nil, fmt.Errorf("unable to create edge: %w", err)
 	}
 
-	edge := &channeldb.ChannelEdgeInfo{
+	edge := &channeldb.ChannelEdgeInfo1{
 		ChannelID:     chanID.ToUint64(),
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
@@ -3307,7 +3307,7 @@ func newChannelEdgeInfo(ctx *testCtx, fundingHeight uint32,
 }
 
 func assertChanChainRejection(t *testing.T, ctx *testCtx,
-	edge *channeldb.ChannelEdgeInfo, failCode errorCode) {
+	edge *channeldb.ChannelEdgeInfo1, failCode errorCode) {
 
 	t.Helper()
 

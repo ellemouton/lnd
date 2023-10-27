@@ -526,7 +526,7 @@ func New(cfg Config, selfKeyDesc *keychain.KeyDescriptor) *AuthenticatedGossiper
 // EdgeWithInfo contains the information that is required to update an edge.
 type EdgeWithInfo struct {
 	// Info describes the channel.
-	Info *channeldb.ChannelEdgeInfo
+	Info *channeldb.ChannelEdgeInfo1
 
 	// Edge describes the policy in one direction of the channel.
 	Edge *channeldb.ChannelEdgePolicy1
@@ -1590,7 +1590,7 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 	// Iterate over all of our channels and check if any of them fall
 	// within the prune interval or re-broadcast interval.
 	type updateTuple struct {
-		info *channeldb.ChannelEdgeInfo
+		info *channeldb.ChannelEdgeInfo1
 		edge *channeldb.ChannelEdgePolicy1
 	}
 
@@ -1600,7 +1600,7 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 	)
 	err := d.cfg.Router.ForAllOutgoingChannels(func(
 		_ kvdb.RTx,
-		info *channeldb.ChannelEdgeInfo,
+		info *channeldb.ChannelEdgeInfo1,
 		edge *channeldb.ChannelEdgePolicy1) error {
 
 		// If there's no auth proof attached to this edge, it means
@@ -1805,8 +1805,8 @@ func (d *AuthenticatedGossiper) processChanPolicyUpdate(
 }
 
 // remotePubFromChanInfo returns the public key of the remote peer given a
-// ChannelEdgeInfo that describe a channel we have with them.
-func remotePubFromChanInfo(chanInfo *channeldb.ChannelEdgeInfo,
+// ChannelEdgeInfo1 that describe a channel we have with them.
+func remotePubFromChanInfo(chanInfo *channeldb.ChannelEdgeInfo1,
 	chanFlags lnwire.ChanUpdateChanFlags) [33]byte {
 
 	var remotePubKey [33]byte
@@ -2038,7 +2038,7 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(
 // processZombieUpdate determines whether the provided channel update should
 // resurrect a given zombie edge.
 func (d *AuthenticatedGossiper) processZombieUpdate(
-	chanInfo *channeldb.ChannelEdgeInfo, msg *lnwire.ChannelUpdate1) error {
+	chanInfo *channeldb.ChannelEdgeInfo1, msg *lnwire.ChannelUpdate1) error {
 
 	// The least-significant bit in the flag on the channel update tells us
 	// which edge is being updated.
@@ -2166,7 +2166,7 @@ func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
 
 // updateChannel creates a new fully signed update for the channel, and updates
 // the underlying graph with the new state.
-func (d *AuthenticatedGossiper) updateChannel(info *channeldb.ChannelEdgeInfo,
+func (d *AuthenticatedGossiper) updateChannel(info *channeldb.ChannelEdgeInfo1,
 	edge *channeldb.ChannelEdgePolicy1) (*lnwire.ChannelAnnouncement1,
 	*lnwire.ChannelUpdate1, error) {
 
@@ -2481,7 +2481,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 		return nil, false
 	}
 
-	edge := &channeldb.ChannelEdgeInfo{
+	edge := &channeldb.ChannelEdgeInfo1{
 		ChannelID:        ann.ShortChannelID.ToUint64(),
 		ChainHash:        ann.ChainHash,
 		NodeKey1Bytes:    ann.NodeID1,

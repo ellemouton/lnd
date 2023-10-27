@@ -324,7 +324,7 @@ func TestEdgeInsertionDeletion(t *testing.T) {
 	require.NoError(t, err, "unable to generate node key")
 	node2Pub, err := node2.PubKey()
 	require.NoError(t, err, "unable to generate node key")
-	edgeInfo := ChannelEdgeInfo{
+	edgeInfo := ChannelEdgeInfo1{
 		ChannelID: chanID,
 		ChainHash: key,
 		AuthProof: &ChannelAuthProof1{
@@ -384,7 +384,7 @@ func TestEdgeInsertionDeletion(t *testing.T) {
 }
 
 func createEdge(height, txIndex uint32, txPosition uint16, outPointIndex uint32,
-	node1, node2 *LightningNode) (ChannelEdgeInfo, lnwire.ShortChannelID) {
+	node1, node2 *LightningNode) (ChannelEdgeInfo1, lnwire.ShortChannelID) {
 
 	shortChanID := lnwire.ShortChannelID{
 		BlockHeight: height,
@@ -398,7 +398,7 @@ func createEdge(height, txIndex uint32, txPosition uint16, outPointIndex uint32,
 
 	node1Pub, _ := node1.PubKey()
 	node2Pub, _ := node2.PubKey()
-	edgeInfo := ChannelEdgeInfo{
+	edgeInfo := ChannelEdgeInfo1{
 		ChannelID: shortChanID.ToUint64(),
 		ChainHash: key,
 		AuthProof: &ChannelAuthProof1{
@@ -553,8 +553,8 @@ func TestDisconnectBlockAtHeight(t *testing.T) {
 	}
 }
 
-func assertEdgeInfoEqual(t *testing.T, e1 *ChannelEdgeInfo,
-	e2 *ChannelEdgeInfo) {
+func assertEdgeInfoEqual(t *testing.T, e1 *ChannelEdgeInfo1,
+	e2 *ChannelEdgeInfo1) {
 
 	if e1.ChannelID != e2.ChannelID {
 		t.Fatalf("chan id's don't match: %v vs %v", e1.ChannelID,
@@ -615,7 +615,7 @@ func assertEdgeInfoEqual(t *testing.T, e1 *ChannelEdgeInfo,
 	}
 }
 
-func createChannelEdge(db kvdb.Backend, node1, node2 *LightningNode) (*ChannelEdgeInfo,
+func createChannelEdge(db kvdb.Backend, node1, node2 *LightningNode) (*ChannelEdgeInfo1,
 	*ChannelEdgePolicy1, *ChannelEdgePolicy1) {
 
 	var (
@@ -640,7 +640,7 @@ func createChannelEdge(db kvdb.Backend, node1, node2 *LightningNode) (*ChannelEd
 
 	// Add the new edge to the database, this should proceed without any
 	// errors.
-	edgeInfo := &ChannelEdgeInfo{
+	edgeInfo := &ChannelEdgeInfo1{
 		ChannelID: chanID,
 		ChainHash: key,
 		AuthProof: &ChannelAuthProof1{
@@ -817,7 +817,7 @@ func assertNodeNotInCache(t *testing.T, g *ChannelGraph, n route.Vertex) {
 }
 
 func assertEdgeWithNoPoliciesInCache(t *testing.T, g *ChannelGraph,
-	e *ChannelEdgeInfo) {
+	e *ChannelEdgeInfo1) {
 
 	// Let's check the internal view first.
 	require.NotEmpty(t, g.graphCache.nodeChannels[e.NodeKey1Bytes])
@@ -895,7 +895,7 @@ func assertNoEdge(t *testing.T, g *ChannelGraph, chanID uint64) {
 }
 
 func assertEdgeWithPolicyInCache(t *testing.T, g *ChannelGraph,
-	e *ChannelEdgeInfo, p *ChannelEdgePolicy1, policy1 bool) {
+	e *ChannelEdgeInfo1, p *ChannelEdgePolicy1, policy1 bool) {
 
 	// Check the internal state first.
 	c1, ok := g.graphCache.nodeChannels[e.NodeKey1Bytes][e.ChannelID]
@@ -1037,7 +1037,7 @@ func TestGraphTraversal(t *testing.T) {
 	// Iterate through all the known channels within the graph DB, once
 	// again if the map is empty that indicates that all edges have
 	// properly been reached.
-	err = graph.ForEachChannel(func(ei *ChannelEdgeInfo, _ *ChannelEdgePolicy1,
+	err = graph.ForEachChannel(func(ei *ChannelEdgeInfo1, _ *ChannelEdgePolicy1,
 		_ *ChannelEdgePolicy1) error {
 
 		delete(chanIndex, ei.ChannelID)
@@ -1051,7 +1051,7 @@ func TestGraphTraversal(t *testing.T) {
 	numNodeChans := 0
 	firstNode, secondNode := nodeList[0], nodeList[1]
 	err = graph.ForEachNodeChannel(nil, firstNode.PubKeyBytes,
-		func(_ kvdb.RTx, _ *ChannelEdgeInfo, outEdge,
+		func(_ kvdb.RTx, _ *ChannelEdgeInfo1, outEdge,
 			inEdge *ChannelEdgePolicy1) error {
 
 			// All channels between first and second node should
@@ -1131,7 +1131,7 @@ func TestGraphTraversalCacheable(t *testing.T) {
 	err = graph.db.View(func(tx kvdb.RTx) error {
 		for _, node := range nodes {
 			err := node.ForEachChannel(
-				tx, func(tx kvdb.RTx, info *ChannelEdgeInfo,
+				tx, func(tx kvdb.RTx, info *ChannelEdgeInfo1,
 					policy *ChannelEdgePolicy1,
 					policy2 *ChannelEdgePolicy1) error {
 
@@ -1251,7 +1251,7 @@ func fillTestGraph(t require.TestingT, graph *ChannelGraph, numNodes,
 				Index: 0,
 			}
 
-			edgeInfo := ChannelEdgeInfo{
+			edgeInfo := ChannelEdgeInfo1{
 				ChannelID: chanID,
 				ChainHash: key,
 				AuthProof: &ChannelAuthProof1{
@@ -1315,7 +1315,7 @@ func assertPruneTip(t *testing.T, graph *ChannelGraph, blockHash *chainhash.Hash
 
 func assertNumChans(t *testing.T, graph *ChannelGraph, n int) {
 	numChans := 0
-	if err := graph.ForEachChannel(func(*ChannelEdgeInfo, *ChannelEdgePolicy1,
+	if err := graph.ForEachChannel(func(*ChannelEdgeInfo1, *ChannelEdgePolicy1,
 		*ChannelEdgePolicy1) error {
 
 		numChans++
@@ -1432,7 +1432,7 @@ func TestGraphPruning(t *testing.T) {
 
 		channelPoints = append(channelPoints, &op)
 
-		edgeInfo := ChannelEdgeInfo{
+		edgeInfo := ChannelEdgeInfo1{
 			ChannelID: chanID,
 			ChainHash: key,
 			AuthProof: &ChannelAuthProof1{
@@ -2283,7 +2283,7 @@ func TestIncompleteChannelPolicies(t *testing.T) {
 	checkPolicies := func(node *LightningNode, expectedIn, expectedOut bool) {
 		calls := 0
 		err := graph.ForEachNodeChannel(nil, node.PubKeyBytes,
-			func(_ kvdb.RTx, _ *ChannelEdgeInfo, outEdge,
+			func(_ kvdb.RTx, _ *ChannelEdgeInfo1, outEdge,
 				inEdge *ChannelEdgePolicy1) error {
 
 				if !expectedOut && outEdge != nil {
@@ -2701,7 +2701,7 @@ func TestNodeIsPublic(t *testing.T) {
 	// After creating all of our nodes and edges, we'll add them to each
 	// participant's graph.
 	nodes := []*LightningNode{aliceNode, bobNode, carolNode}
-	edges := []*ChannelEdgeInfo{&aliceBobEdge, &bobCarolEdge}
+	edges := []*ChannelEdgeInfo1{&aliceBobEdge, &bobCarolEdge}
 	graphs := []*ChannelGraph{aliceGraph, bobGraph, carolGraph}
 	for _, graph := range graphs {
 		for _, node := range nodes {
@@ -3319,7 +3319,7 @@ func TestBatchedAddChannelEdge(t *testing.T) {
 	// Create a third edge, this with a block height of 155.
 	edgeInfo3, _ := createEdge(height-1, 0, 0, 2, node1, node2)
 
-	edges := []ChannelEdgeInfo{edgeInfo, edgeInfo2, edgeInfo3}
+	edges := []ChannelEdgeInfo1{edgeInfo, edgeInfo2, edgeInfo3}
 	errChan := make(chan error, len(edges))
 	errTimeout := errors.New("timeout adding batched channel")
 
@@ -3327,7 +3327,7 @@ func TestBatchedAddChannelEdge(t *testing.T) {
 	var wg sync.WaitGroup
 	for _, edge := range edges {
 		wg.Add(1)
-		go func(edge ChannelEdgeInfo) {
+		go func(edge ChannelEdgeInfo1) {
 			defer wg.Done()
 
 			select {
@@ -3436,7 +3436,7 @@ func BenchmarkForEachChannel(b *testing.B) {
 			for _, n := range nodes {
 				err := n.ForEachChannel(
 					tx, func(tx kvdb.RTx,
-						info *ChannelEdgeInfo,
+						info *ChannelEdgeInfo1,
 						policy *ChannelEdgePolicy1,
 						policy2 *ChannelEdgePolicy1) error {
 
@@ -3492,7 +3492,7 @@ func TestGraphCacheForEachNodeChannel(t *testing.T) {
 	// though we have a nil edge policy here.
 	var numChans int
 	err = graph.ForEachNodeChannel(nil, node1.PubKeyBytes,
-		func(tx kvdb.RTx, _ *ChannelEdgeInfo, _ *ChannelEdgePolicy1,
+		func(tx kvdb.RTx, _ *ChannelEdgeInfo1, _ *ChannelEdgePolicy1,
 			_ *ChannelEdgePolicy1) error {
 
 			numChans++

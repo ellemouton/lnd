@@ -65,7 +65,7 @@ func createChannel(t *testing.T) *channeldb.OpenChannel {
 // our `pubkey` with the direction bit set appropriately in the policies. Our
 // update will be created with the disabled bit set if startEnabled is false.
 func createEdgePolicies(t *testing.T, channel *channeldb.OpenChannel,
-	pubkey *btcec.PublicKey, startEnabled bool) (*channeldb.ChannelEdgeInfo,
+	pubkey *btcec.PublicKey, startEnabled bool) (*channeldb.ChannelEdgeInfo1,
 	*channeldb.ChannelEdgePolicy1, *channeldb.ChannelEdgePolicy1) {
 
 	var (
@@ -98,7 +98,7 @@ func createEdgePolicies(t *testing.T, channel *channeldb.OpenChannel,
 	// bit.
 	dir2 |= lnwire.ChanUpdateDirection
 
-	return &channeldb.ChannelEdgeInfo{
+	return &channeldb.ChannelEdgeInfo1{
 			ChannelPoint:  channel.FundingOutpoint,
 			NodeKey1Bytes: pubkey1,
 			NodeKey2Bytes: pubkey2,
@@ -120,7 +120,7 @@ func createEdgePolicies(t *testing.T, channel *channeldb.OpenChannel,
 type mockGraph struct {
 	mu        sync.Mutex
 	channels  []*channeldb.OpenChannel
-	chanInfos map[wire.OutPoint]*channeldb.ChannelEdgeInfo
+	chanInfos map[wire.OutPoint]*channeldb.ChannelEdgeInfo1
 	chanPols1 map[wire.OutPoint]*channeldb.ChannelEdgePolicy1
 	chanPols2 map[wire.OutPoint]*channeldb.ChannelEdgePolicy1
 	sidToCid  map[lnwire.ShortChannelID]wire.OutPoint
@@ -133,7 +133,7 @@ func newMockGraph(t *testing.T, numChannels int,
 
 	g := &mockGraph{
 		channels:  make([]*channeldb.OpenChannel, 0, numChannels),
-		chanInfos: make(map[wire.OutPoint]*channeldb.ChannelEdgeInfo),
+		chanInfos: make(map[wire.OutPoint]*channeldb.ChannelEdgeInfo1),
 		chanPols1: make(map[wire.OutPoint]*channeldb.ChannelEdgePolicy1),
 		chanPols2: make(map[wire.OutPoint]*channeldb.ChannelEdgePolicy1),
 		sidToCid:  make(map[lnwire.ShortChannelID]wire.OutPoint),
@@ -159,7 +159,7 @@ func (g *mockGraph) FetchAllOpenChannels() ([]*channeldb.OpenChannel, error) {
 }
 
 func (g *mockGraph) FetchChannelEdgesByOutpoint(
-	op *wire.OutPoint) (*channeldb.ChannelEdgeInfo,
+	op *wire.OutPoint) (*channeldb.ChannelEdgeInfo1,
 	*channeldb.ChannelEdgePolicy1, *channeldb.ChannelEdgePolicy1, error) {
 
 	g.mu.Lock()
@@ -247,7 +247,7 @@ func (g *mockGraph) addChannel(channel *channeldb.OpenChannel) {
 }
 
 func (g *mockGraph) addEdgePolicy(c *channeldb.OpenChannel,
-	info *channeldb.ChannelEdgeInfo,
+	info *channeldb.ChannelEdgeInfo1,
 	pol1, pol2 *channeldb.ChannelEdgePolicy1) {
 
 	g.mu.Lock()

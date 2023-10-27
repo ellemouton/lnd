@@ -629,7 +629,7 @@ type SelectHopHintsCfg struct {
 
 	// FetchChannelEdgesByID attempts to lookup the two directed edges for
 	// the channel identified by the channel ID.
-	FetchChannelEdgesByID func(chanID uint64) (*channeldb.ChannelEdgeInfo,
+	FetchChannelEdgesByID func(chanID uint64) (*channeldb.ChannelEdgeInfo1,
 		*channeldb.ChannelEdgePolicy1, *channeldb.ChannelEdgePolicy1,
 		error)
 
