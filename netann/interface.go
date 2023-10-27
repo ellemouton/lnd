@@ -19,5 +19,5 @@ type ChannelGraph interface {
 	// FetchChannelEdgesByOutpoint returns the channel edge info and most
 	// recent channel edge policies for a given outpoint.
 	FetchChannelEdgesByOutpoint(*wire.OutPoint) (*channeldb.ChannelEdgeInfo,
-		*channeldb.ChannelEdgePolicy, *channeldb.ChannelEdgePolicy, error)
+		*channeldb.ChannelEdgePolicy1, *channeldb.ChannelEdgePolicy1, error)
 }

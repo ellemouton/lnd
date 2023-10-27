@@ -92,7 +92,7 @@ type mockGraphSource struct {
 	mu            sync.Mutex
 	nodes         []channeldb.LightningNode
 	infos         map[uint64]channeldb.ChannelEdgeInfo
-	edges         map[uint64][]channeldb.ChannelEdgePolicy
+	edges         map[uint64][]channeldb.ChannelEdgePolicy1
 	zombies       map[uint64][][33]byte
 	chansToReject map[uint64]struct{}
 }
@@ -101,7 +101,7 @@ func newMockRouter(height uint32) *mockGraphSource {
 	return &mockGraphSource{
 		bestHeight:    height,
 		infos:         make(map[uint64]channeldb.ChannelEdgeInfo),
-		edges:         make(map[uint64][]channeldb.ChannelEdgePolicy),
+		edges:         make(map[uint64][]channeldb.ChannelEdgePolicy1),
 		zombies:       make(map[uint64][][33]byte),
 		chansToReject: make(map[uint64]struct{}),
 	}
@@ -144,14 +144,14 @@ func (r *mockGraphSource) queueValidationFail(chanID uint64) {
 	r.chansToReject[chanID] = struct{}{}
 }
 
-func (r *mockGraphSource) UpdateEdge(edge *channeldb.ChannelEdgePolicy,
+func (r *mockGraphSource) UpdateEdge(edge *channeldb.ChannelEdgePolicy1,
 	_ ...batch.SchedulerOption) error {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if len(r.edges[edge.ChannelID]) == 0 {
-		r.edges[edge.ChannelID] = make([]channeldb.ChannelEdgePolicy, 2)
+		r.edges[edge.ChannelID] = make([]channeldb.ChannelEdgePolicy1, 2)
 	}
 
 	if edge.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
@@ -191,7 +191,7 @@ func (r *mockGraphSource) ForEachNode(func(node *channeldb.LightningNode) error)
 
 func (r *mockGraphSource) ForAllOutgoingChannels(cb func(tx kvdb.RTx,
 	i *channeldb.ChannelEdgeInfo,
-	c *channeldb.ChannelEdgePolicy) error) error {
+	c *channeldb.ChannelEdgePolicy1) error) error {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -222,14 +222,14 @@ func (r *mockGraphSource) ForAllOutgoingChannels(cb func(tx kvdb.RTx,
 }
 
 func (r *mockGraphSource) ForEachChannel(func(chanInfo *channeldb.ChannelEdgeInfo,
-	e1, e2 *channeldb.ChannelEdgePolicy) error) error {
+	e1, e2 *channeldb.ChannelEdgePolicy1) error) error {
 	return nil
 }
 
 func (r *mockGraphSource) GetChannelByID(chanID lnwire.ShortChannelID) (
 	*channeldb.ChannelEdgeInfo,
-	*channeldb.ChannelEdgePolicy,
-	*channeldb.ChannelEdgePolicy, error) {
+	*channeldb.ChannelEdgePolicy1,
+	*channeldb.ChannelEdgePolicy1, error) {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -253,13 +253,13 @@ func (r *mockGraphSource) GetChannelByID(chanID lnwire.ShortChannelID) (
 		return &chanInfo, nil, nil, nil
 	}
 
-	var edge1 *channeldb.ChannelEdgePolicy
-	if !reflect.DeepEqual(edges[0], channeldb.ChannelEdgePolicy{}) {
+	var edge1 *channeldb.ChannelEdgePolicy1
+	if !reflect.DeepEqual(edges[0], channeldb.ChannelEdgePolicy1{}) {
 		edge1 = &edges[0]
 	}
 
-	var edge2 *channeldb.ChannelEdgePolicy
-	if !reflect.DeepEqual(edges[1], channeldb.ChannelEdgePolicy{}) {
+	var edge2 *channeldb.ChannelEdgePolicy1
+	if !reflect.DeepEqual(edges[1], channeldb.ChannelEdgePolicy1{}) {
 		edge2 = &edges[1]
 	}
 
@@ -359,12 +359,12 @@ func (r *mockGraphSource) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 
 	switch {
 	case flags&lnwire.ChanUpdateDirection == 0 &&
-		!reflect.DeepEqual(edges[0], channeldb.ChannelEdgePolicy{}):
+		!reflect.DeepEqual(edges[0], channeldb.ChannelEdgePolicy1{}):
 
 		return !timestamp.After(edges[0].LastUpdate)
 
 	case flags&lnwire.ChanUpdateDirection == 1 &&
-		!reflect.DeepEqual(edges[1], channeldb.ChannelEdgePolicy{}):
+		!reflect.DeepEqual(edges[1], channeldb.ChannelEdgePolicy1{}):
 
 		return !timestamp.After(edges[1].LastUpdate)
 
@@ -2480,7 +2480,7 @@ func TestReceiveRemoteChannelUpdateFirst(t *testing.T) {
 		t.Fatalf("remote update was not processed")
 	}
 
-	// Check that the ChannelEdgePolicy was added to the graph.
+	// Check that the ChannelEdgePolicy1 was added to the graph.
 	chanInfo, e1, e2, err = ctx.router.GetChannelByID(
 		batch.chanUpdAnn1.ShortChannelID,
 	)
@@ -3446,7 +3446,7 @@ out:
 	err = ctx.router.ForAllOutgoingChannels(func(
 		_ kvdb.RTx,
 		info *channeldb.ChannelEdgeInfo,
-		edge *channeldb.ChannelEdgePolicy) error {
+		edge *channeldb.ChannelEdgePolicy1) error {
 
 		edge.TimeLockDelta = uint16(newTimeLockDelta)
 		edgesToUpdate = append(edgesToUpdate, EdgeWithInfo{

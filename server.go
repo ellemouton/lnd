@@ -1232,7 +1232,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	// Wrap the DeleteChannelEdges method so that the funding manager can
 	// use it without depending on several layers of indirection.
 	deleteAliasEdge := func(scid lnwire.ShortChannelID) (
-		*channeldb.ChannelEdgePolicy, error) {
+		*channeldb.ChannelEdgePolicy1, error) {
 
 		info, e1, e2, err := s.graphDB.FetchChannelEdgesByID(
 			scid.ToUint64(),
@@ -1251,7 +1251,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		var ourKey [33]byte
 		copy(ourKey[:], nodeKeyDesc.PubKey.SerializeCompressed())
 
-		var ourPolicy *channeldb.ChannelEdgePolicy
+		var ourPolicy *channeldb.ChannelEdgePolicy1
 		if info != nil && info.NodeKey1Bytes == ourKey {
 			ourPolicy = e1
 		} else {
@@ -3095,7 +3095,7 @@ func (s *server) establishPersistentConnections() error {
 	err = s.graphDB.ForEachNodeChannel(nil, sourceNode.PubKeyBytes, func(
 		tx kvdb.RTx,
 		chanInfo *channeldb.ChannelEdgeInfo,
-		policy, _ *channeldb.ChannelEdgePolicy) error {
+		policy, _ *channeldb.ChannelEdgePolicy1) error {
 
 		// If the remote party has announced the channel to us, but we
 		// haven't yet, then we won't have a policy. However, we don't

@@ -491,7 +491,7 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 // chanCanBeHopHint returns true if the target channel is eligible to be a hop
 // hint.
 func chanCanBeHopHint(channel *HopHintInfo, cfg *SelectHopHintsCfg) (
-	*channeldb.ChannelEdgePolicy, bool) {
+	*channeldb.ChannelEdgePolicy1, bool) {
 
 	// Since we're only interested in our private channels, we'll skip
 	// public ones.
@@ -546,7 +546,7 @@ func chanCanBeHopHint(channel *HopHintInfo, cfg *SelectHopHintsCfg) (
 
 	// Now, we'll need to determine which is the correct policy for HTLCs
 	// being sent from the remote node.
-	var remotePolicy *channeldb.ChannelEdgePolicy
+	var remotePolicy *channeldb.ChannelEdgePolicy1
 	if bytes.Equal(remotePub[:], info.NodeKey1Bytes[:]) {
 		remotePolicy = p1
 	} else {
@@ -604,9 +604,9 @@ func newHopHintInfo(c *channeldb.OpenChannel, isActive bool) *HopHintInfo {
 }
 
 // newHopHint returns a new hop hint using the relevant data from a hopHintInfo
-// and a ChannelEdgePolicy.
+// and a ChannelEdgePolicy1.
 func newHopHint(hopHintInfo *HopHintInfo,
-	chanPolicy *channeldb.ChannelEdgePolicy) zpay32.HopHint {
+	chanPolicy *channeldb.ChannelEdgePolicy1) zpay32.HopHint {
 
 	return zpay32.HopHint{
 		NodeID:      hopHintInfo.RemotePubkey,
@@ -630,7 +630,7 @@ type SelectHopHintsCfg struct {
 	// FetchChannelEdgesByID attempts to lookup the two directed edges for
 	// the channel identified by the channel ID.
 	FetchChannelEdgesByID func(chanID uint64) (*channeldb.ChannelEdgeInfo,
-		*channeldb.ChannelEdgePolicy, *channeldb.ChannelEdgePolicy,
+		*channeldb.ChannelEdgePolicy1, *channeldb.ChannelEdgePolicy1,
 		error)
 
 	// GetAlias allows the peer's alias SCID to be retrieved for private
