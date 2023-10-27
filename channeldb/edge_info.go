@@ -3,6 +3,7 @@ package channeldb
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 
 	"github.com/btcsuite/btcd/wire"
@@ -10,25 +11,41 @@ import (
 	"github.com/lightningnetwork/lnd/kvdb"
 )
 
-func putChanEdgeInfo(edgeIndex kvdb.RwBucket, edgeInfo *models.ChannelEdgeInfo1,
+func putChanEdgeInfo(edgeIndex kvdb.RwBucket, edgeInfo models.ChannelEdgeInfo,
 	chanID [8]byte) error {
 
-	var b bytes.Buffer
+	switch info := edgeInfo.(type) {
+	case *models.ChannelEdgeInfo1:
+		var b bytes.Buffer
+		err := serializeChanEdgeInfo1(&b, info, chanID)
+		if err != nil {
+			return err
+		}
 
-	if _, err := b.Write(edgeInfo.NodeKey1Bytes[:]); err != nil {
+		return edgeIndex.Put(chanID[:], b.Bytes())
+	default:
+		return fmt.Errorf("unhandled implementation of "+
+			"ChannelEdgeInfo: %T", edgeInfo)
+	}
+}
+
+func serializeChanEdgeInfo1(w io.Writer, edgeInfo *models.ChannelEdgeInfo1,
+	chanID [8]byte) error {
+
+	if _, err := w.Write(edgeInfo.NodeKey1Bytes[:]); err != nil {
 		return err
 	}
-	if _, err := b.Write(edgeInfo.NodeKey2Bytes[:]); err != nil {
+	if _, err := w.Write(edgeInfo.NodeKey2Bytes[:]); err != nil {
 		return err
 	}
-	if _, err := b.Write(edgeInfo.BitcoinKey1Bytes[:]); err != nil {
+	if _, err := w.Write(edgeInfo.BitcoinKey1Bytes[:]); err != nil {
 		return err
 	}
-	if _, err := b.Write(edgeInfo.BitcoinKey2Bytes[:]); err != nil {
+	if _, err := w.Write(edgeInfo.BitcoinKey2Bytes[:]); err != nil {
 		return err
 	}
 
-	if err := wire.WriteVarBytes(&b, 0, edgeInfo.Features); err != nil {
+	if err := wire.WriteVarBytes(w, 0, edgeInfo.Features); err != nil {
 		return err
 	}
 
@@ -41,116 +58,113 @@ func putChanEdgeInfo(edgeIndex kvdb.RwBucket, edgeInfo *models.ChannelEdgeInfo1,
 		bitcoinSig2 = authProof.BitcoinSig2Bytes
 	}
 
-	if err := wire.WriteVarBytes(&b, 0, nodeSig1); err != nil {
+	if err := wire.WriteVarBytes(w, 0, nodeSig1); err != nil {
 		return err
 	}
-	if err := wire.WriteVarBytes(&b, 0, nodeSig2); err != nil {
+	if err := wire.WriteVarBytes(w, 0, nodeSig2); err != nil {
 		return err
 	}
-	if err := wire.WriteVarBytes(&b, 0, bitcoinSig1); err != nil {
+	if err := wire.WriteVarBytes(w, 0, bitcoinSig1); err != nil {
 		return err
 	}
-	if err := wire.WriteVarBytes(&b, 0, bitcoinSig2); err != nil {
+	if err := wire.WriteVarBytes(w, 0, bitcoinSig2); err != nil {
 		return err
 	}
 
-	if err := writeOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
+	if err := writeOutpoint(w, &edgeInfo.ChannelPoint); err != nil {
 		return err
 	}
-	err := binary.Write(&b, byteOrder, uint64(edgeInfo.Capacity))
+	err := binary.Write(w, byteOrder, uint64(edgeInfo.Capacity))
 	if err != nil {
 		return err
 	}
-	if _, err := b.Write(chanID[:]); err != nil {
+	if _, err := w.Write(chanID[:]); err != nil {
 		return err
 	}
-	if _, err := b.Write(edgeInfo.ChainHash[:]); err != nil {
+	if _, err := w.Write(edgeInfo.ChainHash[:]); err != nil {
 		return err
 	}
 
 	if len(edgeInfo.ExtraOpaqueData) > MaxAllowedExtraOpaqueBytes {
 		return ErrTooManyExtraOpaqueBytes(len(edgeInfo.ExtraOpaqueData))
 	}
-	err = wire.WriteVarBytes(&b, 0, edgeInfo.ExtraOpaqueData)
-	if err != nil {
-		return err
-	}
 
-	return edgeIndex.Put(chanID[:], b.Bytes())
+	return wire.WriteVarBytes(w, 0, edgeInfo.ExtraOpaqueData)
 }
 
 func fetchChanEdgeInfo(edgeIndex kvdb.RBucket,
-	chanID []byte) (models.ChannelEdgeInfo1, error) {
+	chanID []byte) (models.ChannelEdgeInfo, error) {
 
 	edgeInfoBytes := edgeIndex.Get(chanID)
 	if edgeInfoBytes == nil {
-		return models.ChannelEdgeInfo1{}, ErrEdgeNotFound
+		return nil, ErrEdgeNotFound
 	}
 
 	edgeInfoReader := bytes.NewReader(edgeInfoBytes)
+
 	return deserializeChanEdgeInfo(edgeInfoReader)
 }
 
-func deserializeChanEdgeInfo(r io.Reader) (models.ChannelEdgeInfo1, error) {
+func deserializeChanEdgeInfo(r io.Reader) (*models.ChannelEdgeInfo1, error) {
 	var (
 		err      error
 		edgeInfo models.ChannelEdgeInfo1
 	)
 
 	if _, err := io.ReadFull(r, edgeInfo.NodeKey1Bytes[:]); err != nil {
-		return models.ChannelEdgeInfo1{}, err
+		return nil, err
 	}
 	if _, err := io.ReadFull(r, edgeInfo.NodeKey2Bytes[:]); err != nil {
-		return models.ChannelEdgeInfo1{}, err
+		return nil, err
 	}
 	if _, err := io.ReadFull(r, edgeInfo.BitcoinKey1Bytes[:]); err != nil {
-		return models.ChannelEdgeInfo1{}, err
+		return nil, err
 	}
 	if _, err := io.ReadFull(r, edgeInfo.BitcoinKey2Bytes[:]); err != nil {
-		return models.ChannelEdgeInfo1{}, err
+		return nil, err
 	}
 
 	edgeInfo.Features, err = wire.ReadVarBytes(r, 0, 900, "features")
 	if err != nil {
-		return models.ChannelEdgeInfo1{}, err
+		return nil, err
 	}
 
-	proof := &models.ChannelAuthProof1{}
+	var proof models.ChannelAuthProof1
 
 	proof.NodeSig1Bytes, err = wire.ReadVarBytes(r, 0, 80, "sigs")
 	if err != nil {
-		return models.ChannelEdgeInfo1{}, err
+		return nil, err
 	}
 	proof.NodeSig2Bytes, err = wire.ReadVarBytes(r, 0, 80, "sigs")
 	if err != nil {
-		return models.ChannelEdgeInfo1{}, err
+		return nil, err
 	}
 	proof.BitcoinSig1Bytes, err = wire.ReadVarBytes(r, 0, 80, "sigs")
 	if err != nil {
-		return models.ChannelEdgeInfo1{}, err
+		return nil, err
 	}
 	proof.BitcoinSig2Bytes, err = wire.ReadVarBytes(r, 0, 80, "sigs")
 	if err != nil {
-		return models.ChannelEdgeInfo1{}, err
+		return nil, err
 	}
 
 	if !proof.IsEmpty() {
-		edgeInfo.AuthProof = proof
+		edgeInfo.AuthProof = &proof
 	}
 
 	edgeInfo.ChannelPoint = wire.OutPoint{}
 	if err := readOutpoint(r, &edgeInfo.ChannelPoint); err != nil {
-		return models.ChannelEdgeInfo1{}, err
+		return nil, err
 	}
 	if err := binary.Read(r, byteOrder, &edgeInfo.Capacity); err != nil {
-		return models.ChannelEdgeInfo1{}, err
+		return nil, err
 	}
 	if err := binary.Read(r, byteOrder, &edgeInfo.ChannelID); err != nil {
-		return models.ChannelEdgeInfo1{}, err
+		return nil, err
 	}
 
 	if _, err := io.ReadFull(r, edgeInfo.ChainHash[:]); err != nil {
-		return models.ChannelEdgeInfo1{}, err
+		return nil, err
 	}
 
 	// We'll try and see if there are any opaque bytes left, if not, then
@@ -162,8 +176,8 @@ func deserializeChanEdgeInfo(r io.Reader) (models.ChannelEdgeInfo1, error) {
 	case err == io.ErrUnexpectedEOF:
 	case err == io.EOF:
 	case err != nil:
-		return models.ChannelEdgeInfo1{}, err
+		return nil, err
 	}
 
-	return edgeInfo, nil
+	return &edgeInfo, nil
 }
