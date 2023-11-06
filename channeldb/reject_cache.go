@@ -87,7 +87,7 @@ func (e *rejectCacheEntry) update(isUpdate1 bool,
 }
 
 // rejectCache is an in-memory cache used to improve the performance of
-// HasChannelEdge1. It caches information about the whether or channel exists, as
+// HasChannelEdge. It caches information about the whether or channel exists, as
 // well as the most recent timestamps for each policy (if they exists).
 type rejectCache struct {
 	n     int

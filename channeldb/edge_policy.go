@@ -1,6 +1,7 @@
 package channeldb
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"errors"
@@ -12,28 +13,119 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/tlv"
 )
 
-func putChanEdgePolicy(edges kvdb.RwBucket, edge *models.ChannelEdgePolicy1,
+const (
+	EdgePolicy2MsgType = tlv.Type(0)
+	EdgePolicy2ToNode  = tlv.Type(1)
+
+	// chanEdgePolicyNewEncodingPrefix is a byte used in the channel edge
+	// policy encoding to signal that the new style encoding which is
+	// prefixed with a type byte is being used instead of the legacy
+	// encoding which would start with 0x02 due to the fact that the
+	// encoding would start with a DER encoded ecdsa signature.
+	chanEdgePolicyNewEncodingPrefix = 0xff
+)
+
+// edgePolicyEncoding indicates how the bytes for a channel edge policy have
+// been serialised.
+type edgePolicyEncodingType uint8
+
+const (
+	// edgePolicy2EncodingType will be used as a prefix for edge policies
+	// advertised using the ChannelUpdate2 message. The type indicates how
+	// the bytes following should be deserialized.
+	edgePolicy2EncodingType edgePolicyEncodingType = 0
+)
+
+type edgePolicyEncodingInfo struct {
+	updateBucketKey []byte
+	updateKey       []byte
+	serialize       func(w io.Writer, toNode []byte) error
+	typeByte        func() (edgePolicyEncodingType, bool)
+}
+
+func encodingInfoFromEdgePolicy(policy models.ChannelEdgePolicy) (
+	*edgePolicyEncodingInfo, error) {
+
+	switch p := policy.(type) {
+	case *models.ChannelEdgePolicy1:
+		updateUnix := uint64(p.LastUpdate.Unix())
+		var indexKey [8 + 8]byte
+		byteOrder.PutUint64(indexKey[:8], updateUnix)
+		byteOrder.PutUint64(indexKey[8:], p.ChannelID)
+
+		return &edgePolicyEncodingInfo{
+			updateBucketKey: edgeUpdateIndexBucket,
+			updateKey:       indexKey[:],
+			serialize: func(w io.Writer, toNode []byte) error {
+				return serializeChanEdgePolicy1(w, p, toNode)
+			},
+			typeByte: func() (edgePolicyEncodingType, bool) {
+				return 0, false
+			},
+		}, nil
+
+	case *models.ChannelEdgePolicy2:
+		indexKey := make([]byte, 4+8)
+		byteOrder.PutUint32(indexKey[:4], p.BlockHeight)
+		byteOrder.PutUint64(indexKey[4:], p.ShortChannelID.ToUint64())
+
+		return &edgePolicyEncodingInfo{
+			updateBucketKey: edgeUpdate2IndexBucket,
+			updateKey:       indexKey,
+			serialize: func(w io.Writer, toNode []byte) error {
+				return serializeChanEdgePolicy2(w, p, toNode)
+			},
+			typeByte: func() (edgePolicyEncodingType, bool) {
+				return edgePolicy2EncodingType, true
+			},
+		}, nil
+
+	default:
+		return nil, fmt.Errorf("unhandled implementation of the "+
+			"models.ChannelEdgePolicy interface: %T", policy)
+	}
+}
+
+func putChanEdgePolicy(edges kvdb.RwBucket, edge models.ChannelEdgePolicy,
 	from, to []byte) error {
+
+	encodingInfo, err := encodingInfoFromEdgePolicy(edge)
+	if err != nil {
+		return err
+	}
+
+	chanID := edge.SCID().ToUint64()
 
 	var edgeKey [33 + 8]byte
 	copy(edgeKey[:], from)
-	byteOrder.PutUint64(edgeKey[33:], edge.ChannelID)
+	byteOrder.PutUint64(edgeKey[33:], chanID)
 
 	var b bytes.Buffer
-	if err := serializeChanEdgePolicy(&b, edge, to); err != nil {
+	if typeByte, ok := encodingInfo.typeByte(); ok {
+		_, err := b.Write([]byte{chanEdgePolicyNewEncodingPrefix})
+		if err != nil {
+			return err
+		}
+
+		_, err = b.Write([]byte{byte(typeByte)})
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := encodingInfo.serialize(&b, to); err != nil {
 		return err
 	}
 
 	// Before we write out the new edge, we'll create a new entry in the
 	// update index in order to keep it fresh.
-	updateUnix := uint64(edge.LastUpdate.Unix())
-	var indexKey [8 + 8]byte
-	byteOrder.PutUint64(indexKey[:8], updateUnix)
-	byteOrder.PutUint64(indexKey[8:], edge.ChannelID)
-
-	updateIndex, err := edges.CreateBucketIfNotExists(edgeUpdateIndexBucket)
+	indexKey := encodingInfo.updateKey
+	updateIndex, err := edges.CreateBucketIfNotExists(
+		encodingInfo.updateBucketKey,
+	)
 	if err != nil {
 		return err
 	}
@@ -63,12 +155,12 @@ func putChanEdgePolicy(edges kvdb.RwBucket, edge *models.ChannelEdgePolicy1,
 			return err
 		}
 
-		oldUpdateTime := uint64(oldEdgePolicy.LastUpdate.Unix())
+		info, err := encodingInfoFromEdgePolicy(oldEdgePolicy)
+		if err != nil {
+			return err
+		}
 
-		var oldIndexKey [8 + 8]byte
-		byteOrder.PutUint64(oldIndexKey[:8], oldUpdateTime)
-		byteOrder.PutUint64(oldIndexKey[8:], edge.ChannelID)
-
+		oldIndexKey := info.updateKey
 		if err := updateIndex.Delete(oldIndexKey[:]); err != nil {
 			return err
 		}
@@ -79,9 +171,7 @@ func putChanEdgePolicy(edges kvdb.RwBucket, edge *models.ChannelEdgePolicy1,
 	}
 
 	err = updateEdgePolicyDisabledIndex(
-		edges, edge.ChannelID,
-		edge.ChannelFlags&lnwire.ChanUpdateDirection > 0,
-		edge.IsDisabled(),
+		edges, chanID, !edge.IsNode1(), edge.IsDisabled(),
 	)
 	if err != nil {
 		return err
@@ -140,7 +230,7 @@ func putChanEdgePolicyUnknown(edges kvdb.RwBucket, channelID uint64,
 }
 
 func fetchChanEdgePolicy(edges kvdb.RBucket, chanID []byte, nodePub []byte) (
-	*models.ChannelEdgePolicy1, error) {
+	models.ChannelEdgePolicy, error) {
 
 	var edgeKey [33 + 8]byte
 	copy(edgeKey[:], nodePub)
@@ -173,7 +263,7 @@ func fetchChanEdgePolicy(edges kvdb.RBucket, chanID []byte, nodePub []byte) (
 }
 
 func fetchChanEdgePolicies(edgeIndex kvdb.RBucket, edges kvdb.RBucket,
-	chanID []byte) (*models.ChannelEdgePolicy1, *models.ChannelEdgePolicy1,
+	chanID []byte) (models.ChannelEdgePolicy, models.ChannelEdgePolicy,
 	error) {
 
 	edgeInfoBytes := edgeIndex.Get(chanID)
@@ -201,7 +291,34 @@ func fetchChanEdgePolicies(edgeIndex kvdb.RBucket, edges kvdb.RBucket,
 	return edge1, edge2, nil
 }
 
-func serializeChanEdgePolicy(w io.Writer, edge *models.ChannelEdgePolicy1,
+func serializeChanEdgePolicy2(w io.Writer, edge *models.ChannelEdgePolicy2,
+	to []byte) error {
+
+	if len(edge.ExtraOpaqueData) > MaxAllowedExtraOpaqueBytes {
+		return ErrTooManyExtraOpaqueBytes(len(edge.ExtraOpaqueData))
+	}
+
+	var b bytes.Buffer
+	if err := edge.Encode(&b, 0); err != nil {
+		return err
+	}
+
+	msg := b.Bytes()
+
+	records := []tlv.Record{
+		tlv.MakePrimitiveRecord(EdgePolicy2MsgType, &msg),
+		tlv.MakePrimitiveRecord(EdgePolicy2ToNode, &to),
+	}
+
+	stream, err := tlv.NewStream(records...)
+	if err != nil {
+		return err
+	}
+
+	return stream.Encode(w)
+}
+
+func serializeChanEdgePolicy1(w io.Writer, edge *models.ChannelEdgePolicy1,
 	to []byte) error {
 
 	err := wire.WriteVarBytes(w, 0, edge.SigBytes)
@@ -267,7 +384,7 @@ func serializeChanEdgePolicy(w io.Writer, edge *models.ChannelEdgePolicy1,
 	return wire.WriteVarBytes(w, 0, opaqueBuf.Bytes())
 }
 
-func deserializeChanEdgePolicy(r io.Reader) (*models.ChannelEdgePolicy1,
+func deserializeChanEdgePolicy(r io.Reader) (models.ChannelEdgePolicy,
 	error) {
 
 	// Deserialize the policy. Note that in case an optional field is not
@@ -282,7 +399,83 @@ func deserializeChanEdgePolicy(r io.Reader) (*models.ChannelEdgePolicy1,
 	return edge, deserializeErr
 }
 
-func deserializeChanEdgePolicyRaw(r io.Reader) (*models.ChannelEdgePolicy1,
+func deserializeChanEdgePolicyRaw(reader io.Reader) (models.ChannelEdgePolicy,
+	error) {
+
+	// Wrap the io.Reader in a bufio.Reader so that we can peak the first
+	// byte of the stream without actually consuming from the stream.
+	r := bufio.NewReader(reader)
+
+	firstByte, err := r.Peek(1)
+	if err != nil {
+		return nil, err
+	}
+
+	if firstByte[0] != chanEdgePolicyNewEncodingPrefix {
+		return deserializeChanEdgePolicy1Raw(r)
+	}
+
+	// Pop the encoding type byte.
+	var scratch [1]byte
+	if _, err = r.Read(scratch[:]); err != nil {
+		return nil, err
+	}
+
+	// Now, read the encoding type byte.
+	if _, err = r.Read(scratch[:]); err != nil {
+		return nil, err
+	}
+
+	encoding := edgePolicyEncodingType(scratch[0])
+	switch encoding {
+	case edgePolicy2EncodingType:
+		return deserializeChanEdgePolicy2Raw(r)
+
+	default:
+		return nil, fmt.Errorf("unknown edge policy encoding "+
+			"type: %d", encoding)
+	}
+}
+
+func deserializeChanEdgePolicy2Raw(r io.Reader) (*models.ChannelEdgePolicy2,
+	error) {
+
+	var (
+		msgBytes []byte
+		toNode   [33]byte
+	)
+
+	records := []tlv.Record{
+		tlv.MakePrimitiveRecord(EdgePolicy2MsgType, &msgBytes),
+		tlv.MakePrimitiveRecord(EdgePolicy2ToNode, &toNode),
+	}
+
+	stream, err := tlv.NewStream(records...)
+	if err != nil {
+		return nil, err
+	}
+
+	err = stream.Decode(r)
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		chanUpdate lnwire.ChannelUpdate2
+		reader     = bytes.NewReader(msgBytes)
+	)
+	err = chanUpdate.Decode(reader, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.ChannelEdgePolicy2{
+		ChannelUpdate2: chanUpdate,
+		ToNode:         toNode,
+	}, nil
+}
+
+func deserializeChanEdgePolicy1Raw(r io.Reader) (*models.ChannelEdgePolicy1,
 	error) {
 
 	var edge models.ChannelEdgePolicy1
