@@ -3004,7 +3004,7 @@ func TestEdgePolicyMissingMaxHtcl(t *testing.T) {
 	edge1.ExtraOpaqueData = nil
 
 	var b bytes.Buffer
-	err = serializeChanEdgePolicy(&b, edge1, to)
+	err = serializeChanEdgePolicy1(&b, edge1, to)
 	if err != nil {
 		t.Fatalf("unable to serialize policy")
 	}
@@ -3014,7 +3014,7 @@ func TestEdgePolicyMissingMaxHtcl(t *testing.T) {
 	edge1.MessageFlags = lnwire.ChanUpdateRequiredMaxHtlc
 	edge1.MaxHTLC = 13928598
 	var b2 bytes.Buffer
-	err = serializeChanEdgePolicy(&b2, edge1, to)
+	err = serializeChanEdgePolicy1(&b2, edge1, to)
 	if err != nil {
 		t.Fatalf("unable to serialize policy")
 	}
