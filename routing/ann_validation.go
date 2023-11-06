@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/davecgh/go-spew/spew"
@@ -12,10 +13,24 @@ import (
 	"github.com/lightningnetwork/lnd/lnwire"
 )
 
-// ValidateChannelAnn validates the channel announcement message and checks
+// ValidateChannelAnn validates the signature(s) of a channel announcement
+// message.
+func ValidateChannelAnn(a lnwire.ChannelAnnouncement) error {
+	switch ann := a.(type) {
+	case *lnwire.ChannelAnnouncement1:
+		return validateChannelAnn1(ann)
+	case *lnwire.ChannelAnnouncement2:
+		return validateChannelAnn2(ann)
+	default:
+		return fmt.Errorf("unhandled lnwire.ChannelAnnouncement "+
+			"implementation: %T", ann)
+	}
+}
+
+// validateChannelAnn1 validates the channel announcement message and checks
 // that node signatures covers the announcement message, and that the bitcoin
 // signatures covers the node keys.
-func ValidateChannelAnn(a *lnwire.ChannelAnnouncement1) error {
+func validateChannelAnn1(a *lnwire.ChannelAnnouncement1) error {
 	// First, we'll compute the digest (h) which is to be signed by each of
 	// the keys included within the node announcement message. This hash
 	// digest includes all the keys, so the (up to 4 signatures) will
@@ -82,7 +97,61 @@ func ValidateChannelAnn(a *lnwire.ChannelAnnouncement1) error {
 	}
 
 	return nil
+}
 
+// validateChannelAnn2 validates the channel announcement 2 message and checks
+// that schnorr signature is valid.
+func validateChannelAnn2(a *lnwire.ChannelAnnouncement2) error {
+	dataHash, err := a.DigestToSign()
+	if err != nil {
+		return err
+	}
+
+	sig, err := a.Signature.ToSignature()
+	if err != nil {
+		return err
+	}
+
+	nodeKey1, err := btcec.ParsePubKey(a.NodeID1[:])
+	if err != nil {
+		return err
+	}
+
+	nodeKey2, err := btcec.ParsePubKey(a.NodeID2[:])
+	if err != nil {
+		return err
+	}
+
+	keys := []*btcec.PublicKey{
+		nodeKey1, nodeKey2,
+	}
+
+	if a.BitcoinKey1 != nil && a.BitcoinKey2 != nil {
+		bitcoinKey1, err := btcec.ParsePubKey(a.BitcoinKey1[:])
+		if err != nil {
+			return err
+		}
+
+		bitcoinKey2, err := btcec.ParsePubKey(a.BitcoinKey2[:])
+		if err != nil {
+			return err
+		}
+
+		keys = append(keys, bitcoinKey1, bitcoinKey2)
+	}
+
+	// TODO(elle): handle non-nil merkle root hash.
+
+	aggKey, _, _, err := musig2.AggregateKeys(keys, true)
+	if err != nil {
+		return err
+	}
+
+	if !sig.Verify(dataHash.CloneBytes(), aggKey.FinalKey) {
+		return fmt.Errorf("invalid sig")
+	}
+
+	return nil
 }
 
 // ValidateNodeAnn validates the node announcement by ensuring that the
@@ -163,27 +232,51 @@ func VerifyChannelUpdateSignature(msg *lnwire.ChannelUpdate1,
 // ValidateChannelUpdateFields validates a channel update's message flags and
 // corresponding update fields.
 func ValidateChannelUpdateFields(capacity btcutil.Amount,
-	msg *lnwire.ChannelUpdate1) error {
+	msg lnwire.ChannelUpdate) error {
 
-	// The maxHTLC flag is mandatory.
-	if !msg.MessageFlags.HasMaxHtlc() {
-		return errors.Errorf("max htlc flag not set for channel "+
-			"update %v", spew.Sdump(msg))
-	}
+	switch m := msg.(type) {
+	case *lnwire.ChannelUpdate1:
+		// The maxHTLC flag is mandatory.
+		if !m.MessageFlags.HasMaxHtlc() {
+			return errors.Errorf("max htlc flag not set for "+
+				"channel update %v", spew.Sdump(m))
+		}
 
-	maxHtlc := msg.HtlcMaximumMsat
-	if maxHtlc == 0 || maxHtlc < msg.HtlcMinimumMsat {
-		return errors.Errorf("invalid max htlc for channel "+
-			"update %v", spew.Sdump(msg))
-	}
+		maxHtlc := m.HtlcMaximumMsat
+		if maxHtlc == 0 || maxHtlc < m.HtlcMinimumMsat {
+			return errors.Errorf("invalid max htlc for channel "+
+				"update %v", spew.Sdump(m))
+		}
 
-	// For light clients, the capacity will not be set so we'll skip
-	// checking whether the MaxHTLC value respects the channel's
-	// capacity.
-	capacityMsat := lnwire.NewMSatFromSatoshis(capacity)
-	if capacityMsat != 0 && maxHtlc > capacityMsat {
-		return errors.Errorf("max_htlc (%v) for channel update "+
-			"greater than capacity (%v)", maxHtlc, capacityMsat)
+		// For light clients, the capacity will not be set so we'll skip
+		// checking whether the MaxHTLC value respects the channel's
+		// capacity.
+		capacityMsat := lnwire.NewMSatFromSatoshis(capacity)
+		if capacityMsat != 0 && maxHtlc > capacityMsat {
+			return errors.Errorf("max_htlc (%v) for channel "+
+				"update greater than capacity (%v)", maxHtlc,
+				capacityMsat)
+		}
+
+	case *lnwire.ChannelUpdate2:
+		maxHtlc := m.HTLCMaximumMsat
+		if maxHtlc == 0 || maxHtlc < m.HTLCMinimumMsat {
+			return errors.Errorf("invalid max htlc for channel "+
+				"update %v", spew.Sdump(m))
+		}
+
+		// Checking whether the MaxHTLC value respects the channel's
+		// capacity.
+		capacityMsat := lnwire.NewMSatFromSatoshis(capacity)
+		if maxHtlc > capacityMsat {
+			return errors.Errorf("max_htlc (%v) for channel "+
+				"update greater than capacity (%v)", maxHtlc,
+				capacityMsat)
+		}
+
+	default:
+		return fmt.Errorf("unhandled implementation of "+
+			"lnwire.ChannelUpdate: %T", msg)
 	}
 
 	return nil
