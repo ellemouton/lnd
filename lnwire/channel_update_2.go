@@ -265,6 +265,10 @@ func (c *ChannelUpdate2) MsgType() MessageType {
 	return MsgChannelUpdate2
 }
 
+func (c *ChannelUpdate2) ExtraData() ExtraOpaqueData {
+	return c.ExtraOpaqueData
+}
+
 // A compile time check to ensure ChannelUpdate2 implements the
 // lnwire.Message interface.
 var _ Message = (*ChannelUpdate2)(nil)
