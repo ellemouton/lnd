@@ -442,12 +442,12 @@ func (c *ChannelGraph) ForEachChannel(cb func(models.ChannelEdgeInfo,
 			}
 
 			policy1 := channelMap[channelMapKey{
-				nodeKey: info.NodeKey1Bytes,
+				nodeKey: info.Node1Bytes(),
 				chanID:  chanID,
 			}]
 
 			policy2 := channelMap[channelMapKey{
-				nodeKey: info.NodeKey2Bytes,
+				nodeKey: info.Node2Bytes(),
 				chanID:  chanID,
 			}]
 
@@ -1475,17 +1475,17 @@ func (c *ChannelGraph) pruneGraphNodes(nodes kvdb.RwBucket,
 	// edge info. We'll use this scan to populate our reference count map
 	// above.
 	err = edgeIndex.ForEach(func(chanID, edgeInfoBytes []byte) error {
-		// The first 66 bytes of the edge info contain the pubkeys of
-		// the nodes that this edge attaches. We'll extract them, and
-		// add them to the ref count map.
-		var node1, node2 [33]byte
-		copy(node1[:], edgeInfoBytes[:33])
-		copy(node2[:], edgeInfoBytes[33:])
+		edge, err := deserializeChanEdgeInfo(
+			bytes.NewReader(edgeInfoBytes),
+		)
+		if err != nil {
+			return err
+		}
 
 		// With the nodes extracted, we'll increase the ref count of
 		// each of the nodes.
-		nodeRefCounts[node1]++
-		nodeRefCounts[node2]++
+		nodeRefCounts[edge.Node1Bytes()]++
+		nodeRefCounts[edge.Node2Bytes()]++
 
 		return nil
 	})
@@ -2222,7 +2222,7 @@ func (c *ChannelGraph) FilterChannelRange(startHeight,
 				return err
 			}
 
-			if edgeInfo.AuthProof == nil {
+			if edgeInfo.GetAuthProof() == nil {
 				continue
 			}
 
@@ -2659,23 +2659,32 @@ func updateEdgePolicy(tx kvdb.RwTx, edge *models.ChannelEdgePolicy1,
 		return false, ErrEdgeNotFound
 	}
 
+	edgeInfo, err := deserializeChanEdgeInfo(bytes.NewReader(nodeInfo))
+	if err != nil {
+		return false, err
+	}
+
 	// Depending on the flags value passed above, either the first
 	// or second edge policy is being updated.
-	var fromNode, toNode []byte
-	var isUpdate1 bool
-	if edge.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
-		fromNode = nodeInfo[:33]
-		toNode = nodeInfo[33:66]
+	var (
+		fromNode, toNode []byte
+		isUpdate1        bool
+		node1Bytes       = edgeInfo.Node1Bytes()
+		node2Bytes       = edgeInfo.Node2Bytes()
+	)
+	if edge.IsNode1() {
+		fromNode = node1Bytes[:]
+		toNode = node2Bytes[:]
 		isUpdate1 = true
 	} else {
-		fromNode = nodeInfo[33:66]
-		toNode = nodeInfo[:33]
+		fromNode = node2Bytes[:]
+		toNode = node1Bytes[:]
 		isUpdate1 = false
 	}
 
 	// Finally, with the direction of the edge being updated
 	// identified, we update the on-disk edge representation.
-	err := putChanEdgePolicy(edges, edge, fromNode, toNode)
+	err = putChanEdgePolicy(edges, edge, fromNode, toNode)
 	if err != nil {
 		return false, err
 	}

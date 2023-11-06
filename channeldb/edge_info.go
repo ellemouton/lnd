@@ -1,6 +1,7 @@
 package channeldb
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"fmt"
@@ -9,24 +10,93 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/kvdb"
+	"github.com/lightningnetwork/lnd/tlv"
+)
+
+// edgeInfoEncodingType indicate how the bytes for a channel edge have been
+// serialised.
+type edgeInfoEncodingType uint8
+
+const (
+	// edgeInfo2EncodingType will be used as a prefix for edge's advertised
+	// using the ChannelAnnouncement2 message. The type indicates how the
+	// bytes following should be deserialized.
+	edgeInfo2EncodingType edgeInfoEncodingType = 0
+)
+
+const (
+	// EdgeInfo2MsgType is the tlv type used within the serialisation of
+	// ChannelEdgeInfo2 for storing the serialisation of the associated
+	// lnwire.ChannelAnnouncement2 message.
+	EdgeInfo2MsgType = tlv.Type(0)
+
+	// EdgeInfo2ChanPoint is the tlv type used within the serialisation of
+	// ChannelEdgeInfo2 for storing channel point.
+	EdgeInfo2ChanPoint = tlv.Type(1)
+
+	// EdgeInfo2Sig is the tlv type used within the serialisation of
+	// ChannelEdgeInfo2 for storing the signature of the
+	// lnwire.ChannelAnnouncement2 message.
+	EdgeInfo2Sig = tlv.Type(2)
+)
+
+const (
+	// chanEdgeNewEncodingPrefix is a byte used in the channel edge encoding
+	// to signal that the new style encoding which is prefixed with a type
+	// byte is being used instead of the legacy encoding which would start
+	// with either 0x02 or 0x03 due to the fact that the encoding would
+	// start with a node's compressed public key.
+	chanEdgeNewEncodingPrefix = 0xff
 )
 
 func putChanEdgeInfo(edgeIndex kvdb.RwBucket, edgeInfo models.ChannelEdgeInfo,
 	chanID [8]byte) error {
 
+	var (
+		b            bytes.Buffer
+		withTypeByte bool
+		typeByte     edgeInfoEncodingType
+		serialize    func(w io.Writer) error
+	)
+
 	switch info := edgeInfo.(type) {
 	case *models.ChannelEdgeInfo1:
-		var b bytes.Buffer
-		err := serializeChanEdgeInfo1(&b, info, chanID)
-		if err != nil {
-			return err
+		serialize = func(w io.Writer) error {
+			return serializeChanEdgeInfo1(&b, info, chanID)
 		}
+	case *models.ChannelEdgeInfo2:
+		withTypeByte = true
+		typeByte = edgeInfo2EncodingType
 
-		return edgeIndex.Put(chanID[:], b.Bytes())
+		serialize = func(w io.Writer) error {
+			return serializeChanEdgeInfo2(&b, info)
+		}
 	default:
 		return fmt.Errorf("unhandled implementation of "+
 			"ChannelEdgeInfo: %T", edgeInfo)
 	}
+
+	if withTypeByte {
+		// First, write the identifying encoding byte to signal that
+		// this is not using the legacy encoding.
+		_, err := b.Write([]byte{chanEdgeNewEncodingPrefix})
+		if err != nil {
+			return err
+		}
+
+		// Now, write the encoding type.
+		_, err = b.Write([]byte{byte(typeByte)})
+		if err != nil {
+			return err
+		}
+	}
+
+	err := serialize(&b)
+	if err != nil {
+		return err
+	}
+
+	return edgeIndex.Put(chanID[:], b.Bytes())
 }
 
 func serializeChanEdgeInfo1(w io.Writer, edgeInfo *models.ChannelEdgeInfo1,
@@ -92,6 +162,41 @@ func serializeChanEdgeInfo1(w io.Writer, edgeInfo *models.ChannelEdgeInfo1,
 	return wire.WriteVarBytes(w, 0, edgeInfo.ExtraOpaqueData)
 }
 
+func serializeChanEdgeInfo2(w io.Writer, edge *models.ChannelEdgeInfo2) error {
+	if len(edge.ExtraOpaqueData) > MaxAllowedExtraOpaqueBytes {
+		return ErrTooManyExtraOpaqueBytes(len(edge.ExtraOpaqueData))
+	}
+
+	serializedMsg, err := edge.DataToSign()
+	if err != nil {
+		return err
+	}
+
+	records := []tlv.Record{
+		tlv.MakePrimitiveRecord(EdgeInfo2MsgType, &serializedMsg),
+		tlv.MakeStaticRecord(
+			EdgeInfo2ChanPoint, &edge.ChannelPoint, 34,
+			encodeOutpoint, decodeOutpoint,
+		),
+	}
+
+	if edge.AuthProof != nil {
+		records = append(
+			records,
+			tlv.MakePrimitiveRecord(
+				EdgeInfo2Sig, &edge.AuthProof.SchnorrSigBytes,
+			),
+		)
+	}
+
+	stream, err := tlv.NewStream(records...)
+	if err != nil {
+		return err
+	}
+
+	return stream.Encode(w)
+}
+
 func fetchChanEdgeInfo(edgeIndex kvdb.RBucket,
 	chanID []byte) (models.ChannelEdgeInfo, error) {
 
@@ -105,7 +210,43 @@ func fetchChanEdgeInfo(edgeIndex kvdb.RBucket,
 	return deserializeChanEdgeInfo(edgeInfoReader)
 }
 
-func deserializeChanEdgeInfo(r io.Reader) (*models.ChannelEdgeInfo1, error) {
+func deserializeChanEdgeInfo(reader io.Reader) (models.ChannelEdgeInfo, error) {
+	// Wrap the io.Reader in a bufio.Reader so that we can peak the first
+	// byte of the stream without actually consuming from the stream.
+	r := bufio.NewReader(reader)
+
+	firstByte, err := r.Peek(1)
+	if err != nil {
+		return nil, err
+	}
+
+	if firstByte[0] != chanEdgeNewEncodingPrefix {
+		return deserializeChanEdgeInfo1(r)
+	}
+
+	// Pop the encoding type byte.
+	var scratch [1]byte
+	if _, err = r.Read(scratch[:]); err != nil {
+		return nil, err
+	}
+
+	// Now, read the encoding type byte.
+	if _, err = r.Read(scratch[:]); err != nil {
+		return nil, err
+	}
+
+	encoding := edgeInfoEncodingType(scratch[0])
+	switch encoding {
+	case edgeInfo2EncodingType:
+		return deserializeChanEdgeInfo2(r)
+
+	default:
+		return nil, fmt.Errorf("unknown edge info encoding type: %d",
+			encoding)
+	}
+}
+
+func deserializeChanEdgeInfo1(r io.Reader) (*models.ChannelEdgeInfo1, error) {
 	var (
 		err      error
 		edgeInfo models.ChannelEdgeInfo1
@@ -180,4 +321,60 @@ func deserializeChanEdgeInfo(r io.Reader) (*models.ChannelEdgeInfo1, error) {
 	}
 
 	return &edgeInfo, nil
+}
+
+func deserializeChanEdgeInfo2(r io.Reader) (*models.ChannelEdgeInfo2, error) {
+	var (
+		edgeInfo models.ChannelEdgeInfo2
+		msgBytes []byte
+		sigBytes []byte
+	)
+
+	records := []tlv.Record{
+		tlv.MakePrimitiveRecord(EdgeInfo2MsgType, &msgBytes),
+		tlv.MakeStaticRecord(
+			EdgeInfo2ChanPoint, &edgeInfo.ChannelPoint, 34,
+			encodeOutpoint, decodeOutpoint,
+		),
+		tlv.MakePrimitiveRecord(EdgeInfo2Sig, &sigBytes),
+	}
+
+	stream, err := tlv.NewStream(records...)
+	if err != nil {
+		return nil, err
+	}
+
+	typeMap, err := stream.DecodeWithParsedTypes(r)
+	if err != nil {
+		return nil, err
+	}
+
+	reader := bytes.NewReader(msgBytes)
+	err = edgeInfo.ChannelAnnouncement2.DecodeTLVRecords(reader)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, ok := typeMap[EdgeInfo2Sig]; ok {
+		edgeInfo.AuthProof = &models.ChannelAuthProof2{
+			SchnorrSigBytes: sigBytes,
+		}
+	}
+
+	return &edgeInfo, nil
+}
+
+func encodeOutpoint(w io.Writer, val interface{}, _ *[8]byte) error {
+	if o, ok := val.(*wire.OutPoint); ok {
+		return writeOutpoint(w, o)
+	}
+
+	return tlv.NewTypeForEncodingErr(val, "*wire.Outpoint")
+}
+
+func decodeOutpoint(r io.Reader, val interface{}, _ *[8]byte, l uint64) error {
+	if o, ok := val.(*wire.OutPoint); ok {
+		return readOutpoint(r, o)
+	}
+	return tlv.NewTypeForDecodingErr(val, "*wire.Outpoint", l, l)
 }
