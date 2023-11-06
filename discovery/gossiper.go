@@ -1831,7 +1831,7 @@ func remotePubFromChanInfo(chanInfo models.ChannelEdgeInfo,
 // assemble the proof and craft the ChannelAnnouncement1.
 func (d *AuthenticatedGossiper) processRejectedEdge(
 	chanAnnMsg lnwire.ChannelAnnouncement,
-	proof *models.ChannelAuthProof1) ([]networkMsg, error) {
+	proof models.ChannelAuthProof) ([]networkMsg, error) {
 
 	scid := chanAnnMsg.SCID()
 
@@ -2469,7 +2469,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 
 	// If this is a remote channel announcement, then we'll validate all
 	// the signatures within the proof as it should be well formed.
-	var proof *models.ChannelAuthProof1
+	var proof models.ChannelAuthProof
 	if nMsg.isRemote {
 		if err := routing.ValidateChannelAnn(ann); err != nil {
 			err := fmt.Errorf("unable to validate announcement: "+
@@ -2502,10 +2502,18 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 
 	// With the proof validated (if necessary), we can now store it within
 	// the database for our path finding and syncing needs.
-	edge, err := buildEdgeInfo(ann, nMsg.optionalMsgFields, proof)
+	edge, err := buildEdgeInfo(ann, nMsg.optionalMsgFields)
 	if err != nil {
 		log.Errorf("unable to build edge info from announcement: %v",
 			err)
+		nMsg.err <- err
+
+		return nil, false
+	}
+
+	err = edge.SetAuthProof(proof)
+	if err != nil {
+		log.Errorf("unable to set auth proof: %v", err)
 		nMsg.err <- err
 
 		return nil, false
@@ -3377,7 +3385,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 }
 
 func buildChanProof(ann lnwire.ChannelAnnouncement) (
-	*models.ChannelAuthProof1, error) {
+	models.ChannelAuthProof, error) {
 
 	switch a := ann.(type) {
 	case *lnwire.ChannelAnnouncement1:
@@ -3387,15 +3395,20 @@ func buildChanProof(ann lnwire.ChannelAnnouncement) (
 			BitcoinSig1Bytes: a.BitcoinSig1.ToSignatureBytes(),
 			BitcoinSig2Bytes: a.BitcoinSig2.ToSignatureBytes(),
 		}, nil
+
+	case *lnwire.ChannelAnnouncement2:
+		return &models.ChannelAuthProof2{
+			SchnorrSigBytes: a.Signature.ToSignatureBytes(),
+		}, nil
+
 	default:
 		return nil, fmt.Errorf("unhandled lnwire.ChannelAnnouncement "+
 			"implementation: %T", a)
 	}
 }
 
-func buildEdgeInfo(ann lnwire.ChannelAnnouncement, opts *optionalMsgFields,
-	proof *models.ChannelAuthProof1) (*models.ChannelEdgeInfo1,
-	error) {
+func buildEdgeInfo(ann lnwire.ChannelAnnouncement, opts *optionalMsgFields) (
+	models.ChannelEdgeInfo, error) {
 
 	switch a := ann.(type) {
 	case *lnwire.ChannelAnnouncement1:
@@ -3412,7 +3425,6 @@ func buildEdgeInfo(ann lnwire.ChannelAnnouncement, opts *optionalMsgFields,
 			BitcoinKey1Bytes: a.BitcoinKey1,
 			BitcoinKey2Bytes: a.BitcoinKey2,
 			Features:         featureBuf.Bytes(),
-			AuthProof:        proof,
 			ExtraOpaqueData:  a.ExtraOpaqueData,
 		}
 
@@ -3430,6 +3442,22 @@ func buildEdgeInfo(ann lnwire.ChannelAnnouncement, opts *optionalMsgFields,
 
 		return edge, nil
 
+	case *lnwire.ChannelAnnouncement2:
+		edge := &models.ChannelEdgeInfo2{
+			ChannelAnnouncement2: *a,
+			ChannelPoint:         wire.OutPoint{},
+		}
+
+		// If there were any optional message fields provided, we'll
+		// include them in its serialized disk representation now.
+		if opts != nil {
+			if opts.channelPoint != nil {
+				cp := *opts.channelPoint
+				edge.ChannelPoint = cp
+			}
+		}
+
+		return edge, nil
 	default:
 		return nil, fmt.Errorf("unhandled lnwire.ChannelAnnouncement "+
 			"implementation: %T", a)
