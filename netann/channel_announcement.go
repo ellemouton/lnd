@@ -36,7 +36,6 @@ func CreateChanAnnouncement(chanProof models.ChannelAuthProof,
 					"paired with ChannelEdgeInfo1, "+
 					"got: %T", edge1)
 			}
-
 		}
 
 		if edge2 != nil {
