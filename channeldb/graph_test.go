@@ -1112,8 +1112,8 @@ func TestGraphTraversal(t *testing.T) {
 	// again if the map is empty that indicates that all edges have
 	// properly been reached.
 	err = graph.ForEachChannel(func(ei models.ChannelEdgeInfo,
-		_ *models.ChannelEdgePolicy1,
-		_ *models.ChannelEdgePolicy1) error {
+		_ models.ChannelEdgePolicy,
+		_ models.ChannelEdgePolicy) error {
 
 		delete(chanIndex, ei.GetChanID())
 		return nil
@@ -1127,7 +1127,7 @@ func TestGraphTraversal(t *testing.T) {
 	firstNode, secondNode := nodeList[0], nodeList[1]
 	err = graph.ForEachNodeChannel(nil, firstNode.PubKeyBytes,
 		func(_ kvdb.RTx, _ models.ChannelEdgeInfo, outEdge,
-			inEdge *models.ChannelEdgePolicy1) error {
+			inEdge models.ChannelEdgePolicy) error {
 
 			// All channels between first and second node should
 			// have fully (both sides) specified policies.
@@ -1137,8 +1137,9 @@ func TestGraphTraversal(t *testing.T) {
 
 			// Each should indicate that it's outgoing (pointed
 			// towards the second node).
+			outToNode := outEdge.GetToNode()
 			if !bytes.Equal(
-				outEdge.ToNode[:], secondNode.PubKeyBytes[:],
+				outToNode[:], secondNode.PubKeyBytes[:],
 			) {
 
 				return fmt.Errorf("wrong outgoing edge")
@@ -1146,8 +1147,9 @@ func TestGraphTraversal(t *testing.T) {
 
 			// The incoming edge should also indicate that it's
 			// pointing to the origin node.
+			inToNode := inEdge.GetToNode()
 			if !bytes.Equal(
-				inEdge.ToNode[:], firstNode.PubKeyBytes[:],
+				inToNode[:], firstNode.PubKeyBytes[:],
 			) {
 
 				return fmt.Errorf("wrong outgoing edge")
@@ -1208,8 +1210,8 @@ func TestGraphTraversalCacheable(t *testing.T) {
 			err := node.ForEachChannel(
 				tx, func(tx kvdb.RTx,
 					info models.ChannelEdgeInfo,
-					policy *models.ChannelEdgePolicy1,
-					policy2 *models.ChannelEdgePolicy1) error {
+					policy models.ChannelEdgePolicy,
+					policy2 models.ChannelEdgePolicy) error {
 
 					delete(chanIndex, info.GetChanID())
 
@@ -1393,8 +1395,8 @@ func assertPruneTip(t *testing.T, graph *ChannelGraph, blockHash *chainhash.Hash
 func assertNumChans(t *testing.T, graph *ChannelGraph, n int) {
 	numChans := 0
 	if err := graph.ForEachChannel(func(models.ChannelEdgeInfo,
-		*models.ChannelEdgePolicy1,
-		*models.ChannelEdgePolicy1) error {
+		models.ChannelEdgePolicy,
+		models.ChannelEdgePolicy) error {
 
 		numChans++
 		return nil
@@ -2372,7 +2374,7 @@ func TestIncompleteChannelPolicies(t *testing.T) {
 		calls := 0
 		err := graph.ForEachNodeChannel(nil, node.PubKeyBytes,
 			func(_ kvdb.RTx, _ models.ChannelEdgeInfo, outEdge,
-				inEdge *models.ChannelEdgePolicy1) error {
+				inEdge models.ChannelEdgePolicy) error {
 
 				if !expectedOut && outEdge != nil {
 					t.Fatalf("Expected no outgoing policy")
@@ -3535,8 +3537,8 @@ func BenchmarkForEachChannel(b *testing.B) {
 				err := n.ForEachChannel(
 					tx, func(tx kvdb.RTx,
 						info models.ChannelEdgeInfo,
-						policy *models.ChannelEdgePolicy1,
-						policy2 *models.ChannelEdgePolicy1) error {
+						policy models.ChannelEdgePolicy,
+						policy2 models.ChannelEdgePolicy) error {
 
 						// We need to do something with
 						// the data here, otherwise the
@@ -3544,8 +3546,8 @@ func BenchmarkForEachChannel(b *testing.B) {
 						// this away, and we get bogus
 						// results.
 						totalCapacity += info.GetCapacity()
-						maxHTLCs += policy.MaxHTLC
-						maxHTLCs += policy2.MaxHTLC
+						maxHTLCs += policy.ForwardingPolicy().MaxHTLC
+						maxHTLCs += policy2.ForwardingPolicy().MaxHTLC
 
 						return nil
 					},
@@ -3591,8 +3593,8 @@ func TestGraphCacheForEachNodeChannel(t *testing.T) {
 	var numChans int
 	err = graph.ForEachNodeChannel(nil, node1.PubKeyBytes,
 		func(tx kvdb.RTx, _ models.ChannelEdgeInfo,
-			_ *models.ChannelEdgePolicy1,
-			_ *models.ChannelEdgePolicy1) error {
+			_ models.ChannelEdgePolicy,
+			_ models.ChannelEdgePolicy) error {
 
 			numChans++
 			return nil
