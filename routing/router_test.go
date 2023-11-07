@@ -12,8 +12,10 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/davecgh/go-spew/spew"
 	sphinx "github.com/lightningnetwork/lightning-onion"
@@ -22,6 +24,7 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/htlcswitch"
+	"github.com/lightningnetwork/lnd/keychain"
 	lnmock "github.com/lightningnetwork/lnd/lntest/mock"
 	"github.com/lightningnetwork/lnd/lntest/wait"
 	"github.com/lightningnetwork/lnd/lntypes"
@@ -238,16 +241,46 @@ func createTestCtxFromFile(t *testing.T,
 // Add valid signature to channel update simulated as error received from the
 // network.
 func signErrChanUpdate(t *testing.T, key *btcec.PrivateKey,
-	errChanUpdate *lnwire.ChannelUpdate1) {
+	errChanUpdate lnwire.ChannelUpdate) {
 
-	chanUpdateMsg, err := errChanUpdate.DataToSign()
-	require.NoError(t, err, "failed to retrieve data to sign")
+	signer := &mockSigner{key: key}
+	err := netann.SignChannelUpdate(
+		signer, keychain.KeyLocator{}, errChanUpdate,
+	)
+	require.NoError(t, err)
+}
 
-	digest := chainhash.DoubleHashB(chanUpdateMsg)
-	sig := ecdsa.Sign(key, digest)
+type mockSigner struct {
+	key *btcec.PrivateKey
+	keychain.MessageSignerRing
+}
 
-	errChanUpdate.Signature, err = lnwire.NewSigFromSignature(sig)
-	require.NoError(t, err, "failed to create new signature")
+func (s *mockSigner) SignMessage(keyLoc keychain.KeyLocator, msg []byte,
+	doubleHash bool) (*ecdsa.Signature, error) {
+
+	digest := chainhash.DoubleHashB(msg)
+	sig := ecdsa.Sign(s.key, digest)
+
+	return sig, nil
+}
+
+func (s *mockSigner) SignMessageSchnorr(keyLoc keychain.KeyLocator, msg []byte,
+	doubleHash bool, taprootTweak []byte) (*schnorr.Signature,
+	error) {
+
+	var digest []byte
+	if doubleHash {
+		digest = chainhash.DoubleHashB(msg)
+	} else {
+		digest = chainhash.HashB(msg)
+	}
+
+	privKey := s.key
+	if len(taprootTweak) > 0 {
+		privKey = txscript.TweakTaprootPrivKey(*privKey, taprootTweak)
+	}
+
+	return schnorr.Sign(privKey, digest)
 }
 
 // TestFindRoutesWithFeeLimit asserts that routes found by the FindRoutes method
@@ -632,15 +665,15 @@ func TestSendPaymentErrorRepeatedFeeInsufficient(t *testing.T) {
 	)
 	require.NoError(t, err, "unable to fetch chan id")
 
-	edgeUpdToFail, ok := edgeUpdateToFail.(*models.ChannelEdgePolicy1)
-	require.True(t, ok)
-
 	errChanUpdate, err := netann.UnsignedChannelUpdateFromEdge(
-		chainhash.Hash{}, edgeUpdToFail,
+		chainhash.Hash{}, edgeUpdateToFail,
 	)
 	require.NoError(t, err)
 
 	signErrChanUpdate(t, ctx.privKeys["songoku"], errChanUpdate)
+
+	chanUpd, ok := errChanUpdate.(*lnwire.ChannelUpdate1)
+	require.True(t, ok)
 
 	// We'll now modify the SendToSwitch method to return an error for the
 	// outgoing channel to Son goku. This will be a fee related error, so
@@ -658,7 +691,7 @@ func TestSendPaymentErrorRepeatedFeeInsufficient(t *testing.T) {
 					// reflect the new fee schedule for the
 					// node/channel.
 					&lnwire.FailFeeInsufficient{
-						Update: *errChanUpdate,
+						Update: *chanUpd,
 					}, 1,
 				)
 			}
@@ -986,6 +1019,9 @@ func TestSendPaymentErrorNonFinalTimeLockErrors(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	chanUpd, ok := errChanUpdate.(*lnwire.ChannelUpdate1)
+	require.True(t, ok)
+
 	// We'll now modify the SendToSwitch method to return an error for the
 	// outgoing channel to son goku. Since this is a time lock related
 	// error, we should fail the payment flow all together, as Goku is the
@@ -995,7 +1031,7 @@ func TestSendPaymentErrorNonFinalTimeLockErrors(t *testing.T) {
 			if firstHop == roasbeefSongoku {
 				return [32]byte{}, htlcswitch.NewForwardingError(
 					&lnwire.FailExpiryTooSoon{
-						Update: *errChanUpdate,
+						Update: *chanUpd,
 					}, 1,
 				)
 			}
@@ -1042,7 +1078,7 @@ func TestSendPaymentErrorNonFinalTimeLockErrors(t *testing.T) {
 			if firstHop == roasbeefSongoku {
 				return [32]byte{}, htlcswitch.NewForwardingError(
 					&lnwire.FailIncorrectCltvExpiry{
-						Update: *errChanUpdate,
+						Update: *chanUpd,
 					}, 1,
 				)
 			}
