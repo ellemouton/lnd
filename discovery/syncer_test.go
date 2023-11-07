@@ -2153,12 +2153,14 @@ func TestGossipSyncerSyncTransitions(t *testing.T) {
 				// send out a message that indicates we want
 				// all the updates from here on.
 				firstTimestamp := uint32(time.Now().Unix())
-				assertMsgSent(
-					t, mChan, &lnwire.GossipTimestampRange{
-						FirstTimestamp: firstTimestamp,
-						TimestampRange: math.MaxUint32,
-					},
-				)
+				firstBlock := uint32(latestKnownHeight)
+				blockRange := uint32(math.MaxUint32)
+				assertMsgSent(t, mChan, &lnwire.GossipTimestampRange{
+					FirstTimestamp:   firstTimestamp,
+					TimestampRange:   math.MaxUint32,
+					FirstBlockHeight: &firstBlock,
+					BlockRange:       &blockRange,
+				})
 
 				// When transitioning from active to passive, we
 				// should expect to see a new local update
@@ -2193,10 +2195,14 @@ func TestGossipSyncerSyncTransitions(t *testing.T) {
 				// horizon sent to the remote peer indicating
 				// that it would like to receive any future
 				// updates.
+				firstBlock := uint32(latestKnownHeight)
+				blockRange := uint32(math.MaxUint32)
 				firstTimestamp := uint32(time.Now().Unix())
 				assertMsgSent(t, msgChan, &lnwire.GossipTimestampRange{
-					FirstTimestamp: firstTimestamp,
-					TimestampRange: math.MaxUint32,
+					FirstTimestamp:   firstTimestamp,
+					TimestampRange:   math.MaxUint32,
+					FirstBlockHeight: &firstBlock,
+					BlockRange:       &blockRange,
 				})
 
 				syncState := g.syncState()
