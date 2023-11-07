@@ -1586,6 +1586,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		AuxFundingController: implCfg.AuxFundingController,
 		AuxSigner:            implCfg.AuxSigner,
 		AuxResolver:          implCfg.AuxContractResolver,
+		BestBlockView:        s.cc.BestBlockTracker,
 	})
 	if err != nil {
 		return nil, err
