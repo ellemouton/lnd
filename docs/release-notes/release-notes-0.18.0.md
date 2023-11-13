@@ -37,6 +37,9 @@
   might panic due to empty witness data found in a transaction. More details
   can be found [here](https://github.com/bitcoin/bitcoin/issues/28730).
 
+* [Ensure that a valid SCID](https://github.com/lightningnetwork/lnd/pull/8171) 
+  is used when marking a zombie edge as live.
+
 # New Features
 ## Functional Enhancements
 
