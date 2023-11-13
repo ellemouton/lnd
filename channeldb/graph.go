@@ -2091,7 +2091,7 @@ func (c *ChannelGraph) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo,
 
 	var newChanIDs []uint64
 
-	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
+	err := kvdb.Update(c.db, func(tx kvdb.RwTx) error {
 		edges := tx.ReadBucket(edgeBucket)
 		if edges == nil {
 			return ErrGraphNoEdgesFound
@@ -2118,17 +2118,32 @@ func (c *ChannelGraph) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo,
 				continue
 			}
 
-			// If the edge is a known zombie, skip it.
 			if zombieIndex != nil {
 				isZombie, _, _ := isZombieEdge(
 					zombieIndex, scid,
 				)
-				if isZombie && isZombieChan(
+
+				isStillZombie := isZombieChan(
 					info.Node1UpdateTimestamp,
 					info.Node2UpdateTimestamp,
-				) {
+				)
 
+				switch {
+				// If the edge is a known zombie and if we
+				// would still consider it a zombie given the
+				// latest update timestamps, then we skip this
+				// channel.
+				case isZombie && isStillZombie:
 					continue
+
+				// Otherwise, if we have marked it as a zombie
+				// but the latest update timestamps could bring
+				// it back from the dead, then we mark it alive.
+				case isZombie && !isStillZombie:
+					err := c.markEdgeLive(tx, scid)
+					if err != nil {
+						return err
+					}
 				}
 			}
 
@@ -3594,10 +3609,14 @@ func markEdgeZombie(zombieIndex kvdb.RwBucket, chanID uint64, pubKey1,
 
 // MarkEdgeLive clears an edge from our zombie index, deeming it as live.
 func (c *ChannelGraph) MarkEdgeLive(chanID uint64) error {
+	return c.markEdgeLive(nil, chanID)
+}
+
+func (c *ChannelGraph) markEdgeLive(tx kvdb.RwTx, chanID uint64) error {
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 
-	err := kvdb.Update(c.db, func(tx kvdb.RwTx) error {
+	dbFn := func(tx kvdb.RwTx) error {
 		edges := tx.ReadWriteBucket(edgeBucket)
 		if edges == nil {
 			return ErrGraphNoEdgesFound
@@ -3615,7 +3634,16 @@ func (c *ChannelGraph) MarkEdgeLive(chanID uint64) error {
 		}
 
 		return zombieIndex.Delete(k[:])
-	}, func() {})
+	}
+
+	// If the transaction is nil, we'll create a new one. Otherwise, we use
+	// the existing transaction
+	var err error
+	if tx == nil {
+		err = kvdb.Update(c.db, dbFn, func() {})
+	} else {
+		err = dbFn(tx)
+	}
 	if err != nil {
 		return err
 	}
@@ -3625,11 +3653,12 @@ func (c *ChannelGraph) MarkEdgeLive(chanID uint64) error {
 
 	// We need to add the channel back into our graph cache, otherwise we
 	// won't use it for path finding.
-	edgeInfos, err := c.FetchChanInfos([]uint64{chanID})
-	if err != nil {
-		return err
-	}
 	if c.graphCache != nil {
+		edgeInfos, err := c.FetchChanInfos([]uint64{chanID})
+		if err != nil {
+			return err
+		}
+
 		for _, edgeInfo := range edgeInfos {
 			c.graphCache.AddChannel(
 				edgeInfo.Info, edgeInfo.Policy1,
