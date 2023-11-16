@@ -17,7 +17,6 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
-	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -447,6 +446,16 @@ func createTestFundingManager(t *testing.T, privKey *btcec.PrivateKey,
 
 	var chanIDSeed [32]byte
 
+	keyFetcher := func(desc *keychain.KeyDescriptor) (*btcec.PrivateKey,
+		error) {
+
+		if desc.KeyLocator == testKeyLoc {
+			return privKey, nil
+		}
+
+		return keyRing.DerivePrivKey(*desc)
+	}
+
 	chainedAcceptor := acpt.NewChainedAcceptor()
 
 	fundingCfg := Config{
@@ -457,6 +466,7 @@ func createTestFundingManager(t *testing.T, privKey *btcec.PrivateKey,
 		ChannelDB:     cdb,
 		FeeEstimator:  estimator,
 		MessageSigner: &mockSigner{},
+		MuSig2Signer:  input.NewMusigSessionManager(keyFetcher),
 		SendAnnouncement: func(msg lnwire.Message,
 			_ ...discovery.OptionalMsgField) chan error {
 
@@ -608,6 +618,16 @@ func recreateAliceFundingManager(t *testing.T, alice *testNode) {
 
 	chainedAcceptor := acpt.NewChainedAcceptor()
 
+	keyFetcher := func(desc *keychain.KeyDescriptor) (*btcec.PrivateKey,
+		error) {
+
+		if desc.KeyLocator == oldCfg.IDKeyLoc {
+			return alice.privKey, nil
+		}
+
+		return alice.fundingMgr.cfg.Wallet.DerivePrivKey(*desc)
+	}
+
 	f, err := NewFundingManager(Config{
 		IDKey:         oldCfg.IDKey,
 		IDKeyLoc:      oldCfg.IDKeyLoc,
@@ -616,6 +636,7 @@ func recreateAliceFundingManager(t *testing.T, alice *testNode) {
 		ChannelDB:     oldCfg.ChannelDB,
 		FeeEstimator:  oldCfg.FeeEstimator,
 		MessageSigner: &mockSigner{},
+		MuSig2Signer:  input.NewMusigSessionManager(keyFetcher),
 		SendAnnouncement: func(msg lnwire.Message,
 			_ ...discovery.OptionalMsgField) chan error {
 
@@ -4929,21 +4950,6 @@ func (m *mockSigner) SignMessage(_ keychain.KeyLocator, _ []byte,
 	_ bool) (*ecdsa.Signature, error) {
 
 	return testSig, nil
-}
-
-func (m *mockSigner) SignMuSig2(secNonce [97]byte, keyLoc keychain.KeyLocator,
-	otherNonces [][66]byte, combinedNonce [66]byte,
-	pubKeys []*btcec.PublicKey, msg [32]byte,
-	opts ...musig2.SignOption) (*musig2.PartialSignature,
-	error) {
-
-	r := *bobPubKey
-	s := *testSScalar
-
-	return &musig2.PartialSignature{
-		S: &s,
-		R: &r,
-	}, nil
 }
 
 func (m *mockSigner) SignMessageSchnorr(keyLoc keychain.KeyLocator, msg []byte,

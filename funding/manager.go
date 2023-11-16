@@ -379,6 +379,8 @@ type Config struct {
 	// MessageSigner can be used to sign various wire messages.
 	MessageSigner keychain.MessageSignerRing
 
+	MuSig2Signer input.MuSig2Signer
+
 	// CurrentNodeAnnouncement should return the latest, fully signed node
 	// announcement from the backing Lightning Network node with a fresh
 	// timestamp.
@@ -4643,8 +4645,6 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 	if err != nil {
 		return nil, err
 	}
-	log.Info("ELLE: degist to sign: ", chanAnnMsg.String())
-	log.Infof("ELLE: ann to sign: %+v", chanAnn)
 
 	pubKeys := []*btcec.PublicKey{
 		localPubKey,
@@ -4675,39 +4675,42 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 	}
 	f.nonceMtx.Unlock()
 
-	nonceAgg, err := musig2.AggregateNonces([][66]byte{
-		announcementNonces.sent.btc.PubNonce,
-		announcementNonces.sent.node.PubNonce,
-		announcementNonces.received.btc,
-		announcementNonces.received.node,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	bitcoinPartialSig, err := f.cfg.MessageSigner.SignMuSig2(
-		announcementNonces.sent.btc.SecNonce,
-		localFundingKey.KeyLocator,
+	musigBtcSess, err := f.cfg.MuSig2Signer.MuSig2CreateSession(
+		input.MuSig2Version100RC2, localFundingKey.KeyLocator,
+		pubKeys, &input.MuSig2Tweaks{},
 		[][66]byte{
 			announcementNonces.sent.node.PubNonce,
 			announcementNonces.received.btc,
 			announcementNonces.received.node,
 		},
-		nonceAgg, pubKeys, *chanAnnMsg, musig2.WithSortedKeys(),
+		announcementNonces.sent.btc,
 	)
 	if err != nil {
-		return nil, errors.Errorf("unable to generate bitcoin "+
-			"partial signature for channel announcement: %v", err)
+		return nil, err
 	}
 
-	nodePartialSig, err := f.cfg.MessageSigner.SignMuSig2(
-		announcementNonces.sent.node.SecNonce,
-		f.cfg.IDKeyLoc, [][66]byte{
+	bitcoinPartialSig, err := f.cfg.MuSig2Signer.MuSig2Sign(
+		musigBtcSess.SessionID, *chanAnnMsg, true,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	musigNodeSess, err := f.cfg.MuSig2Signer.MuSig2CreateSession(
+		input.MuSig2Version100RC2, f.cfg.IDKeyLoc, pubKeys,
+		&input.MuSig2Tweaks{},
+		[][66]byte{
 			announcementNonces.sent.btc.PubNonce,
 			announcementNonces.received.btc,
 			announcementNonces.received.node,
-		},
-		nonceAgg, pubKeys, *chanAnnMsg, musig2.WithSortedKeys(),
+		}, announcementNonces.sent.node,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	nodePartialSig, err := f.cfg.MuSig2Signer.MuSig2Sign(
+		musigNodeSess.SessionID, *chanAnnMsg, true,
 	)
 	if err != nil {
 		return nil, errors.Errorf("unable to generate node "+
