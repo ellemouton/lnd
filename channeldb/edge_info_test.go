@@ -81,12 +81,14 @@ func TestEdgeInfoSerialisation(t *testing.T) {
 
 				// Sometimes add an AuthProof.
 				if r.Intn(2)%2 == 0 {
+					n := r.Intn(80)
+
 					//nolint:lll
 					authProof := &models.ChannelAuthProof1{
-						NodeSig1Bytes:    make([]byte, 33),
-						NodeSig2Bytes:    make([]byte, 33),
-						BitcoinSig1Bytes: make([]byte, 33),
-						BitcoinSig2Bytes: make([]byte, 33),
+						NodeSig1Bytes:    make([]byte, n),
+						NodeSig2Bytes:    make([]byte, n),
+						BitcoinSig1Bytes: make([]byte, n),
+						BitcoinSig2Bytes: make([]byte, n),
 					}
 
 					_, err = r.Read(
