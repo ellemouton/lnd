@@ -26,7 +26,6 @@ import (
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnpeer"
 	"github.com/lightningnetwork/lnd/lnutils"
-	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwallet/chanvalidate"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/multimutex"
@@ -259,14 +258,14 @@ type Config struct {
 	// use to determine which messages need to be resent for a given peer.
 	MessageStore GossipMessageStore
 
-	// AnnSigner is an instance of the MessageSigner interface which will
-	// be used to manually sign any outgoing channel updates. The signer
-	// implementation should be backed by the public key of the backing
-	// Lightning node.
+	// AnnSigner is an instance of the MessageSignerRing interface which
+	// will be used to manually sign any outgoing channel updates. The
+	// signer implementation should be backed by the public key of the
+	// backing Lightning node.
 	//
 	// TODO(roasbeef): extract ann crafting + sign from fundingMgr into
 	// here?
-	AnnSigner lnwallet.MessageSigner
+	AnnSigner keychain.MessageSignerRing
 
 	// ScidCloser is an instance of ClosedChannelTracker that helps the
 	// gossiper cut down on spam channel announcements for already closed
