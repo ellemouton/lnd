@@ -156,13 +156,13 @@ func (h *clientDBHarness) loadTowerByID(id wtdb.TowerID,
 	return tower
 }
 
-func (h *clientDBHarness) fetchChanSummaries() map[lnwire.ChannelID]wtdb.ClientChanSummary {
+func (h *clientDBHarness) fetchChanInfos() wtdb.ChannelInfos {
 	h.t.Helper()
 
-	summaries, err := h.db.FetchChanSummaries()
+	infos, err := h.db.FetchChanInfos()
 	require.NoError(h.t, err)
 
-	return summaries
+	return infos
 }
 
 func (h *clientDBHarness) registerChan(chanID lnwire.ChannelID,
@@ -552,7 +552,7 @@ func testRemoveTower(h *clientDBHarness) {
 func testChanSummaries(h *clientDBHarness) {
 	// First, assert that this channel is not already registered.
 	var chanID lnwire.ChannelID
-	_, ok := h.fetchChanSummaries()[chanID]
+	_, ok := h.fetchChanInfos()[chanID]
 	require.Falsef(h.t, ok, "pkscript for channel %x should not exist yet",
 		chanID)
 
@@ -565,7 +565,7 @@ func testChanSummaries(h *clientDBHarness) {
 
 	// Assert that the channel exists and that its sweep pkscript matches
 	// the one we registered.
-	summary, ok := h.fetchChanSummaries()[chanID]
+	summary, ok := h.fetchChanInfos()[chanID]
 	require.Truef(h.t, ok, "pkscript for channel %x should not exist yet",
 		chanID)
 	require.Equal(h.t, expPkScript, summary.SweepPkScript)

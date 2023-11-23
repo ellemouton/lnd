@@ -3,8 +3,23 @@ package wtdb
 import (
 	"io"
 
+	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
+
+// ChannelInfos is a map for a given channel id to it's ChannelInfo.
+type ChannelInfos map[lnwire.ChannelID]*ChannelInfo
+
+// ChannelInfo contains various useful things about a registered channel.
+type ChannelInfo struct {
+	ClientChanSummary
+
+	// MaxHeight is the highest commitment height that the tower has been
+	// handed for this channel. An Option type is used to store this since
+	// a commitment height of zero is valid, and we need a way of knowing if
+	// we have seen a new height yet or not.
+	MaxHeight fn.Option[uint64]
+}
 
 // ChannelSummaries is a map for a given channel id to it's ClientChanSummary.
 type ChannelSummaries map[lnwire.ChannelID]ClientChanSummary
