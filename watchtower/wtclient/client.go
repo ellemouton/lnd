@@ -424,7 +424,10 @@ func getTowerAndSessionCandidates(db DB, keyRing ECDHKeyRing,
 	opts ...wtdb.ClientSessionListOption) (
 	map[wtdb.SessionID]*ClientSession, error) {
 
-	towers, err := db.ListTowers()
+	// Fetch all active towers from the DB.
+	towers, err := db.ListTowers(func(tower *wtdb.Tower) bool {
+		return tower.Status == wtdb.TowerStatusActive
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -1752,7 +1755,7 @@ func (c *TowerClient) RegisteredTowers(opts ...wtdb.ClientSessionListOption) (
 	[]*RegisteredTower, error) {
 
 	// Retrieve all of our towers along with all of our sessions.
-	towers, err := c.cfg.DB.ListTowers()
+	towers, err := c.cfg.DB.ListTowers(nil)
 	if err != nil {
 		return nil, err
 	}
