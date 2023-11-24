@@ -71,6 +71,31 @@ func RegisterWatchtowerClientJSONCallbacks(registry map[string]func(ctx context.
 		callback(string(respBytes), nil)
 	}
 
+	registry["wtclientrpc.WatchtowerClient.InactivateTower"] = func(ctx context.Context,
+		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
+
+		req := &InactivateTowerRequest{}
+		err := marshaler.Unmarshal([]byte(reqJSON), req)
+		if err != nil {
+			callback("", err)
+			return
+		}
+
+		client := NewWatchtowerClientClient(conn)
+		resp, err := client.InactivateTower(ctx, req)
+		if err != nil {
+			callback("", err)
+			return
+		}
+
+		respBytes, err := marshaler.Marshal(resp)
+		if err != nil {
+			callback("", err)
+			return
+		}
+		callback(string(respBytes), nil)
+	}
+
 	registry["wtclientrpc.WatchtowerClient.ListTowers"] = func(ctx context.Context,
 		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
 

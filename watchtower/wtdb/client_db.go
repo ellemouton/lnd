@@ -387,6 +387,9 @@ func (c *ClientDB) CreateTower(lnAddr *lnwire.NetAddress) (*Tower, error) {
 				return err
 			}
 
+			// Set it's status to active.
+			tower.Status = TowerStatusActive
+
 			// Add the new address to the existing tower. If the
 			// address is a duplicate, this will result in no
 			// change.
@@ -461,6 +464,95 @@ func (c *ClientDB) CreateTower(lnAddr *lnwire.NetAddress) (*Tower, error) {
 	}
 
 	return tower, nil
+}
+
+// SetTowerStatus
+func (c *ClientDB) SetTowerStatus(pubKey *btcec.PublicKey,
+	status TowerStatus) error {
+
+	var sessStatus CSessionStatus
+	switch status {
+	case TowerStatusActive:
+		sessStatus = CSessionActive
+	case TowerStatusInactive:
+		sessStatus = CSessionInactive
+	default:
+		return fmt.Errorf("unhandled tower status: %d", status)
+	}
+
+	return kvdb.Update(c.db, func(tx kvdb.RwTx) error {
+		towers := tx.ReadWriteBucket(cTowerBkt)
+		if towers == nil {
+			return ErrUninitializedDB
+		}
+
+		towerIndex := tx.ReadWriteBucket(cTowerIndexBkt)
+		if towerIndex == nil {
+			return ErrUninitializedDB
+		}
+
+		towersToSessionsIndex := tx.ReadWriteBucket(
+			cTowerToSessionIndexBkt,
+		)
+		if towersToSessionsIndex == nil {
+			return ErrUninitializedDB
+		}
+
+		chanIDIndexBkt := tx.ReadBucket(cChanIDIndexBkt)
+		if chanIDIndexBkt == nil {
+			return ErrUninitializedDB
+		}
+
+		pubKeyBytes := pubKey.SerializeCompressed()
+		towerIDBytes := towerIndex.Get(pubKeyBytes)
+		if towerIDBytes == nil {
+			return ErrTowerNotFound
+		}
+
+		tower, err := getTower(towers, towerIDBytes)
+		if err != nil {
+			return err
+		}
+
+		// If the tower already has the desired status, then we can exit
+		// here.
+		if tower.Status == status {
+			return nil
+		}
+
+		// Otherwise, we update the status and re-store the tower.
+		tower.Status = status
+
+		err = putTower(towers, tower)
+		if err != nil {
+			return err
+		}
+
+		// Now, we will go through all the tower's sessions and update
+		// their status accordingly.
+		sessions := tx.ReadWriteBucket(cSessionBkt)
+		if sessions == nil {
+			return ErrUninitializedDB
+		}
+		towerID := TowerIDFromBytes(towerIDBytes)
+
+		towerSessions, err := c.listTowerSessions(
+			towerID, sessions, chanIDIndexBkt,
+			towersToSessionsIndex,
+		)
+		if err != nil {
+			return err
+		}
+
+		for _, session := range towerSessions {
+			err := markSessionStatus(sessions, session, sessStatus)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}, func() {})
 }
 
 // RemoveTower modifies a tower's record within the database. If an address is

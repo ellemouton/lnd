@@ -45,6 +45,8 @@ type DB interface {
 	// towers to be returned.
 	ListTowers(filter wtdb.TowerFilterFn) ([]*wtdb.Tower, error)
 
+	SetTowerStatus(pubKey *btcec.PublicKey, status wtdb.TowerStatus) error
+
 	// NextSessionKeyIndex reserves a new session key derivation index for a
 	// particular tower id and blob type. The index is reserved for that
 	// (tower, blob type) pair until CreateClientSession is invoked for that

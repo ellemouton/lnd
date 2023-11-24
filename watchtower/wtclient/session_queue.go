@@ -766,18 +766,18 @@ func (s *sessionQueueSet) AddAndStart(sessionQueue *sessionQueue) {
 
 // StopAndRemove stops the given session queue and removes it from the
 // sessionQueueSet.
-func (s *sessionQueueSet) StopAndRemove(id wtdb.SessionID) error {
+func (s *sessionQueueSet) StopAndRemove(id wtdb.SessionID, final bool) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	queue, ok := s.queues[id]
 	if !ok {
-		return nil
+		return false, nil
 	}
 
 	delete(s.queues, id)
 
-	return queue.Stop(true)
+	return true, queue.Stop(final)
 }
 
 // Get fetches and returns the sessionQueue with the given ID.

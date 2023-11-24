@@ -111,6 +111,8 @@ type Client interface {
 	// instead.
 	RemoveTower(*btcec.PublicKey, net.Addr) error
 
+	InactivateTower(pubKey *btcec.PublicKey) error
+
 	// RegisteredTowers retrieves the list of watchtowers registered with
 	// the client.
 	RegisteredTowers(...wtdb.ClientSessionListOption) ([]*RegisteredTower,
@@ -273,6 +275,17 @@ type staleTowerMsg struct {
 	errChan chan error
 }
 
+type inactivateTowerMsg struct {
+	// pubKey is the identifying public key of the watchtower.
+	pubKey *btcec.PublicKey
+
+	// errChan is the channel through which we'll send a response back to
+	// the caller when handling their request.
+	//
+	// NOTE: This channel must be buffered.
+	errChan chan error
+}
+
 // TowerClient is a concrete implementation of the Client interface, offering a
 // non-blocking, reliable subsystem for backing up revoked states to a specified
 // private tower.
@@ -302,8 +315,9 @@ type TowerClient struct {
 	statTicker *time.Ticker
 	stats      *ClientStats
 
-	newTowers   chan *newTowerMsg
-	staleTowers chan *staleTowerMsg
+	newTowers        chan *newTowerMsg
+	staleTowers      chan *staleTowerMsg
+	inactivateTowers chan *inactivateTowerMsg
 
 	wg   sync.WaitGroup
 	quit chan struct{}
@@ -363,16 +377,28 @@ func New(config *Config) (*TowerClient, error) {
 		stats:                new(ClientStats),
 		newTowers:            make(chan *newTowerMsg),
 		staleTowers:          make(chan *staleTowerMsg),
+		inactivateTowers:     make(chan *inactivateTowerMsg),
 		quit:                 make(chan struct{}),
 	}
 
 	candidateTowers := newTowerListIterator()
-	perActiveTower := func(tower *Tower) {
-		// If the tower has already been marked as active, then there is
-		// no need to add it to the iterator again.
-		if candidateTowers.IsActive(tower.ID) {
-			return
+
+	// Fetch all active towers from the DB.
+	dbTowers, err := cfg.DB.ListTowers(func(tower *wtdb.Tower) bool {
+		return tower.Status == wtdb.TowerStatusActive
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	towers := make([]*Tower, len(dbTowers))
+	for i, dbTower := range dbTowers {
+		tower, err := NewTowerFromDBTower(dbTower)
+		if err != nil {
+			return nil, err
 		}
+
+		towers[i] = tower
 
 		c.log.Infof("Using private watchtower %x, offering policy %s",
 			tower.IdentityKey.SerializeCompressed(), cfg.Policy)
@@ -385,8 +411,8 @@ func New(config *Config) (*TowerClient, error) {
 	// client. We will use any of these sessions if their policies match the
 	// current policy of the client, otherwise they will be ignored and new
 	// sessions will be requested.
-	candidateSessions, err := getTowerAndSessionCandidates(
-		cfg.DB, cfg.SecretKeyRing, perActiveTower,
+	candidateSessions, err := getSessionCandidates(
+		cfg.DB, cfg.SecretKeyRing, towers,
 		wtdb.WithPreEvalFilterFn(c.genSessionFilter(true)),
 		wtdb.WithPostEvalFilterFn(ExhaustedSessionFilter()),
 	)
@@ -419,26 +445,12 @@ func New(config *Config) (*TowerClient, error) {
 // pass the sessionFilter check. If a tower has a session that does pass the
 // sessionFilter check then the perActiveTower call-back will be called on that
 // tower.
-func getTowerAndSessionCandidates(db DB, keyRing ECDHKeyRing,
-	perActiveTower func(tower *Tower),
-	opts ...wtdb.ClientSessionListOption) (
+func getSessionCandidates(db DB, keyRing ECDHKeyRing,
+	towers []*Tower, opts ...wtdb.ClientSessionListOption) (
 	map[wtdb.SessionID]*ClientSession, error) {
 
-	// Fetch all active towers from the DB.
-	towers, err := db.ListTowers(func(tower *wtdb.Tower) bool {
-		return tower.Status == wtdb.TowerStatusActive
-	})
-	if err != nil {
-		return nil, err
-	}
-
 	candidateSessions := make(map[wtdb.SessionID]*ClientSession)
-	for _, dbTower := range towers {
-		tower, err := NewTowerFromDBTower(dbTower)
-		if err != nil {
-			return nil, err
-		}
-
+	for _, tower := range towers {
 		sessions, err := db.ListClientSessions(&tower.ID, opts...)
 		if err != nil {
 			return nil, err
@@ -454,8 +466,6 @@ func getTowerAndSessionCandidates(db DB, keyRing ECDHKeyRing,
 
 			// Add the session to the set of candidate sessions.
 			candidateSessions[s.ID] = cs
-
-			perActiveTower(tower)
 		}
 	}
 
@@ -947,8 +957,8 @@ func (c *TowerClient) handleClosableSessions(
 
 				// Stop the session and remove it from the
 				// in-memory set.
-				err := c.activeSessions.StopAndRemove(
-					item.sessionID,
+				_, err := c.activeSessions.StopAndRemove(
+					item.sessionID, true,
 				)
 				if err != nil {
 					c.log.Errorf("could not remove "+
@@ -1199,6 +1209,9 @@ func (c *TowerClient) backupDispatcher() {
 			case msg := <-c.staleTowers:
 				msg.errChan <- c.handleStaleTower(msg)
 
+			case msg := <-c.inactivateTowers:
+				msg.errChan <- c.handleInactivateTower(msg)
+
 			case <-c.quit:
 				return
 			}
@@ -1283,6 +1296,9 @@ func (c *TowerClient) backupDispatcher() {
 			// of its corresponding candidate sessions as inactive.
 			case msg := <-c.staleTowers:
 				msg.errChan <- c.handleStaleTower(msg)
+
+			case msg := <-c.inactivateTowers:
+				msg.errChan <- c.handleInactivateTower(msg)
 
 			case <-c.quit:
 				return
@@ -1658,6 +1674,71 @@ func (c *TowerClient) RemoveTower(pubKey *btcec.PublicKey,
 	}
 }
 
+func (c *TowerClient) InactivateTower(pubKey *btcec.PublicKey) error {
+	errChan := make(chan error, 1)
+
+	select {
+	case c.inactivateTowers <- &inactivateTowerMsg{
+		pubKey:  pubKey,
+		errChan: errChan,
+	}:
+	case <-c.pipeline.quit:
+		return ErrClientExiting
+	}
+
+	select {
+	case err := <-errChan:
+		return err
+	case <-c.pipeline.quit:
+		return ErrClientExiting
+	}
+}
+
+func (c *TowerClient) handleInactivateTower(msg *inactivateTowerMsg) error {
+	// We'll load the tower before potentially removing it in order to
+	// retrieve its ID within the database.
+	dbTower, err := c.cfg.DB.LoadTower(msg.pubKey)
+	if err != nil {
+		return err
+	}
+
+	// Otherwise, the tower should no longer be used for future session
+	// negotiations and backups. First, we'll update our in-memory state
+	// with the stale tower.
+	err = c.candidateTowers.RemoveCandidate(dbTower.ID, nil)
+	if err != nil {
+		return err
+	}
+
+	pubKey := msg.pubKey.SerializeCompressed()
+	sessions, err := c.cfg.DB.ListClientSessions(&dbTower.ID)
+	if err != nil {
+		return fmt.Errorf("unable to retrieve sessions for tower %x: "+
+			"%v", pubKey, err)
+	}
+	for sessionID := range sessions {
+		delete(c.candidateSessions, sessionID)
+
+		_, err := c.activeSessions.StopAndRemove(sessionID, false)
+		if err != nil {
+			return fmt.Errorf("could not stop session %s: %w",
+				sessionID, err)
+		}
+	}
+
+	// If our active session queue corresponds to the stale tower, we'll
+	// proceed to negotiate a new one.
+	if c.sessionQueue != nil {
+		towerKey := c.sessionQueue.tower.IdentityKey
+
+		if bytes.Equal(pubKey, towerKey.SerializeCompressed()) {
+			c.sessionQueue = nil
+		}
+	}
+
+	return c.cfg.DB.SetTowerStatus(msg.pubKey, wtdb.TowerStatusInactive)
+}
+
 // handleStaleTower handles a request for an existing tower to be removed. If
 // none of the tower's sessions have pending updates, then they will become
 // inactive and removed as candidates. If the active session queue corresponds
@@ -1693,12 +1774,9 @@ func (c *TowerClient) handleStaleTower(msg *staleTowerMsg) error {
 	for sessionID := range sessions {
 		delete(c.candidateSessions, sessionID)
 
-		// Shutdown the session so that any pending updates are
-		// replayed back onto the main task pipeline.
-		err = c.activeSessions.StopAndRemove(sessionID)
+		err = c.terminateSession(sessionID)
 		if err != nil {
-			c.log.Errorf("could not stop session %s: %w", sessionID,
-				err)
+			return err
 		}
 	}
 
@@ -1744,6 +1822,38 @@ func (c *TowerClient) removeTowerAddr(tower *wtdb.Tower, addr net.Addr) error {
 		}
 
 		return err
+	}
+
+	return nil
+}
+
+func (c *TowerClient) terminateSession(id wtdb.SessionID) error {
+	// Shutdown the session so that any pending updates are
+	// replayed back onto the main task pipeline.
+	handled, err := c.activeSessions.StopAndRemove(id, true)
+	if err != nil {
+		return fmt.Errorf("could not stop session %s: %w", id, err)
+	}
+
+	if handled {
+		return nil
+	}
+
+	updates, err := c.cfg.DB.FetchSessionCommittedUpdates(&id)
+	if err != nil {
+		return err
+	}
+
+	for _, update := range updates {
+		err = c.pipeline.QueueBackupID(&update.BackupID)
+		if err != nil {
+			return err
+		}
+
+		err = c.cfg.DB.DeleteCommittedUpdate(&id, update.SeqNum)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

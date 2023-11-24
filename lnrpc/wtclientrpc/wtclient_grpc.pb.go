@@ -30,6 +30,7 @@ type WatchtowerClientClient interface {
 	// again. If an address is provided, then this RPC only serves as a way of
 	// removing the address from the watchtower instead.
 	RemoveTower(ctx context.Context, in *RemoveTowerRequest, opts ...grpc.CallOption) (*RemoveTowerResponse, error)
+	InactivateTower(ctx context.Context, in *InactivateTowerRequest, opts ...grpc.CallOption) (*InactivateTowerResponse, error)
 	// lncli: `wtclient towers`
 	// ListTowers returns the list of watchtowers registered with the client.
 	ListTowers(ctx context.Context, in *ListTowersRequest, opts ...grpc.CallOption) (*ListTowersResponse, error)
@@ -64,6 +65,15 @@ func (c *watchtowerClientClient) AddTower(ctx context.Context, in *AddTowerReque
 func (c *watchtowerClientClient) RemoveTower(ctx context.Context, in *RemoveTowerRequest, opts ...grpc.CallOption) (*RemoveTowerResponse, error) {
 	out := new(RemoveTowerResponse)
 	err := c.cc.Invoke(ctx, "/wtclientrpc.WatchtowerClient/RemoveTower", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *watchtowerClientClient) InactivateTower(ctx context.Context, in *InactivateTowerRequest, opts ...grpc.CallOption) (*InactivateTowerResponse, error) {
+	out := new(InactivateTowerResponse)
+	err := c.cc.Invoke(ctx, "/wtclientrpc.WatchtowerClient/InactivateTower", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -122,6 +132,7 @@ type WatchtowerClientServer interface {
 	// again. If an address is provided, then this RPC only serves as a way of
 	// removing the address from the watchtower instead.
 	RemoveTower(context.Context, *RemoveTowerRequest) (*RemoveTowerResponse, error)
+	InactivateTower(context.Context, *InactivateTowerRequest) (*InactivateTowerResponse, error)
 	// lncli: `wtclient towers`
 	// ListTowers returns the list of watchtowers registered with the client.
 	ListTowers(context.Context, *ListTowersRequest) (*ListTowersResponse, error)
@@ -146,6 +157,9 @@ func (UnimplementedWatchtowerClientServer) AddTower(context.Context, *AddTowerRe
 }
 func (UnimplementedWatchtowerClientServer) RemoveTower(context.Context, *RemoveTowerRequest) (*RemoveTowerResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RemoveTower not implemented")
+}
+func (UnimplementedWatchtowerClientServer) InactivateTower(context.Context, *InactivateTowerRequest) (*InactivateTowerResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method InactivateTower not implemented")
 }
 func (UnimplementedWatchtowerClientServer) ListTowers(context.Context, *ListTowersRequest) (*ListTowersResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListTowers not implemented")
@@ -204,6 +218,24 @@ func _WatchtowerClient_RemoveTower_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(WatchtowerClientServer).RemoveTower(ctx, req.(*RemoveTowerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WatchtowerClient_InactivateTower_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InactivateTowerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WatchtowerClientServer).InactivateTower(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/wtclientrpc.WatchtowerClient/InactivateTower",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WatchtowerClientServer).InactivateTower(ctx, req.(*InactivateTowerRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -294,6 +326,10 @@ var WatchtowerClient_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RemoveTower",
 			Handler:    _WatchtowerClient_RemoveTower_Handler,
+		},
+		{
+			MethodName: "InactivateTower",
+			Handler:    _WatchtowerClient_InactivateTower_Handler,
 		},
 		{
 			MethodName: "ListTowers",

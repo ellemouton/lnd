@@ -282,6 +282,9 @@
     "wtclientrpcAddTowerResponse": {
       "type": "object"
     },
+    "wtclientrpcInactivateTowerResponse": {
+      "type": "object"
+    },
     "wtclientrpcListTowersResponse": {
       "type": "object",
       "properties": {

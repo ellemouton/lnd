@@ -41,6 +41,9 @@ service WatchtowerClient {
     */
     rpc RemoveTower (RemoveTowerRequest) returns (RemoveTowerResponse);
 
+    rpc InactivateTower (InactivateTowerRequest)
+        returns (InactivateTowerResponse);
+
     /* lncli: `wtclient towers`
     ListTowers returns the list of watchtowers registered with the client.
     */
@@ -83,6 +86,14 @@ message RemoveTowerRequest {
     session negotiations and backups.
     */
     string address = 2;
+}
+
+message InactivateTowerRequest {
+    // The identifying public key of the watchtower to remove.
+    bytes pubkey = 1;
+}
+
+message InactivateTowerResponse {
 }
 
 message RemoveTowerResponse {

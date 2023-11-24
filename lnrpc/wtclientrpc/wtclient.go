@@ -44,6 +44,10 @@ var (
 			Entity: "offchain",
 			Action: "write",
 		}},
+		"/wtclientrpc.WatchtowerClient/InactivateTower": {{
+			Entity: "offchain",
+			Action: "write",
+		}},
 		"/wtclientrpc.WatchtowerClient/ListTowers": {{
 			Entity: "offchain",
 			Action: "read",
@@ -217,6 +221,30 @@ func (c *WatchtowerClient) AddTower(ctx context.Context,
 	}
 
 	return &AddTowerResponse{}, nil
+}
+
+func (c *WatchtowerClient) InactivateTower(ctx context.Context,
+	req *InactivateTowerRequest) (*InactivateTowerResponse, error) {
+
+	if err := c.isActive(); err != nil {
+		return nil, err
+	}
+
+	pubKey, err := btcec.ParsePubKey(req.Pubkey)
+	if err != nil {
+		return nil, err
+	}
+
+	err = c.cfg.Client.InactivateTower(pubKey)
+	if err != nil {
+		return nil, err
+	}
+	err = c.cfg.AnchorClient.InactivateTower(pubKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return &InactivateTowerResponse{}, nil
 }
 
 // RemoveTower removes a watchtower from being considered for future session
