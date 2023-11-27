@@ -2417,13 +2417,13 @@ var clientTests = []clientTest{
 		},
 	},
 	{
-		// Demonstrate that a client is un-able to remove a tower if
-		// there are persisted un-acked updates in a session that is
-		// not loaded as a candidate session on start-up.
-		//
-		// NOTE: This is a bug and will be fixed in a followup commit.
-		name: "can't remove tower with un-acked update in " +
-			"non-candidate session",
+		// Previously we would not load a session into memory if it's
+		// seq num was equal to it's max-updates. This meant that we
+		// would then not properly handle any committed updates for the
+		// session meaning that we would then not remove the tower if
+		// needed. This test demonstrates that this has been fixed.
+		name: "can remove tower with an un-acked update in " +
+			"an exhausted session after a restart",
 		cfg: harnessCfg{
 			localBalance:  localBalance,
 			remoteBalance: remoteBalance,
@@ -2461,8 +2461,7 @@ var clientTests = []clientTest{
 			// update which will cause a CommittedUpdate to be
 			// persisted which will also mean that the SeqNum of the
 			// session is now equal to MaxUpdates of the session
-			// policy. This means that on start-up of the client,
-			// the session will not be loaded as a candidate.
+			// policy.
 			h.backupStates(chanID, numUpdates-1, numUpdates, nil)
 
 			tower, err := h.clientDB.LoadTower(
@@ -2497,14 +2496,22 @@ var clientTests = []clientTest{
 			require.NoError(h.t, h.client.Stop())
 			h.startClient()
 
-			// Attempt to remove the tower. This will fail due to
-			// there still being un-acked updates for the tower
-			// since these are only (currently) properly handled for
-			// sessions loaded as candidate sessions on start-up.
+			// Now remove the tower.
 			err = h.client.RemoveTower(
 				h.server.addr.IdentityKey, nil,
 			)
-			require.ErrorIs(h.t, err, wtdb.ErrTowerUnackedUpdates)
+			require.NoError(h.t, err)
+
+			// Add a new tower.
+			server2 := newServerHarness(
+				h.t, h.net, towerAddr2Str, nil,
+			)
+			server2.start()
+			h.addTower(server2.addr)
+
+			// Now we assert that the backups are backed up to the
+			// new tower.
+			server2.waitForUpdates(hints[numUpdates-1:], waitTime)
 		},
 	},
 	{
