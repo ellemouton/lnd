@@ -114,6 +114,8 @@ type DB interface {
 	// the client's active policy.
 	RegisterChannel(lnwire.ChannelID, []byte) error
 
+	TerminateSession(id *wtdb.SessionID) error
+
 	// MarkBackupIneligible records that the state identified by the
 	// (channel id, commit height) tuple was ineligible for being backed up
 	// under the current policy. This state can be retried later under a

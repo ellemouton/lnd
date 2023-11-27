@@ -624,6 +624,29 @@ func (c *ClientDB) LoadTowerByID(towerID TowerID) (*Tower, error) {
 	return tower, nil
 }
 
+// TerminateSession will set the status of the given session to terminated so
+// that the session is not used for any future updates.
+func (c *ClientDB) TerminateSession(id *SessionID) error {
+	return kvdb.Update(c.db, func(tx kvdb.RwTx) error {
+		sessions := tx.ReadWriteBucket(cSessionBkt)
+		if sessions == nil {
+			return ErrUninitializedDB
+		}
+
+		sessionsBkt := tx.ReadBucket(cSessionBkt)
+		if sessionsBkt == nil {
+			return ErrUninitializedDB
+		}
+
+		session, err := getClientSessionBody(sessionsBkt, id[:])
+		if err != nil {
+			return err
+		}
+
+		return markSessionStatus(sessions, session, CSessionTerminal)
+	}, func() {})
+}
+
 // LoadTower retrieves a tower by its public key.
 func (c *ClientDB) LoadTower(pubKey *btcec.PublicKey) (*Tower, error) {
 	var tower *Tower
