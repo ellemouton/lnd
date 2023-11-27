@@ -371,12 +371,23 @@ func New(config *Config) (*TowerClient, error) {
 	}
 
 	candidateTowers := newTowerListIterator()
-	perActiveTower := func(tower *Tower) {
-		// If the tower has already been marked as active, then there is
-		// no need to add it to the iterator again.
-		if candidateTowers.IsActive(tower.ID) {
-			return
+
+	// Fetch all active towers from the DB.
+	dbTowers, err := cfg.DB.ListTowers(func(tower *wtdb.Tower) bool {
+		return tower.Status == wtdb.TowerStatusActive
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	towers := make([]*Tower, len(dbTowers))
+	for i, dbTower := range dbTowers {
+		tower, err := NewTowerFromDBTower(dbTower)
+		if err != nil {
+			return nil, err
 		}
+
+		towers[i] = tower
 
 		c.log.Infof("Using private watchtower %x, offering policy %s",
 			tower.IdentityKey.SerializeCompressed(), cfg.Policy)
@@ -385,12 +396,12 @@ func New(config *Config) (*TowerClient, error) {
 		candidateTowers.AddCandidate(tower)
 	}
 
-	// Load all candidate sessions and towers from the database into the
-	// client. We will use any of these sessions if their policies match the
-	// current policy of the client, otherwise they will be ignored and new
+	// Load all candidate sessions from the database into the client. We
+	// will use any of these sessions if their policies match the current
+	// policy of the client, otherwise they will be ignored and new
 	// sessions will be requested.
-	candidateSessions, err := getTowerAndSessionCandidates(
-		cfg.DB, cfg.SecretKeyRing, perActiveTower,
+	candidateSessions, err := getSessionCandidates(
+		cfg.DB, cfg.SecretKeyRing, towers,
 		wtdb.WithPreEvalFilterFn(c.genSessionFilter(true)),
 		wtdb.WithCountCommittedUpdates(),
 		wtdb.WithPostEvalFilterFn(ExhaustedSessionFilter()),
@@ -419,31 +430,14 @@ func New(config *Config) (*TowerClient, error) {
 	return c, nil
 }
 
-// getTowerAndSessionCandidates loads all the towers from the DB and then
-// fetches the sessions for each of tower. Sessions are only collected if they
-// pass the sessionFilter check. If a tower has a session that does pass the
-// sessionFilter check then the perActiveTower call-back will be called on that
-// tower.
-func getTowerAndSessionCandidates(db DB, keyRing ECDHKeyRing,
-	perActiveTower func(tower *Tower),
-	opts ...wtdb.ClientSessionListOption) (
+// getSessionCandidates iterates over the given set of active towers and fetches
+// the sessions for each.
+func getSessionCandidates(db DB, keyRing ECDHKeyRing,
+	towers []*Tower, opts ...wtdb.ClientSessionListOption) (
 	map[wtdb.SessionID]*ClientSession, error) {
 
-	// Fetch all active towers from the DB.
-	towers, err := db.ListTowers(func(tower *wtdb.Tower) bool {
-		return tower.Status == wtdb.TowerStatusActive
-	})
-	if err != nil {
-		return nil, err
-	}
-
 	candidateSessions := make(map[wtdb.SessionID]*ClientSession)
-	for _, dbTower := range towers {
-		tower, err := NewTowerFromDBTower(dbTower)
-		if err != nil {
-			return nil, err
-		}
-
+	for _, tower := range towers {
 		sessions, err := db.ListClientSessions(&tower.ID, opts...)
 		if err != nil {
 			return nil, err
@@ -459,8 +453,6 @@ func getTowerAndSessionCandidates(db DB, keyRing ECDHKeyRing,
 
 			// Add the session to the set of candidate sessions.
 			candidateSessions[s.ID] = cs
-
-			perActiveTower(tower)
 		}
 	}
 
