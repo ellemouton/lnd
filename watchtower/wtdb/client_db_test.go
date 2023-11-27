@@ -146,10 +146,10 @@ func (h *clientDBHarness) removeTower(pubKey *btcec.PublicKey, addr net.Addr,
 		}
 
 		for _, session := range h.listSessions(&tower.ID) {
-			require.Equal(h.t, wtdb.CSessionInactive,
+			require.Equal(h.t, wtdb.CSessionTerminal,
 				session.Status, "expected status for session "+
 					"%v to be %v, got %v", session.ID,
-				wtdb.CSessionInactive, session.Status)
+				wtdb.CSessionTerminal, session.Status)
 		}
 	}
 }
@@ -617,7 +617,7 @@ func testTowerStatusChange(h *clientDBHarness) {
 	// to inactive.
 	h.removeTower(tower.IdentityKey, nil, true, nil)
 	assertTowerStatus(wtdb.TowerStatusInactive)
-	assertSessionStatus(wtdb.CSessionInactive)
+	assertSessionStatus(wtdb.CSessionTerminal)
 
 	// Re-adding the tower in some way should re-active it and its session.
 	h.createTower(towerAddr, nil)
@@ -1013,6 +1013,44 @@ func testMarkChannelClosed(h *clientDBHarness) {
 	// Assert that we now can delete the session.
 	h.deleteSession(session1.ID, nil)
 	require.Empty(h.t, h.listClosableSessions(nil))
+
+	// We also want to test that a session can be deleted if it has been
+	// marked as terminal.
+
+	// Create session2 with MaxUpdates set to 5.
+	session2 := h.randSession(h.t, tower.ID, 5)
+	h.insertSession(session2, nil)
+
+	// Create and register channel 7.
+	chanID7 := randChannelID(h.t)
+	h.registerChan(chanID7, nil, nil)
+
+	// Add two updates for channel 7 in session 2. Ack one of them so that
+	// the mapping from this channel to this session is created but don't
+	// ack the other since we want to delete the committed update later.
+	update = randCommittedUpdateForChannel(h.t, chanID7, 1)
+	h.commitUpdate(&session2.ID, update, nil)
+	h.ackUpdate(&session2.ID, 1, 1, nil)
+
+	update = randCommittedUpdateForChannel(h.t, chanID7, 2)
+	h.commitUpdate(&session2.ID, update, nil)
+
+	// Check that attempting to delete the session will fail since it is not
+	// yet considered closable.
+	h.deleteSession(session2.ID, wtdb.ErrSessionNotClosable)
+
+	// Now delete one of the added committed updates. This should put the
+	// session in the terminal state after which we should be able to
+	// delete the session.
+	h.deleteCommittedUpdate(&session2.ID, 2, nil)
+
+	// Marking channel 7 as closed will now return session 2 since it has
+	// been marked as terminal.
+	sl = h.markChannelClosed(chanID7, 1, nil)
+	require.ElementsMatch(h.t, sl, []wtdb.SessionID{session2.ID})
+
+	// We should not be able to delete the session.
+	h.deleteSession(session2.ID, nil)
 }
 
 // testAckUpdate asserts the behavior of AckUpdate.
