@@ -1860,9 +1860,10 @@ func (c *ClientDB) MarkChannelClosed(chanID lnwire.ChannelID,
 
 // isSessionClosable returns true if a session is considered closable. A session
 // is considered closable only if all the following points are true:
-// 1) It has no un-acked updates.
-// 2) It is exhausted (ie it can't accept any more updates)
-// 3) All the channels that it has acked updates for are closed.
+//  1. It has no un-acked updates.
+//  2. It is exhausted (ie it can't accept any more updates) OR it has been
+//     marked as terminal.
+//  3. All the channels that it has acked updates for are closed.
 func isSessionClosable(sessionsBkt, chanDetailsBkt, chanIDIndexBkt kvdb.RBucket,
 	id *SessionID) (bool, error) {
 
@@ -1885,25 +1886,19 @@ func isSessionClosable(sessionsBkt, chanDetailsBkt, chanIDIndexBkt kvdb.RBucket,
 		}
 	}
 
-	// If the session has any un-acked updates, then it is not yet closable.
-	err := commitsBkt.ForEach(func(_, _ []byte) error {
-		return ErrSessionHasUnackedUpdates
-	})
-	if errors.Is(err, ErrSessionHasUnackedUpdates) {
-		return false, nil
-	} else if err != nil {
-		return false, err
-	}
-
 	session, err := getClientSessionBody(sessionsBkt, id[:])
 	if err != nil {
 		return false, err
 	}
 
+	isTerminal := session.Status == CSessionTerminal
+
 	// We have already checked that the session has no more committed
-	// updates. So now we can check if the session is exhausted.
-	if session.SeqNum < session.Policy.MaxUpdates {
-		// If the session is not yet exhausted, it is not yet closable.
+	// updates. So now we can check if the session is exhausted or has a
+	// terminal state.
+	if !isTerminal && session.SeqNum < session.Policy.MaxUpdates {
+		// If the session is not yet exhausted, and it is not yet in a
+		// terminal state then it is not yet closable.
 		return false, nil
 	}
 
@@ -1923,11 +1918,16 @@ func isSessionClosable(sessionsBkt, chanDetailsBkt, chanIDIndexBkt kvdb.RBucket,
 		}
 	}
 
-	// If the session has no acked-updates, then something is wrong since
-	// the above check ensures that this session has been exhausted meaning
-	// that it should have MaxUpdates acked updates.
 	ackedRangeBkt := sessBkt.NestedReadBucket(cSessionAckRangeIndex)
 	if ackedRangeBkt == nil {
+		if isTerminal {
+			return true, nil
+		}
+
+		// If the session has no acked-updates, and it is not in a
+		// terminal state then something is wrong since the above check
+		// ensures that this session has been exhausted meaning that it
+		// should have MaxUpdates acked updates.
 		return false, fmt.Errorf("no acked-updates found for "+
 			"exhausted session %s", id)
 	}
@@ -2075,7 +2075,6 @@ func (c *ClientDB) CommitUpdate(id *SessionID,
 		lastApplied = session.TowerLastApplied
 
 		return nil
-
 	}, func() {
 		lastApplied = 0
 	})
@@ -2309,6 +2308,20 @@ func (c *ClientDB) DeleteCommittedUpdates(id *SessionID) error {
 				id.String())
 		}
 
+		session, err := getClientSessionBody(sessions, id[:])
+		if err != nil {
+			return err
+		}
+
+		// Once we delete a committed update from the session, the
+		// SeqNum of the session will be incorrect and so the session
+		// should be marked as terminal.
+		session.Status = CSessionTerminal
+		err = putClientSessionBody(sessionBkt, session)
+		if err != nil {
+			return err
+		}
+
 		// If the commits sub-bucket doesn't exist, there can't possibly
 		// be corresponding updates to remove.
 		sessionCommits := sessionBkt.NestedReadWriteBucket(
@@ -2322,7 +2335,7 @@ func (c *ClientDB) DeleteCommittedUpdates(id *SessionID) error {
 		// the ForEach loop. The return of this error means that at
 		// least one committed update exists.
 		var errFoundUpdates = fmt.Errorf("found committed updates")
-		err := sessionCommits.ForEach(func(k, v []byte) error {
+		err = sessionCommits.ForEach(func(k, v []byte) error {
 			return errFoundUpdates
 		})
 		switch {
