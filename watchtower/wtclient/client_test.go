@@ -2550,6 +2550,82 @@ var clientTests = []clientTest{
 			require.NoError(h.t, err)
 		},
 	},
+	{
+		name: "de-active a tower",
+		cfg: harnessCfg{
+			localBalance:  localBalance,
+			remoteBalance: remoteBalance,
+			policy: wtpolicy.Policy{
+				TxPolicy:   defaultTxPolicy,
+				MaxUpdates: 5,
+			},
+		},
+		fn: func(h *testHarness) {
+			const (
+				numUpdates = 10
+				chanIDInt  = 0
+			)
+
+			// Advance the channel with a few updates.
+			hints := h.advanceChannelN(chanIDInt, numUpdates)
+
+			// Backup a few these updates and wait for them to
+			// arrive at the server.
+			h.backupStates(chanIDInt, 0, numUpdates/2, nil)
+			h.server.waitForUpdates(hints[:numUpdates/2], waitTime)
+
+			// Lookup the tower and assert that it currently is
+			// seen as an active session candidate.
+			tower, err := h.client.LookupTower(
+				h.server.addr.IdentityKey,
+			)
+			require.NoError(h.t, err)
+			require.True(h.t, tower.ActiveSessionCandidate)
+
+			// Deactivate the tower.
+			err = h.client.DeactivateTower(
+				h.server.addr.IdentityKey,
+			)
+			require.NoError(h.t, err)
+
+			// Assert that it is no longer seen as an active
+			// session candidate.
+			tower, err = h.client.LookupTower(
+				h.server.addr.IdentityKey,
+			)
+			require.NoError(h.t, err)
+			require.False(h.t, tower.ActiveSessionCandidate)
+
+			// Add a new tower.
+			server2 := newServerHarness(
+				h.t, h.net, towerAddr2Str, nil,
+			)
+			server2.start()
+			h.addTower(server2.addr)
+
+			// Backup a few more states and assert that they appear
+			// on the second tower server.
+			h.backupStates(
+				chanIDInt, numUpdates/2, numUpdates-1, nil,
+			)
+			server2.waitForUpdates(
+				hints[numUpdates/2:numUpdates-1], waitTime,
+			)
+
+			// Reactivate the first tower.
+			err = h.client.AddTower(h.server.addr)
+			require.NoError(h.t, err)
+
+			// Deactivate the second tower.
+			err = h.client.DeactivateTower(server2.addr.IdentityKey)
+			require.NoError(h.t, err)
+
+			// Backup the last backup and assert that it appears
+			// on the first tower.
+			h.backupStates(chanIDInt, numUpdates-1, numUpdates, nil)
+			h.server.waitForUpdates(hints[numUpdates-1:], waitTime)
+		},
+	},
 }
 
 // TestClient executes the client test suite, asserting the ability to backup
