@@ -2305,6 +2305,15 @@ func getClientSessionBody(sessions kvdb.RBucket,
 // that read sessions from the DB.
 type ClientSessionFilterFn func(*ClientSession) bool
 
+// ClientSessWithNumCommittedUpdatesFilterFn describes the signature of a
+// callback function that can be used to filter out a session based on the
+// contents of ClientSession along with the number of un-acked committed updates
+// that the session has.
+//
+// NOTE: the number of updates will only be meaningful if the
+// WithCountCommittedUpdates option is used.
+type ClientSessWithNumCommittedUpdatesFilterFn func(*ClientSession, uint16) bool
+
 // PerMaxHeightCB describes the signature of a callback function that can be
 // called for each channel that a session has updates for to communicate the
 // maximum commitment height that the session has backed up for the channel.
@@ -2355,6 +2364,11 @@ type ClientSessionListCfg struct {
 	// committed (un-acked) updates.
 	PerCommittedUpdate PerCommittedUpdateCB
 
+	// CountCommittedUpdates is true if the number of un-acked committed
+	// updates of the session should be counted. This should be used along
+	// with the PostEvaluateFilterFn.
+	CountCommittedUpdates bool
+
 	// PreEvaluateFilterFn will be run after loading a session from the DB
 	// and _before_ any of the other call-back functions in
 	// ClientSessionListCfg. Therefore, if a session fails this filter
@@ -2365,8 +2379,9 @@ type ClientSessionListCfg struct {
 	// PostEvaluateFilterFn will be run _after_ all the other call-back
 	// functions in ClientSessionListCfg. If a session fails this filter
 	// function then all it means is that it won't be included in the list
-	// of sessions to return.
-	PostEvaluateFilterFn ClientSessionFilterFn
+	// of sessions to return. The number of committed updates passed to the
+	// call-back is only meaningful if CountCommittedUpdates is true.
+	PostEvaluateFilterFn ClientSessWithNumCommittedUpdatesFilterFn
 }
 
 // NewClientSessionCfg constructs a new ClientSessionListCfg.
@@ -2380,6 +2395,15 @@ func NewClientSessionCfg() *ClientSessionListCfg {
 func WithPerMaxHeight(cb PerMaxHeightCB) ClientSessionListOption {
 	return func(cfg *ClientSessionListCfg) {
 		cfg.PerMaxHeight = cb
+	}
+}
+
+// WithCountCommittedUpdates will trigger the number of committed updates of
+// a session to be counted. This number will then be passed to the
+// PostEvaluateFilterFn call-back if one is set.
+func WithCountCommittedUpdates() ClientSessionListOption {
+	return func(cfg *ClientSessionListCfg) {
+		cfg.CountCommittedUpdates = true
 	}
 }
 
@@ -2426,8 +2450,12 @@ func WithPreEvalFilterFn(fn ClientSessionFilterFn) ClientSessionListOption {
 // is used to determine if the session should be evaluated at all (and thus
 // run against the other ClientSessionListCfg call-backs) whereas the session
 // will only reach the PostEvalFilterFn call-back once it has already been
-// evaluated by all the other call-backs.
-func WithPostEvalFilterFn(fn ClientSessionFilterFn) ClientSessionListOption {
+// evaluated by all the other call-backs. The number of committed updates count
+// supplied to the call-back is only meaningful if the WithCountCommittedUpdates
+// option is set too.
+func WithPostEvalFilterFn(
+	fn ClientSessWithNumCommittedUpdatesFilterFn) ClientSessionListOption {
+
 	return func(cfg *ClientSessionListCfg) {
 		cfg.PostEvaluateFilterFn = fn
 	}
@@ -2459,8 +2487,9 @@ func (c *ClientDB) getClientSession(sessionsBkt, chanIDIndexBkt kvdb.RBucket,
 
 	// Pass the session's committed (un-acked) updates through the call-back
 	// if one is provided.
-	err = filterClientSessionCommits(
+	numCommittedUpdates, err := filterClientSessionCommits(
 		sessionBkt, session, cfg.PerCommittedUpdate,
+		cfg.CountCommittedUpdates,
 	)
 	if err != nil {
 		return nil, err
@@ -2477,7 +2506,7 @@ func (c *ClientDB) getClientSession(sessionsBkt, chanIDIndexBkt kvdb.RBucket,
 	}
 
 	if cfg.PostEvaluateFilterFn != nil &&
-		!cfg.PostEvaluateFilterFn(session) {
+		!cfg.PostEvaluateFilterFn(session, numCommittedUpdates) {
 
 		return nil, ErrSessionFailedFilterFn
 	}
@@ -2584,20 +2613,24 @@ func (c *ClientDB) filterClientSessionAcks(sessionBkt,
 
 // filterClientSessionCommits retrieves all committed updates for the session
 // identified by the serialized session id and passes them to the given
-// PerCommittedUpdateCB callback.
+// PerCommittedUpdateCB callback. If the countUpdates argument is true, then
+// the number of committed updates will be returned.
 func filterClientSessionCommits(sessionBkt kvdb.RBucket, s *ClientSession,
-	cb PerCommittedUpdateCB) error {
+	cb PerCommittedUpdateCB, countUpdates bool) (uint16, error) {
 
-	if cb == nil {
-		return nil
+	if cb == nil && !countUpdates {
+		return 0, nil
 	}
 
 	sessionCommits := sessionBkt.NestedReadBucket(cSessionCommits)
 	if sessionCommits == nil {
-		return nil
+		return 0, nil
 	}
 
+	var numUpdates uint16
 	err := sessionCommits.ForEach(func(k, v []byte) error {
+		numUpdates++
+
 		var committedUpdate CommittedUpdate
 		err := committedUpdate.Decode(bytes.NewReader(v))
 		if err != nil {
@@ -2605,14 +2638,17 @@ func filterClientSessionCommits(sessionBkt kvdb.RBucket, s *ClientSession,
 		}
 		committedUpdate.SeqNum = byteOrder.Uint16(k)
 
-		cb(s, &committedUpdate)
+		if cb != nil {
+			cb(s, &committedUpdate)
+		}
+
 		return nil
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	return nil
+	return numUpdates, nil
 }
 
 // putClientSessionBody stores the body of the ClientSession (everything but the
