@@ -140,6 +140,12 @@ type DB interface {
 	// DeleteCommittedUpdates deletes all the committed updates belonging to
 	// the given session from the db.
 	DeleteCommittedUpdates(id *wtdb.SessionID) error
+
+	// DeactivateTower sets the given tower's status to inactive. It also
+	// sets the status of any session with the tower to inactive.
+	// CreateTower can be used to reactivate the tower and all its sessions
+	// again.
+	DeactivateTower(pubKey *btcec.PublicKey) error
 }
 
 // AuthDialer connects to a remote node using an authenticated transport, such
