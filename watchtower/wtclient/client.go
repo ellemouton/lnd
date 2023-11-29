@@ -116,6 +116,10 @@ type Client interface {
 	// be used while the tower is inactive.
 	DeactivateTower(pubKey *btcec.PublicKey) error
 
+	// TerminateSession sets the given session's status to CSessionTerminal
+	// meaning that it will not be used again.
+	TerminateSession(id *wtdb.SessionID) error
+
 	// RegisteredTowers retrieves the list of watchtowers registered with
 	// the client.
 	RegisteredTowers(...wtdb.ClientSessionListOption) ([]*RegisteredTower,
@@ -291,6 +295,19 @@ type deactivateTowerMsg struct {
 	errChan chan error
 }
 
+// terminateSessMsg is an internal message we'll use within the TowerClient to
+// signal that a session should be terminated.
+type terminateSessMsg struct {
+	// id is the session identifier.
+	id *wtdb.SessionID
+
+	// errChan is the channel through which we'll send a response back to
+	// the caller when handling their request.
+	//
+	// NOTE: This channel must be buffered.
+	errChan chan error
+}
+
 // TowerClient is a concrete implementation of the Client interface, offering a
 // non-blocking, reliable subsystem for backing up revoked states to a specified
 // private tower.
@@ -323,6 +340,7 @@ type TowerClient struct {
 	newTowers        chan *newTowerMsg
 	staleTowers      chan *staleTowerMsg
 	deactivateTowers chan *deactivateTowerMsg
+	terminateSession chan *terminateSessMsg
 
 	wg   sync.WaitGroup
 	quit chan struct{}
@@ -383,6 +401,7 @@ func New(config *Config) (*TowerClient, error) {
 		newTowers:            make(chan *newTowerMsg),
 		staleTowers:          make(chan *staleTowerMsg),
 		deactivateTowers:     make(chan *deactivateTowerMsg),
+		terminateSession:     make(chan *terminateSessMsg),
 		quit:                 make(chan struct{}),
 	}
 
@@ -1225,6 +1244,9 @@ func (c *TowerClient) backupDispatcher() {
 			case msg := <-c.deactivateTowers:
 				msg.errChan <- c.handleDeactivateTower(msg)
 
+			case msg := <-c.terminateSession:
+				msg.errChan <- c.handleTerminateSession(msg)
+
 			case <-c.quit:
 				return
 			}
@@ -1312,6 +1334,9 @@ func (c *TowerClient) backupDispatcher() {
 
 			case msg := <-c.deactivateTowers:
 				msg.errChan <- c.handleDeactivateTower(msg)
+
+			case msg := <-c.terminateSession:
+				msg.errChan <- c.handleTerminateSession(msg)
 
 			case <-c.quit:
 				return
@@ -1658,6 +1683,54 @@ func (c *TowerClient) handleNewTower(msg *newTowerMsg) error {
 	}
 
 	return nil
+}
+
+// TerminateSession sets the given session's status to CSessionTerminal meaning
+// that it will not be used again.
+func (c *TowerClient) TerminateSession(id *wtdb.SessionID) error {
+	errChan := make(chan error, 1)
+
+	select {
+	case c.terminateSession <- &terminateSessMsg{
+		id:      id,
+		errChan: errChan,
+	}:
+	case <-c.pipeline.quit:
+		return ErrClientExiting
+	}
+
+	select {
+	case err := <-errChan:
+		return err
+	case <-c.pipeline.quit:
+		return ErrClientExiting
+	}
+}
+
+// handleTerminateSession handles a request to terminate a session. It will
+// first shut down the session if it is part of the active session set, then
+// it will ensure that the active session queue is set reset if it is using the
+// session in question. Finally, the session's status in the DB will be updated.
+func (c *TowerClient) handleTerminateSession(msg *terminateSessMsg) error {
+	id := *msg.id
+
+	delete(c.candidateSessions, id)
+
+	err := c.activeSessions.StopAndRemove(id, true)
+	if err != nil {
+		return fmt.Errorf("could not stop session %s: %w", id, err)
+	}
+
+	// If our active session queue corresponds to the session being
+	// terminated, then we'll proceed to negotiate a new one.
+	if c.sessionQueue != nil {
+		if bytes.Equal(c.sessionQueue.ID()[:], id[:]) {
+			c.sessionQueue = nil
+		}
+	}
+
+	// Finally, mark the session as terminated in the DB.
+	return c.cfg.DB.TerminateSession(msg.id)
 }
 
 // DeactivateTower sets the given tower's status to inactive so that it
