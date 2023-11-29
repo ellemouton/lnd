@@ -49,6 +49,13 @@ service WatchtowerClient {
     rpc DeactivateTower (DeactivateTowerRequest)
         returns (DeactivateTowerResponse);
 
+    /* lncli: `wtclient session terminate`
+    Terminate terminates the given session and marks it as terminal so that
+    it is not used for backups anymore.
+    */
+    rpc TerminateSession (TerminateSessionRequest)
+        returns (TerminateSessionResponse);
+
     /* lncli: `wtclient towers`
     ListTowers returns the list of watchtowers registered with the client.
     */
@@ -102,6 +109,14 @@ message DeactivateTowerRequest {
 }
 
 message DeactivateTowerResponse {
+}
+
+message TerminateSessionRequest {
+    // The ID of the session that should be terminated.
+    bytes session_id = 1;
+}
+
+message TerminateSessionResponse {
 }
 
 message GetTowerInfoRequest {
