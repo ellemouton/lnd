@@ -76,6 +76,12 @@
   running this new version, please make sure to upgrade your client application
   to include this new status so it can understand the RPC response properly.
 
+* [New watchtower client DeactivateTower and TerminateSession]() commands have 
+  been added. The DeactivateTower command can be used to mark a tower as 
+  inactive so that its sessions are not loaded on startup and so that the tower 
+  is not considered for session negotiation. TerminateSession can be used to 
+  mark a specific session as terminal so that that specific is never used again.
+
 ## lncli Additions
 
 # Improvements
