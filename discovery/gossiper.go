@@ -329,6 +329,11 @@ type Config struct {
 	// to without iterating over the entire set of open channels.
 	FindChannel func(node *btcec.PublicKey, chanID lnwire.ChannelID) (
 		*channeldb.OpenChannel, error)
+
+	// FetchTxBySCID queries the chain for the transaction with the given
+	// SCID. A quit channel can be passed in to cancel the query.
+	FetchTxBySCID func(chanID *lnwire.ShortChannelID, quit chan struct{}) (
+		*wire.MsgTx, error)
 }
 
 // processedNetworkMsg is a wrapper around networkMsg and a boolean. It is
@@ -1863,7 +1868,7 @@ func (d *AuthenticatedGossiper) processRejectedEdge(
 	if err != nil {
 		return nil, err
 	}
-	err = routing.ValidateChannelAnn(chanAnn)
+	err = routing.ValidateChannelAnn(chanAnn, d.fetchTx)
 	if err != nil {
 		err := fmt.Errorf("assembled channel announcement proof "+
 			"for shortChanID=%v isn't valid: %v",
@@ -1932,6 +1937,12 @@ func (d *AuthenticatedGossiper) addNode(msg *lnwire.NodeAnnouncement1,
 	}
 
 	return d.cfg.Router.AddNode(node, op...)
+}
+
+func (d *AuthenticatedGossiper) fetchTx(chanID *lnwire.ShortChannelID) (
+	*wire.MsgTx, error) {
+
+	return d.cfg.FetchTxBySCID(chanID, d.quit)
 }
 
 // isPremature decides whether a given network message has a block height+delta
@@ -2459,7 +2470,8 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 	// the signatures within the proof as it should be well formed.
 	var proof *models.ChannelAuthProof1
 	if nMsg.isRemote {
-		if err := routing.ValidateChannelAnn(ann); err != nil {
+		err := routing.ValidateChannelAnn(ann, d.fetchTx)
+		if err != nil {
 			err := fmt.Errorf("unable to validate announcement: "+
 				"%v", err)
 
@@ -3270,7 +3282,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 
 	// With all the necessary components assembled validate the full
 	// channel announcement proof.
-	if err := routing.ValidateChannelAnn(chanAnn); err != nil {
+	if err := routing.ValidateChannelAnn(chanAnn, d.fetchTx); err != nil {
 		err := fmt.Errorf("channel announcement proof for "+
 			"short_chan_id=%v isn't valid: %v", shortChanID, err)
 

@@ -1031,6 +1031,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		FindBaseByAlias:         s.aliasMgr.FindBaseSCID,
 		GetAlias:                s.aliasMgr.GetPeerAlias,
 		FindChannel:             s.findChannel,
+		FetchTxBySCID:           s.fetchTxBySCID,
 	}, nodeKeyDesc)
 
 	s.localChanMgr = &localchans.Manager{
