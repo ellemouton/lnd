@@ -22,6 +22,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
+	"github.com/lightningnetwork/lnd/tlv"
 	"github.com/lightningnetwork/lnd/tor"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -632,23 +633,36 @@ func TestLightningWireProtocol(t *testing.T) {
 		},
 		MsgChannelReady: func(v []reflect.Value, r *rand.Rand) {
 			var c [32]byte
-			if _, err := r.Read(c[:]); err != nil {
-				t.Fatalf("unable to generate chan id: %v", err)
-				return
-			}
+			_, err := r.Read(c[:])
+			require.NoError(t, err)
 
 			pubKey, err := randPubKey()
-			if err != nil {
-				t.Fatalf("unable to generate key: %v", err)
-				return
-			}
+			require.NoError(t, err)
 
-			req := NewChannelReady(ChannelID(c), pubKey)
+			req := NewChannelReady(c, pubKey)
 
 			if r.Int31()%2 == 0 {
 				scid := NewShortChanIDFromInt(uint64(r.Int63()))
 				req.AliasScid = &scid
 				req.NextLocalNonce = randLocalNonce(r)
+			}
+
+			if r.Int31()%2 == 0 {
+				nodeNonce := tlv.ZeroRecordT[
+					tlv.TlvType0, Musig2Nonce,
+				]()
+				nodeNonce.Val = *randLocalNonce(r)
+				req.AnnouncementNodeNonce = tlv.SomeRecordT(
+					nodeNonce,
+				)
+
+				btcNonce := tlv.ZeroRecordT[
+					tlv.TlvType2, Musig2Nonce,
+				]()
+				btcNonce.Val = *randLocalNonce(r)
+				req.AnnouncementBitcoinNonce = tlv.SomeRecordT(
+					btcNonce,
+				)
 			}
 
 			v[0] = reflect.ValueOf(*req)
