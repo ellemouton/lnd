@@ -209,6 +209,8 @@
   with a lower min_final_cltv_expiry_delta value than 18 blocks since
   LND 0.11.0.
 
+* Add new [lnwire](https://github.com/lightningnetwork/lnd/pull/8044) messages 
+  for the Gossip 1.75 protocol.
 
 ## Testing
 
