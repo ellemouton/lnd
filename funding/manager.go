@@ -389,7 +389,7 @@ type Config struct {
 	// CurrentNodeAnnouncement should return the latest, fully signed node
 	// announcement from the backing Lightning Network node with a fresh
 	// timestamp.
-	CurrentNodeAnnouncement func() (lnwire.NodeAnnouncement, error)
+	CurrentNodeAnnouncement func() (lnwire.NodeAnnouncement1, error)
 
 	// SendAnnouncement is used by the FundingManager to send announcement
 	// messages to the Gossiper to possibly broadcast to the greater

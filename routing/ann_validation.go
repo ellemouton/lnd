@@ -88,7 +88,7 @@ func ValidateChannelAnn(a *lnwire.ChannelAnnouncement1) error {
 // ValidateNodeAnn validates the node announcement by ensuring that the
 // attached signature is needed a signature of the node announcement under the
 // specified node public key.
-func ValidateNodeAnn(a *lnwire.NodeAnnouncement) error {
+func ValidateNodeAnn(a *lnwire.NodeAnnouncement1) error {
 	// Reconstruct the data of announcement which should be covered by the
 	// signature so we can verify the signature shortly below
 	data, err := a.DataToSign()
