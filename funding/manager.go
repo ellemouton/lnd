@@ -4052,7 +4052,7 @@ func (f *Manager) ensureInitialForwardingPolicy(chanID lnwire.ChannelID,
 // send out to the network after a new channel has been created locally.
 type chanAnnouncement struct {
 	chanAnn       *lnwire.ChannelAnnouncement1
-	chanUpdateAnn *lnwire.ChannelUpdate
+	chanUpdateAnn *lnwire.ChannelUpdate1
 	chanProof     *lnwire.AnnounceSignatures1
 }
 
@@ -4146,7 +4146,7 @@ func (f *Manager) newChanAnnouncement(localPubKey,
 
 	// We announce the channel with the default values. Some of
 	// these values can later be changed by crafting a new ChannelUpdate.
-	chanUpdateAnn := &lnwire.ChannelUpdate{
+	chanUpdateAnn := &lnwire.ChannelUpdate1{
 		ShortChannelID: shortChanID,
 		ChainHash:      chainHash,
 		Timestamp:      uint32(time.Now().Unix()),

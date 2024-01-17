@@ -2692,9 +2692,9 @@ func (r *ChannelRouter) sendPayment(feeLimit lnwire.MilliSatoshi,
 
 // extractChannelUpdate examines the error and extracts the channel update.
 func (r *ChannelRouter) extractChannelUpdate(
-	failure lnwire.FailureMessage) *lnwire.ChannelUpdate {
+	failure lnwire.FailureMessage) *lnwire.ChannelUpdate1 {
 
-	var update *lnwire.ChannelUpdate
+	var update *lnwire.ChannelUpdate1
 	switch onionErr := failure.(type) {
 	case *lnwire.FailExpiryTooSoon:
 		update = &onionErr.Update
@@ -2715,7 +2715,7 @@ func (r *ChannelRouter) extractChannelUpdate(
 
 // applyChannelUpdate validates a channel update and if valid, applies it to the
 // database. It returns a bool indicating whether the updates were successful.
-func (r *ChannelRouter) applyChannelUpdate(msg *lnwire.ChannelUpdate) bool {
+func (r *ChannelRouter) applyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 	ch, _, _, err := r.GetChannelByID(msg.ShortChannelID)
 	if err != nil {
 		log.Errorf("Unable to retrieve channel by id: %v", err)
