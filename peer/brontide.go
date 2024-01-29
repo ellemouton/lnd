@@ -2604,6 +2604,7 @@ func (p *Brontide) fetchActiveChanCloser(chanID lnwire.ChannelID) (
 		return nil, fmt.Errorf("unable to estimate fee")
 	}
 
+	// ELLE: create chan closer: shutdown from remote.
 	chanCloser, err = p.createChanCloser(
 		channel, deliveryScript, feePerKw, nil, false,
 	)
@@ -2829,6 +2830,7 @@ func (p *Brontide) restartCoopClose(lnChan *lnwallet.LightningChannel) (
 		channeldb.ChanStatusLocalCloseInitiator,
 	)
 
+	// ELLE: create chan closer: on restart
 	chanCloser, err := p.createChanCloser(
 		lnChan, deliveryScript, feePerKw, nil, locallyInitiated,
 	)
@@ -2951,6 +2953,7 @@ func (p *Brontide) handleLocalCloseReq(req *htlcswitch.ChanClose) {
 			}
 		}
 
+		// ELLE: create chan closer: on local request
 		chanCloser, err := p.createChanCloser(
 			channel, deliveryScript, req.TargetFeePerKw, req, true,
 		)
