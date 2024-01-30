@@ -7,6 +7,7 @@ import (
 	"github.com/lightningnetwork/lnd/lnrpc/invoicesrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/routerrpc"
 	"github.com/lightningnetwork/lnd/lntest"
+	"github.com/lightningnetwork/lnd/lntest/wait"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/stretchr/testify/require"
 )
@@ -151,8 +152,8 @@ func testCoopCloseWithHtlcsWithRestart(ht *lntest.HarnessTest) {
 		ChannelPoint: chanPoint,
 		NoWait:       true,
 	})
-	ht.AssertChannelInactive(bob, chanPoint)
-	ht.AssertChannelInactive(alice, chanPoint)
+	ht.AssertChannelWaitingClose(bob, chanPoint)
+	ht.AssertChannelWaitingClose(alice, chanPoint)
 
 	// Now restart Alice and Bob.
 	ht.RestartNode(alice)
@@ -160,47 +161,31 @@ func testCoopCloseWithHtlcsWithRestart(ht *lntest.HarnessTest) {
 
 	ht.AssertConnected(alice, bob)
 
-	// Show that the channel is seen as active again by Alice and Bob.
-	ht.AssertChannelActive(alice, chanPoint)
-	ht.AssertChannelActive(bob, chanPoint)
-
 	// Let's settle the invoice.
 	alice.RPC.SettleInvoice(preimage[:])
 
-	ht.CloseChannel(alice, chanPoint)
+	var closingTxid string
+	err := wait.Predicate(func() bool {
+		pendingChansResp := alice.RPC.PendingChannels()
+		waitingClosed := pendingChansResp.WaitingCloseChannels
 
-	//// Have Alice attempt to close the channel.
-	//closeClient := alice.RPC.CloseChannel(&lnrpc.CloseChannelRequest{
-	//	ChannelPoint: chanPoint,
-	//	NoWait:       true,
-	//})
-	//
-	//// Pull the instant update off the wire to clear the path for the
-	//// close pending update.
-	//_, err := closeClient.Recv()
-	//require.NoError(ht, err)
-	//
-	//// Wait for the next channel closure update. Now that we have settled
-	//// the only HTLC this should be imminent.
-	//update, err := closeClient.Recv()
-	//require.NoError(ht, err)
-	//
-	//// This next update should be a GetClosePending as it should be the
-	//// negotiation of the coop close tx.
-	//closePending := update.GetClosePending()
-	//require.NotNil(ht, closePending)
-	//
-	//// Convert the txid we get from the PendingUpdate to a Hash so we can
-	//// wait for it to be mined.
-	//var closeTxid chainhash.Hash
-	//require.NoError(
-	//	ht, closeTxid.SetBytes(closePending.Txid),
-	//	"invalid closing txid",
-	//)
-	//
-	//// Wait for the close tx to be in the Mempool.
-	//ht.Miner.AssertTxInMempool(&closeTxid)
-	//
-	//// Wait for it to get mined and finish tearing down.
-	//ht.AssertStreamChannelCoopClosed(alice, chanPoint, false, closeClient)
+		if len(waitingClosed) != 1 {
+			return false
+		}
+
+		closingTxid = waitingClosed[0].ClosingTxid
+
+		return true
+	}, defaultTimeout)
+	require.NoError(ht, err)
+
+	// Convert the txid we get from the PendingUpdate to a Hash so we can
+	// wait for it to be mined.
+	closeTxid, err := chainhash.NewHashFromStr(closingTxid)
+	require.NoError(ht, err)
+
+	// Wait for the close tx to be in the Mempool.
+	ht.Miner.AssertTxInMempool(closeTxid)
+
+	ht.MineBlocksAndAssertNumTxes(6, 1)
 }

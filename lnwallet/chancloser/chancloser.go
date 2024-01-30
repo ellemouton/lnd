@@ -353,6 +353,14 @@ func (c *ChanCloser) initChanShutdown() (*lnwire.Shutdown, error) {
 	chancloserLog.Infof("ChannelPoint(%v): sending shutdown message",
 		c.chanPoint)
 
+	chancloserLog.Infof("ELLE: marking shutdown sent...")
+	err := c.cfg.Channel.MarkShutdownSent()
+	if err != nil {
+		chancloserLog.Infof("ELLE: here? %v", err)
+		return nil, err
+	}
+	chancloserLog.Infof("ELLE: done!")
+
 	return shutdown, nil
 }
 

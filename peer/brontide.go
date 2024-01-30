@@ -903,10 +903,13 @@ func (p *Brontide) loadActiveChannels(chans []*channeldb.OpenChannel) (
 			// Check if this channel needs to have the cooperative
 			// close process restarted. If so, we'll need to send
 			// the Shutdown message that is returned.
-			if dbChan.HasChanStatus(
+			sentShutdown := dbChan.HasChanStatus(
+				channeldb.ChanStatusShutdownSent,
+			)
+			coopCloseBroadcast := dbChan.HasChanStatus(
 				channeldb.ChanStatusCoopBroadcasted,
-			) {
-
+			)
+			if sentShutdown || coopCloseBroadcast {
 				shutdownMsg, err := p.restartCoopClose(lnChan)
 				if err != nil {
 					p.log.Errorf("Unable to restart "+
@@ -922,9 +925,13 @@ func (p *Brontide) loadActiveChannels(chans []*channeldb.OpenChannel) (
 				// Append the message to the set of messages to
 				// send.
 				msgs = append(msgs, shutdownMsg)
+			} else {
+				p.log.Info("ELLE: channel coop close not starting")
 			}
 
 			continue
+		} else {
+			p.log.Info("ELLE: channel has normal status. starting as normal")
 		}
 
 		// Before we register this new link with the HTLC Switch, we'll

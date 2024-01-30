@@ -444,6 +444,7 @@ func (h *HarnessTest) findChannel(hn *node.HarnessNode,
 	}
 
 	channelInfo := hn.RPC.ListChannels(req)
+	hn.RPC.PendingChannels()
 
 	// Find the target channel.
 	for _, channel := range channelInfo.Channels {

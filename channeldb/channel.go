@@ -597,6 +597,8 @@ var (
 	// ChanStatusRemoteCloseInitiator indicates that the remote node
 	// initiated closing the channel.
 	ChanStatusRemoteCloseInitiator ChannelStatus = 1 << 6
+
+	ChanStatusShutdownSent ChannelStatus = 1 << 7
 )
 
 // chanStatusStrings maps a ChannelStatus to a human friendly string that
@@ -610,6 +612,7 @@ var chanStatusStrings = map[ChannelStatus]string{
 	ChanStatusCoopBroadcasted:      "ChanStatusCoopBroadcasted",
 	ChanStatusLocalCloseInitiator:  "ChanStatusLocalCloseInitiator",
 	ChanStatusRemoteCloseInitiator: "ChanStatusRemoteCloseInitiator",
+	ChanStatusShutdownSent:         "ChanStatusShutdownSent",
 }
 
 // orderedChanStatusFlags is an in-order list of all that channel status flags.
@@ -618,6 +621,7 @@ var orderedChanStatusFlags = []ChannelStatus{
 	ChanStatusCommitBroadcasted,
 	ChanStatusLocalDataLoss,
 	ChanStatusRestored,
+	ChanStatusShutdownSent,
 	ChanStatusCoopBroadcasted,
 	ChanStatusLocalCloseInitiator,
 	ChanStatusRemoteCloseInitiator,

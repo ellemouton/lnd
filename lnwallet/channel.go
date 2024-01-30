@@ -8860,6 +8860,13 @@ func (lc *LightningChannel) MarkCoopBroadcasted(tx *wire.MsgTx,
 	return lc.channelState.MarkCoopBroadcasted(tx, localInitiated)
 }
 
+func (lc *LightningChannel) MarkShutdownSent() error {
+	lc.Lock()
+	defer lc.Unlock()
+
+	return lc.channelState.ApplyChanStatus(channeldb.ChanStatusShutdownSent)
+}
+
 // MarkDataLoss marks sets the channel status to LocalDataLoss and stores the
 // passed commitPoint for use to retrieve funds in case the remote force closes
 // the channel.
