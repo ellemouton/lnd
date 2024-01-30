@@ -6,6 +6,7 @@ import (
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/invoicesrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/routerrpc"
+	"github.com/lightningnetwork/lnd/lnrpc/walletrpc"
 	"github.com/lightningnetwork/lnd/lntest"
 	"github.com/lightningnetwork/lnd/lntest/wait"
 	"github.com/lightningnetwork/lnd/lntypes"
@@ -118,7 +119,7 @@ func testCoopCloseWithHtlcsWithRestart(ht *lntest.HarnessTest) {
 	// Here we set things up so that Alice generates a HODL invoice so we
 	// can test whether the shutdown is deferred until the settlement of
 	// that invoice.
-	payAmt := btcutil.Amount(4)
+	payAmt := btcutil.Amount(400000)
 	var preimage lntypes.Preimage
 	copy(preimage[:], ht.Random32Bytes())
 	payHash := preimage.Hash()
@@ -147,10 +148,18 @@ func testCoopCloseWithHtlcsWithRestart(ht *lntest.HarnessTest) {
 	// Assert at this point that the HTLC is open but not yet settled.
 	ht.AssertInvoiceState(invoiceStream, lnrpc.Invoice_ACCEPTED)
 
-	// Have Alice attempt to close the channel.
+	// Have Alice attempt to close the channel. Also let her set a specific
+	// delivery address so that we can test that this is persisted across
+	// restarts.
+
+	newAddr := alice.RPC.NewAddress(&lnrpc.NewAddressRequest{
+		Type: AddrTypeWitnessPubkeyHash,
+	})
+
 	_ = alice.RPC.CloseChannel(&lnrpc.CloseChannelRequest{
-		ChannelPoint: chanPoint,
-		NoWait:       true,
+		ChannelPoint:    chanPoint,
+		NoWait:          true,
+		DeliveryAddress: newAddr.Address,
 	})
 	ht.AssertChannelWaitingClose(bob, chanPoint)
 	ht.AssertChannelWaitingClose(alice, chanPoint)
@@ -188,4 +197,10 @@ func testCoopCloseWithHtlcsWithRestart(ht *lntest.HarnessTest) {
 	ht.Miner.AssertTxInMempool(closeTxid)
 
 	ht.MineBlocksAndAssertNumTxes(6, 1)
+
+	tx := alice.RPC.GetTransaction(&walletrpc.GetTransactionRequest{Txid: closingTxid})
+	require.Len(ht, tx.OutputDetails, 1)
+
+	require.Equal(ht, tx.OutputDetails[0].Address, newAddr.Address)
+
 }
