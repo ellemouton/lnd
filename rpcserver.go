@@ -3750,6 +3750,8 @@ func (r *rpcServer) fetchWaitingCloseChannels() (waitingCloseChannels,
 			return tx.TxHash().String(), nil
 		}
 
+		rpcsLog.Infof("ELLE: the committed error was: %v", err)
+
 		// If the error returned is not ErrNoCloseTx, something
 		// unexpected happened and we will return the error.
 		if err != channeldb.ErrNoCloseTx {
@@ -3762,6 +3764,8 @@ func (r *rpcServer) fetchWaitingCloseChannels() (waitingCloseChannels,
 			return tx.TxHash().String(), nil
 		}
 
+		rpcsLog.Infof("ELLE: the coop error was: %v", err)
+
 		// Return the error if it's not ErrNoCloseTx.
 		if err != channeldb.ErrNoCloseTx {
 			return "", err
@@ -3770,6 +3774,7 @@ func (r *rpcServer) fetchWaitingCloseChannels() (waitingCloseChannels,
 		// Otherwise return an empty txid. This can happen if the
 		// remote broadcast the closing txid and we haven't recorded it
 		// yet.
+		rpcsLog.Infof("ELLE: here. Empty TXID")
 		return "", nil
 	}
 

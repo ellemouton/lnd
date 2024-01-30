@@ -2565,6 +2565,7 @@ func (p *Brontide) fetchActiveChanCloser(chanID lnwire.ChannelID) (
 		// created for a non-pending channel or for a channel that had
 		// previously started the shutdown process but the connection
 		// was restarted.
+		p.log.Infof("ELLE: was active")
 		return chanCloser, nil
 	}
 
@@ -2608,6 +2609,7 @@ func (p *Brontide) fetchActiveChanCloser(chanID lnwire.ChannelID) (
 	}
 
 	// ELLE: create chan closer: shutdown from remote.
+	p.log.Infof("ELLE: chan closer h1: %x", deliveryScript)
 	chanCloser, err = p.createChanCloser(
 		channel, deliveryScript, feePerKw, nil, false,
 	)
@@ -2825,9 +2827,6 @@ func (p *Brontide) restartCoopClose(lnChan *lnwallet.LightningChannel) (
 
 	p.log.Infof("ELLE: using delivery script: %x", deliveryScript)
 
-	// 0014e2ee3e4c9a634c8eefd7d48653be8d0b7f9009f2
-	// 0014e2ee3e4c9a634c8eefd7d48653be8d0b7f9009f2
-
 	// Compute an ideal fee.
 	feePerKw, err := p.cfg.FeeEstimator.EstimateFeePerKW(
 		p.cfg.CoopCloseTargetConfs,
@@ -2844,6 +2843,7 @@ func (p *Brontide) restartCoopClose(lnChan *lnwallet.LightningChannel) (
 	)
 
 	// ELLE: create chan closer: on restart
+	p.log.Infof("ELLE: chan closer h2: %x", deliveryScript)
 	chanCloser, err := p.createChanCloser(
 		lnChan, deliveryScript, feePerKw, nil, locallyInitiated,
 	)
@@ -2967,6 +2967,7 @@ func (p *Brontide) handleLocalCloseReq(req *htlcswitch.ChanClose) {
 		}
 
 		// ELLE: create chan closer: on local request
+		p.log.Infof("ELLE: chan closer h3: %x", deliveryScript)
 		chanCloser, err := p.createChanCloser(
 			channel, deliveryScript, req.TargetFeePerKw, req, true,
 		)
@@ -3614,6 +3615,8 @@ func (p *Brontide) handleCloseMsg(msg *closeMsg) {
 		return
 	}
 
+	p.log.Infof("ELLE: handleCLoseMsg 1: %x", chanCloser.GetLocalDel())
+
 	handleErr := func(err error) {
 		err = fmt.Errorf("unable to process close msg: %w", err)
 		p.log.Error(err)
@@ -3683,8 +3686,12 @@ func (p *Brontide) handleCloseMsg(msg *closeMsg) {
 		}
 
 		if link == nil {
+			p.log.Infof("ELLE: Link is fokken nil")
+			p.log.Infof("ELLE: handleCLoseMsg 2: %x", chanCloser.GetLocalDel())
 			beginNegotiation()
 		} else {
+			p.log.Infof("ELLE: begin Neg now")
+			p.log.Infof("ELLE: handleCLoseMsg 3: %x", chanCloser.GetLocalDel())
 			// Now we register a flush hook to advance the
 			// ChanCloser and possibly send out a ClosingSigned
 			// when the link finishes draining.
@@ -3696,8 +3703,10 @@ func (p *Brontide) handleCloseMsg(msg *closeMsg) {
 		}
 
 	case *lnwire.ClosingSigned:
+		p.log.Infof("ELLE: This one")
 		oClosingSigned, err := chanCloser.ReceiveClosingSigned(*typed)
 		if err != nil {
+			p.log.Infof("ELLE: ReceiveClosingSigned after ClosingSigned error: %v", err)
 			handleErr(err)
 			return
 		}

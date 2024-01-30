@@ -1612,12 +1612,16 @@ func (c *OpenChannel) MarkCommitmentBroadcasted(closeTx *wire.MsgTx,
 	)
 }
 
-func (c *OpenChannel) MarkShutdownSent(localDeliveryScript []byte) error {
+func (c *OpenChannel) MarkShutdownSent(localDeliveryScript []byte,
+	locallyInitiated bool) error {
+
 	log.Infof("ELLE: marking shutdown sent with script: %x", localDeliveryScript)
-	return c.markShutdownSent(localDeliveryScript)
+	return c.markShutdownSent(localDeliveryScript, locallyInitiated)
 }
 
-func (c *OpenChannel) markShutdownSent(deliveryScript []byte) error {
+func (c *OpenChannel) markShutdownSent(deliveryScript []byte,
+	locallyInitiated bool) error {
+
 	c.Lock()
 	defer c.Unlock()
 
@@ -1625,7 +1629,17 @@ func (c *OpenChannel) markShutdownSent(deliveryScript []byte) error {
 		return chanBucket.Put(deliveryScriptKey, deliveryScript)
 	}
 
-	return c.putChanStatus(ChanStatusShutdownSent, putDeliveryScript)
+	// Add the initiator status to the status provided. These statuses are
+	// set in addition to the broadcast status so that we do not need to
+	// migrate the original logic which does not store initiator.
+	status := ChanStatusShutdownSent
+	if locallyInitiated {
+		status |= ChanStatusLocalCloseInitiator
+	} else {
+		status |= ChanStatusRemoteCloseInitiator
+	}
+
+	return c.putChanStatus(status, putDeliveryScript)
 }
 
 // MarkCoopBroadcasted marks the channel to indicate that a cooperative close
@@ -1720,7 +1734,7 @@ func (c *OpenChannel) DeliveryScript() ([]byte, error) {
 		return nil, err
 	}
 
-	log.Trace("ELLE: got delivery script: %x", deliveryScriptKey)
+	log.Infof("ELLE: got delivery script: %x", deliveryScript)
 
 	return deliveryScript, nil
 }

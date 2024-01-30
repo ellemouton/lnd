@@ -210,6 +210,10 @@ type ChanCloser struct {
 	cachedClosingSigned fn.Option[lnwire.ClosingSigned]
 }
 
+func (c *ChanCloser) GetLocalDel() []byte {
+	return c.localDeliveryScript
+}
+
 // calcCoopCloseFee computes an "ideal" absolute co-op close fee given the
 // delivery scripts of both parties and our ideal fee rate.
 func calcCoopCloseFee(chanType channeldb.ChannelType,
@@ -262,6 +266,8 @@ func (d *SimpleCoopFeeEstimator) EstimateFee(chanType channeldb.ChannelType,
 func NewChanCloser(cfg ChanCloseCfg, deliveryScript []byte,
 	idealFeePerKw chainfee.SatPerKWeight, negotiationHeight uint32,
 	closeReq *htlcswitch.ChanClose, locallyInitiated bool) *ChanCloser {
+
+	chancloserLog.Infof("ELLE: new chan closer: local init? %v. Delivery script: ", locallyInitiated, deliveryScript)
 
 	cid := lnwire.NewChanIDFromOutPoint(cfg.Channel.ChannelPoint())
 	return &ChanCloser{
@@ -324,7 +330,9 @@ func (c *ChanCloser) initChanShutdown() (*lnwire.Shutdown, error) {
 	// With both items constructed we'll now send the shutdown message for this
 	// particular channel, advertising a shutdown request to our desired
 	// closing script.
+	chancloserLog.Infof("ELLE: local del script before new shutdown msg: %x", c.localDeliveryScript)
 	shutdown := lnwire.NewShutdown(c.cid, c.localDeliveryScript)
+	chancloserLog.Infof("ELLE: local del script after new shutdown msg: %x", c.localDeliveryScript)
 
 	// If this is a taproot channel, then we'll need to also generate a
 	// nonce that'll be used sign the co-op close transaction offer.
@@ -353,10 +361,14 @@ func (c *ChanCloser) initChanShutdown() (*lnwire.Shutdown, error) {
 	chancloserLog.Infof("ChannelPoint(%v): sending shutdown message",
 		c.chanPoint)
 
-	err := c.cfg.Channel.MarkShutdownSent(c.localDeliveryScript)
+	chancloserLog.Infof("ELLE: Local del script before mark shutdown: %x", c.localDeliveryScript)
+	err := c.cfg.Channel.MarkShutdownSent(
+		c.localDeliveryScript, c.locallyInitiated,
+	)
 	if err != nil {
 		return nil, err
 	}
+	chancloserLog.Infof("ELLE: Local del script after mark shutdown: %x", c.localDeliveryScript)
 
 	return shutdown, nil
 }
@@ -382,6 +394,7 @@ func (c *ChanCloser) ShutdownChan() (*lnwire.Shutdown, error) {
 	// With the opening steps complete, we'll transition into the
 	// closeShutdownInitiated state. In this state, we'll wait until the other
 	// party sends their version of the shutdown message.
+	chancloserLog.Infof("ELLE: IDLE -> SHUTDOWN INIT")
 	c.state = closeShutdownInitiated
 
 	// Finally, we'll return the shutdown message to the caller so it can send
@@ -487,6 +500,8 @@ func (c *ChanCloser) ReceiveShutdown(
 
 	noShutdown := fn.None[lnwire.Shutdown]()
 
+	chancloserLog.Infof("ELLE: ReceiveShutdown")
+
 	switch c.state {
 	// If we're in the close idle state, and we're receiving a channel
 	// closure related message, then this indicates that we're on the
@@ -558,6 +573,7 @@ func (c *ChanCloser) ReceiveShutdown(
 		// negotiation. So we'll update our internal state to reflect
 		// this, so we can handle the next message sent.
 		c.state = closeAwaitingFlush
+		chancloserLog.Infof("ELLE: IDLE -> AWAITING FLUSH")
 
 		return fn.Some(*localShutdown), err
 
@@ -580,6 +596,7 @@ func (c *ChanCloser) ReceiveShutdown(
 		// At this point, we can now start the fee negotiation state, by
 		// constructing and sending our initial signature for what we
 		// think the closing transaction should look like.
+		chancloserLog.Infof("ELLE: SHUTDOWN INITIATED -> AWAITING FLUSH")
 		c.state = closeAwaitingFlush
 
 		// If this is a taproot channel, then we'll want to stash the
@@ -619,13 +636,18 @@ func (c *ChanCloser) BeginNegotiation() (
 	fn.Option[lnwire.ClosingSigned], error,
 ) {
 
+	chancloserLog.Infof("ELLE: BeginNegotiation")
+	chancloserLog.Infof("ELLE: local del Script start of BeginNegotiation %x", c.localDeliveryScript)
+
 	noClosingSigned := fn.None[lnwire.ClosingSigned]()
 
 	switch c.state {
 	case closeAwaitingFlush:
 		// Now that we know their desired delivery script, we can
 		// compute what our max/ideal fee will be.
+		chancloserLog.Infof("ELLE: local del Script before initFeeBase %x", c.localDeliveryScript)
 		c.initFeeBaseline()
+		chancloserLog.Infof("ELLE: local del Script after initFeeBase %x", c.localDeliveryScript)
 
 		// Before continuing, mark the channel as cooperatively closed
 		// with a nil txn. Even though we haven't negotiated the final
@@ -642,6 +664,7 @@ func (c *ChanCloser) BeginNegotiation() (
 		// At this point, we can now start the fee negotiation state, by
 		// constructing and sending our initial signature for what we
 		// think the closing transaction should look like.
+		chancloserLog.Infof("ELLE: AWAITING FLUSH -> FEE NEG")
 		c.state = closeFeeNegotiation
 		if !c.cfg.Channel.IsInitiator() {
 			// By default this means we do nothing, but we do want
@@ -654,6 +677,10 @@ func (c *ChanCloser) BeginNegotiation() (
 					res, err = c.ReceiveClosingSigned(cs)
 				},
 			)
+
+			if err != nil {
+				chancloserLog.Infof("ELLE: ReceiveClosingSigned error (non initiator): %v", err)
+			}
 
 			return res, err
 		}
@@ -684,6 +711,8 @@ func (c *ChanCloser) ReceiveClosingSigned(
 ) (fn.Option[lnwire.ClosingSigned], error) {
 
 	noClosing := fn.None[lnwire.ClosingSigned]()
+
+	chancloserLog.Infof("ELLE: local del Script start of ReceiveClosingSigned %x", c.localDeliveryScript)
 
 	switch c.state {
 	case closeAwaitingFlush:
@@ -822,6 +851,9 @@ func (c *ChanCloser) ReceiveClosingSigned(
 			}
 		}
 
+		chancloserLog.Infof("ELLE: local delevery Script: %x", c.localDeliveryScript)
+		chancloserLog.Infof("ELLE: %x, %x, %x, %x, %v", localSig.Serialize(), remoteSig.Serialize(), c.localDeliveryScript, c.remoteDeliveryScript)
+
 		closeTx, _, err := c.cfg.Channel.CompleteCooperativeClose(
 			localSig, remoteSig, c.localDeliveryScript,
 			c.remoteDeliveryScript, remoteProposedFee, closeOpts...,
@@ -901,6 +933,7 @@ func (c *ChanCloser) proposeCloseSigned(fee btcutil.Amount) (*lnwire.ClosingSign
 		}
 	}
 
+	chancloserLog.Infof("ELLE: local del Script before CreateCloseProp %x", c.localDeliveryScript)
 	rawSig, _, _, err := c.cfg.Channel.CreateCloseProposal(
 		fee, c.localDeliveryScript, c.remoteDeliveryScript,
 		closeOpts...,
@@ -908,6 +941,7 @@ func (c *ChanCloser) proposeCloseSigned(fee btcutil.Amount) (*lnwire.ClosingSign
 	if err != nil {
 		return nil, err
 	}
+	chancloserLog.Infof("ELLE: local del Script after CreateCloseProp %x", c.localDeliveryScript)
 
 	// We'll note our last signature and proposed fee so when the remote
 	// party responds we'll be able to decide if we've agreed on fees or
