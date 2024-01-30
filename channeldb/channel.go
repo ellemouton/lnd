@@ -121,6 +121,8 @@ var (
 	// broadcasted when moving the channel to state CoopBroadcasted.
 	coopCloseTxKey = []byte("coop-closing-tx-key")
 
+	deliveryScriptKey = []byte("delivery-script-key")
+
 	// commitDiffKey stores the current pending commitment state we've
 	// extended to the remote party (if any). Each time we propose a new
 	// state, we store the information necessary to reconstruct this state
@@ -187,6 +189,8 @@ var (
 	// ErrNoCloseTx is returned when no closing tx is found for a channel
 	// in the state CommitBroadcasted.
 	ErrNoCloseTx = fmt.Errorf("no closing tx found")
+
+	ErrNoDeliveryScript = fmt.Errorf("no delivery script")
 
 	// ErrNoRestoredChannelMutation is returned when a caller attempts to
 	// mutate a channel that's been recovered.
@@ -1608,6 +1612,22 @@ func (c *OpenChannel) MarkCommitmentBroadcasted(closeTx *wire.MsgTx,
 	)
 }
 
+func (c *OpenChannel) MarkShutdownSent(localDeliveryScript []byte) error {
+	log.Infof("ELLE: marking shutdown sent with script: %x", localDeliveryScript)
+	return c.markShutdownSent(localDeliveryScript)
+}
+
+func (c *OpenChannel) markShutdownSent(deliveryScript []byte) error {
+	c.Lock()
+	defer c.Unlock()
+
+	putDeliveryScript := func(chanBucket kvdb.RwBucket) error {
+		return chanBucket.Put(deliveryScriptKey, deliveryScript)
+	}
+
+	return c.putChanStatus(ChanStatusShutdownSent, putDeliveryScript)
+}
+
 // MarkCoopBroadcasted marks the channel to indicate that a cooperative close
 // transaction has been broadcast, either our own or the remote, and that we
 // should watch the chain for it to confirm before taking further action. It
@@ -1670,6 +1690,39 @@ func (c *OpenChannel) BroadcastedCommitment() (*wire.MsgTx, error) {
 // MarkCoopBroadcasted. If not found ErrNoCloseTx is returned.
 func (c *OpenChannel) BroadcastedCooperative() (*wire.MsgTx, error) {
 	return c.getClosingTx(coopCloseTxKey)
+}
+
+func (c *OpenChannel) DeliveryScript() ([]byte, error) {
+	var deliveryScript []byte
+
+	err := kvdb.View(c.Db.backend, func(tx kvdb.RTx) error {
+		chanBucket, err := fetchChanBucket(
+			tx, c.IdentityPub, &c.FundingOutpoint, c.ChainHash,
+		)
+		switch err {
+		case nil:
+		case ErrNoChanDBExists, ErrNoActiveChannels, ErrChannelNotFound:
+			return ErrNoDeliveryScript
+		default:
+			return err
+		}
+
+		deliveryScript = chanBucket.Get(deliveryScriptKey)
+		if deliveryScript == nil {
+			return ErrNoDeliveryScript
+		}
+
+		return nil
+	}, func() {
+		deliveryScript = nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	log.Trace("ELLE: got delivery script: %x", deliveryScriptKey)
+
+	return deliveryScript, nil
 }
 
 // getClosingTx is a helper method which returns the stored closing transaction

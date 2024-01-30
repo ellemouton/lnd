@@ -925,13 +925,9 @@ func (p *Brontide) loadActiveChannels(chans []*channeldb.OpenChannel) (
 				// Append the message to the set of messages to
 				// send.
 				msgs = append(msgs, shutdownMsg)
-			} else {
-				p.log.Info("ELLE: channel coop close not starting")
 			}
 
 			continue
-		} else {
-			p.log.Info("ELLE: channel has normal status. starting as normal")
 		}
 
 		// Before we register this new link with the HTLC Switch, we'll
@@ -2811,16 +2807,26 @@ func (p *Brontide) restartCoopClose(lnChan *lnwallet.LightningChannel) (
 	}
 
 	// As mentioned above, we don't re-create the delivery script.
-	deliveryScript := c.LocalShutdownScript
-	if len(deliveryScript) == 0 {
-		var err error
-		deliveryScript, err = p.genDeliveryScript()
-		if err != nil {
-			p.log.Errorf("unable to gen delivery script: %v",
-				err)
-			return nil, fmt.Errorf("close addr unavailable")
+	deliveryScript, err := c.DeliveryScript()
+	if err != nil && !errors.Is(err, channeldb.ErrNoDeliveryScript) {
+		return nil, err
+	} else if err != nil {
+		deliveryScript = c.LocalShutdownScript
+		if len(deliveryScript) == 0 {
+			var err error
+			deliveryScript, err = p.genDeliveryScript()
+			if err != nil {
+				p.log.Errorf("unable to gen delivery script: %v",
+					err)
+				return nil, fmt.Errorf("close addr unavailable")
+			}
 		}
 	}
+
+	p.log.Infof("ELLE: using delivery script: %x", deliveryScript)
+
+	// 0014e2ee3e4c9a634c8eefd7d48653be8d0b7f9009f2
+	// 0014e2ee3e4c9a634c8eefd7d48653be8d0b7f9009f2
 
 	// Compute an ideal fee.
 	feePerKw, err := p.cfg.FeeEstimator.EstimateFeePerKW(

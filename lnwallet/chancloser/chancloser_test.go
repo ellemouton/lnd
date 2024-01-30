@@ -154,7 +154,7 @@ func (m *mockChannel) MarkCoopBroadcasted(*wire.MsgTx, bool) error {
 	return nil
 }
 
-func (m *mockChannel) MarkShutdownSent() error {
+func (m *mockChannel) MarkShutdownSent(deliveryAddr []byte) error {
 	return nil
 }
 

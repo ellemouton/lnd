@@ -353,13 +353,10 @@ func (c *ChanCloser) initChanShutdown() (*lnwire.Shutdown, error) {
 	chancloserLog.Infof("ChannelPoint(%v): sending shutdown message",
 		c.chanPoint)
 
-	chancloserLog.Infof("ELLE: marking shutdown sent...")
-	err := c.cfg.Channel.MarkShutdownSent()
+	err := c.cfg.Channel.MarkShutdownSent(c.localDeliveryScript)
 	if err != nil {
-		chancloserLog.Infof("ELLE: here? %v", err)
 		return nil, err
 	}
-	chancloserLog.Infof("ELLE: done!")
 
 	return shutdown, nil
 }
@@ -646,7 +643,6 @@ func (c *ChanCloser) BeginNegotiation() (
 		// constructing and sending our initial signature for what we
 		// think the closing transaction should look like.
 		c.state = closeFeeNegotiation
-
 		if !c.cfg.Channel.IsInitiator() {
 			// By default this means we do nothing, but we do want
 			// to check if we have a cached remote offer to process.

@@ -35,7 +35,7 @@ type Channel interface { //nolint:interfacebloat
 	// transaction has been broadcast.
 	MarkCoopBroadcasted(*wire.MsgTx, bool) error
 
-	MarkShutdownSent() error
+	MarkShutdownSent(deliveryAddr []byte) error
 
 	// IsInitiator returns true we are the initiator of the channel.
 	IsInitiator() bool

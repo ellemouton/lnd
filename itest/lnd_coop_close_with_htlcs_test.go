@@ -107,10 +107,10 @@ func testCoopCloseWithHtlcs(ht *lntest.HarnessTest) {
 func testCoopCloseWithHtlcsWithRestart(ht *lntest.HarnessTest) {
 	alice, bob := ht.Alice, ht.Bob
 
-	// Here we set up a channel between Alice and Bob, beginning with a
-	// balance on Bob's side.
+	// Here we set up a channel between Alice and Bob.
 	chanPoint := ht.OpenChannel(bob, alice, lntest.OpenChannelParams{
-		Amt: btcutil.Amount(1000000),
+		Amt:     btcutil.Amount(1000000),
+		PushAmt: btcutil.Amount(1000000 / 2),
 	})
 
 	// Wait for Bob to understand that the channel is ready to use.
@@ -119,7 +119,7 @@ func testCoopCloseWithHtlcsWithRestart(ht *lntest.HarnessTest) {
 	// Here we set things up so that Alice generates a HODL invoice so we
 	// can test whether the shutdown is deferred until the settlement of
 	// that invoice.
-	payAmt := btcutil.Amount(400000)
+	payAmt := btcutil.Amount(400)
 	var preimage lntypes.Preimage
 	copy(preimage[:], ht.Random32Bytes())
 	payHash := preimage.Hash()
@@ -199,8 +199,17 @@ func testCoopCloseWithHtlcsWithRestart(ht *lntest.HarnessTest) {
 	ht.MineBlocksAndAssertNumTxes(6, 1)
 
 	tx := alice.RPC.GetTransaction(&walletrpc.GetTransactionRequest{Txid: closingTxid})
-	require.Len(ht, tx.OutputDetails, 1)
+	require.Len(ht, tx.OutputDetails, 2)
 
-	require.Equal(ht, tx.OutputDetails[0].Address, newAddr.Address)
+	var outputDetail *lnrpc.OutputDetail
+	for _, output := range tx.OutputDetails {
+		if output.IsOurAddress {
+			outputDetail = output
+			break
+		}
+	}
+	require.NotNil(ht, outputDetail)
+
+	require.Equal(ht, outputDetail.Address, newAddr.Address)
 
 }

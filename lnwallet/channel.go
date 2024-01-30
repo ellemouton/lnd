@@ -8857,14 +8857,15 @@ func (lc *LightningChannel) MarkCoopBroadcasted(tx *wire.MsgTx,
 	lc.Lock()
 	defer lc.Unlock()
 
+	lc.log.Infof("ELLE: marking broadcasted")
 	return lc.channelState.MarkCoopBroadcasted(tx, localInitiated)
 }
 
-func (lc *LightningChannel) MarkShutdownSent() error {
+func (lc *LightningChannel) MarkShutdownSent(deliveryAddr []byte) error {
 	lc.Lock()
 	defer lc.Unlock()
 
-	return lc.channelState.ApplyChanStatus(channeldb.ChanStatusShutdownSent)
+	return lc.channelState.MarkShutdownSent(deliveryAddr)
 }
 
 // MarkDataLoss marks sets the channel status to LocalDataLoss and stores the
