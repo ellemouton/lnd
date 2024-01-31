@@ -1721,10 +1721,13 @@ func (c *OpenChannel) DeliveryScript() ([]byte, error) {
 			return err
 		}
 
-		deliveryScript = chanBucket.Get(deliveryScriptKey)
-		if deliveryScript == nil {
+		delScriptBytes := chanBucket.Get(deliveryScriptKey)
+		if delScriptBytes == nil {
 			return ErrNoDeliveryScript
 		}
+
+		deliveryScript = make([]byte, len(delScriptBytes))
+		copy(deliveryScript, delScriptBytes)
 
 		return nil
 	}, func() {

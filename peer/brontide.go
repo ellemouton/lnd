@@ -2598,6 +2598,7 @@ func (p *Brontide) fetchActiveChanCloser(chanID lnwire.ChannelID) (
 		}
 	}
 
+	// NOT THIS ONE.
 	b := make([]byte, len(deliveryScript))
 	copy(b, deliveryScript)
 
@@ -2612,7 +2613,6 @@ func (p *Brontide) fetchActiveChanCloser(chanID lnwire.ChannelID) (
 	}
 
 	// ELLE: create chan closer: shutdown from remote.
-	p.log.Infof("ELLE: chan closer h1: %x", b)
 	chanCloser, err = p.createChanCloser(
 		channel, b, feePerKw, nil, false,
 	)
@@ -2621,7 +2621,9 @@ func (p *Brontide) fetchActiveChanCloser(chanID lnwire.ChannelID) (
 		return nil, fmt.Errorf("unable to create chan closer")
 	}
 
-	p.log.Infof("ELLE: adding active chan close 1 with: %x", chanCloser.GetLocalDel())
+	p.log.Infof("ELLE: adding active chan close 1 with: %x",
+		chanCloser.GetLocalDel())
+
 	p.activeChanCloses[chanID] = chanCloser
 
 	return chanCloser, nil
@@ -2825,6 +2827,7 @@ func (p *Brontide) restartCoopClose(lnChan *lnwallet.LightningChannel) (
 	} else if err != nil {
 		deliveryScript = c.LocalShutdownScript
 		if len(deliveryScript) == 0 {
+			p.log.Infof("ELLE: gen new del script")
 			var err error
 			deliveryScript, err = p.genDeliveryScript()
 			if err != nil {
@@ -2832,13 +2835,18 @@ func (p *Brontide) restartCoopClose(lnChan *lnwallet.LightningChannel) (
 					err)
 				return nil, fmt.Errorf("close addr unavailable")
 			}
+		} else {
+			p.log.Infof("ELLE: using local shutdown script")
 		}
+	} else {
+		p.log.Infof("ELLE: c.Delivery")
 	}
 
-	b := make([]byte, len(deliveryScript))
-	copy(b, deliveryScript)
+	// IT'S THIS ONE!
+	//b := make([]byte, len(deliveryScript))
+	//copy(b, deliveryScript)
 
-	p.log.Infof("ELLE: using delivery script: %x", b)
+	p.log.Infof("ELLE: using delivery script: %x", deliveryScript)
 
 	// Compute an ideal fee.
 	feePerKw, err := p.cfg.FeeEstimator.EstimateFeePerKW(
@@ -2856,9 +2864,9 @@ func (p *Brontide) restartCoopClose(lnChan *lnwallet.LightningChannel) (
 	)
 
 	// ELLE: create chan closer: on restart
-	p.log.Infof("ELLE: chan closer h2: %x", b)
+	p.log.Infof("ELLE: chan closer h2: %x", deliveryScript)
 	chanCloser, err := p.createChanCloser(
-		lnChan, b, feePerKw, nil, locallyInitiated,
+		lnChan, deliveryScript, feePerKw, nil, locallyInitiated,
 	)
 	if err != nil {
 		p.log.Errorf("unable to create chan closer: %v", err)
