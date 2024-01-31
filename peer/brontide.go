@@ -2565,7 +2565,7 @@ func (p *Brontide) fetchActiveChanCloser(chanID lnwire.ChannelID) (
 		// created for a non-pending channel or for a channel that had
 		// previously started the shutdown process but the connection
 		// was restarted.
-		p.log.Infof("ELLE: was active")
+		p.log.Infof("ELLE: was active with: %x", chanCloser.GetLocalDel())
 		return chanCloser, nil
 	}
 
@@ -2598,6 +2598,9 @@ func (p *Brontide) fetchActiveChanCloser(chanID lnwire.ChannelID) (
 		}
 	}
 
+	b := make([]byte, len(deliveryScript))
+	copy(b, deliveryScript)
+
 	// In order to begin fee negotiations, we'll first compute our target
 	// ideal fee-per-kw.
 	feePerKw, err := p.cfg.FeeEstimator.EstimateFeePerKW(
@@ -2609,15 +2612,16 @@ func (p *Brontide) fetchActiveChanCloser(chanID lnwire.ChannelID) (
 	}
 
 	// ELLE: create chan closer: shutdown from remote.
-	p.log.Infof("ELLE: chan closer h1: %x", deliveryScript)
+	p.log.Infof("ELLE: chan closer h1: %x", b)
 	chanCloser, err = p.createChanCloser(
-		channel, deliveryScript, feePerKw, nil, false,
+		channel, b, feePerKw, nil, false,
 	)
 	if err != nil {
 		p.log.Errorf("unable to create chan closer: %v", err)
 		return nil, fmt.Errorf("unable to create chan closer")
 	}
 
+	p.log.Infof("ELLE: adding active chan close 1 with: %x", chanCloser.GetLocalDel())
 	p.activeChanCloses[chanID] = chanCloser
 
 	return chanCloser, nil
@@ -2760,16 +2764,22 @@ func (p *Brontide) retryRequestEnable(activeChans map[wire.OutPoint]struct{}) {
 func chooseDeliveryScript(upfront,
 	requested lnwire.DeliveryAddress) (lnwire.DeliveryAddress, error) {
 
+	cp := func(a lnwire.DeliveryAddress) lnwire.DeliveryAddress {
+		b := make([]byte, len(a))
+		copy(b, a)
+
+		return b
+	}
 	// If no upfront shutdown script was provided, return the user
 	// requested address (which may be nil).
 	if len(upfront) == 0 {
-		return requested, nil
+		return cp(requested), nil
 	}
 
 	// If an upfront shutdown script was provided, and the user did not request
 	// a custom shutdown script, return the upfront address.
 	if len(requested) == 0 {
-		return upfront, nil
+		return cp(upfront), nil
 	}
 
 	// If both an upfront shutdown script and a custom close script were
@@ -2782,7 +2792,7 @@ func chooseDeliveryScript(upfront,
 
 	// The user requested script matches the upfront shutdown script, so we
 	// can return it without error.
-	return upfront, nil
+	return cp(upfront), nil
 }
 
 // restartCoopClose checks whether we need to restart the cooperative close
@@ -2825,7 +2835,10 @@ func (p *Brontide) restartCoopClose(lnChan *lnwallet.LightningChannel) (
 		}
 	}
 
-	p.log.Infof("ELLE: using delivery script: %x", deliveryScript)
+	b := make([]byte, len(deliveryScript))
+	copy(b, deliveryScript)
+
+	p.log.Infof("ELLE: using delivery script: %x", b)
 
 	// Compute an ideal fee.
 	feePerKw, err := p.cfg.FeeEstimator.EstimateFeePerKW(
@@ -2843,9 +2856,9 @@ func (p *Brontide) restartCoopClose(lnChan *lnwallet.LightningChannel) (
 	)
 
 	// ELLE: create chan closer: on restart
-	p.log.Infof("ELLE: chan closer h2: %x", deliveryScript)
+	p.log.Infof("ELLE: chan closer h2: %x", b)
 	chanCloser, err := p.createChanCloser(
-		lnChan, deliveryScript, feePerKw, nil, locallyInitiated,
+		lnChan, b, feePerKw, nil, locallyInitiated,
 	)
 	if err != nil {
 		p.log.Errorf("unable to create chan closer: %v", err)
@@ -2856,6 +2869,7 @@ func (p *Brontide) restartCoopClose(lnChan *lnwallet.LightningChannel) (
 	// goroutine since this is done before the channelManager goroutine is
 	// created.
 	chanID := lnwire.NewChanIDFromOutPoint(&c.FundingOutpoint)
+	p.log.Infof("ELLE: adding active chan close 2 with: %x", chanCloser.GetLocalDel())
 	p.activeChanCloses[chanID] = chanCloser
 
 	// Create the Shutdown message.
@@ -2966,10 +2980,13 @@ func (p *Brontide) handleLocalCloseReq(req *htlcswitch.ChanClose) {
 			}
 		}
 
+		b := make([]byte, len(deliveryScript))
+		copy(b, deliveryScript)
+
 		// ELLE: create chan closer: on local request
-		p.log.Infof("ELLE: chan closer h3: %x", deliveryScript)
+		p.log.Infof("ELLE: chan closer h3: %x", b)
 		chanCloser, err := p.createChanCloser(
-			channel, deliveryScript, req.TargetFeePerKw, req, true,
+			channel, b, req.TargetFeePerKw, req, true,
 		)
 		if err != nil {
 			p.log.Errorf(err.Error())
@@ -2977,6 +2994,7 @@ func (p *Brontide) handleLocalCloseReq(req *htlcswitch.ChanClose) {
 			return
 		}
 
+		p.log.Infof("ELLE: adding active chan close 3 with: %x", chanCloser.GetLocalDel())
 		p.activeChanCloses[chanID] = chanCloser
 
 		// Finally, we'll initiate the channel shutdown within the
@@ -2986,6 +3004,7 @@ func (p *Brontide) handleLocalCloseReq(req *htlcswitch.ChanClose) {
 		if err != nil {
 			p.log.Errorf(err.Error())
 			req.Err <- err
+			p.log.Infof("ELLE: deleting from active chan closes")
 			delete(p.activeChanCloses, chanID)
 
 			// As we were unable to shutdown the channel, we'll
@@ -3159,6 +3178,7 @@ func (p *Brontide) finalizeChanClosure(chanCloser *chancloser.ChanCloser) {
 
 	// Also clear the activeChanCloses map of this channel.
 	cid := lnwire.NewChanIDFromOutPoint(chanPoint)
+	p.log.Infof("ELLE: deleting from active chan closes 2")
 	delete(p.activeChanCloses, cid)
 
 	// Next, we'll launch a goroutine which will request to be notified by
@@ -3628,6 +3648,7 @@ func (p *Brontide) handleCloseMsg(msg *closeMsg) {
 		if chanCloser.CloseRequest() != nil {
 			chanCloser.CloseRequest().Err <- err
 		}
+		p.log.Infof("ELLE: deleting from active chan closes 3")
 		delete(p.activeChanCloses, msg.cid)
 
 		p.Disconnect(err)

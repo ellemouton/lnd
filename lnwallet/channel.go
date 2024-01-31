@@ -7818,7 +7818,7 @@ func (lc *LightningChannel) CreateCloseProposal(proposedFee btcutil.Amount,
 		closeTxOpts = append(closeTxOpts, WithRBFCloseTx())
 	}
 
-	closeTx := CreateCooperativeCloseTx(
+	closeTx := lc.CreateCooperativeCloseTx(
 		fundingTxIn(lc.channelState), lc.channelState.LocalChanCfg.DustLimit,
 		lc.channelState.RemoteChanCfg.DustLimit, ourBalance, theirBalance,
 		localDeliveryScript, remoteDeliveryScript, closeTxOpts...,
@@ -7907,7 +7907,7 @@ func (lc *LightningChannel) CompleteCooperativeClose(
 	// Create the transaction used to return the current settled balance
 	// on this active channel back to both parties. In this current model,
 	// the initiator pays full fees for the cooperative close transaction.
-	closeTx := CreateCooperativeCloseTx(
+	closeTx := lc.CreateCooperativeCloseTx(
 		fundingTxIn(lc.channelState), lc.channelState.LocalChanCfg.DustLimit,
 		lc.channelState.RemoteChanCfg.DustLimit, ourBalance, theirBalance,
 		localDeliveryScript, remoteDeliveryScript, closeTxOpts...,
@@ -8583,7 +8583,7 @@ func WithRBFCloseTx() CloseTxOpt {
 // constructing the channel is the initiator of the closure. Currently it is
 // expected that the initiator pays the transaction fees for the closing
 // transaction in full.
-func CreateCooperativeCloseTx(fundingTxIn wire.TxIn,
+func (lc *LightningChannel) CreateCooperativeCloseTx(fundingTxIn wire.TxIn,
 	localDust, remoteDust, ourBalance, theirBalance btcutil.Amount,
 	ourDeliveryScript, theirDeliveryScript []byte,
 	closeOpts ...CloseTxOpt) *wire.MsgTx {
@@ -8609,6 +8609,7 @@ func CreateCooperativeCloseTx(fundingTxIn wire.TxIn,
 	// Create both cooperative closure outputs, properly respecting the
 	// dust limits of both parties.
 	if ourBalance >= localDust {
+		lc.log.Infof("ELLE: adding our del script to the output: %x", ourDeliveryScript)
 		closeTx.AddTxOut(&wire.TxOut{
 			PkScript: ourDeliveryScript,
 			Value:    int64(ourBalance),
