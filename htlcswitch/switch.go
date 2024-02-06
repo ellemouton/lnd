@@ -2295,6 +2295,26 @@ func (s *Switch) AddLink(link ChannelLink) error {
 	// Attach the Switch's failAliasUpdate function to the link.
 	link.attachFailAliasUpdate(s.failAliasUpdate)
 
+	// If a shutdown message has previously been sent on this link, then
+	// we need to make sure that we have disabled any HTLC adds on the
+	// outgoing direction of the link and that we re-resend the same
+	// shutdown message that we previously sent.
+	link.ShutdownMsg().WhenSome(func(shutdown lnwire.Shutdown) {
+		link.OnCommitOnce(Outgoing, func() {
+			err = link.DisableAdds(Outgoing)
+			if err != nil {
+				log.Warnf("outgoing link adds already "+
+					"disabled: %v", link.ChanID())
+			}
+
+			err = link.Peer().SendMessage(false, &shutdown)
+			if err != nil {
+				log.Warnf("Error sending shutdown message: %v",
+					err)
+			}
+		})
+	})
+
 	if err := link.Start(); err != nil {
 		log.Errorf("AddLink failed to start link with chanID=%v: %v",
 			chanID, err)

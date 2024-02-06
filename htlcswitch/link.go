@@ -19,6 +19,7 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/contractcourt"
+	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/htlcswitch/hodl"
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
 	"github.com/lightningnetwork/lnd/invoices"
@@ -271,6 +272,14 @@ type ChannelLinkConfig struct {
 	// GetAliases is used by the link and switch to fetch the set of
 	// aliases for a given link.
 	GetAliases func(base lnwire.ShortChannelID) []lnwire.ShortChannelID
+
+	// ShutdownMsg is an optional value that is set if, at the time of
+	// the link being started, persisted shutdown info was found for the
+	// channel. This value being set means that we previously sent a
+	// Shutdown message to our peer, and so we should do so again on
+	// re-establish and should not allow anymore HTLC adds on the outgoing
+	// direction of the link.
+	ShutdownMsg fn.Option[lnwire.Shutdown]
 }
 
 // channelLink is the service which drives a channel's commitment update
@@ -400,9 +409,12 @@ type hookMap struct {
 // newHookMap initializes a new empty hookMap.
 func newHookMap() hookMap {
 	return hookMap{
-		allocIdx:      atomic.Uint64{},
-		transient:     make(map[uint64]func()),
-		newTransients: make(chan func()),
+		allocIdx:  atomic.Uint64{},
+		transient: make(map[uint64]func()),
+
+		// We add a buffer of 1 to the newTransients in case we want
+		// to add a hook before starting the link.
+		newTransients: make(chan func(), 1),
 	}
 }
 
@@ -2952,6 +2964,12 @@ func (l *channelLink) Stats() (uint64, lnwire.MilliSatoshi, lnwire.MilliSatoshi)
 	return snapshot.ChannelCommitment.CommitHeight,
 		snapshot.TotalMSatSent,
 		snapshot.TotalMSatReceived
+}
+
+// ShutdownMsg returns an optional type which, if set, will contain the
+// Shutdown message that we should send to the remote peer.
+func (l *channelLink) ShutdownMsg() fn.Option[lnwire.Shutdown] {
+	return l.cfg.ShutdownMsg
 }
 
 // String returns the string representation of channel link.

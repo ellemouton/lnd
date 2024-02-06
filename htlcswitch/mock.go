@@ -27,6 +27,7 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/contractcourt"
+	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/lnpeer"
@@ -857,6 +858,10 @@ func (f *mockChannelLink) AttachMailBox(mailBox MailBox) {
 	f.mailBox = mailBox
 	f.packets = mailBox.PacketOutBox()
 	mailBox.SetDustClosure(f.getDustClosure())
+}
+
+func (f *mockChannelLink) ShutdownMsg() fn.Option[lnwire.Shutdown] {
+	return fn.None[lnwire.Shutdown]()
 }
 
 func (f *mockChannelLink) attachFailAliasUpdate(closure func(

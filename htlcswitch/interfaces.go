@@ -6,6 +6,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channeldb/models"
+	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/lnpeer"
 	"github.com/lightningnetwork/lnd/lntypes"
@@ -259,6 +260,10 @@ type ChannelLink interface {
 	// Stats return the statistics of channel link. Number of updates,
 	// total sent/received milli-satoshis.
 	Stats() (uint64, lnwire.MilliSatoshi, lnwire.MilliSatoshi)
+
+	// ShutdownMsg returns an optional type which, if set, will contain the
+	// Shutdown message that we should send to the remote peer.
+	ShutdownMsg() fn.Option[lnwire.Shutdown]
 
 	// Peer returns the representation of remote peer with which we have
 	// the channel link opened.
