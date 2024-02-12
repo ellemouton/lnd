@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
+	"github.com/lightningnetwork/lnd/tlv"
 )
 
 var (
@@ -255,6 +257,12 @@ const (
 	// finalized.
 	SimpleTaprootChannelsOptionalStaging = 181
 
+	TaprootGossipRequiredFinal = 32
+	TaprootGossipOptionalFinal = 33
+
+	TaprootGossipRequiredStaging = 132
+	TaprootGossipOptionalStaging = 133
+
 	// MaxBolt11Feature is the maximum feature bit value allowed in bolt 11
 	// invoices.
 	//
@@ -319,6 +327,10 @@ var Features = map[FeatureBit]string{
 	SimpleTaprootChannelsOptionalFinal:   "simple-taproot-chans",
 	SimpleTaprootChannelsRequiredStaging: "simple-taproot-chans-x",
 	SimpleTaprootChannelsOptionalStaging: "simple-taproot-chans-x",
+	TaprootGossipRequiredFinal:           "taproot-gossip",
+	TaprootGossipOptionalFinal:           "taproot-gossip",
+	TaprootGossipRequiredStaging:         "taproot-gossip-x",
+	TaprootGossipOptionalStaging:         "taproot-gossip-x",
 }
 
 // RawFeatureVector represents a set of feature bits as defined in BOLT-09.  A
@@ -338,6 +350,20 @@ func NewRawFeatureVector(bits ...FeatureBit) *RawFeatureVector {
 		fv.Set(bit)
 	}
 	return fv
+}
+
+// Record returns a TLV record that can be used to encode/decode the raw feature
+// vector from a given TLV stream.
+func (fv *RawFeatureVector) Record() tlv.Record {
+	return tlv.MakeDynamicRecord(
+		0, fv, fv.featureBitLen, rawFeatureVectorEncoder,
+		rawFeatureVectorDecoder,
+	)
+}
+
+// featureBitLen returns the length in bytes of the encoded feature bits.
+func (fv *RawFeatureVector) featureBitLen() uint64 {
+	return uint64(fv.SerializeSize())
 }
 
 // IsEmpty returns whether the feature vector contains any feature bits.
@@ -372,7 +398,7 @@ func (fv RawFeatureVector) Equals(other *RawFeatureVector) bool {
 	return true
 }
 
-// Merges sets all feature bits in other on the receiver's feature vector.
+// Merge sets all feature bits in other on the receiver's feature vector.
 func (fv *RawFeatureVector) Merge(other *RawFeatureVector) error {
 	for bit := range other.features {
 		err := fv.SafeSet(bit)
@@ -720,4 +746,35 @@ func (fv *FeatureVector) Features() map[FeatureBit]struct{} {
 func (fv *FeatureVector) Clone() *FeatureVector {
 	features := fv.RawFeatureVector.Clone()
 	return NewFeatureVector(features, fv.featureNames)
+}
+
+// rawFeatureVectorEncoder is a custom TLV encoder for a RawFeatureVector
+// record.
+func rawFeatureVectorEncoder(w io.Writer, val interface{}, _ *[8]byte) error {
+	if v, ok := val.(*RawFeatureVector); ok {
+		// Encode the feature bits as a byte slice without its length
+		// prepended, as that's already taken care of by the TLV record.
+		fv := *v
+		return fv.encode(w, fv.SerializeSize(), 8)
+	}
+
+	return tlv.NewTypeForEncodingErr(val, "lnwire.RawFeatureVector")
+}
+
+// rawFeatureVectorDecoder is a custom TLV decoder for a RawFeatureVector
+// record.
+func rawFeatureVectorDecoder(r io.Reader, val interface{}, _ *[8]byte,
+	l uint64) error {
+
+	if v, ok := val.(*RawFeatureVector); ok {
+		fv := NewRawFeatureVector()
+		if err := fv.decode(r, int(l), 8); err != nil {
+			return err
+		}
+		*v = *fv
+
+		return nil
+	}
+
+	return tlv.NewTypeForEncodingErr(val, "lnwire.RawFeatureVector")
 }

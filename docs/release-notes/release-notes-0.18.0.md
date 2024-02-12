@@ -277,6 +277,24 @@
   This change implements changes codified in [bolts#1092](https://github.com/lightning/bolts/pull/1092)
   and makes TLV Onions, Static Remote Keys, Gossip Queries, compulsory features for
   LND's peers. Data Loss Protection has been compulsory for years.
+ 
+* Add new [lnwire](https://github.com/lightningnetwork/lnd/pull/8044) messages 
+  for the Gossip 1.75 protocol.
+
+* Add new [channeldb](https://github.com/lightningnetwork/lnd/pull/8164) types 
+  required for the Gossip 1.75 protocol.
+
+* Use the new interfaces added for Gossip 1.75 throughout the codebase 
+  [1](https://github.com/lightningnetwork/lnd/pull/8252) 
+  [2](https://github.com/lightningnetwork/lnd/pull/8253).
+  [3](https://github.com/lightningnetwork/lnd/pull/8254).
+
+* Update the [gossip 
+  protocol](https://github.com/lightningnetwork/lnd/pull/8255) to be able to 
+  gossip new Gossip 1.75 messages. 
+
+* Add the new [feature bit](https://github.com/lightningnetwork/lnd/pull/8256) 
+  for Gossip 1.75 and allow creation of public channels from lncli.
 
 ## Testing
 
