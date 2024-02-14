@@ -154,7 +154,9 @@
   Support utilizing the usage of environment variables in `lnd.conf` for `rpcuser` and `rpcpass` fields to better protect the secrets.
 
 * [Preparatory work](https://github.com/lightningnetwork/lnd/pull/8159) for 
-  forwarding of blinded routes was added.
+  forwarding of blinded routes was added, along with [support](https://github.com/lightningnetwork/lnd/pull/8160)
+  for forwarding blinded payments. Forwarding of blinded payments is disabled 
+  by default, and the feature is not yet advertised to the network.
 
 ## RPC Additions
 
