@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/urfave/cli"
 )
@@ -74,6 +75,9 @@ var addInvoiceCommand = cli.Command{
 			Usage: "creates an AMP invoice. If true, preimage " +
 				"should not be set.",
 		},
+		cli.StringFlag{
+			Name: "intro_node",
+		},
 	},
 	Action: actionDecorator(addInvoice),
 }
@@ -119,16 +123,36 @@ func addInvoice(ctx *cli.Context) error {
 		return fmt.Errorf("unable to parse description_hash: %w", err)
 	}
 
+	private := ctx.Bool("private")
+
+	var intro []byte
+	if ctx.IsSet("intro_node") {
+		if private {
+			return fmt.Errorf("cant do hop hints and blinded path")
+		}
+
+		intro, err = hex.DecodeString(ctx.String("intro_node"))
+		if err != nil {
+			return err
+		}
+
+		_, err = btcec.ParsePubKey(intro)
+		if err != nil {
+			return err
+		}
+	}
+
 	invoice := &lnrpc.Invoice{
-		Memo:            ctx.String("memo"),
-		RPreimage:       preimage,
-		Value:           amt,
-		ValueMsat:       amtMsat,
-		DescriptionHash: descHash,
-		FallbackAddr:    ctx.String("fallback_addr"),
-		Expiry:          ctx.Int64("expiry"),
-		Private:         ctx.Bool("private"),
-		IsAmp:           ctx.Bool("amp"),
+		Memo:             ctx.String("memo"),
+		RPreimage:        preimage,
+		Value:            amt,
+		ValueMsat:        amtMsat,
+		DescriptionHash:  descHash,
+		FallbackAddr:     ctx.String("fallback_addr"),
+		Expiry:           ctx.Int64("expiry"),
+		IsAmp:            ctx.Bool("amp"),
+		Private:          private,
+		IntroductionNode: intro,
 	}
 
 	resp, err := client.AddInvoice(ctxc, invoice)
