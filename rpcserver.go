@@ -3,6 +3,7 @@ package lnd
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -33,6 +34,7 @@ import (
 	"github.com/btcsuite/btcwallet/wallet/txauthor"
 	"github.com/davecgh/go-spew/spew"
 	proxy "github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/autopilot"
 	"github.com/lightningnetwork/lnd/build"
 	"github.com/lightningnetwork/lnd/chainreg"
@@ -5704,6 +5706,238 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 			return nil, err
 		}
 		addInvoiceData.Preimage = &preimage
+	} else {
+		// TODO: find a different way.
+		paymentPreimage := &lntypes.Preimage{}
+		if _, err := rand.Read(paymentPreimage[:]); err != nil {
+			return nil, err
+		}
+		addInvoiceData.Preimage = paymentPreimage
+	}
+
+	var blindedPaths []zpay32.BlindedPath
+	if invoice.IntroductionNode != nil {
+		selfNode, err := r.server.graphDB.SourceNode()
+		if err != nil {
+			return nil, err
+		}
+
+		src, err := route.NewVertexFromBytes(invoice.IntroductionNode)
+		if err != nil {
+			return nil, err
+		}
+
+		dest, err := route.NewVertexFromBytes(selfNode.PubKeyBytes[:])
+		if err != nil {
+			return nil, err
+		}
+
+		feeLimit := lnwire.NewMSatFromSatoshis(btcutil.SatoshiPerBitcoin)
+
+		req, err := routing.NewRouteRequest(
+			src, &dest, value, 1, &routing.RestrictParams{
+				FeeLimit:          feeLimit,
+				CltvLimit:         r.routerBackend.MaxTotalTimelock,
+				ProbabilitySource: r.routerBackend.MissionControl.GetProbability,
+			}, nil, nil, nil, r.routerBackend.DefaultFinalCltvDelta,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		route, _, err := r.server.chanRouter.FindRoute(req)
+		if err != nil {
+			return nil, err
+		}
+
+		var (
+			hopInfo   []*sphinx.HopInfo
+			relayInfo []*record.PaymentRelayInfo
+		)
+
+		// Gotta manually include the intro hop.
+		introNode, err := btcec.ParsePubKey(src[:])
+		if err != nil {
+			return nil, err
+		}
+
+		var (
+			minHTLC uint64
+			maxHTLC = uint64(math.MaxUint64)
+		)
+
+		scid := lnwire.NewShortChanIDFromInt(route.Hops[0].ChannelID)
+
+		_, update1, update2, err := r.server.graphDB.FetchChannelEdgesByID(route.Hops[0].ChannelID)
+		if err != nil {
+			return nil, err
+		}
+
+		var policy *models.ChannelEdgePolicy
+		if update1 != nil && !bytes.Equal(update1.ToNode[:], src[:]) {
+			policy = update1
+		}
+		if update2 != nil && !bytes.Equal(update2.ToNode[:], src[:]) {
+			policy = update2
+		}
+
+		if policy == nil {
+			return nil, fmt.Errorf("no chan update for hop")
+		}
+
+		if uint64(policy.MinHTLC) > minHTLC {
+			minHTLC = uint64(policy.MinHTLC)
+		}
+		if uint64(policy.MaxHTLC) < maxHTLC {
+			maxHTLC = uint64(policy.MaxHTLC)
+		}
+
+		ri := &record.PaymentRelayInfo{
+			CltvExpiryDelta: policy.TimeLockDelta,
+			FeeRate:         uint32(policy.FeeProportionalMillionths),
+			BaseFee:         uint32(policy.FeeBaseMSat),
+		}
+
+		relayInfo = append(relayInfo, ri)
+
+		data := record.BlindedRouteData{
+			ShortChannelID: &scid,
+			RelayInfo:      ri,
+			Constraints: &record.PaymentConstraints{
+				MaxCltvExpiry:   0,
+				HtlcMinimumMsat: 0,
+			},
+		}
+
+		plaintxt, err := record.EncodeBlindedRouteData(&data)
+		if err != nil {
+			return nil, err
+		}
+
+		hopInfo = append(hopInfo, &sphinx.HopInfo{
+			NodePub:   introNode,
+			PlainText: plaintxt,
+		})
+
+		for i := 0; i < len(route.Hops); i++ {
+			var data record.BlindedRouteData
+			if i == len(route.Hops)-1 {
+				data = record.BlindedRouteData{
+					PathID: addInvoiceData.Preimage[:],
+				}
+			} else {
+				scid := lnwire.NewShortChanIDFromInt(route.Hops[i+1].ChannelID)
+
+				_, update1, update2, err := r.server.graphDB.FetchChannelEdgesByID(route.Hops[i+1].ChannelID)
+				if err != nil {
+					return nil, err
+				}
+
+				var policy *models.ChannelEdgePolicy
+				if update1 != nil && !bytes.Equal(update1.ToNode[:], src[:]) {
+					policy = update1
+				}
+				if update2 != nil && !bytes.Equal(update2.ToNode[:], src[:]) {
+					policy = update2
+				}
+
+				if policy == nil {
+					return nil, fmt.Errorf("no chan update for hop")
+				}
+
+				ri := &record.PaymentRelayInfo{
+					CltvExpiryDelta: policy.TimeLockDelta,
+					FeeRate:         uint32(policy.FeeProportionalMillionths),
+					BaseFee:         uint32(policy.FeeBaseMSat),
+				}
+
+				relayInfo = append(relayInfo, ri)
+
+				data = record.BlindedRouteData{
+					ShortChannelID: &scid,
+					RelayInfo:      ri,
+					Constraints: &record.PaymentConstraints{
+						MaxCltvExpiry:   0,
+						HtlcMinimumMsat: 0,
+					},
+				}
+			}
+
+			node, err := btcec.ParsePubKey(route.Hops[i].PubKeyBytes[:])
+			if err != nil {
+				return nil, err
+			}
+
+			plaintxt, err := record.EncodeBlindedRouteData(&data)
+			if err != nil {
+				return nil, err
+			}
+
+			hopInfo = append(hopInfo, &sphinx.HopInfo{
+				NodePub:   node,
+				PlainText: plaintxt,
+			})
+		}
+
+		var (
+			totalFeeBase   uint32
+			totalFeeProp   uint32
+			totalCltvDelta uint16
+		)
+		for i := len(relayInfo) - 1; i >= 0; i-- {
+			info := relayInfo[i]
+
+			// route_fee_base_msat(n+1) = (fee_base_msat(n+1) * 1000000 + route_fee_base_msat(n) * (1000000 + fee_proportional_millionths(n+1)) + 1000000 - 1) / 1000000
+			totalFeeBase = ((info.BaseFee * 1000000) + (totalFeeBase * (1000000 + info.FeeRate)) + 1000000 - 1) / 1000000
+
+			// route_fee_proportional_millionths(n+1) = ((route_fee_proportional_millionths(n) + fee_proportional_millionths(n+1)) * 1000000 + route_fee_proportional_millionths(n) * fee_proportional_millionths(n+1) + 1000000 - 1) / 1000000
+			totalFeeProp = ((totalFeeProp+info.FeeRate)*1000000 + totalFeeBase*info.FeeRate + 1000000 - 1) / 1000000
+
+			totalCltvDelta += info.CltvExpiryDelta
+		}
+
+		totalCltvDelta += routing.MinCLTVDelta
+
+		sessionKey, err := btcec.NewPrivateKey()
+		if err != nil {
+			return nil, err
+		}
+
+		blindedPath, err := sphinx.BuildBlindedPath(sessionKey, hopInfo)
+		if err != nil {
+			return nil, err
+		}
+
+		var hops []*zpay32.BlindedHop
+		for i, blindedHop := range blindedPath.BlindedHops {
+			var h zpay32.BlindedHop
+			if i == 0 {
+				h.NodeID = blindedPath.IntroductionPoint
+			} else {
+				h.NodeID = blindedHop.BlindedNodePub
+			}
+
+			h.EncryptedRecipientData = blindedHop.CipherText
+
+			hops = append(hops, &h)
+		}
+
+		// Now construct a z32 blinded path.
+		blindedPaths = append(blindedPaths,
+			zpay32.BlindedPath{
+				FeeBaseMsat:  totalFeeBase,
+				FeePropMsat:  totalFeeProp,
+				CltvExpDelta: totalCltvDelta,
+				HTLCMinMsat:  minHTLC,
+				HTLCMaxMsat:  maxHTLC,
+
+				Features:                    lnwire.EmptyFeatureVector(),
+				FirstEphemeralBlindingPoint: blindedPath.BlindingPoint,
+				Hops:                        hops,
+			},
+		)
+
+		addInvoiceData.BlindedPaths = blindedPaths
 	}
 
 	hash, dbInvoice, err := invoicesrpc.AddInvoice(

@@ -137,6 +137,8 @@ type AddInvoiceData struct {
 	// RouteHints are optional route hints that can each be individually
 	// used to assist in reaching the invoice's destination.
 	RouteHints [][]zpay32.HopHint
+
+	BlindedPaths []zpay32.BlindedPath
 }
 
 // paymentHashAndPreimage returns the payment hash and preimage for this invoice
@@ -419,6 +421,10 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 				options, routeHint,
 			)
 		}
+	}
+
+	for _, path := range invoice.BlindedPaths {
+		options = append(options, zpay32.WithBlindedPath(&path))
 	}
 
 	// Set our desired invoice features and add them to our list of options.
