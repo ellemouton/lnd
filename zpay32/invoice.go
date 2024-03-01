@@ -76,6 +76,8 @@ const (
 	// probing the recipient.
 	fieldTypeS = 16
 
+	fieldTypeB = 20
+
 	// maxInvoiceLength is the maximum total length an invoice can have.
 	// This is chosen to be the maximum number of bytes that can fit into a
 	// single QR code: https://en.wikipedia.org/wiki/QR_code#Storage
@@ -183,6 +185,8 @@ type Invoice struct {
 	// NOTE: This is optional.
 	RouteHints [][]HopHint
 
+	BlindedPaths []*BlindedPath
+
 	// Features represents an optional field used to signal optional or
 	// required support for features by the receiver.
 	Features *lnwire.FeatureVector
@@ -224,6 +228,12 @@ func Description(description string) func(*Invoice) {
 func CLTVExpiry(delta uint64) func(*Invoice) {
 	return func(i *Invoice) {
 		i.minFinalCLTVExpiry = &delta
+	}
+}
+
+func WithBlindedPath(path *BlindedPath) func(*Invoice) {
+	return func(i *Invoice) {
+		i.BlindedPaths = append(i.BlindedPaths, path)
 	}
 }
 
@@ -372,6 +382,11 @@ func validateInvoice(invoice *Invoice) error {
 	if invoice.DescriptionHash != nil && len(invoice.DescriptionHash) != 32 {
 		return fmt.Errorf("unsupported description hash length: %d",
 			len(invoice.DescriptionHash))
+	}
+
+	if len(invoice.RouteHints) != 0 && len(invoice.BlindedPaths) != 0 {
+		return fmt.Errorf("cannot have both route hints and blinded " +
+			"path")
 	}
 
 	if invoice.Destination != nil &&

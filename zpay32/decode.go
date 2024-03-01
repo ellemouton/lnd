@@ -290,6 +290,7 @@ func parseTaggedFields(invoice *Invoice, fields []byte, net *chaincfg.Params) er
 			}
 
 			invoice.RouteHints = append(invoice.RouteHints, routeHint)
+
 		case fieldType9:
 			if invoice.Features != nil {
 				// We skip the field if we have already seen a
@@ -298,6 +299,17 @@ func parseTaggedFields(invoice *Invoice, fields []byte, net *chaincfg.Params) er
 			}
 
 			invoice.Features, err = parseFeatures(base32Data)
+
+		case fieldTypeB:
+			blindedPath, err := parseBlindedPath(base32Data)
+			if err != nil {
+				return err
+			}
+
+			invoice.BlindedPaths = append(
+				invoice.BlindedPaths, blindedPath,
+			)
+
 		default:
 			// Ignore unknown type.
 		}
@@ -505,6 +517,15 @@ func parseFeatures(data []byte) (*lnwire.FeatureVector, error) {
 	}
 
 	return lnwire.NewFeatureVector(rawFeatures, lnwire.Features), nil
+}
+
+func parseBlindedPath(data []byte) (*BlindedPath, error) {
+	base256Data, err := bech32.ConvertBits(data, 5, 8, false)
+	if err != nil {
+		return nil, err
+	}
+
+	return DecodeBlindedPath(bytes.NewReader(base256Data))
 }
 
 // base32ToUint64 converts a base32 encoded number to uint64.
