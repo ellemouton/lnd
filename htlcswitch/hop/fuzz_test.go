@@ -120,8 +120,8 @@ func fuzzPayload(f *testing.F, finalPayload bool) {
 
 		payload1, err := NewPayloadFromReader(
 			r, finalPayload, &BlindingKit{
-				ForwardingInfo: func(*btcec.PublicKey,
-					[]byte) (*ForwardingInfo, error) {
+				ForwardingInfo: func(*btcec.PublicKey, []byte,
+					bool) (*ForwardingInfo, error) {
 
 					return &ForwardingInfo{}, nil
 				},
@@ -158,7 +158,7 @@ func fuzzPayload(f *testing.F, finalPayload bool) {
 		payload2, err := NewPayloadFromReader(
 			&b, finalPayload, &BlindingKit{
 				ForwardingInfo: func(*btcec.PublicKey,
-					[]byte) (*ForwardingInfo, error) {
+					[]byte, bool) (*ForwardingInfo, error) {
 
 					return &ForwardingInfo{}, nil
 				},

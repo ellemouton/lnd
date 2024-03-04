@@ -199,7 +199,7 @@ func TestBlindingKitForwardingInfo(t *testing.T) {
 			MaxCltvExpiry:   1000,
 			HtlcMinimumMsat: lnwire.MilliSatoshi(1),
 		},
-		nil,
+		nil, nil,
 	)
 
 	validData, err := record.EncodeBlindedRouteData(blindedData)
@@ -259,7 +259,7 @@ func TestBlindingKitForwardingInfo(t *testing.T) {
 				testCase.incomingCLTV, false,
 			)
 
-			_, err := kit.ForwardingInfo(nil, testCase.data)
+			_, err := kit.ForwardingInfo(nil, testCase.data, false)
 			require.ErrorIs(t, err, testCase.expectedErr)
 		})
 	}

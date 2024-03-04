@@ -721,6 +721,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 
 		// If the probability is zero, there is no point in trying.
 		if edgeProbability == 0 {
+			log.Infof("ELLE: edge probability = zero")
 			return
 		}
 
@@ -983,6 +984,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 
 			// If there are no valid features, skip this node.
 			if fromFeatures == nil {
+				log.Infof("ELLE: skipping due to bad features.")
 				continue
 			}
 
@@ -1017,6 +1019,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 		if !ok {
 			// If the node doesn't have a next hop it means we
 			// didn't find a path.
+			log.Infof("here. no next hop after %s", currentNode.String())
 			return nil, 0, errNoPathFound
 		}
 

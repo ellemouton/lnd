@@ -626,7 +626,7 @@ func testDecodeHopPayloadValidation(t *testing.T, test decodePayloadTest) {
 			// Provide a non-nil blinding kit which will be
 			// used for parsing blinded routes.
 			ForwardingInfo: func(*btcec.PublicKey,
-				[]byte) (*hop.ForwardingInfo, error) {
+				[]byte, bool) (*hop.ForwardingInfo, error) {
 
 				return &hop.ForwardingInfo{}, nil
 			},
@@ -732,7 +732,7 @@ func TestValidateBlindedRouteData(t *testing.T) {
 				&record.PaymentConstraints{
 					MaxCltvExpiry: 100,
 				},
-				nil,
+				nil, nil,
 			),
 			incomingTimelock: 200,
 			relayingNode:     true,
@@ -752,7 +752,7 @@ func TestValidateBlindedRouteData(t *testing.T) {
 					MaxCltvExpiry:   0,
 					HtlcMinimumMsat: 10,
 				},
-				nil,
+				nil, nil,
 			),
 			incomingAmount:   100,
 			incomingTimelock: 10,
@@ -771,7 +771,7 @@ func TestValidateBlindedRouteData(t *testing.T) {
 				&record.PaymentConstraints{
 					HtlcMinimumMsat: 15,
 				},
-				nil,
+				nil, nil,
 			),
 			incomingAmount: 10,
 			err: hop.ErrInvalidPayload{
@@ -790,7 +790,7 @@ func TestValidateBlindedRouteData(t *testing.T) {
 					MaxCltvExpiry:   100,
 					HtlcMinimumMsat: 20,
 				},
-				nil,
+				nil, nil,
 			),
 			incomingAmount:   40,
 			incomingTimelock: 80,
@@ -810,7 +810,7 @@ func TestValidateBlindedRouteData(t *testing.T) {
 						lnwire.FeatureBit(9999),
 					),
 					lnwire.Features,
-				),
+				), nil,
 			),
 			incomingAmount:   40,
 			incomingTimelock: 80,
@@ -834,7 +834,7 @@ func TestValidateBlindedRouteData(t *testing.T) {
 					MaxCltvExpiry:   100,
 					HtlcMinimumMsat: 20,
 				},
-				nil,
+				nil, nil,
 			),
 			incomingAmount:   40,
 			incomingTimelock: 80,
@@ -849,6 +849,7 @@ func TestValidateBlindedRouteData(t *testing.T) {
 				testCase.data, testCase.incomingAmount,
 				testCase.incomingTimelock,
 				testCase.relayingNode,
+				false,
 			)
 			require.Equal(t, testCase.err, err)
 		})

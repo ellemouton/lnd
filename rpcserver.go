@@ -5889,14 +5889,20 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 
 			// route_fee_base_msat(n+1) = (fee_base_msat(n+1) * 1000000 + route_fee_base_msat(n) * (1000000 + fee_proportional_millionths(n+1)) + 1000000 - 1) / 1000000
 			totalFeeBase = ((info.BaseFee * 1000000) + (totalFeeBase * (1000000 + info.FeeRate)) + 1000000 - 1) / 1000000
+			rpcsLog.Infof("ELLE: fees for hop %d. Base: %v, Prop: %v", i, info.BaseFee, info.FeeRate)
+			rpcsLog.Infof("ELLE: total base fee at hop %d is: %v", i, totalFeeBase)
 
 			// route_fee_proportional_millionths(n+1) = ((route_fee_proportional_millionths(n) + fee_proportional_millionths(n+1)) * 1000000 + route_fee_proportional_millionths(n) * fee_proportional_millionths(n+1) + 1000000 - 1) / 1000000
 			totalFeeProp = ((totalFeeProp+info.FeeRate)*1000000 + totalFeeBase*info.FeeRate + 1000000 - 1) / 1000000
+			rpcsLog.Infof("ELLE: total prop fee at hop %d is: %v", i, totalFeeProp)
 
 			totalCltvDelta += info.CltvExpiryDelta
 		}
 
-		totalCltvDelta += routing.MinCLTVDelta
+		totalFeeProp += 1
+		totalFeeBase += 1
+
+		totalCltvDelta += chainreg.DefaultBitcoinTimeLockDelta
 
 		sessionKey, err := btcec.NewPrivateKey()
 		if err != nil {

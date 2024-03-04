@@ -220,6 +220,7 @@ func updateMpp(ctx *invoiceUpdateCtx, inv *Invoice) (*InvoiceUpdateDesc,
 	}
 
 	if ctx.expiry < uint32(ctx.currentHeight+inv.Terms.FinalCltvDelta) {
+		log.Infof("ELLE: ctx.expiry: %d, ctx.currentHeight: %d, inv.Terms.FinalCltvDelta: %d", ctx.expiry, ctx.currentHeight, inv.Terms.FinalCltvDelta)
 		return nil, ctx.failRes(ResultExpiryTooSoon), nil
 	}
 

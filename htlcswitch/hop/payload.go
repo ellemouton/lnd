@@ -306,7 +306,7 @@ func NewPayloadFromReader(r io.Reader, finalHop bool,
 		}
 	} else {
 		forwarding, err := blindingKit.ForwardingInfo(
-			activeBlindingPoint, payload.encryptedData,
+			activeBlindingPoint, payload.encryptedData, finalHop,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("blinded forwarding info "+
@@ -484,6 +484,7 @@ func ValidateParsedPayloadTypes(parsedTypes tlv.TypeMap, isFinalHop,
 			allowedTLVs[record.AmtOnionType] = true
 			allowedTLVs[record.LockTimeOnionType] = true
 			allowedTLVs[record.TotalAmtMsatBlindedType] = true
+			allowedTLVs[record.MPPOnionType] = true
 		}
 
 		for tlvType := range parsedTypes {
@@ -590,7 +591,11 @@ func getMinRequiredViolation(set tlv.TypeMap) *tlv.Type {
 // different validation rules).
 func ValidateBlindedRouteData(blindedData *record.BlindedRouteData,
 	incomingAmount lnwire.MilliSatoshi, incomingTimelock uint32,
-	relayingNode bool) error {
+	relayingNode, final bool) error {
+
+	if final {
+		return nil
+	}
 
 	hopType := RouteRoleIntroduction
 	if relayingNode {

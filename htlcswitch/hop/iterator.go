@@ -153,7 +153,7 @@ type BlindingKit struct {
 	// ForwardingInfo uses the ephemeral blinding key provided to decrypt
 	// a blob of encrypted data provided in the onion and obtain the
 	// forwarding information for the blinded hop.
-	ForwardingInfo func(*btcec.PublicKey, []byte) (*ForwardingInfo,
+	ForwardingInfo func(*btcec.PublicKey, []byte, bool) (*ForwardingInfo,
 		error)
 
 	// DisableBlindedFwd provides the ability to optionally disable blinded
@@ -172,7 +172,7 @@ func MakeBlindingKit(processor BlindingProcessor,
 	return &BlindingKit{
 		BlindingPoint: blindingPoint,
 		ForwardingInfo: func(blinding *btcec.PublicKey,
-			data []byte) (*ForwardingInfo, error) {
+			data []byte, finalHop bool) (*ForwardingInfo, error) {
 
 			decrypted, err := processor.DecryptBlindedHopData(
 				blinding, data,
@@ -185,7 +185,7 @@ func MakeBlindingKit(processor BlindingProcessor,
 			b := bytes.NewBuffer(decrypted)
 			routeData, err := record.DecodeBlindedRouteData(b)
 			if err != nil {
-				return nil, fmt.Errorf("%w: %w",
+				return nil, fmt.Errorf("%w: %v",
 					ErrDecodeFailed, err)
 			}
 
@@ -195,6 +195,7 @@ func MakeBlindingKit(processor BlindingProcessor,
 				// point, then we got it from update_add_htlc
 				// and we're a relaying node.
 				blindingPoint != nil,
+				finalHop,
 			); err != nil {
 				return nil, err
 			}
