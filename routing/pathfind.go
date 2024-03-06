@@ -175,8 +175,10 @@ func newRoute(sourceVertex route.Vertex,
 			// If this edge comes from router hints, the features
 			// could be nil.
 			if edge.ToNodeFeatures == nil {
+				log.Infof("ELLE: toNodeFeatures just not set")
 				return false
 			}
+			log.Infof("ELLE: toNodeFeatures was set but feature not found")
 			return edge.ToNodeFeatures.HasFeature(feature)
 		}
 
@@ -186,6 +188,7 @@ func newRoute(sourceVertex route.Vertex,
 		// transitive dependencies have already been validated by path
 		// finding or some other means.
 		tlvPayload = supports(lnwire.TLVOnionPayloadOptional)
+		log.Info("ELLE: supports TLVOnion Payload?", tlvPayload)
 
 		if i == len(pathEdges)-1 {
 			// If this is the last hop, then the hop payload will
@@ -506,6 +509,8 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 	source, target route.Vertex, amt lnwire.MilliSatoshi, timePref float64,
 	finalHtlcExpiry int32) ([]*models.CachedEdgePolicy, float64, error) {
 
+	log.Infof("Target is: %s", target.String())
+
 	// Pathfinding can be a significant portion of the total payment
 	// latency, especially on low-powered devices. Log several metrics to
 	// aid in the analysis performance problems in this area.
@@ -630,6 +635,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 		// Build reverse lookup to find incoming edges. Needed because
 		// search is taken place from target to source.
 		for _, additionalEdge := range additionalEdges {
+			log.Infof("ADDITIONAL EDGE: %d", additionalEdge.EdgePolicy().ChannelID)
 			outgoingEdgePolicy := additionalEdge.EdgePolicy()
 			toVertex := outgoingEdgePolicy.ToNodePubKey()
 
@@ -721,7 +727,6 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 
 		// If the probability is zero, there is no point in trying.
 		if edgeProbability == 0 {
-			log.Infof("ELLE: edge probability = zero")
 			return
 		}
 

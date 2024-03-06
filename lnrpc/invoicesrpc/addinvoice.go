@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/lightningnetwork/lnd/channeldb"
@@ -47,6 +49,8 @@ const (
 
 // AddInvoiceConfig contains dependencies for invoice creation.
 type AddInvoiceConfig struct {
+	BlindedPathKey *btcec.PrivateKey
+
 	// AddInvoice is called to add the invoice to the registry.
 	AddInvoice func(ctx context.Context, invoice *invoices.Invoice,
 		paymentHash lntypes.Hash) (uint64, error)
@@ -424,7 +428,7 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 	}
 
 	for _, path := range invoice.BlindedPaths {
-		options = append(options, zpay32.WithBlindedPath(&path))
+		options = append(options, zpay32.WithBlindedPath(path))
 	}
 
 	// Set our desired invoice features and add them to our list of options.
@@ -456,6 +460,12 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 
 	payReqString, err := payReq.Encode(zpay32.MessageSigner{
 		SignCompact: func(msg []byte) ([]byte, error) {
+			if len(invoice.BlindedPaths) > 0 {
+				digest := chainhash.HashB(msg)
+
+				return ecdsa.SignCompact(cfg.BlindedPathKey, digest, true)
+			}
+
 			return cfg.NodeSigner.SignMessageCompact(msg, false)
 		},
 	})

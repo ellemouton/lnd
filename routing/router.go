@@ -2134,6 +2134,8 @@ func (r *ChannelRouter) FindRoute(req *RouteRequest) (*route.Route, float64,
 		return nil, 0, err
 	}
 
+	log.Infof("got route: %s", route)
+
 	go log.Tracef("Obtained path to send %v to %x: %v",
 		req.Amount, req.Target, newLogClosure(func() string {
 			return spew.Sdump(route)
@@ -2266,6 +2268,9 @@ type LightningPayment struct {
 	// together and sorted in forward order in order to reach the
 	// destination successfully.
 	RouteHints [][]zpay32.HopHint
+
+	// TODO(elle): set this.
+	BlindedPayment *BlindedPayment
 
 	// OutgoingChannelIDs is the list of channels that are allowed for the
 	// first hop. If nil, any channel may be used.

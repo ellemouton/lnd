@@ -114,10 +114,10 @@ type Hop struct {
 func (h *Hop) PackHopPayload(w io.Writer, nextChanID uint64) error {
 	// If this is a legacy payload, then we'll exit here as this method
 	// shouldn't be called.
-	if h.LegacyPayload == true {
-		return fmt.Errorf("cannot pack hop payloads for legacy " +
-			"payloads")
-	}
+	//if h.LegacyPayload == true {
+	//	return fmt.Errorf("cannot pack hop payloads for legacy " +
+	//		"payloads")
+	//}
 
 	// Otherwise, we'll need to make a new stream that includes our
 	// required routing fields, as well as these optional values.

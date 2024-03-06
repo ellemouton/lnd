@@ -991,6 +991,15 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 		payIntent.PaymentAddr = payAddr
 		payIntent.PaymentRequest = []byte(rpcPayReq.PaymentRequest)
 		payIntent.Metadata = payReq.Metadata
+		if len(payReq.BlindedPaths) > 0 {
+			payIntent.BlindedPayment = marshalBlindedPayment(payReq.BlindedPaths[0])
+
+			copy(payIntent.Target[:], payReq.BlindedPaths[0].Hops[len(payReq.BlindedPaths[0].Hops)-1].NodeID.SerializeCompressed())
+
+			for i, hop := range payReq.BlindedPaths[0].Hops {
+				log.Infof("elle, bp hop %d is: %x", i, hop.NodeID.SerializeCompressed())
+			}
+		}
 	} else {
 		// Otherwise, If the payment request field was not specified
 		// (and a custom route wasn't specified), construct the payment
@@ -1127,6 +1136,35 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 	}
 
 	return payIntent, nil
+}
+
+func marshalBlindedPayment(path zpay32.BlindedPath) *routing.BlindedPayment {
+	return &routing.BlindedPayment{
+		BlindedPath: &sphinx.BlindedPath{
+			IntroductionPoint: path.Hops[0].NodeID,
+			BlindingPoint:     path.FirstEphemeralBlindingPoint,
+			BlindedHops:       marshalBlindedHops(path.Hops),
+		},
+		BaseFee:             path.FeeBaseMsat,
+		ProportionalFeeRate: path.FeePropMsat,
+		CltvExpiryDelta:     path.CltvExpDelta,
+		HtlcMinimum:         path.HTLCMinMsat,
+		HtlcMaximum:         path.HTLCMaxMsat,
+		Features:            path.Features,
+	}
+}
+
+func marshalBlindedHops(hops []*zpay32.BlindedHop) []*sphinx.BlindedHopInfo {
+	res := make([]*sphinx.BlindedHopInfo, len(hops))
+
+	for i, hop := range hops {
+		res[i] = &sphinx.BlindedHopInfo{
+			BlindedNodePub: hop.NodeID,
+			CipherText:     hop.EncryptedRecipientData,
+		}
+	}
+
+	return res
 }
 
 // unmarshallRouteHints unmarshalls a list of route hints.

@@ -5661,7 +5661,21 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 
 	defaultDelta := r.cfg.Bitcoin.TimeLockDelta
 
+	keyDesc, err := r.server.cc.KeyRing.DeriveKey(keychain.KeyLocator{
+		Family: keychain.KeyFamilyBlindedPath,
+		Index:  0,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	key, err := r.server.cc.KeyRing.DerivePrivKey(keyDesc)
+	if err != nil {
+		return nil, err
+	}
+
 	addInvoiceCfg := &invoicesrpc.AddInvoiceConfig{
+		BlindedPathKey:    key,
 		AddInvoice:        r.server.invoices.AddInvoice,
 		IsChannelActive:   r.server.htlcSwitch.HasActiveLink,
 		ChainParams:       r.cfg.ActiveNetParams.Params,
@@ -5800,16 +5814,14 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 
 		relayInfo = append(relayInfo, ri)
 
-		data := record.BlindedRouteData{
-			ShortChannelID: &scid,
-			RelayInfo:      ri,
-			Constraints: &record.PaymentConstraints{
-				MaxCltvExpiry:   0,
+		data := record.NewBlindedRouteData(
+			&scid, nil, ri, &record.PaymentConstraints{
+				MaxCltvExpiry:   math.MaxUint32,
 				HtlcMinimumMsat: 0,
-			},
-		}
+			}, nil, nil,
+		)
 
-		plaintxt, err := record.EncodeBlindedRouteData(&data)
+		plaintxt, err := record.EncodeBlindedRouteData(data)
 		if err != nil {
 			return nil, err
 		}
@@ -5820,11 +5832,12 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 		})
 
 		for i := 0; i < len(route.Hops); i++ {
-			var data record.BlindedRouteData
+			var data *record.BlindedRouteData
 			if i == len(route.Hops)-1 {
-				data = record.BlindedRouteData{
-					PathID: addInvoiceData.Preimage[:],
-				}
+				data = record.NewBlindedRouteData(
+					nil, nil, nil, nil, nil,
+					addInvoiceData.Preimage[:],
+				)
 			} else {
 				scid := lnwire.NewShortChanIDFromInt(route.Hops[i+1].ChannelID)
 
@@ -5853,14 +5866,12 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 
 				relayInfo = append(relayInfo, ri)
 
-				data = record.BlindedRouteData{
-					ShortChannelID: &scid,
-					RelayInfo:      ri,
-					Constraints: &record.PaymentConstraints{
-						MaxCltvExpiry:   0,
+				data = record.NewBlindedRouteData(
+					&scid, nil, ri, &record.PaymentConstraints{
+						MaxCltvExpiry:   math.MaxUint32,
 						HtlcMinimumMsat: 0,
-					},
-				}
+					}, nil, nil,
+				)
 			}
 
 			node, err := btcec.ParsePubKey(route.Hops[i].PubKeyBytes[:])
@@ -5868,7 +5879,7 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 				return nil, err
 			}
 
-			plaintxt, err := record.EncodeBlindedRouteData(&data)
+			plaintxt, err := record.EncodeBlindedRouteData(data)
 			if err != nil {
 				return nil, err
 			}
@@ -5889,18 +5900,15 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 
 			// route_fee_base_msat(n+1) = (fee_base_msat(n+1) * 1000000 + route_fee_base_msat(n) * (1000000 + fee_proportional_millionths(n+1)) + 1000000 - 1) / 1000000
 			totalFeeBase = ((info.BaseFee * 1000000) + (totalFeeBase * (1000000 + info.FeeRate)) + 1000000 - 1) / 1000000
-			rpcsLog.Infof("ELLE: fees for hop %d. Base: %v, Prop: %v", i, info.BaseFee, info.FeeRate)
-			rpcsLog.Infof("ELLE: total base fee at hop %d is: %v", i, totalFeeBase)
 
 			// route_fee_proportional_millionths(n+1) = ((route_fee_proportional_millionths(n) + fee_proportional_millionths(n+1)) * 1000000 + route_fee_proportional_millionths(n) * fee_proportional_millionths(n+1) + 1000000 - 1) / 1000000
 			totalFeeProp = ((totalFeeProp+info.FeeRate)*1000000 + totalFeeBase*info.FeeRate + 1000000 - 1) / 1000000
-			rpcsLog.Infof("ELLE: total prop fee at hop %d is: %v", i, totalFeeProp)
 
 			totalCltvDelta += info.CltvExpiryDelta
 		}
 
-		totalFeeProp += 1
-		totalFeeBase += 1
+		totalFeeProp += 10
+		totalFeeBase += 10
 
 		totalCltvDelta += chainreg.DefaultBitcoinTimeLockDelta
 

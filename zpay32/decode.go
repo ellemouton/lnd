@@ -307,7 +307,7 @@ func parseTaggedFields(invoice *Invoice, fields []byte, net *chaincfg.Params) er
 			}
 
 			invoice.BlindedPaths = append(
-				invoice.BlindedPaths, blindedPath,
+				invoice.BlindedPaths, *blindedPath,
 			)
 
 		default:

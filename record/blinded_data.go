@@ -15,7 +15,7 @@ import (
 // forwarding information.
 type BlindedRouteData struct {
 	// ShortChannelID is the channel ID of the next hop.
-	ShortChannelID tlv.RecordT[tlv.TlvType2, lnwire.ShortChannelID]
+	ShortChannelID tlv.OptionalRecordT[tlv.TlvType2, lnwire.ShortChannelID]
 
 	// NextBlindingOverride is a blinding point that should be switched
 	// in for the next hop. This is used to combine two blinded paths into
@@ -26,7 +26,7 @@ type BlindedRouteData struct {
 	PathID tlv.OptionalRecordT[tlv.TlvType6, []byte]
 
 	// RelayInfo provides the relay parameters for the hop.
-	RelayInfo tlv.RecordT[tlv.TlvType10, PaymentRelayInfo]
+	RelayInfo tlv.OptionalRecordT[tlv.TlvType10, PaymentRelayInfo]
 
 	// Constraints provides the payment relay constraints for the hop.
 	Constraints tlv.OptionalRecordT[tlv.TlvType12, PaymentConstraints]
@@ -37,14 +37,23 @@ type BlindedRouteData struct {
 
 // NewBlindedRouteData creates the data that's provided for hops within a
 // blinded route.
-func NewBlindedRouteData(chanID lnwire.ShortChannelID,
-	blindingOverride *btcec.PublicKey, relayInfo PaymentRelayInfo,
+func NewBlindedRouteData(chanID *lnwire.ShortChannelID,
+	blindingOverride *btcec.PublicKey, relayInfo *PaymentRelayInfo,
 	constraints *PaymentConstraints, features *lnwire.FeatureVector,
 	pathID []byte) *BlindedRouteData {
 
-	info := &BlindedRouteData{
-		ShortChannelID: tlv.NewRecordT[tlv.TlvType2](chanID),
-		RelayInfo:      tlv.NewRecordT[tlv.TlvType10](relayInfo),
+	var info BlindedRouteData
+
+	if chanID != nil {
+		info.ShortChannelID = tlv.SomeRecordT(
+			tlv.NewRecordT[tlv.TlvType2](*chanID),
+		)
+	}
+
+	if relayInfo != nil {
+		info.RelayInfo = tlv.SomeRecordT(
+			tlv.NewRecordT[tlv.TlvType10](*relayInfo),
+		)
 	}
 
 	if pathID != nil {
@@ -69,7 +78,7 @@ func NewBlindedRouteData(chanID lnwire.ShortChannelID,
 		)
 	}
 
-	return info
+	return &info
 }
 
 // DecodeBlindedRouteData decodes the data provided within a blinded route.
@@ -81,6 +90,8 @@ func DecodeBlindedRouteData(r io.Reader) (*BlindedRouteData, error) {
 		constraints      = d.Constraints.Zero()
 		features         = d.Features.Zero()
 		pathID           = d.PathID.Zero()
+		scid             = d.ShortChannelID.Zero()
+		relayInfo        = d.RelayInfo.Zero()
 	)
 
 	var tlvRecords lnwire.ExtraOpaqueData
@@ -89,8 +100,8 @@ func DecodeBlindedRouteData(r io.Reader) (*BlindedRouteData, error) {
 	}
 
 	typeMap, err := tlvRecords.ExtractRecords(
-		&d.ShortChannelID, &blindingOverride, &pathID, &d.RelayInfo.Val,
-		&constraints, &features,
+		&scid, &blindingOverride, &pathID, &relayInfo, &constraints,
+		&features,
 	)
 	if err != nil {
 		return nil, err
@@ -99,6 +110,14 @@ func DecodeBlindedRouteData(r io.Reader) (*BlindedRouteData, error) {
 	val, ok := typeMap[d.NextBlindingOverride.TlvType()]
 	if ok && val == nil {
 		d.NextBlindingOverride = tlv.SomeRecordT(blindingOverride)
+	}
+
+	if val, ok := typeMap[d.ShortChannelID.TlvType()]; ok && val == nil {
+		d.ShortChannelID = tlv.SomeRecordT(scid)
+	}
+
+	if val, ok := typeMap[d.RelayInfo.TlvType()]; ok && val == nil {
+		d.RelayInfo = tlv.SomeRecordT(relayInfo)
 	}
 
 	if val, ok := typeMap[d.Constraints.TlvType()]; ok && val == nil {
@@ -123,7 +142,11 @@ func EncodeBlindedRouteData(data *BlindedRouteData) ([]byte, error) {
 		recordProducers = make([]tlv.RecordProducer, 0, 5)
 	)
 
-	recordProducers = append(recordProducers, &data.ShortChannelID)
+	data.ShortChannelID.WhenSome(func(scid tlv.RecordT[tlv.TlvType2,
+		lnwire.ShortChannelID]) {
+
+		recordProducers = append(recordProducers, &scid)
+	})
 
 	data.NextBlindingOverride.WhenSome(func(pk tlv.RecordT[tlv.TlvType8,
 		*btcec.PublicKey]) {
@@ -135,7 +158,11 @@ func EncodeBlindedRouteData(data *BlindedRouteData) ([]byte, error) {
 		recordProducers = append(recordProducers, &id)
 	})
 
-	recordProducers = append(recordProducers, &data.RelayInfo.Val)
+	data.RelayInfo.WhenSome(func(info tlv.RecordT[tlv.TlvType10,
+		PaymentRelayInfo]) {
+
+		recordProducers = append(recordProducers, &info)
+	})
 
 	data.Constraints.WhenSome(func(cs tlv.RecordT[tlv.TlvType12,
 		PaymentConstraints]) {

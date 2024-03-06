@@ -889,6 +889,8 @@ func (i *InvoiceRegistry) NotifyExitHopHtlc(rHash lntypes.Hash,
 	circuitKey CircuitKey, hodlChan chan<- interface{},
 	payload Payload) (HtlcResolution, error) {
 
+	log.Infof("ELLE: we think we are the exit hop....")
+
 	// Create the update context containing the relevant details of the
 	// incoming htlc.
 	ctx := invoiceUpdateCtx{

@@ -185,7 +185,7 @@ type Invoice struct {
 	// NOTE: This is optional.
 	RouteHints [][]HopHint
 
-	BlindedPaths []*BlindedPath
+	BlindedPaths []BlindedPath
 
 	// Features represents an optional field used to signal optional or
 	// required support for features by the receiver.
@@ -231,7 +231,7 @@ func CLTVExpiry(delta uint64) func(*Invoice) {
 	}
 }
 
-func WithBlindedPath(path *BlindedPath) func(*Invoice) {
+func WithBlindedPath(path BlindedPath) func(*Invoice) {
 	return func(i *Invoice) {
 		i.BlindedPaths = append(i.BlindedPaths, path)
 	}

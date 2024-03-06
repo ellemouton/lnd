@@ -120,6 +120,8 @@ const (
 	// preventing others from having full access to the tower just as a
 	// result of knowing the node key.
 	KeyFamilyTowerID KeyFamily = 9
+
+	KeyFamilyBlindedPath KeyFamily = 10
 )
 
 // VersionZeroKeyFamilies is a slice of all the known key families for first

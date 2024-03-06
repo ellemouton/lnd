@@ -236,7 +236,7 @@ func CreateRPCFeatures(fv *lnwire.FeatureVector) map[uint32]*lnrpc.Feature {
 	return rpcFeatures
 }
 
-func CreateRPCBlindedPath(blindedPaths []*zpay32.BlindedPath) (
+func CreateRPCBlindedPath(blindedPaths []zpay32.BlindedPath) (
 	[]*lnrpc.BlindedPaymentPath, error) {
 
 	var res []*lnrpc.BlindedPaymentPath

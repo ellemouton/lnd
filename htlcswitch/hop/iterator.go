@@ -232,21 +232,28 @@ func deriveForwardingInfo(data *record.BlindedRouteData,
 	incomingAmt lnwire.MilliSatoshi, incomingCltv uint32,
 	nextEph *btcec.PublicKey) (*ForwardingInfo, error) {
 
+	var relayInfo record.PaymentRelayInfo
+	data.RelayInfo.WhenSome(func(r tlv.RecordT[tlv.TlvType10, record.PaymentRelayInfo]) {
+		relayInfo = r.Val
+	})
+
 	fwdAmt, err := calculateForwardingAmount(
-		incomingAmt, data.RelayInfo.Val.BaseFee,
-		data.RelayInfo.Val.FeeRate,
+		incomingAmt, relayInfo.BaseFee, relayInfo.FeeRate,
 	)
 	if err != nil {
 		return nil, err
 	}
 
+	var scid lnwire.ShortChannelID
+	data.ShortChannelID.WhenSome(func(r tlv.RecordT[tlv.TlvType2, lnwire.ShortChannelID]) {
+		scid = r.Val
+	})
+
 	return &ForwardingInfo{
-		NextHop:         data.ShortChannelID.Val,
+		NextHop:         scid,
 		AmountToForward: fwdAmt,
-		OutgoingCTLV: incomingCltv - uint32(
-			data.RelayInfo.Val.CltvExpiryDelta,
-		),
-		NextBlinding: nextEph,
+		OutgoingCTLV:    incomingCltv - uint32(relayInfo.CltvExpiryDelta),
+		NextBlinding:    nextEph,
 	}, nil
 }
 

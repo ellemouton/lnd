@@ -872,8 +872,8 @@ func TestNewInvoice(t *testing.T) {
 					Amount(testMillisat24BTC),
 					Description(testEmptyString),
 					Destination(testPubKey),
-					WithBlindedPath(&blindedPath1),
-					WithBlindedPath(&blindedPath2),
+					WithBlindedPath(blindedPath1),
+					WithBlindedPath(blindedPath2),
 				)
 			},
 			valid:          true,

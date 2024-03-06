@@ -2,7 +2,6 @@ package route
 
 import (
 	"bytes"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -188,12 +187,14 @@ func (h *Hop) Copy() *Hop {
 func (h *Hop) PackHopPayload(w io.Writer, nextChanID uint64,
 	finalHop bool) error {
 
+	log.Info("entering PackHopPayload")
+
 	// If this is a legacy payload, then we'll exit here as this method
 	// shouldn't be called.
-	if h.LegacyPayload == true {
-		return fmt.Errorf("cannot pack hop payloads for legacy " +
-			"payloads")
-	}
+	//if h.LegacyPayload == true {
+	//	return fmt.Errorf("cannot pack hop payloads for legacy " +
+	//		"payloads")
+	//}
 
 	// Otherwise, we'll need to make a new stream that includes our
 	// required routing fields, as well as these optional values.
@@ -237,6 +238,7 @@ func (h *Hop) PackHopPayload(w io.Writer, nextChanID uint64,
 
 	// Validate channel TLV is present as expected based on location in
 	// route and whether this hop is blinded.
+	log.Infof("nextChanIDSet: %v, blindedHop: %v, finalHop: %v", nextChanID != 0, isBlinded, finalHop)
 	err := validateNextChanID(nextChanID != 0, isBlinded, finalHop)
 	if err != nil {
 		return fmt.Errorf("%w: channel id: %v", err, nextChanID)
@@ -652,46 +654,50 @@ func (r *Route) ToSphinxPath() (*sphinx.PaymentPath, error) {
 		finalHop := i == len(r.Hops)-1
 		if !finalHop {
 			nextHop = r.Hops[i+1].ChannelID
+			log.Infof("ELLE: here. setting next hop: %d", r.Hops[i+1].ChannelID)
 		}
+
+		log.Infof("ELLE: looking at hop: %s. Next hop is: %d. i: %d. Num hops: %d", hop.PubKeyBytes.String(), nextHop, i, len(r.Hops))
 
 		var payload sphinx.HopPayload
 
 		// If this is the legacy payload, then we can just include the
 		// hop data as normal.
-		if hop.LegacyPayload {
-			// Before we encode this value, we'll pack the next hop
-			// into the NextAddress field of the hop info to ensure
-			// we point to the right now.
-			hopData := sphinx.HopData{
-				ForwardAmount: uint64(hop.AmtToForward),
-				OutgoingCltv:  hop.OutgoingTimeLock,
-			}
-			binary.BigEndian.PutUint64(
-				hopData.NextAddress[:], nextHop,
-			)
-
-			payload, err = sphinx.NewLegacyHopPayload(&hopData)
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			// For non-legacy payloads, we'll need to pack the
-			// routing information, along with any extra TLV
-			// information into the new per-hop payload format.
-			// We'll also pass in the chan ID of the hop this
-			// channel should be forwarded to so we can construct a
-			// valid payload.
-			var b bytes.Buffer
-			err := hop.PackHopPayload(&b, nextHop, finalHop)
-			if err != nil {
-				return nil, err
-			}
-
-			payload, err = sphinx.NewTLVHopPayload(b.Bytes())
-			if err != nil {
-				return nil, err
-			}
+		//if hop.LegacyPayload {
+		//	log.Info("elle.... legacy payload...?")
+		//	// Before we encode this value, we'll pack the next hop
+		//	// into the NextAddress field of the hop info to ensure
+		//	// we point to the right now.
+		//	hopData := sphinx.HopData{
+		//		ForwardAmount: uint64(hop.AmtToForward),
+		//		OutgoingCltv:  hop.OutgoingTimeLock,
+		//	}
+		//	binary.BigEndian.PutUint64(
+		//		hopData.NextAddress[:], nextHop,
+		//	)
+		//
+		//	payload, err = sphinx.NewLegacyHopPayload(&hopData)
+		//	if err != nil {
+		//		return nil, err
+		//	}
+		//} else {
+		// For non-legacy payloads, we'll need to pack the
+		// routing information, along with any extra TLV
+		// information into the new per-hop payload format.
+		// We'll also pass in the chan ID of the hop this
+		// channel should be forwarded to so we can construct a
+		// valid payload.
+		var b bytes.Buffer
+		err = hop.PackHopPayload(&b, nextHop, finalHop)
+		if err != nil {
+			return nil, err
 		}
+
+		payload, err = sphinx.NewTLVHopPayload(b.Bytes())
+		if err != nil {
+			return nil, err
+		}
+		//}
 
 		path[i] = sphinx.OnionHop{
 			NodePub:    *pub,

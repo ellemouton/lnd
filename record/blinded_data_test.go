@@ -107,7 +107,7 @@ func TestBlindedDataEncoding(t *testing.T) {
 			}
 
 			encodedData := NewBlindedRouteData(
-				channelID, pubkey(t), info, constraints,
+				&channelID, pubkey(t), &info, constraints,
 				testCase.features, testCase.pathID,
 			)
 
@@ -140,13 +140,13 @@ func TestBlindingSpecTestVectors(t *testing.T) {
 		{
 			encoded: "011a0000000000000000000000000000000000000000000000000000020800000000000006c10a0800240000009627100c06000b69e505dc0e00fd023103123456",
 			expectedPaymentData: NewBlindedRouteData(
-				lnwire.ShortChannelID{
+				&lnwire.ShortChannelID{
 					BlockHeight: 0,
 					TxIndex:     0,
 					TxPosition:  1729,
 				},
 				nil,
-				PaymentRelayInfo{
+				&PaymentRelayInfo{
 					CltvExpiryDelta: 36,
 					FeeRate:         150,
 					BaseFee:         10000,
@@ -165,11 +165,11 @@ func TestBlindingSpecTestVectors(t *testing.T) {
 		{
 			encoded: "020800000000000004510821031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f0a0800300000006401f40c06000b69c105dc0e00",
 			expectedPaymentData: NewBlindedRouteData(
-				lnwire.ShortChannelID{
+				&lnwire.ShortChannelID{
 					TxPosition: 1105,
 				},
 				nextBlindingOverride,
-				PaymentRelayInfo{
+				&PaymentRelayInfo{
 					CltvExpiryDelta: 48,
 					FeeRate:         100,
 					BaseFee:         500,

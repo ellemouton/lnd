@@ -109,6 +109,9 @@ func (b *BlindedPayment) toRouteHints() RouteHints {
 	features := lnwire.EmptyFeatureVector()
 	if b.Features != nil {
 		features = b.Features.Clone()
+		log.Info("elle: features got cloned: %v", b.Features.Features())
+	} else {
+		log.Info("elle: features empty")
 	}
 
 	// Use the total aggregate relay parameters for the entire blinded

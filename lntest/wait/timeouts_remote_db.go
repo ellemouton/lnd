@@ -35,5 +35,5 @@ const (
 	SqliteBusyTimeout = time.Second * 10
 
 	// PaymentTimeout is the timeout used when sending payments.
-	PaymentTimeout = time.Second * 60
+	PaymentTimeout = time.Second * 10
 )
