@@ -476,7 +476,10 @@ func (s *Switch) GetAttemptResult(attemptID uint64, paymentHash lntypes.Hash,
 	// caller.
 	s.wg.Add(1)
 	go func() {
-		defer s.wg.Done()
+		defer func() {
+			log.Infof("ELLE: 1")
+			s.wg.Done()
+		}()
 
 		var n *networkResult
 		select {
@@ -803,7 +806,10 @@ func (s *Switch) ForwardPackets(linkQuit chan struct{},
 
 // logFwdErrs logs any errors received on `fwdChan`.
 func (s *Switch) logFwdErrs(num *int, wg *sync.WaitGroup, fwdChan chan error) {
-	defer s.wg.Done()
+	defer func() {
+		s.wg.Done()
+		log.Infof("ELLE: 2")
+	}()
 
 	// Wait here until the outer function has finished persisting
 	// and routing the packets. This guarantees we don't read from num until
@@ -921,7 +927,10 @@ func (s *Switch) getLocalLink(pkt *htlcPacket, htlc *lnwire.UpdateAddHTLC) (
 //
 // NOTE: This method MUST be spawned as a goroutine.
 func (s *Switch) handleLocalResponse(pkt *htlcPacket) {
-	defer s.wg.Done()
+	defer func() {
+		s.wg.Done()
+		log.Infof("ELLE: 3")
+	}()
 
 	attemptID := pkt.incomingHTLCID
 
@@ -1709,7 +1718,10 @@ func (s *Switch) CloseLink(chanPoint *wire.OutPoint,
 //
 // NOTE: This MUST be run as a goroutine.
 func (s *Switch) htlcForwarder() {
-	defer s.wg.Done()
+	defer func() {
+		s.wg.Done()
+		log.Infof("ELLE: 4")
+	}()
 
 	defer func() {
 		s.blockEpochStream.Cancel()
@@ -1881,7 +1893,10 @@ out:
 		case <-s.cfg.FwdEventTicker.Ticks():
 			s.wg.Add(1)
 			go func() {
-				defer s.wg.Done()
+				defer func() {
+					s.wg.Done()
+					log.Infof("ELLE: 5")
+				}()
 
 				if err := s.FlushForwardingEvents(); err != nil {
 					log.Errorf("unable to flush "+
