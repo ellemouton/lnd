@@ -41,6 +41,7 @@ func TestBlindedDataEncoding(t *testing.T) {
 		htlcMin     lnwire.MilliSatoshi
 		features    *lnwire.FeatureVector
 		constraints bool
+		pathID      []byte
 	}{
 		{
 			name:    "zero variable values",
@@ -76,6 +77,10 @@ func TestBlindedDataEncoding(t *testing.T) {
 			name:        "no payment constraints",
 			constraints: true,
 		},
+		{
+			name:   "with path ID",
+			pathID: []byte{1, 2, 3, 4, 5},
+		},
 	}
 
 	for _, testCase := range tests {
@@ -103,7 +108,7 @@ func TestBlindedDataEncoding(t *testing.T) {
 
 			encodedData := NewBlindedRouteData(
 				channelID, pubkey(t), info, constraints,
-				testCase.features,
+				testCase.features, testCase.pathID,
 			)
 
 			encoded, err := EncodeBlindedRouteData(encodedData)
@@ -154,6 +159,7 @@ func TestBlindingSpecTestVectors(t *testing.T) {
 					lnwire.NewRawFeatureVector(),
 					lnwire.Features,
 				),
+				nil,
 			),
 		},
 		{
@@ -175,7 +181,8 @@ func TestBlindingSpecTestVectors(t *testing.T) {
 				lnwire.NewFeatureVector(
 					lnwire.NewRawFeatureVector(),
 					lnwire.Features,
-				)),
+				), nil,
+			),
 		},
 	}
 

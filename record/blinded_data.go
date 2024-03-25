@@ -23,6 +23,8 @@ type BlindedRouteData struct {
 	// could be used for payments as well).
 	NextBlindingOverride tlv.OptionalRecordT[tlv.TlvType8, *btcec.PublicKey]
 
+	PathID tlv.OptionalRecordT[tlv.TlvType6, []byte]
+
 	// RelayInfo provides the relay parameters for the hop.
 	RelayInfo tlv.RecordT[tlv.TlvType10, PaymentRelayInfo]
 
@@ -37,12 +39,18 @@ type BlindedRouteData struct {
 // blinded route.
 func NewBlindedRouteData(chanID lnwire.ShortChannelID,
 	blindingOverride *btcec.PublicKey, relayInfo PaymentRelayInfo,
-	constraints *PaymentConstraints,
-	features *lnwire.FeatureVector) *BlindedRouteData {
+	constraints *PaymentConstraints, features *lnwire.FeatureVector,
+	pathID []byte) *BlindedRouteData {
 
 	info := &BlindedRouteData{
 		ShortChannelID: tlv.NewRecordT[tlv.TlvType2](chanID),
 		RelayInfo:      tlv.NewRecordT[tlv.TlvType10](relayInfo),
+	}
+
+	if pathID != nil {
+		info.PathID = tlv.SomeRecordT(
+			tlv.NewPrimitiveRecord[tlv.TlvType6](pathID),
+		)
 	}
 
 	if blindingOverride != nil {
@@ -72,6 +80,7 @@ func DecodeBlindedRouteData(r io.Reader) (*BlindedRouteData, error) {
 		blindingOverride = d.NextBlindingOverride.Zero()
 		constraints      = d.Constraints.Zero()
 		features         = d.Features.Zero()
+		pathID           = d.PathID.Zero()
 	)
 
 	var tlvRecords lnwire.ExtraOpaqueData
@@ -80,9 +89,8 @@ func DecodeBlindedRouteData(r io.Reader) (*BlindedRouteData, error) {
 	}
 
 	typeMap, err := tlvRecords.ExtractRecords(
-		&d.ShortChannelID,
-		&blindingOverride, &d.RelayInfo.Val, &constraints,
-		&features,
+		&d.ShortChannelID, &blindingOverride, &pathID, &d.RelayInfo.Val,
+		&constraints, &features,
 	)
 	if err != nil {
 		return nil, err
@@ -95,6 +103,10 @@ func DecodeBlindedRouteData(r io.Reader) (*BlindedRouteData, error) {
 
 	if val, ok := typeMap[d.Constraints.TlvType()]; ok && val == nil {
 		d.Constraints = tlv.SomeRecordT(constraints)
+	}
+
+	if val, ok := typeMap[d.PathID.TlvType()]; ok && val == nil {
+		d.PathID = tlv.SomeRecordT(pathID)
 	}
 
 	if val, ok := typeMap[d.Features.TlvType()]; ok && val == nil {
@@ -117,6 +129,10 @@ func EncodeBlindedRouteData(data *BlindedRouteData) ([]byte, error) {
 		*btcec.PublicKey]) {
 
 		recordProducers = append(recordProducers, &pk)
+	})
+
+	data.PathID.WhenSome(func(id tlv.RecordT[tlv.TlvType6, []byte]) {
+		recordProducers = append(recordProducers, &id)
 	})
 
 	recordProducers = append(recordProducers, &data.RelayInfo.Val)
