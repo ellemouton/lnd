@@ -3805,6 +3805,8 @@ message Invoice {
     Note: Output only, don't specify for creating an invoice.
     */
     map<string, AMPInvoiceState> amp_invoice_state = 28;
+
+    bytes introduction_node = 29;
 }
 
 enum InvoiceHTLCState {
@@ -4254,6 +4256,7 @@ message PayReq {
     bytes payment_addr = 11;
     int64 num_msat = 12;
     map<uint32, Feature> features = 13;
+    repeated BlindedPaymentPath blinded_paths = 14;
 }
 
 enum FeatureBit {
