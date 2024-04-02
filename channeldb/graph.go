@@ -229,6 +229,35 @@ type Graph interface {
 		cb func(channel *DirectedChannel) error) error
 
 	FetchNodeFeatures(node route.Vertex) (*lnwire.FeatureVector, error)
+
+	SourceNode() (*LightningNode, error)
+
+	PruneTip() (*chainhash.Hash, uint32, error)
+
+	PruneGraph(spentOutputs []*wire.OutPoint,
+		blockHash *chainhash.Hash, blockHeight uint32) (
+		[]*models.ChannelEdgeInfo, error)
+
+	ChannelView() ([]EdgePoint, error)
+
+	PruneGraphNodes() error
+
+	DisconnectBlockAtHeight(height uint32) ([]*models.ChannelEdgeInfo, error)
+
+	DisabledChannelIDs() ([]uint64, error)
+
+	DeleteChannelEdges(strictZombiePruning, markZombie bool,
+		chanIDs ...uint64) error
+
+	HasLightningNode(nodePub [33]byte) (time.Time, bool, error)
+
+	MarkEdgeZombie(chanID uint64, pubKey1, pubKey2 [33]byte) error
+
+	HasChannelEdge(chanID uint64) (time.Time, time.Time, bool, bool, error)
+
+	UpdateChannelEdge(edge *models.ChannelEdgeInfo) error
+
+	MarkEdgeLive(chanID uint64) error
 }
 
 // ChannelGraph is a persistent, on-disk graph representation of the Lightning
