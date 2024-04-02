@@ -178,6 +178,9 @@ type Graph interface {
 	ForEachNodeCached(cb func(node route.Vertex,
 		chans map[uint64]*DirectedChannel) error) error
 
+	NodeUpdatesInHorizon(startTime, endTime time.Time) ([]LightningNode,
+		error)
+
 	/*
 		ChannelAnnouncement related methods.
 	*/
@@ -190,23 +193,28 @@ type Graph interface {
 			*models.ChannelEdgePolicy,
 			*models.ChannelEdgePolicy) error) error
 
+	FetchChanInfos(tx kvdb.RTx, chanIDs []uint64) ([]ChannelEdge, error)
+
 	/*
 		ChannelUpdate related methods.
 	*/
 	UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 		op ...batch.SchedulerOption) error
 
+	ChanUpdatesInHorizon(startTime, endTime time.Time) ([]ChannelEdge,
+		error)
+
+	/*
+		Self Node things.
+	*/
+	SetSourceNode(node *LightningNode) error
+	SourceNode() (*LightningNode, error)
+
 	/*
 		Other
 	*/
 
 	HighestChanID() (uint64, error)
-
-	ChanUpdatesInHorizon(startTime, endTime time.Time) ([]ChannelEdge,
-		error)
-
-	NodeUpdatesInHorizon(startTime, endTime time.Time) ([]LightningNode,
-		error)
 
 	IsPublicNode(pubKey [33]byte) (bool, error)
 
@@ -215,8 +223,6 @@ type Graph interface {
 
 	FilterChannelRange(startHeight, endHeight uint32,
 		withTimestamps bool) ([]BlockChannelRange, error)
-
-	FetchChanInfos(tx kvdb.RTx, chanIDs []uint64) ([]ChannelEdge, error)
 
 	FetchChannelEdgesByID(chanID uint64) (*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error)
@@ -229,8 +235,6 @@ type Graph interface {
 		cb func(channel *DirectedChannel) error) error
 
 	FetchNodeFeatures(node route.Vertex) (*lnwire.FeatureVector, error)
-
-	SourceNode() (*LightningNode, error)
 
 	PruneTip() (*chainhash.Hash, uint32, error)
 
@@ -260,8 +264,6 @@ type Graph interface {
 	MarkEdgeLive(chanID uint64) error
 
 	NewPathFindTx() (kvdb.RTx, error)
-
-	SetSourceNode(node *LightningNode) error
 
 	FetchOtherNode(tx kvdb.RTx, channel *models.ChannelEdgeInfo,
 		thisNodeKey []byte) (*LightningNode, error)
@@ -305,7 +307,7 @@ type ChannelGraph struct {
 // returned instance has its own unique reject cache and channel cache.
 func NewChannelGraph(db kvdb.Backend, rejectCacheSize, chanCacheSize int,
 	batchCommitInterval time.Duration, preAllocCacheNumNodes int,
-	useGraphCache, noMigrations bool) (*ChannelGraph, error) {
+	useGraphCache, noMigrations bool) (Graph, error) {
 
 	if !noMigrations {
 		if err := initChannelGraph(db); err != nil {
