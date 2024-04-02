@@ -220,6 +220,10 @@ type Graph interface {
 
 	FetchChannelEdgesByID(chanID uint64) (*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error)
+
+	FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, error)
 }
 
 // ChannelGraph is a persistent, on-disk graph representation of the Lightning
