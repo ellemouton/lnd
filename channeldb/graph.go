@@ -195,6 +195,31 @@ type Graph interface {
 	*/
 	UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 		op ...batch.SchedulerOption) error
+
+	/*
+		Other
+	*/
+
+	HighestChanID() (uint64, error)
+
+	ChanUpdatesInHorizon(startTime, endTime time.Time) ([]ChannelEdge,
+		error)
+
+	NodeUpdatesInHorizon(startTime, endTime time.Time) ([]LightningNode,
+		error)
+
+	IsPublicNode(pubKey [33]byte) (bool, error)
+
+	FilterKnownChanIDs(chansInfo []ChannelUpdateInfo,
+		isZombieChan func(time.Time, time.Time) bool) ([]uint64, error)
+
+	FilterChannelRange(startHeight, endHeight uint32,
+		withTimestamps bool) ([]BlockChannelRange, error)
+
+	FetchChanInfos(tx kvdb.RTx, chanIDs []uint64) ([]ChannelEdge, error)
+
+	FetchChannelEdgesByID(chanID uint64) (*models.ChannelEdgeInfo,
+		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error)
 }
 
 // ChannelGraph is a persistent, on-disk graph representation of the Lightning

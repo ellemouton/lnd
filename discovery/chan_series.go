@@ -70,12 +70,12 @@ type ChannelGraphTimeSeries interface {
 // in-protocol channel range queries to quickly and efficiently synchronize our
 // channel state with all peers.
 type ChanSeries struct {
-	graph *channeldb.ChannelGraph
+	graph channeldb.Graph
 }
 
-// NewChanSeries constructs a new ChanSeries backed by a channeldb.ChannelGraph.
+// NewChanSeries constructs a new ChanSeries backed by a channeldb.Graph.
 // The returned ChanSeries implements the ChannelGraphTimeSeries interface.
-func NewChanSeries(graph *channeldb.ChannelGraph) *ChanSeries {
+func NewChanSeries(graph channeldb.Graph) *ChanSeries {
 	return &ChanSeries{
 		graph: graph,
 	}
