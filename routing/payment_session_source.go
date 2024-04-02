@@ -18,7 +18,7 @@ var _ PaymentSessionSource = (*SessionSource)(nil)
 type SessionSource struct {
 	// Graph is the channel graph that will be used to gather metrics from
 	// and also to carry out path finding queries.
-	Graph *channeldb.ChannelGraph
+	Graph channeldb.Graph
 
 	// SourceNode is the graph's source node.
 	SourceNode *channeldb.LightningNode

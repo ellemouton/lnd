@@ -258,6 +258,8 @@ type Graph interface {
 	UpdateChannelEdge(edge *models.ChannelEdgeInfo) error
 
 	MarkEdgeLive(chanID uint64) error
+
+	NewPathFindTx() (kvdb.RTx, error)
 }
 
 // ChannelGraph is a persistent, on-disk graph representation of the Lightning
