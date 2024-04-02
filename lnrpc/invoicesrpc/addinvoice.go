@@ -71,7 +71,7 @@ type AddInvoiceConfig struct {
 	ChanDB *channeldb.ChannelStateDB
 
 	// Graph holds a reference to the ChannelGraph database.
-	Graph *channeldb.ChannelGraph
+	Graph channeldb.Graph
 
 	// GenInvoiceFeatures returns a feature containing feature bits that
 	// should be advertised on freshly generated invoices.
