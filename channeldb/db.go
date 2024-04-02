@@ -325,7 +325,7 @@ type DB struct {
 	channelStateDB *ChannelStateDB
 
 	dbPath                    string
-	graph                     *ChannelGraph
+	graph                     Graph
 	clock                     clock.Clock
 	dryRun                    bool
 	keepFailedPaymentAttempts bool
@@ -1629,7 +1629,7 @@ func (d *DB) applyOptionalVersions(cfg OptionalMiragtionConfig) error {
 }
 
 // ChannelGraph returns the current instance of the directed channel graph.
-func (d *DB) ChannelGraph() *ChannelGraph {
+func (d *DB) ChannelGraph() Graph {
 	return d.graph
 }
 
