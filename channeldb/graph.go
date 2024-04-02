@@ -224,6 +224,11 @@ type Graph interface {
 	FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy, error)
+
+	ForEachNodeDirectedChannel(tx kvdb.RTx, node route.Vertex,
+		cb func(channel *DirectedChannel) error) error
+
+	FetchNodeFeatures(node route.Vertex) (*lnwire.FeatureVector, error)
 }
 
 // ChannelGraph is a persistent, on-disk graph representation of the Lightning

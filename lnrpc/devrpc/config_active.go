@@ -15,5 +15,5 @@ import (
 // also be specified.
 type Config struct {
 	ActiveNetParams *chaincfg.Params
-	GraphDB         *channeldb.ChannelGraph
+	GraphDB         channeldb.Graph
 }

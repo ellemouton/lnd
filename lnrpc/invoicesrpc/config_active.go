@@ -47,7 +47,7 @@ type Config struct {
 
 	// GraphDB is a global database instance which is needed to access the
 	// channel graph.
-	GraphDB *channeldb.ChannelGraph
+	GraphDB channeldb.Graph
 
 	// ChanStateDB is a possibly replicated db instance which contains the
 	// channel state
