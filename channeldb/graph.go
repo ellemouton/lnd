@@ -163,6 +163,40 @@ const (
 	MaxAllowedExtraOpaqueBytes = 10000
 )
 
+type Graph interface {
+	/*
+		NodeAnnouncement related methods.
+	*/
+
+	FetchLightningNode(tx kvdb.RTx, nodePub route.Vertex) (*LightningNode,
+		error)
+
+	AddLightningNode(node *LightningNode, op ...batch.SchedulerOption) error
+
+	ForEachNode(cb func(kvdb.RTx, *LightningNode) error) error
+
+	ForEachNodeCached(cb func(node route.Vertex,
+		chans map[uint64]*DirectedChannel) error) error
+
+	/*
+		ChannelAnnouncement related methods.
+	*/
+
+	AddChannelEdge(edge *models.ChannelEdgeInfo,
+		op ...batch.SchedulerOption) error
+
+	ForEachNodeChannel(tx kvdb.RTx, nodePub route.Vertex,
+		cb func(kvdb.RTx, *models.ChannelEdgeInfo,
+			*models.ChannelEdgePolicy,
+			*models.ChannelEdgePolicy) error) error
+
+	/*
+		ChannelUpdate related methods.
+	*/
+	UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
+		op ...batch.SchedulerOption) error
+}
+
 // ChannelGraph is a persistent, on-disk graph representation of the Lightning
 // Network. This struct can be used to implement path finding algorithms on top
 // of, and also to update a node's view based on information received from the
