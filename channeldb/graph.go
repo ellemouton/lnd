@@ -165,13 +165,38 @@ const (
 
 type Graph interface {
 	/*
-		NodeAnnouncement related methods.
+		Graph Write Methods.
 	*/
+	AddLightningNode(node *LightningNode, op ...batch.SchedulerOption) error
 
+	AddChannelEdge(edge *models.ChannelEdgeInfo,
+		op ...batch.SchedulerOption) error
+
+	UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
+		op ...batch.SchedulerOption) error
+
+	PruneTip() (*chainhash.Hash, uint32, error)
+
+	PruneGraph(spentOutputs []*wire.OutPoint,
+		blockHash *chainhash.Hash, blockHeight uint32) (
+		[]*models.ChannelEdgeInfo, error)
+
+	PruneGraphNodes() error
+
+	DisconnectBlockAtHeight(height uint32) ([]*models.ChannelEdgeInfo, error)
+
+	DeleteChannelEdges(strictZombiePruning, markZombie bool,
+		chanIDs ...uint64) error
+
+	MarkEdgeZombie(chanID uint64, pubKey1, pubKey2 [33]byte) error
+
+	MarkEdgeLive(chanID uint64) error
+
+	/*
+		Graph Read Methods.
+	*/
 	FetchLightningNode(tx kvdb.RTx, nodePub route.Vertex) (*LightningNode,
 		error)
-
-	AddLightningNode(node *LightningNode, op ...batch.SchedulerOption) error
 
 	ForEachNode(cb func(kvdb.RTx, *LightningNode) error) error
 
@@ -181,13 +206,6 @@ type Graph interface {
 	NodeUpdatesInHorizon(startTime, endTime time.Time) ([]LightningNode,
 		error)
 
-	/*
-		ChannelAnnouncement related methods.
-	*/
-
-	AddChannelEdge(edge *models.ChannelEdgeInfo,
-		op ...batch.SchedulerOption) error
-
 	ForEachNodeChannel(tx kvdb.RTx, nodePub route.Vertex,
 		cb func(kvdb.RTx, *models.ChannelEdgeInfo,
 			*models.ChannelEdgePolicy,
@@ -195,24 +213,8 @@ type Graph interface {
 
 	FetchChanInfos(tx kvdb.RTx, chanIDs []uint64) ([]ChannelEdge, error)
 
-	/*
-		ChannelUpdate related methods.
-	*/
-	UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
-		op ...batch.SchedulerOption) error
-
 	ChanUpdatesInHorizon(startTime, endTime time.Time) ([]ChannelEdge,
 		error)
-
-	/*
-		Self Node things.
-	*/
-	SetSourceNode(node *LightningNode) error
-	SourceNode() (*LightningNode, error)
-
-	/*
-		Other
-	*/
 
 	HighestChanID() (uint64, error)
 
@@ -236,32 +238,15 @@ type Graph interface {
 
 	FetchNodeFeatures(node route.Vertex) (*lnwire.FeatureVector, error)
 
-	PruneTip() (*chainhash.Hash, uint32, error)
-
-	PruneGraph(spentOutputs []*wire.OutPoint,
-		blockHash *chainhash.Hash, blockHeight uint32) (
-		[]*models.ChannelEdgeInfo, error)
-
 	ChannelView() ([]EdgePoint, error)
-
-	PruneGraphNodes() error
-
-	DisconnectBlockAtHeight(height uint32) ([]*models.ChannelEdgeInfo, error)
 
 	DisabledChannelIDs() ([]uint64, error)
 
-	DeleteChannelEdges(strictZombiePruning, markZombie bool,
-		chanIDs ...uint64) error
-
 	HasLightningNode(nodePub [33]byte) (time.Time, bool, error)
-
-	MarkEdgeZombie(chanID uint64, pubKey1, pubKey2 [33]byte) error
 
 	HasChannelEdge(chanID uint64) (time.Time, time.Time, bool, bool, error)
 
 	UpdateChannelEdge(edge *models.ChannelEdgeInfo) error
-
-	MarkEdgeLive(chanID uint64) error
 
 	NewPathFindTx() (kvdb.RTx, error)
 
@@ -276,6 +261,12 @@ type Graph interface {
 		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error
 
 	NumZombies() (uint64, error)
+
+	/*
+		Self Node things.
+	*/
+	SetSourceNode(node *LightningNode) error
+	SourceNode() (*LightningNode, error)
 }
 
 // ChannelGraph is a persistent, on-disk graph representation of the Lightning
