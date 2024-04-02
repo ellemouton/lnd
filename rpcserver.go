@@ -2818,7 +2818,7 @@ func createRPCCloseUpdate(update interface{}) (
 // abandonChanFromGraph attempts to remove a channel from the channel graph. If
 // we can't find the chanID in the graph, then we assume it has already been
 // removed, and will return a nop.
-func abandonChanFromGraph(chanGraph *channeldb.ChannelGraph,
+func abandonChanFromGraph(chanGraph channeldb.Graph,
 	chanPoint *wire.OutPoint) error {
 
 	// First, we'll obtain the channel ID. If we can't locate this, then

@@ -260,6 +260,20 @@ type Graph interface {
 	MarkEdgeLive(chanID uint64) error
 
 	NewPathFindTx() (kvdb.RTx, error)
+
+	SetSourceNode(node *LightningNode) error
+
+	FetchOtherNode(tx kvdb.RTx, channel *models.ChannelEdgeInfo,
+		thisNodeKey []byte) (*LightningNode, error)
+
+	ChannelID(chanPoint *wire.OutPoint) (uint64, error)
+
+	LookupAlias(pub *btcec.PublicKey) (string, error)
+
+	ForEachChannel(cb func(*models.ChannelEdgeInfo,
+		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error
+
+	NumZombies() (uint64, error)
 }
 
 // ChannelGraph is a persistent, on-disk graph representation of the Lightning

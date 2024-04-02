@@ -237,7 +237,7 @@ type server struct {
 
 	fundingMgr *funding.Manager
 
-	graphDB *channeldb.ChannelGraph
+	graphDB channeldb.Graph
 
 	chanStateDB *channeldb.ChannelStateDB
 
