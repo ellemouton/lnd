@@ -317,6 +317,8 @@ type ChannelPolicy struct {
 // the configuration MUST be non-nil for the ChannelRouter to carry out its
 // duties.
 type Config struct {
+	SourceNode *channeldb.LightningNode
+
 	// Graph is the channel graph that the ChannelRouter will use to gather
 	// metrics from and also to carry out path finding queries.
 	Graph channeldb.Graph
@@ -506,22 +508,17 @@ var _ ChannelGraphSource = (*ChannelRouter)(nil)
 // channel graph is a subset of the UTXO set) set, then the router will proceed
 // to fully sync to the latest state of the UTXO set.
 func New(cfg Config) (*ChannelRouter, error) {
-	selfNode, err := cfg.Graph.SourceNode()
-	if err != nil {
-		return nil, err
-	}
-
 	r := &ChannelRouter{
 		cfg: &cfg,
 		cachedGraph: &CachedGraph{
 			graph:  cfg.Graph,
-			source: selfNode.PubKeyBytes,
+			source: cfg.SourceNode.PubKeyBytes,
 		},
 		networkUpdates:    make(chan *routingMsg),
 		topologyClients:   &lnutils.SyncMap[uint64, *topologyClient]{},
 		ntfnClientUpdates: make(chan *topologyClientUpdate),
 		channelEdgeMtx:    multimutex.NewMutex[uint64](),
-		selfNode:          selfNode,
+		selfNode:          cfg.SourceNode,
 		statTicker:        ticker.New(defaultStatInterval),
 		stats:             new(routerStats),
 		quit:              make(chan struct{}),

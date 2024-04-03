@@ -163,6 +163,8 @@ type server struct {
 	// identityKeyLoc is the key locator for the above wrapped identity key.
 	identityKeyLoc keychain.KeyLocator
 
+	sourceNode *channeldb.LightningNode
+
 	// nodeSigner is an implementation of the MessageSigner implementation
 	// that's backed by the identity private key of the running lnd node.
 	nodeSigner *netann.NodeSigner
@@ -859,6 +861,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	if err := chanGraph.SetSourceNode(selfNode); err != nil {
 		return nil, fmt.Errorf("can't set self node: %w", err)
 	}
+	s.sourceNode = selfNode
 	s.currentNodeAnn = nodeAnn
 
 	// The router will get access to the payment ID sequencer, such that it
@@ -946,13 +949,9 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		MinProbability: routingConfig.MinRouteProbability,
 	}
 
-	sourceNode, err := chanGraph.SourceNode()
-	if err != nil {
-		return nil, fmt.Errorf("error getting source node: %w", err)
-	}
 	paymentSessionSource := &routing.SessionSource{
 		Graph:             chanGraph,
-		SourceNode:        sourceNode,
+		SourceNode:        s.sourceNode,
 		MissionControl:    s.missionControl,
 		GetLink:           s.htlcSwitch.GetLinkByShortID,
 		PathFindingConfig: pathFindingConfig,
@@ -965,6 +964,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	strictPruning := (cfg.Bitcoin.Node == "neutrino" ||
 		cfg.Routing.StrictZombiePruning)
 	s.chanRouter, err = routing.New(routing.Config{
+		SourceNode:          selfNode,
 		Graph:               chanGraph,
 		Chain:               cc.ChainIO,
 		ChainView:           cc.ChainView,
@@ -2991,11 +2991,11 @@ func (s *server) genNodeAnnouncement(features *lnwire.RawFeatureVector,
 	return *s.currentNodeAnn, nil
 }
 
-// updateAndBrodcastSelfNode generates a new node announcement
+// updateAndBroadcastSelfNode generates a new node announcement
 // applying the giving modifiers and updating the time stamp
 // to ensure it propagates through the network. Then it brodcasts
 // it to the network.
-func (s *server) updateAndBrodcastSelfNode(features *lnwire.RawFeatureVector,
+func (s *server) updateAndBroadcastSelfNode(features *lnwire.RawFeatureVector,
 	modifiers ...netann.NodeAnnModifier) error {
 
 	newNodeAnn, err := s.genNodeAnnouncement(features, modifiers...)
@@ -3007,7 +3007,7 @@ func (s *server) updateAndBrodcastSelfNode(features *lnwire.RawFeatureVector,
 	// Update the on-disk version of our announcement.
 	// Load and modify self node istead of creating anew instance so we
 	// don't risk overwriting any existing values.
-	selfNode, err := s.graphDB.SourceNode()
+	selfNode, err := s.graphDB.SourceNode(s.identityECDH.PubKey())
 	if err != nil {
 		return fmt.Errorf("unable to get current source node: %w", err)
 	}
@@ -3071,15 +3071,11 @@ func (s *server) establishPersistentConnections() error {
 	// After checking our previous connections for addresses to connect to,
 	// iterate through the nodes in our channel graph to find addresses
 	// that have been added via NodeAnnouncement messages.
-	sourceNode, err := s.graphDB.SourceNode()
-	if err != nil {
-		return err
-	}
 
 	// TODO(roasbeef): instead iterate over link nodes and query graph for
 	// each of the nodes.
 	selfPub := s.identityECDH.PubKey().SerializeCompressed()
-	err = s.graphDB.ForEachNodeChannel(nil, sourceNode.PubKeyBytes, func(
+	err = s.graphDB.ForEachNodeChannel(nil, s.sourceNode.PubKeyBytes, func(
 		tx kvdb.RTx,
 		chanInfo *models.ChannelEdgeInfo,
 		policy, _ *models.ChannelEdgePolicy) error {

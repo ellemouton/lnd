@@ -663,10 +663,7 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 	chanPredicate chanacceptor.MultiplexAcceptor) error {
 
 	// Set up router rpc backend.
-	selfNode, err := s.graphDB.SourceNode()
-	if err != nil {
-		return err
-	}
+	selfNode := r.server.sourceNode
 	graph := s.graphDB
 
 	routerBackend := &routerrpc.RouterBackend{
@@ -756,13 +753,13 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 	// server configuration struct.
 	//
 	// TODO(roasbeef): extend sub-sever config to have both (local vs remote) DB
-	err = subServerCgs.PopulateDependencies(
+	err := subServerCgs.PopulateDependencies(
 		r.cfg, s.cc, r.cfg.networkDir, macService, atpl, invoiceRegistry,
 		s.htlcSwitch, r.cfg.ActiveNetParams.Params, s.chanRouter,
 		routerBackend, s.nodeSigner, s.graphDB, s.chanStateDB,
 		s.sweeper, tower, s.towerClientMgr, r.cfg.net.ResolveTCPAddr,
 		genInvoiceFeatures, genAmpInvoiceFeatures,
-		s.getNodeAnnouncement, s.updateAndBrodcastSelfNode, parseAddr,
+		s.getNodeAnnouncement, s.updateAndBroadcastSelfNode, parseAddr,
 		rpcsLog, s.aliasMgr.GetPeerAlias,
 	)
 	if err != nil {
@@ -6881,13 +6878,10 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 	_ *lnrpc.FeeReportRequest) (*lnrpc.FeeReportResponse, error) {
 
 	channelGraph := r.server.graphDB
-	selfNode, err := channelGraph.SourceNode()
-	if err != nil {
-		return nil, err
-	}
+	selfNode := r.server.sourceNode
 
 	var feeReports []*lnrpc.ChannelFeeReport
-	err = channelGraph.ForEachNodeChannel(nil, selfNode.PubKeyBytes,
+	err := channelGraph.ForEachNodeChannel(nil, selfNode.PubKeyBytes,
 		func(_ kvdb.RTx, chanInfo *models.ChannelEdgeInfo,
 			edgePolicy, _ *models.ChannelEdgePolicy) error {
 

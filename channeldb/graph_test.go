@@ -77,12 +77,15 @@ func MakeTestGraph(t testing.TB, modifiers ...OptionModifier) (*ChannelGraph, er
 		return nil, err
 	}
 
+	chanGraph, ok := graph.(*ChannelGraph)
+	require.True(t, ok)
+
 	t.Cleanup(func() {
 		_ = backend.Close()
 		backendCleanup()
 	})
 
-	return graph, nil
+	return chanGraph, nil
 }
 
 func createLightningNode(db kvdb.Backend, priv *btcec.PrivateKey) (*LightningNode, error) {
@@ -278,11 +281,13 @@ func TestSourceNode(t *testing.T) {
 	testNode, err := createTestVertex(graph.db)
 	require.NoError(t, err, "unable to create test node")
 
+	pk, err := testNode.PubKey()
+	require.NoError(t, err)
+
 	// Attempt to fetch the source node, this should return an error as the
 	// source node hasn't yet been set.
-	if _, err := graph.SourceNode(); err != ErrSourceNodeNotSet {
-		t.Fatalf("source node shouldn't be set in new graph")
-	}
+	_, err = graph.SourceNode(pk)
+	require.ErrorIs(t, err, ErrGraphNodeNotFound)
 
 	// Set the source the source node, this should insert the node into the
 	// database in a special way indicating it's the source node.
@@ -292,7 +297,7 @@ func TestSourceNode(t *testing.T) {
 
 	// Retrieve the source node from the database, it should exactly match
 	// the one we set above.
-	sourceNode, err := graph.SourceNode()
+	sourceNode, err := graph.SourceNode(pk)
 	require.NoError(t, err, "unable to fetch source node")
 	if err := compareNodes(testNode, sourceNode); err != nil {
 		t.Fatalf("nodes don't match: %v", err)
@@ -4007,10 +4012,13 @@ func TestGraphLoading(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	chanGraph, ok := graph.(*ChannelGraph)
+	require.True(t, ok)
+
 	// Populate the graph with test data.
 	const numNodes = 100
 	const numChannels = 4
-	_, _ = fillTestGraph(t, graph, numNodes, numChannels)
+	_, _ = fillTestGraph(t, chanGraph, numNodes, numChannels)
 
 	// Recreate the graph. This should cause the graph cache to be
 	// populated.
@@ -4021,14 +4029,17 @@ func TestGraphLoading(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	chanGraphReloaded, ok := graphReloaded.(*ChannelGraph)
+	require.True(t, ok)
+
 	// Assert that the cache content is identical.
 	require.Equal(
-		t, graph.graphCache.nodeChannels,
-		graphReloaded.graphCache.nodeChannels,
+		t, chanGraph.graphCache.nodeChannels,
+		chanGraphReloaded.graphCache.nodeChannels,
 	)
 
 	require.Equal(
-		t, graph.graphCache.nodeFeatures,
-		graphReloaded.graphCache.nodeFeatures,
+		t, chanGraph.graphCache.nodeFeatures,
+		chanGraphReloaded.graphCache.nodeFeatures,
 	)
 }

@@ -41,6 +41,7 @@ var (
 	//
 	// maps: pubKey -> nodeInfo
 	// maps: source -> selfPubKey
+	// maps: source-nodes -> sourceNodeKey -> nil
 	nodeBucket = []byte("graph-node")
 
 	// nodeUpdateIndexBucket is a sub-bucket of the nodeBucket. This bucket
@@ -53,7 +54,7 @@ var (
 
 	// sourceKey is a special key that resides within the nodeBucket. The
 	// sourceKey maps a key to the public key of the "self node".
-	sourceKey = []byte("source")
+	sourceKey = []byte("source-nodes")
 
 	// aliasIndexBucket is a sub-bucket that's nested within the main
 	// nodeBucket. This bucket maps the public key of a node to its
@@ -266,7 +267,7 @@ type Graph interface {
 		Self Node things.
 	*/
 	SetSourceNode(node *LightningNode) error
-	SourceNode() (*LightningNode, error)
+	SourceNode(key *btcec.PublicKey) (*LightningNode, error)
 }
 
 // ChannelGraph is a persistent, on-disk graph representation of the Lightning
@@ -853,7 +854,9 @@ func (c *ChannelGraph) ForEachNodeCacheable(cb func(kvdb.RTx,
 // as the center node within a star-graph. This method may be used to kick off
 // a path finding algorithm in order to explore the reachability of another
 // node based off the source node.
-func (c *ChannelGraph) SourceNode() (*LightningNode, error) {
+func (c *ChannelGraph) SourceNode(pubkey *btcec.PublicKey) (*LightningNode,
+	error) {
+
 	var source *LightningNode
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		// First grab the nodes bucket which stores the mapping from
@@ -863,11 +866,14 @@ func (c *ChannelGraph) SourceNode() (*LightningNode, error) {
 			return ErrGraphNotFound
 		}
 
-		node, err := c.sourceNode(nodes)
+		node, err := fetchLightningNode(
+			nodes, pubkey.SerializeCompressed(),
+		)
 		if err != nil {
 			return err
 		}
-		source = node
+
+		source = &node
 
 		return nil
 	}, func() {
@@ -880,24 +886,38 @@ func (c *ChannelGraph) SourceNode() (*LightningNode, error) {
 	return source, nil
 }
 
-// sourceNode uses an existing database transaction and returns the source node
+// sourceNodes uses an existing database transaction and returns the source node
 // of the graph. The source node is treated as the center node within a
 // star-graph. This method may be used to kick off a path finding algorithm in
 // order to explore the reachability of another node based off the source node.
-func (c *ChannelGraph) sourceNode(nodes kvdb.RBucket) (*LightningNode, error) {
-	selfPub := nodes.Get(sourceKey)
-	if selfPub == nil {
+func (c *ChannelGraph) sourceNodes(nodes kvdb.RBucket) ([]*LightningNode, error) {
+	sourceBkt := nodes.NestedReadBucket(sourceKey)
+	if sourceBkt == nil {
 		return nil, ErrSourceNodeNotSet
 	}
 
-	// With the pubKey of the source node retrieved, we're able to
-	// fetch the full node information.
-	node, err := fetchLightningNode(nodes, selfPub)
+	var sourceNodes []*LightningNode
+	err := sourceBkt.ForEach(func(sourcePubKey, _ []byte) error {
+		// With the pubKey of the source node retrieved, we're able to
+		// fetch the full node information.
+		node, err := fetchLightningNode(nodes, sourcePubKey)
+		if err != nil {
+			return err
+		}
+
+		sourceNodes = append(sourceNodes, &node)
+
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	return &node, nil
+	if len(sourceNodes) == 0 {
+		return nil, ErrSourceNodeNotSet
+	}
+
+	return sourceNodes, nil
 }
 
 // SetSourceNode sets the source node within the graph database. The source
@@ -914,9 +934,14 @@ func (c *ChannelGraph) SetSourceNode(node *LightningNode) error {
 			return err
 		}
 
+		sourcesBkt, err := nodes.CreateBucketIfNotExists(sourceKey)
+		if err != nil {
+			return err
+		}
+
 		// Next we create the mapping from source to the targeted
 		// public key.
-		if err := nodes.Put(sourceKey, nodePubBytes); err != nil {
+		if err := sourcesBkt.Put(nodePubBytes, nil); err != nil {
 			return err
 		}
 
@@ -1543,7 +1568,7 @@ func (c *ChannelGraph) pruneGraphNodes(nodes kvdb.RwBucket,
 
 	// We'll retrieve the graph's source node to ensure we don't remove it
 	// even if it no longer has any open channels.
-	sourceNode, err := c.sourceNode(nodes)
+	sourceNodes, err := c.sourceNodes(nodes)
 	if err != nil {
 		return err
 	}
@@ -1570,9 +1595,11 @@ func (c *ChannelGraph) pruneGraphNodes(nodes kvdb.RwBucket,
 		return err
 	}
 
-	// To ensure we never delete the source node, we'll start off by
-	// bumping its ref count to 1.
-	nodeRefCounts[sourceNode.PubKeyBytes] = 1
+	// To ensure we never delete a source node, we'll start off by bumping
+	// its ref count to 1 for each source node.
+	for _, sourceNode := range sourceNodes {
+		nodeRefCounts[sourceNode.PubKeyBytes] = 1
+	}
 
 	// Next, we'll run through the edgeIndex which maps a channel ID to the
 	// edge info. We'll use this scan to populate our reference count map
