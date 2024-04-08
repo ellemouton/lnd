@@ -3273,24 +3273,6 @@ func (l *channelLink) processRemoteAdds(fwdPkg *channeldb.FwdPkg,
 			continue
 		}
 
-		// Retrieve onion obfuscator from onion blob in order to
-		// produce initial obfuscation of the onion failureCode.
-		obfuscator, failureCode := chanIterator.ExtractErrorEncrypter(
-			l.cfg.ExtractErrorEncrypter,
-		)
-		if failureCode != lnwire.CodeNone {
-			// If we're unable to process the onion blob than we
-			// should send the malformed htlc error to payment
-			// sender.
-			l.sendMalformedHTLCError(
-				pd.HtlcIndex, failureCode, onionBlob[:], pd.SourceRef,
-			)
-
-			l.log.Errorf("unable to decode onion "+
-				"obfuscator: %v", failureCode)
-			continue
-		}
-
 		heightNow := l.cfg.BestHeight()
 
 		pld, err := chanIterator.HopPayload()
@@ -3299,9 +3281,32 @@ func (l *channelLink) processRemoteAdds(fwdPkg *channeldb.FwdPkg,
 			// received invalid onion payload failure, then we
 			// should send an error back to the caller so the HTLC
 			// can be canceled.
-			var failedType uint64
+			var (
+				failedType     uint64
+				isIntroduction bool
+			)
 			if e, ok := err.(hop.ErrInvalidPayload); ok {
 				failedType = uint64(e.Type)
+				isIntroduction = e.RouteRole ==
+					hop.RouteRoleIntroduction
+			}
+
+			// If we couldn't parse the payload, make our best
+			// effort at creating an error encrypter that knows
+			// what blinding type we were, but if we couldn't
+			// parse the payload we have no way of knowing whether
+			// we were the introduction node or not.
+			//
+			//nolint:lll
+			obfuscator, failCode := chanIterator.ExtractErrorEncrypter(
+				l.cfg.ExtractErrorEncrypter,
+				isIntroduction,
+			)
+			if failCode != lnwire.CodeNone {
+				l.log.Errorf("could not extract error "+
+					"encrypter: %v", err)
+
+				return
 			}
 
 			// TODO: currently none of the test unit infrastructure
@@ -3317,6 +3322,27 @@ func (l *channelLink) processRemoteAdds(fwdPkg *channeldb.FwdPkg,
 
 			l.log.Errorf("unable to decode forwarding "+
 				"instructions: %v", err)
+			continue
+		}
+
+		// Retrieve onion obfuscator from onion blob in order to
+		// produce initial obfuscation of the onion failureCode.
+		obfuscator, failureCode := chanIterator.ExtractErrorEncrypter(
+			l.cfg.ExtractErrorEncrypter,
+			pld.BlindingPoint() != nil,
+		)
+		if failureCode != lnwire.CodeNone {
+			// If we're unable to process the onion blob than we
+			// should send the malformed htlc error to payment
+			// sender.
+			l.sendMalformedHTLCError(
+				pd.HtlcIndex, failureCode, onionBlob[:],
+				pd.SourceRef,
+			)
+
+			l.log.Errorf("unable to decode onion "+
+				"obfuscator: %v", failureCode)
+
 			continue
 		}
 
