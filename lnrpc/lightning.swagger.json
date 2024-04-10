@@ -6277,6 +6277,12 @@
           "additionalProperties": {
             "$ref": "#/definitions/lnrpcFeature"
           }
+        },
+        "blinded_paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/lnrpcBlindedPaymentPath"
+          }
         }
       }
     },
