@@ -17,6 +17,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
 
@@ -116,6 +117,62 @@ var (
 
 	// Must be initialized in init().
 	testDescriptionHash [32]byte
+
+	testBlindedPK1Bytes, _ = hex.DecodeString("03f3311e948feb5115242c4e39" +
+		"6c81c448ab7ee5fd24c4e24e66c73533cc4f98b8")
+	testBlindedHopPK1, _   = btcec.ParsePubKey(testBlindedPK1Bytes)
+	testBlindedPK2Bytes, _ = hex.DecodeString("03a8c97ed5cd40d474e4ef18c8" +
+		"99854b25e5070106504cb225e6d2c112d61a805e")
+	testBlindedHopPK2, _   = btcec.ParsePubKey(testBlindedPK2Bytes)
+	testBlindedPK3Bytes, _ = hex.DecodeString("0220293926219d8efe733336e2" +
+		"b674570dd96aa763acb3564e6e367b384d861a0a")
+	testBlindedHopPK3, _   = btcec.ParsePubKey(testBlindedPK3Bytes)
+	testBlindedPK4Bytes, _ = hex.DecodeString("02c75eb336a038294eaaf76015" +
+		"8b2e851c3c0937262e35401ae64a1bee71a2e40c")
+	testBlindedHopPK4, _ = btcec.ParsePubKey(testBlindedPK4Bytes)
+
+	blindedPath1 = &BlindedPaymentPath{
+		FeeBaseMsat:                 40,
+		FeeRate:                     20,
+		CltvExpiryDelta:             130,
+		HTLCMinMsat:                 2,
+		HTLCMaxMsat:                 100,
+		Features:                    lnwire.EmptyFeatureVector(),
+		FirstEphemeralBlindingPoint: testBlindedHopPK1,
+		Hops: []*sphinx.BlindedHopInfo{
+			{
+				BlindedNodePub: testBlindedHopPK2,
+				CipherText:     []byte{1, 2, 3, 4, 5},
+			},
+			{
+				BlindedNodePub: testBlindedHopPK3,
+				CipherText:     []byte{5, 4, 3, 2, 1},
+			},
+			{
+				BlindedNodePub: testBlindedHopPK4,
+				CipherText: []byte{
+					1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+					11, 12, 13, 14,
+				},
+			},
+		},
+	}
+
+	blindedPath2 = &BlindedPaymentPath{
+		FeeBaseMsat:                 4,
+		FeeRate:                     2,
+		CltvExpiryDelta:             10,
+		HTLCMinMsat:                 0,
+		HTLCMaxMsat:                 10,
+		Features:                    lnwire.EmptyFeatureVector(),
+		FirstEphemeralBlindingPoint: testBlindedHopPK4,
+		Hops: []*sphinx.BlindedHopInfo{
+			{
+				BlindedNodePub: testBlindedHopPK3,
+				CipherText:     []byte{1, 2, 3, 4, 5},
+			},
+		},
+	}
 )
 
 func init() {
@@ -804,6 +861,23 @@ func TestNewInvoice(t *testing.T) {
 			},
 			valid:          true,
 			encodedInvoice: "lnbcrt241pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdqqnp4q0n326hr8v9zprg8gsvezcch06gfaqqhde2aj730yg0durunfhv66df5c8pqjjt4z4ymmuaxfx8eh5v7hmzs3wrfas8m2sz5qz56rw2lxy8mmgm4xln0ha26qkw6u3vhu22pss2udugr9g74c3x20slpcqjgq0el4h6",
+		},
+		{
+			// Mainnet invoice with two blinded paths.
+			newInvoice: func() (*Invoice, error) {
+				return NewInvoice(&chaincfg.MainNetParams,
+					testPaymentHash,
+					time.Unix(1503429093, 0),
+					Amount(testMillisat24BTC),
+					Description(testEmptyString),
+					Destination(testPubKey),
+					WithBlindedPaymentPath(blindedPath1),
+					WithBlindedPaymentPath(blindedPath2),
+				)
+			},
+			valid: true,
+			//nolint:lll
+			encodedInvoice: "lnbc241pveeq09pp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdqq5fjqqqqq2qqqqqpgqyzqqqqqqqqqqqqyqqqqqqqqqqqvsqqqqlnxy0ffrlt2y2jgtzw89kgr3zg4dlwtlfycn3yuek8x5eucnuchqps82xf0m2u6sx5wnjw7xxgnxz5kf09quqsv5zvkgj7d5kpzttp4qz7qqzszqsrqszsygpf8ynzr8vwleenxdhzke69wrwed2nk8t9n2e8xudnm8pxcvxs2qqzs2pqrqgqs9367kvm2qwpff640wcq43vhg28pupymjvt34gqdwvjsmaec69eqvqq8qzqsrqszsvpcgpy9qkrqdpc59yqqqqqpqqqqqqyqq2qqqqqqqqqqqqqqqqqqqqqqqqpgqqqqk8t6endgpc99824amqzk9japgu8synwf3wx4qp4ej2r0h8rghypsqsygpf8ynzr8vwleenxdhzke69wrwed2nk8t9n2e8xudnm8pxcvxs2qqzszqsrqszsnp4q0n326hr8v9zprg8gsvezcch06gfaqqhde2aj730yg0durunfhv66hpf8m5jd5gqyk62qmsca76kpt0q6n0dpjlfef56n2hpx9k6jt3mh3c4rzzskjstsclus72wtrn9gn3j4ax6fnz8lfz9m27nwj5xvz6qq0nnqke",
 		},
 	}
 
