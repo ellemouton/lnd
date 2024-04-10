@@ -63,6 +63,68 @@ func TestBlindedDataFinalHopEncoding(t *testing.T) {
 	}
 }
 
+// TestBlindedRouteDataPadding tests the PadBy method of BlindedRouteData.
+func TestBlindedRouteDataPadding(t *testing.T) {
+	newBlindedRouteData := func() *BlindedRouteData {
+		channelID := lnwire.NewShortChanIDFromInt(1)
+		info := PaymentRelayInfo{
+			FeeRate:         2,
+			CltvExpiryDelta: 3,
+			BaseFee:         30,
+		}
+
+		constraints := &PaymentConstraints{
+			MaxCltvExpiry:   4,
+			HtlcMinimumMsat: 100,
+		}
+
+		return NewBlindedRouteData(
+			channelID, pubkey(t), info, constraints, nil,
+		)
+	}
+
+	tests := []struct {
+		name                 string
+		paddingSize          uint64
+		expectedSizeIncrease uint64
+	}{
+		{
+			name: "no extra padding",
+		},
+		{
+			name: "small padding (length " +
+				"field of 1 byte)",
+			paddingSize:          200,
+			expectedSizeIncrease: 202,
+		},
+		{
+			name: "medium padding (length field " +
+				"of 3 bytes)",
+			paddingSize:          256,
+			expectedSizeIncrease: 260,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data := newBlindedRouteData()
+
+			prePaddingEncoding, err := EncodeBlindedRouteData(data)
+			require.NoError(t, err)
+
+			require.NoError(t, data.PadBy(test.paddingSize))
+
+			postPaddingEncodig, err := EncodeBlindedRouteData(data)
+			require.NoError(t, err)
+
+			require.EqualValues(
+				t, test.expectedSizeIncrease,
+				len(postPaddingEncodig)-len(prePaddingEncoding),
+			)
+		})
+	}
+}
+
 // TestBlindedDataEncoding tests encoding and decoding of blinded data blobs.
 // These tests specifically cover cases where the variable length encoded
 // integers values have different numbers of leading zeros trimmed because
@@ -167,6 +229,7 @@ func TestBlindingSpecTestVectors(t *testing.T) {
 	tests := []struct {
 		encoded             string
 		expectedPaymentData *BlindedRouteData
+		expectedPadding     uint64
 	}{
 		{
 			encoded: "011a0000000000000000000000000000000000000000000000000000020800000000000006c10a0800240000009627100c06000b69e505dc0e00fd023103123456",
@@ -191,6 +254,7 @@ func TestBlindingSpecTestVectors(t *testing.T) {
 					lnwire.Features,
 				),
 			),
+			expectedPadding: 26,
 		},
 		{
 			encoded: "020800000000000004510821031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f0a0800300000006401f40c06000b69c105dc0e00",
@@ -224,6 +288,10 @@ func TestBlindingSpecTestVectors(t *testing.T) {
 
 			decodedRoute, err := DecodeBlindedRouteData(buff)
 			require.NoError(t, err)
+
+			require.NoError(t, test.expectedPaymentData.PadBy(
+				test.expectedPadding,
+			))
 
 			require.Equal(
 				t, test.expectedPaymentData, decodedRoute,

@@ -3,6 +3,7 @@ package record
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -14,6 +15,11 @@ import (
 // route encrypted data blob that is created by the recipient to provide
 // forwarding information.
 type BlindedRouteData struct {
+	// Padding is an optional set of bytes that a recipient can use to pad
+	// the data so that the encrypted recipient data blobs are all the same
+	// length.
+	Padding tlv.OptionalRecordT[tlv.TlvType1, []byte]
+
 	// ShortChannelID is the channel ID of the next hop.
 	ShortChannelID tlv.RecordT[tlv.TlvType2, lnwire.ShortChannelID]
 
@@ -89,6 +95,7 @@ func DecodeBlindedRouteData(r io.Reader) (*BlindedRouteData, error) {
 	var (
 		d BlindedRouteData
 
+		padding          = d.Padding.Zero()
 		blindingOverride = d.NextBlindingOverride.Zero()
 		constraints      = d.Constraints.Zero()
 		features         = d.Features.Zero()
@@ -101,14 +108,19 @@ func DecodeBlindedRouteData(r io.Reader) (*BlindedRouteData, error) {
 	}
 
 	typeMap, err := tlvRecords.ExtractRecords(
-		&d.ShortChannelID, &blindingOverride, &pathID, &d.RelayInfo.Val,
-		&constraints, &features,
+		&padding, &d.ShortChannelID, &blindingOverride, &pathID,
+		&d.RelayInfo.Val, &constraints, &features,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	val, ok := typeMap[d.NextBlindingOverride.TlvType()]
+	val, ok := typeMap[d.Padding.TlvType()]
+	if ok && val == nil {
+		d.Padding = tlv.SomeRecordT(padding)
+	}
+
+	val, ok = typeMap[d.NextBlindingOverride.TlvType()]
 	if ok && val == nil {
 		d.NextBlindingOverride = tlv.SomeRecordT(blindingOverride)
 	}
@@ -132,8 +144,12 @@ func DecodeBlindedRouteData(r io.Reader) (*BlindedRouteData, error) {
 func EncodeBlindedRouteData(data *BlindedRouteData) ([]byte, error) {
 	var (
 		e               lnwire.ExtraOpaqueData
-		recordProducers = make([]tlv.RecordProducer, 0, 5)
+		recordProducers = make([]tlv.RecordProducer, 0, 7)
 	)
+
+	data.Padding.WhenSome(func(p tlv.RecordT[tlv.TlvType1, []byte]) {
+		recordProducers = append(recordProducers, &p)
+	})
 
 	recordProducers = append(recordProducers, &data.ShortChannelID)
 
@@ -168,6 +184,27 @@ func EncodeBlindedRouteData(data *BlindedRouteData) ([]byte, error) {
 	return e[:], nil
 }
 
+// PadBy adds "n" padding bytes to the BlindedRouteData using the Padding field.
+// Callers should be aware that the total payload size will change by more than
+// "n" since the "n" bytes will be prefixed by BigSize type and length fields.
+func (b *BlindedRouteData) PadBy(n uint64) error {
+	// If no padding is needed, then there is nothing to do.
+	if n == 0 {
+		return nil
+	}
+
+	if b.Padding.IsSome() {
+		return fmt.Errorf("padding has already been added to the " +
+			"blinded route data")
+	}
+
+	b.Padding = tlv.SomeRecordT(
+		tlv.NewPrimitiveRecord[tlv.TlvType1](make([]byte, n)),
+	)
+
+	return nil
+}
+
 // PaymentRelayInfo describes the relay policy for a blinded path.
 type PaymentRelayInfo struct {
 	// CltvExpiryDelta is the expiry delta for the payment.
@@ -181,8 +218,8 @@ type PaymentRelayInfo struct {
 	BaseFee uint32
 }
 
-// newPaymentRelayRecord creates a tlv.Record that encodes the payment relay
-// (type 10) type for an encrypted blob payload.
+// Record creates a tlv.Record that encodes the payment relay (type 10) type
+// for an encrypted blob payload.
 func (i *PaymentRelayInfo) Record() tlv.Record {
 	return tlv.MakeDynamicRecord(
 		10, &i, func() uint64 {
