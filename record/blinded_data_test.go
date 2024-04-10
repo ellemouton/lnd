@@ -27,6 +27,42 @@ func pubkey(t *testing.T) *btcec.PublicKey {
 	return nodePk
 }
 
+// TestBlindedDataFinalHopEncoding tests the encoding and decoding of a blinded
+// data blob intended for the final hop of a blinded path where only the pathID
+// will potentially be set.
+func TestBlindedDataFinalHopEncoding(t *testing.T) {
+	tests := []struct {
+		name   string
+		pathID []byte
+	}{
+		{
+			name:   "with path ID",
+			pathID: []byte{1, 2, 3, 4, 5, 6},
+		},
+		{
+			name:   "with no path ID",
+			pathID: nil,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			encodedData := NewFinalHopBlindedRouteData(test.pathID)
+
+			encoded, err := EncodeBlindedRouteData(encodedData)
+			require.NoError(t, err)
+
+			b := bytes.NewBuffer(encoded)
+			decodedData, err := DecodeBlindedRouteData(b)
+			require.NoError(t, err)
+
+			require.Equal(t, encodedData, decodedData)
+		})
+	}
+}
+
 // TestBlindedDataEncoding tests encoding and decoding of blinded data blobs.
 // These tests specifically cover cases where the variable length encoded
 // integers values have different numbers of leading zeros trimmed because
