@@ -9,6 +9,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	sphinx "github.com/lightningnetwork/lightning-onion"
+	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/record"
 	"github.com/lightningnetwork/lnd/tlv"
@@ -360,12 +361,38 @@ func (b *BlindingKit) DecryptAndValidateFwdInfo(payload *Payload,
 	if err != nil {
 		return nil, err
 	}
+
 	// Validate the data in the blinded route against our incoming htlc's
 	// information.
 	if err := ValidateBlindedRouteData(
 		routeData, b.IncomingAmount, b.IncomingCltv,
 	); err != nil {
 		return nil, err
+	}
+
+	// TODO(elle): gotta do other checks like checking that other fields
+	// are _not_ set etc.
+	if isFinalHop {
+		var pathID *lntypes.Preimage
+		routeData.PathID.WhenSome(func(r tlv.RecordT[tlv.TlvType6,
+			[]byte]) {
+
+			var id lntypes.Preimage
+			copy(id[:], r.Val)
+
+			pathID = &id
+		})
+
+		if pathID == nil {
+			return nil, ErrInvalidPayload{
+				Type:      tlv.Type(6),
+				Violation: InsufficientViolation,
+			}
+		}
+
+		return &ForwardingInfo{
+			PathID: pathID,
+		}, nil
 	}
 
 	relayInfo, err := routeData.RelayInfo.UnwrapOrErr(

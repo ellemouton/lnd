@@ -3580,6 +3580,23 @@ func (l *channelLink) processExitHop(pd *lnwallet.PaymentDescriptor,
 		return nil
 	}
 
+	// TODO(elle): should this check be somewhere else? Similar location to
+	// MPP and AMP checks perhaps?
+	if fwdInfo.PathID != nil &&
+		!fwdInfo.PathID.Matches(lntypes.Hash(pd.RHash)) {
+
+		l.log.Errorf("onion payload of incoming htlc(%x) has "+
+			"incorrect path ID. Got %x expected %x", pd.RHash[:],
+			fwdInfo.PathID.Hash(), pd.RHash)
+
+		failure := NewLinkError(
+			lnwire.NewInvalidBlinding(pd.OnionBlob),
+		)
+		l.sendHTLCError(pd, failure, obfuscator, true)
+
+		return nil
+	}
+
 	// As we're the exit hop, we'll double check the hop-payload included in
 	// the HTLC to ensure that it was crafted correctly by the sender and
 	// is compatible with the HTLC we were extended.
