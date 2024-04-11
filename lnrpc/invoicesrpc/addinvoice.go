@@ -12,17 +12,23 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/davecgh/go-spew/spew"
+	sphinx "github.com/lightningnetwork/lightning-onion"
+	"github.com/lightningnetwork/lnd/chainreg"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/netann"
+	"github.com/lightningnetwork/lnd/record"
 	"github.com/lightningnetwork/lnd/routing"
+	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/zpay32"
 )
 
@@ -84,6 +90,16 @@ type AddInvoiceConfig struct {
 	// GetAlias allows the peer's alias SCID to be retrieved for private
 	// option_scid_alias channels.
 	GetAlias func(lnwire.ChannelID) (lnwire.ShortChannelID, error)
+
+	// QueryBlindedRoutes can be used to generate a few routes to this node
+	// that can then be used in the construction of a blinded payment path.
+	QueryBlindedRoutes func(lnwire.MilliSatoshi) ([]*route.Route, error)
+
+	// BlindedRoutePolicyMultiplier is the amount by which policy values for
+	// hops in a blinded route will be bumped to avoid easy probing. For
+	// example, a multiplier of 1.1 will bump all the values (base fee, fee
+	// rate and CLTV delta by 10%).
+	BlindedRoutePolicyMultiplier float64
 }
 
 // AddInvoiceData contains the required data to create a new invoice.
@@ -129,10 +145,15 @@ type AddInvoiceData struct {
 	// immediately upon receiving the payment.
 	HodlInvoice bool
 
-	// Amp signals whether or not to create an AMP invoice.
+	// Amp signals whether to create an AMP invoice.
 	//
 	// NOTE: Preimage should always be set to nil when this value is true.
 	Amp bool
+
+	// Blinded signals that this invoice should disguise the location of the
+	// recipient by adding blinded payment paths to the invoice instead of
+	// revealing the destination node's real pub key.
+	Blinded bool
 
 	// RouteHints are optional route hints that can each be individually
 	// used to assist in reaching the invoice's destination.
@@ -158,11 +179,18 @@ type AddInvoiceData struct {
 func (d *AddInvoiceData) paymentHashAndPreimage() (
 	*lntypes.Preimage, lntypes.Hash, error) {
 
-	if d.Amp {
-		return d.ampPaymentHashAndPreimage()
-	}
+	switch {
+	// For now, disallow an AMP payment for a payment to a blinded path.
+	case d.Amp && d.Blinded:
+		return nil, lntypes.Hash{}, fmt.Errorf("cannot currently do " +
+			"an AMP payment to a blinded path")
 
-	return d.mppPaymentHashAndPreimage()
+	case d.Amp:
+		return d.ampPaymentHashAndPreimage()
+
+	default:
+		return d.mppPaymentHashAndPreimage()
+	}
 }
 
 // ampPaymentHashAndPreimage returns the payment hash to use for an AMP invoice.
@@ -388,6 +416,11 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 
 	// Include route hints if needed.
 	if len(invoice.RouteHints) > 0 || invoice.Private {
+		if invoice.Blinded {
+			return nil, nil, fmt.Errorf("can't set both hop " +
+				"hints and add blinded paths")
+		}
+
 		// Validate provided hop hints.
 		for _, hint := range invoice.RouteHints {
 			if len(hint) == 0 {
@@ -421,6 +454,25 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 		}
 	}
 
+	if invoice.Blinded {
+		paths, err := buildBlindedPaymentPaths(&buildBlindedPathCfg{
+			findRoutes:            cfg.QueryBlindedRoutes,
+			fetchChannelEdgesByID: cfg.Graph.FetchChannelEdgesByID,
+			preimage:              *paymentPreimage,
+			value:                 invoice.Value,
+			policyMultiplier:      cfg.BlindedRoutePolicyMultiplier,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+
+		for _, path := range paths {
+			options = append(options, zpay32.WithBlindedPaymentPath(
+				path,
+			))
+		}
+	}
+
 	// Set our desired invoice features and add them to our list of options.
 	var invoiceFeatures *lnwire.FeatureVector
 	if invoice.Amp {
@@ -432,12 +484,18 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 
 	// Generate and set a random payment address for this invoice. If the
 	// sender understands payment addresses, this can be used to avoid
-	// intermediaries probing the receiver.
+	// intermediaries probing the receiver. This is only done if the invoice
+	// does not include a blinded path since in that case, the recipient is
+	// responsible for doing this check by including an appropriate path ID
+	// within the encrypted data of the blinded payment path for the final
+	// hop.
 	var paymentAddr [32]byte
-	if _, err := rand.Read(paymentAddr[:]); err != nil {
-		return nil, nil, err
+	if !invoice.Blinded {
+		if _, err := rand.Read(paymentAddr[:]); err != nil {
+			return nil, nil, err
+		}
+		options = append(options, zpay32.PaymentAddr(paymentAddr))
 	}
-	options = append(options, zpay32.PaymentAddr(paymentAddr))
 
 	// Create and encode the payment request as a bech32 (zpay32) string.
 	creationDate := time.Now()
@@ -450,7 +508,27 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 
 	payReqString, err := payReq.Encode(zpay32.MessageSigner{
 		SignCompact: func(msg []byte) ([]byte, error) {
-			return cfg.NodeSigner.SignMessageCompact(msg, false)
+			// For an invoice without a blinded path, the main node
+			// key is used to sign the invoice so that the sender
+			// can derive the true pub key of the recipient.
+			if !invoice.Blinded {
+				return cfg.NodeSigner.SignMessageCompact(
+					msg, false,
+				)
+			}
+
+			// For an invoice with a blinded path, we use an
+			// ephemeral key to sign the invoice since we don't want
+			// the sender to be able to know the real pub key of
+			// the recipient.
+			ephemKey, err := btcec.NewPrivateKey()
+			if err != nil {
+				return nil, err
+			}
+
+			return ecdsa.SignCompact(
+				ephemKey, chainhash.HashB(msg), true,
+			)
 		},
 	})
 	if err != nil {
@@ -839,4 +917,336 @@ func PopulateHopHints(cfg *SelectHopHintsCfg, amtMSat lnwire.MilliSatoshi,
 
 	hopHints = append(hopHints, selectedHints...)
 	return hopHints, nil
+}
+
+// buildBlindedPathCfg defines the various resources required to build a blinded
+// payment path to this node.
+type buildBlindedPathCfg struct {
+	// findRoutes returns a set of routes to us that can be used for the
+	// construction of blinded paths.
+	findRoutes func(value lnwire.MilliSatoshi) ([]*route.Route, error)
+
+	// fetchChannelEdgesByID attempts to look up the two directed edges for
+	// the channel identified by the channel ID.
+	fetchChannelEdgesByID func(chanID uint64) (*models.ChannelEdgeInfo,
+		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error)
+
+	// preimage is the preimage that will be used for the payment. This will
+	// be used as the PathID in the encrypted data for the final hop of the
+	// path.
+	preimage lntypes.Preimage
+
+	// value is the payment amount that must be routed. This will be used
+	// for selecting appropriate routes to use for the blinded path.
+	value lnwire.MilliSatoshi
+
+	// policyMultiplier is the amount by which policy values for hops in a
+	// blinded route will be bumped to avoid easy probing. For example, a
+	// multiplier of 1.1 will bump all the values (base fee, fee rate and
+	// CLTV delta by 10%).
+	policyMultiplier float64
+}
+
+// buildBlindedPaymentPaths uses the passed config to construct a set of blinded
+// payment paths that can be added to the invoice.
+func buildBlindedPaymentPaths(cfg *buildBlindedPathCfg) (
+	[]*zpay32.BlindedPaymentPath, error) {
+
+	// Find some appropriate routes for the value to be routed.
+	routes, err := cfg.findRoutes(cfg.value)
+	if err != nil {
+		return nil, err
+	}
+
+	paths := make([]*zpay32.BlindedPaymentPath, len(routes))
+
+	// For each route returned, we will construct the associated blinded
+	// payment path.
+	for i, route := range routes {
+		path, err := buildBlindedPaymentPath(cfg, route)
+		if err != nil {
+			return nil, err
+		}
+
+		paths[i] = path
+	}
+
+	return paths, nil
+}
+
+// buildBlindedPaymentPath uses the passed route and config to construct a
+// blinded payment path that is ready to add to an invoice.
+func buildBlindedPaymentPath(cfg *buildBlindedPathCfg, route *route.Route) (
+	*zpay32.BlindedPaymentPath, error) {
+
+	// TODO(elle): I think this is actually allowed... ie, intro node can
+	//  be receiver. Are policy values then zero though?
+	if len(route.Hops) == 0 {
+		return nil, fmt.Errorf("blinded routes must contain at " +
+			"least 1 hop")
+	}
+
+	var (
+		// To account for the introduction node, we add 1 to the number
+		// of hops in the route to get the full path length.
+		pathLength = len(route.Hops) + 1
+		relayInfo  = make([]*record.PaymentRelayInfo, 0, pathLength)
+		hopInfo    = make([]*sphinx.HopInfo, 0, pathLength)
+
+		// TODO(elle): actual values here...
+		constraints = record.PaymentConstraints{
+			MaxCltvExpiry:   math.MaxUint32,
+			HtlcMinimumMsat: 0,
+		}
+	)
+
+	// Before iterating through the route's hops, we'll first collect the
+	// data that we need to send to the intro node.
+	// The intro node's channel that we care about is the one named in the
+	// first hop of the route.
+	introChan := lnwire.NewShortChanIDFromInt(route.Hops[0].ChannelID)
+
+	introPolicy, err := getNodeChannelPolicy(
+		cfg, route.Hops[0].ChannelID, route.SourcePubKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	bufferedIntroPolicy := addPolicyBuffer(
+		introPolicy, cfg.policyMultiplier,
+	)
+
+	relayInfo = append(relayInfo, bufferedIntroPolicy)
+
+	info, err := getHopInfo(
+		introChan, route.SourcePubKey, bufferedIntroPolicy,
+		&constraints,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	hopInfo = append(hopInfo, info)
+
+	var (
+		minHTLC = introPolicy.MinHTLC
+		maxHTLC = introPolicy.MaxHTLC
+	)
+
+	// With the introduction node sorted, we will now iterate through the
+	// remaining hops and collect the payment relay info for each of them
+	// excluding the very last hop since that hop won't be routed through.
+	for i := 0; i < len(route.Hops)-1; i++ {
+		scid := lnwire.NewShortChanIDFromInt(route.Hops[i+1].ChannelID)
+
+		policy, err := getNodeChannelPolicy(
+			cfg, route.Hops[i].ChannelID, route.Hops[i].PubKeyBytes,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// Update the allowed min & max HTLCs.
+		if policy.MinHTLC > minHTLC {
+			minHTLC = policy.MinHTLC
+		}
+		if policy.MaxHTLC < maxHTLC {
+			maxHTLC = policy.MaxHTLC
+		}
+
+		bufferedRelayInfo := addPolicyBuffer(
+			policy, cfg.policyMultiplier,
+		)
+
+		relayInfo = append(relayInfo, bufferedRelayInfo)
+
+		info, err := getHopInfo(
+			scid, route.Hops[i].PubKeyBytes, bufferedRelayInfo,
+			&constraints,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		hopInfo = append(hopInfo, info)
+	}
+
+	// For the final hop, we only need to set the Path ID.
+	info, err = getFinalHopInfo(
+		route.Hops[len(route.Hops)-1].PubKeyBytes, cfg.preimage,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	hopInfo = append(hopInfo, info)
+
+	// Derive an ephemeral session key.
+	sessionKey, err := btcec.NewPrivateKey()
+	if err != nil {
+		return nil, err
+	}
+
+	// Encrypt the hop info.
+	blindedPath, err := sphinx.BuildBlindedPath(sessionKey, hopInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(blindedPath.BlindedHops) < 1 {
+		return nil, fmt.Errorf("blinded path must have at least one " +
+			"hop")
+	}
+
+	// Overwrite the introduction point's blinded pub key with the real
+	// pub key since then we can use this more compact format in the
+	// invoice without needing to encode the un-used blinded node pub key of
+	// the intro node.
+	blindedPath.BlindedHops[0].BlindedNodePub =
+		blindedPath.IntroductionPoint
+
+	baseFee, feeRate, cltvDelta := calcBlindedPathPolicies(relayInfo)
+
+	// Now construct a z32 blinded path.
+	return &zpay32.BlindedPaymentPath{
+		FeeBaseMsat:                 baseFee,
+		FeeRate:                     feeRate,
+		CltvExpiryDelta:             cltvDelta,
+		HTLCMinMsat:                 uint64(minHTLC),
+		HTLCMaxMsat:                 uint64(maxHTLC),
+		Features:                    lnwire.EmptyFeatureVector(),
+		FirstEphemeralBlindingPoint: blindedPath.BlindingPoint,
+		Hops:                        blindedPath.BlindedHops,
+	}, nil
+}
+
+func calcBlindedPathPolicies(relayInfo []*record.PaymentRelayInfo) (uint32,
+	uint32, uint16) {
+
+	var (
+		totalFeeBase uint32
+		totalFeeProp uint32
+
+		// TODO(elle): get actual config value for this.
+		totalCltvDelta = uint16(chainreg.DefaultBitcoinTimeLockDelta)
+	)
+	for i := len(relayInfo) - 1; i >= 0; i-- {
+		info := relayInfo[i]
+
+		totalFeeBase = calcNextTotalBaseFee(
+			totalFeeBase, info.BaseFee, info.FeeRate,
+		)
+
+		totalFeeProp = calcNextTotalFeeRate(totalFeeProp, info.FeeRate)
+
+		totalCltvDelta += info.CltvExpiryDelta
+	}
+
+	return totalFeeBase, totalFeeProp, totalCltvDelta
+}
+
+func calcNextTotalBaseFee(currentTotal, hopBaseFee, hopFeeRate uint32) uint32 {
+	const m = uint32(1000000)
+
+	numerator := (hopBaseFee * m) +
+		(currentTotal * (m + hopFeeRate)) + m - 1
+
+	return numerator / m
+}
+
+func calcNextTotalFeeRate(currentTotal, hopFeeRate uint32) uint32 {
+	const m = uint32(1000000)
+
+	numerator := (currentTotal+hopFeeRate)*m + currentTotal*hopFeeRate + m - 1
+
+	return numerator / m
+}
+
+func getNodeChannelPolicy(cfg *buildBlindedPathCfg, chanID uint64,
+	nodeID route.Vertex) (*models.ChannelEdgePolicy, error) {
+
+	_, update1, update2, err := cfg.fetchChannelEdgesByID(chanID)
+	if err != nil {
+		return nil, err
+	}
+
+	var policy *models.ChannelEdgePolicy
+	if update1 != nil && !bytes.Equal(update1.ToNode[:], nodeID[:]) {
+		policy = update1
+	}
+	if update2 != nil && !bytes.Equal(update2.ToNode[:], nodeID[:]) {
+		policy = update2
+	}
+
+	if policy == nil {
+		return nil, fmt.Errorf("no chan update for blinded path hop")
+	}
+
+	return policy, nil
+}
+
+func getFinalHopInfo(node route.Vertex, preimage lntypes.Preimage) (
+	*sphinx.HopInfo, error) {
+
+	hopData := record.NewFinalHopBlindedRouteData(preimage[:])
+
+	nodeID, err := btcec.ParsePubKey(node[:])
+	if err != nil {
+		return nil, err
+	}
+
+	plaintxt, err := record.EncodeBlindedRouteData(hopData)
+	if err != nil {
+		return nil, err
+	}
+
+	return &sphinx.HopInfo{
+		NodePub:   nodeID,
+		PlainText: plaintxt,
+	}, nil
+}
+
+// getHopInfo builds the record.BlindedRouteData struct for the given node,
+// encodes that into a TLV stream and puts that into a sphinx.HopInfo along with
+// the nodes real pub key.
+func getHopInfo(scid lnwire.ShortChannelID, node route.Vertex,
+	relayInfo *record.PaymentRelayInfo,
+	constraints *record.PaymentConstraints) (*sphinx.HopInfo, error) {
+
+	// Finally, we can wrap up the data we want to send to this hop.
+	hopData := record.NewBlindedRouteData(
+		scid, nil, *relayInfo, constraints, nil,
+	)
+
+	nodeID, err := btcec.ParsePubKey(node[:])
+	if err != nil {
+		return nil, err
+	}
+
+	plaintxt, err := record.EncodeBlindedRouteData(hopData)
+	if err != nil {
+		return nil, err
+	}
+
+	return &sphinx.HopInfo{
+		NodePub:   nodeID,
+		PlainText: plaintxt,
+	}, nil
+}
+
+func addPolicyBuffer(policy *models.ChannelEdgePolicy,
+	multiplier float64) *record.PaymentRelayInfo {
+
+	return &record.PaymentRelayInfo{
+		CltvExpiryDelta: uint16(math.Ceil(
+			float64(policy.TimeLockDelta) * multiplier,
+		)),
+		FeeRate: uint32(math.Ceil(
+			float64(policy.FeeProportionalMillionths) * multiplier,
+		)),
+		BaseFee: uint32(math.Ceil(
+			float64(policy.FeeBaseMSat) * multiplier,
+		)),
+	}
 }
