@@ -60,6 +60,10 @@ type CachedEdgePolicy struct {
 	// the edge is in the cache, only on the copy that is returned in
 	// ForEachChannel().
 	ToNodeFeatures *lnwire.FeatureVector
+
+	// BlindedEdge is true if this policy was obtained from a blinded path.
+	// We can assume certain node features if it was.
+	BlindedEdge bool
 }
 
 // ComputeFee computes the fee to forward an HTLC of `amt` milli-satoshis over

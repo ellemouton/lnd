@@ -134,6 +134,7 @@ func (b *BlindedPayment) toRouteHints() RouteHints {
 			)
 		},
 		ToNodeFeatures: features,
+		BlindedEdge:    true,
 	}
 
 	hints[fromNode] = []AdditionalEdge{
@@ -167,6 +168,7 @@ func (b *BlindedPayment) toRouteHints() RouteHints {
 				return nextNode
 			},
 			ToNodeFeatures: features,
+			BlindedEdge:    true,
 		}
 
 		hints[fromNode] = []AdditionalEdge{

@@ -186,7 +186,8 @@ func newRoute(sourceVertex route.Vertex,
 		// the hop. We assume already that the feature vector's
 		// transitive dependencies have already been validated by path
 		// finding or some other means.
-		tlvPayload = supports(lnwire.TLVOnionPayloadOptional)
+		tlvPayload = supports(lnwire.TLVOnionPayloadOptional) ||
+			edge.BlindedEdge
 
 		if i == len(pathEdges)-1 {
 			// If this is the last hop, then the hop payload will
