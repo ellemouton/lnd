@@ -2316,6 +2316,8 @@ type LightningPayment struct {
 	// destination successfully.
 	RouteHints [][]zpay32.HopHint
 
+	BlindedPayment *BlindedPayment
+
 	// OutgoingChannelIDs is the list of channels that are allowed for the
 	// first hop. If nil, any channel may be used.
 	OutgoingChannelIDs []uint64
