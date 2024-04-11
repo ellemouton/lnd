@@ -141,6 +141,81 @@ func testRouteBlindingReceiving(ht *lntest.HarnessTest) {
 	ht.CloseChannel(carol, chanPointCarolDave)
 }
 
+func testRouteBlindingReceivingToInvoice(ht *lntest.HarnessTest) {
+	// First, set up A - B - C - D.
+	var (
+		// Convenience aliases.
+		alice = ht.Alice
+		bob   = ht.Bob
+	)
+
+	chanAmt := btcutil.Amount(100000)
+	chanPointAliceBob := ht.OpenChannel(
+		alice, bob, lntest.OpenChannelParams{
+			Amt:        chanAmt,
+			BaseFee:    10000,
+			FeeRate:    0,
+			UseBaseFee: true,
+			UseFeeRate: true,
+		},
+	)
+
+	carol := ht.NewNode("Carol", nil)
+	ht.EnsureConnected(bob, carol)
+
+	var bobCarolBase uint64 = 2000
+	chanPointBobCarol := ht.OpenChannel(
+		bob, carol, lntest.OpenChannelParams{
+			Amt:        chanAmt,
+			BaseFee:    bobCarolBase,
+			FeeRate:    0,
+			UseBaseFee: true,
+			UseFeeRate: true,
+		},
+	)
+
+	// Give Alice some coins to fund the channel.
+	ht.FundCoins(btcutil.SatoshiPerBitcoin, carol)
+
+	dave := ht.NewNode("Dave", nil)
+
+	ht.EnsureConnected(carol, dave)
+	chanPointCarolDave := ht.OpenChannel(
+		carol, dave, lntest.OpenChannelParams{
+			Amt: chanAmt,
+		},
+	)
+
+	ht.Logf("alice: %s", alice.RPC.GetInfo().IdentityPubkey)
+	ht.Logf("bob: %s", bob.RPC.GetInfo().IdentityPubkey)
+	ht.Logf("charlie: %s", carol.RPC.GetInfo().IdentityPubkey)
+	ht.Logf("dave: %s", dave.RPC.GetInfo().IdentityPubkey)
+
+	// Wait for Dave to see Bob/Carol's channel because he'll need it for
+	// pathfinding.
+	ht.AssertTopologyChannelOpen(dave, chanPointBobCarol)
+	ht.AssertTopologyChannelOpen(dave, chanPointCarolDave)
+
+	var paymentAmt int64 = 10000
+	invoice := &lnrpc.Invoice{
+		Memo:      "test",
+		ValueMsat: paymentAmt,
+		Blind:     true,
+	}
+	invoiceResp := dave.RPC.AddInvoice(invoice)
+
+	payReq := dave.RPC.DecodePayReq(invoiceResp.PaymentRequest)
+	ht.Logf("%+v", payReq.BlindedPaths[0])
+
+	// Try pay it directly.
+	ht.CompletePaymentRequests(alice, []string{invoiceResp.PaymentRequest})
+
+	// Close them chans.
+	ht.CloseChannel(alice, chanPointAliceBob)
+	ht.CloseChannel(bob, chanPointBobCarol)
+	ht.CloseChannel(carol, chanPointCarolDave)
+}
+
 // testQueryBlindedRoutes tests querying routes to blinded routes. To do this,
 // it sets up a nework of Alice - Bob - Carol and creates a mock blinded route
 // that uses Carol as the introduction node (plus dummy hops to cover multiple

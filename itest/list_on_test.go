@@ -567,6 +567,10 @@ var allTestCases = []*lntest.TestCase{
 		TestFunc: testRouteBlindingReceiving,
 	},
 	{
+		Name:     "rb receive to invoice",
+		TestFunc: testRouteBlindingReceivingToInvoice,
+	},
+	{
 		Name:     "forward blinded",
 		TestFunc: testForwardBlindedRoute,
 	},
