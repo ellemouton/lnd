@@ -514,7 +514,8 @@ func (g *testGraphInstance) getLink(chanID lnwire.ShortChannelID) (
 // not required and derived from the channel data. The goal is to keep
 // instantiating a test channel graph as light weight as possible.
 func createTestGraphFromChannels(t *testing.T, useCache bool,
-	testChannels []*testChannel, source string) (*testGraphInstance, error) {
+	testChannels []*testChannel, source string,
+	sourceFeatureBits ...lnwire.FeatureBit) (*testGraphInstance, error) {
 
 	// We'll use this fake address for the IP address of all the nodes in
 	// our tests. This value isn't needed for path finding so it doesn't
@@ -578,7 +579,12 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 	}
 
 	// Add the source node.
-	dbNode, err := addNodeWithAlias(source, lnwire.EmptyFeatureVector())
+	dbNode, err := addNodeWithAlias(
+		source, lnwire.NewFeatureVector(
+			lnwire.NewRawFeatureVector(sourceFeatureBits...),
+			lnwire.Features,
+		),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -746,6 +752,146 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 		privKeyMap:   privKeyMap,
 		links:        links,
 	}, nil
+}
+
+func TestFindBlindedPaths(t *testing.T) {
+	featuresWithRouteBlinding := lnwire.NewFeatureVector(
+		lnwire.NewRawFeatureVector(lnwire.RouteBlindingOptional),
+		lnwire.Features,
+	)
+
+	testChannels := []*testChannel{
+		symmetricTestChannel("dave", "alice", 100000, &testChannelPolicy{
+			Expiry:  144,
+			FeeRate: 400,
+			MinHTLC: 1,
+			MaxHTLC: 100000000,
+		}, 1),
+		symmetricTestChannel("dave", "bob", 100000, &testChannelPolicy{
+			Expiry:   144,
+			FeeRate:  400,
+			MinHTLC:  1,
+			MaxHTLC:  100000000,
+			Features: featuresWithRouteBlinding,
+		}, 2),
+		symmetricTestChannel("dave", "charlie", 100000, &testChannelPolicy{
+			Expiry:   144,
+			FeeRate:  400,
+			MinHTLC:  1,
+			MaxHTLC:  100000000,
+			Features: featuresWithRouteBlinding,
+		}, 3),
+		symmetricTestChannel("alice", "frank", 100000, &testChannelPolicy{
+			Expiry:   144,
+			FeeRate:  400,
+			MinHTLC:  1,
+			MaxHTLC:  100000000,
+			Features: featuresWithRouteBlinding,
+		}, 4),
+		symmetricTestChannel("bob", "frank", 100000, &testChannelPolicy{
+			Expiry:   144,
+			FeeRate:  400,
+			MinHTLC:  1,
+			MaxHTLC:  100000000,
+			Features: featuresWithRouteBlinding,
+		}, 5),
+		symmetricTestChannel("eve", "charlie", 100000, &testChannelPolicy{
+			Expiry:   144,
+			FeeRate:  400,
+			MinHTLC:  1,
+			MaxHTLC:  100000000,
+			Features: featuresWithRouteBlinding,
+		}, 6),
+		symmetricTestChannel("bob", "eve", 100000, &testChannelPolicy{
+			Expiry:   144,
+			FeeRate:  400,
+			MinHTLC:  1,
+			MaxHTLC:  100000000,
+			Features: featuresWithRouteBlinding,
+		}, 7),
+		symmetricTestChannel("dave", "george", 100000, &testChannelPolicy{
+			Expiry:   144,
+			FeeRate:  400,
+			MinHTLC:  1,
+			MaxHTLC:  100000000,
+			Features: featuresWithRouteBlinding,
+		}, 8),
+	}
+
+	ctx := newPathFindingTestContext(
+		t, true, testChannels, "dave", lnwire.RouteBlindingOptional,
+	)
+
+	assertPaths := func(paths [][]blindedHop, expectedPaths []string) {
+		require.Len(t, paths, len(expectedPaths))
+
+		actualPaths := make(map[string]bool)
+
+		for _, path := range paths {
+			label := ""
+			for _, hop := range path {
+				label += ctx.aliasFromKey(hop.vertex) + ","
+			}
+
+			actualPaths[strings.TrimRight(label, ",")] = true
+		}
+
+		for _, path := range expectedPaths {
+			require.True(t, actualPaths[path])
+		}
+	}
+
+	paths, err := ctx.findBlindedPaths(&blindedPathRestrictions{
+		minHops: 1,
+		maxHops: 1,
+	})
+	require.NoError(t, err)
+
+	// We expect the B->D and C->D paths to be chosen.
+	assertPaths(paths, []string{
+		"bob,dave",
+		"charlie,dave",
+	})
+
+	paths, err = ctx.findBlindedPaths(&blindedPathRestrictions{
+		minHops: 1,
+		maxHops: 2,
+	})
+	require.NoError(t, err)
+
+	// We expect the following paths:
+	// 	- B, D
+	//	- F, B, D
+	// 	- E, B, D
+	// 	- C, D
+	// 	- E, C, D
+	assertPaths(paths, []string{
+		"bob,dave",
+		"frank,bob,dave",
+		"eve,bob,dave",
+		"charlie,dave",
+		"eve,charlie,dave",
+	})
+
+	paths, err = ctx.findBlindedPaths(&blindedPathRestrictions{
+		minHops: 2,
+		maxHops: 3,
+	})
+	require.NoError(t, err)
+
+	// We expect the following paths:
+	//	- F, B, D
+	// 	- E, B, D
+	// 	- E, C, D
+	// 	- B, E, C, D
+	// 	- C, E, B, D
+	assertPaths(paths, []string{
+		"frank,bob,dave",
+		"eve,bob,dave",
+		"eve,charlie,dave",
+		"bob,eve,charlie,dave",
+		"charlie,eve,bob,dave",
+	})
 }
 
 // TestPathFinding tests all path finding related cases both with the in-memory
@@ -3302,10 +3448,11 @@ type pathFindingTestContext struct {
 }
 
 func newPathFindingTestContext(t *testing.T, useCache bool,
-	testChannels []*testChannel, source string) *pathFindingTestContext {
+	testChannels []*testChannel, source string,
+	sourceFeatureBits ...lnwire.FeatureBit) *pathFindingTestContext {
 
 	testGraphInstance, err := createTestGraphFromChannels(
-		t, useCache, testChannels, source,
+		t, useCache, testChannels, source, sourceFeatureBits...,
 	)
 	require.NoError(t, err, "unable to create graph")
 
@@ -3338,6 +3485,12 @@ func (c *pathFindingTestContext) aliasFromKey(pubKey route.Vertex) string {
 	return ""
 }
 
+func (c *pathFindingTestContext) findBlindedPaths(
+	restrictions *blindedPathRestrictions) ([][]blindedHop, error) {
+
+	return dbFindBlindedPaths(c.graph, restrictions)
+}
+
 func (c *pathFindingTestContext) findPath(target route.Vertex,
 	amt lnwire.MilliSatoshi) ([]*unifiedEdge,
 	error) {
@@ -3363,6 +3516,30 @@ func (c *pathFindingTestContext) assertPath(path []*unifiedEdge,
 				edge.policy.ChannelID)
 		}
 	}
+}
+
+func dbFindBlindedPaths(graph *channeldb.ChannelGraph,
+	restrictions *blindedPathRestrictions) ([][]blindedHop, error) {
+
+	sourceNode, err := graph.SourceNode()
+	if err != nil {
+		return nil, err
+	}
+
+	routingGraph, err := NewCachedGraph(sourceNode, graph)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		if err := routingGraph.Close(); err != nil {
+			log.Errorf("Error closing db tx: %v", err)
+		}
+	}()
+
+	return findBlindedPaths(
+		routingGraph, sourceNode.PubKeyBytes, restrictions,
+	)
 }
 
 // dbFindPath calls findPath after getting a db transaction from the database

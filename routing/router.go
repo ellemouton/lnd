@@ -2080,6 +2080,47 @@ func (r *RouteRequest) blindedPath() *sphinx.BlindedPath {
 	return r.BlindedPayment.BlindedPath
 }
 
+func (r *ChannelRouter) FindBlindedPaths(destination route.Vertex,
+	amt lnwire.MilliSatoshi) ([]*route.Route, error) {
+
+	paths, err := findBlindedPaths(
+		r.cachedGraph, destination, &blindedPathRestrictions{
+			minHops: 1,
+			maxHops: 2,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	routes := make([]*route.Route, len(paths))
+
+	for i, path := range paths {
+		if len(path) < 1 {
+			return nil, fmt.Errorf("a blinded path must have at " +
+				"least one hop")
+		}
+
+		introNode := path[0].vertex
+
+		hops := make([]*route.Hop, 0, len(path)-1)
+
+		for j := 1; j < len(path); j++ {
+			hops = append(hops, &route.Hop{
+				PubKeyBytes: path[j].vertex,
+				ChannelID:   path[j-1].edgePolicy.ChannelID,
+			})
+		}
+
+		routes[i] = &route.Route{
+			SourcePubKey: introNode,
+			Hops:         hops,
+		}
+	}
+
+	return routes, nil
+}
+
 // FindRoute attempts to query the ChannelRouter for the optimum path to a
 // particular target destination to which it is able to send `amt` after
 // factoring in channel capacities and cumulative fees along the route.

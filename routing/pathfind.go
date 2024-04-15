@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/btcsuite/btcd/btcutil"
@@ -502,6 +503,130 @@ func getOutgoingBalance(node route.Vertex, outgoingChans map[uint64]struct{},
 		return 0, 0, err
 	}
 	return max, total, err
+}
+
+type blindedPathRestrictions struct {
+	minHops int
+	maxHops int
+}
+
+type blindedHop struct {
+	vertex     route.Vertex
+	edgePolicy *models.CachedEdgePolicy
+}
+
+// TODO(elle):
+//   - take amount into account. Error if not enough cap given amount.
+//   - use mission control to choose the best of the collected paths.
+func findBlindedPaths(g routingGraph, target route.Vertex,
+	restrictions *blindedPathRestrictions) ([][]blindedHop, error) {
+
+	// This function will have some recursion. We will spin out from the
+	// target node & append edges to the paths until we reach various exit
+	// conditions such as: The maxHops number being reached or reaching
+	// a node that doesn't have any other edges - in that final case, the
+	// whole path should be ignored.
+
+	paths, _, err := processNode(g, target, nil, restrictions)
+
+	// Reverse each path so that the order is correct and then append this
+	// node on as the destination of each path.
+	orderedPaths := make([][]blindedHop, len(paths))
+
+	for i, path := range paths {
+		sort.Slice(path, func(i, j int) bool {
+			return j < i
+		})
+
+		orderedPaths[i] = append(path, blindedHop{vertex: target})
+	}
+
+	return orderedPaths, err
+}
+
+func processNode(g routingGraph, node route.Vertex,
+	alreadyVisited map[route.Vertex]bool,
+	restrictions *blindedPathRestrictions) ([][]blindedHop, bool, error) {
+
+	if len(alreadyVisited) > restrictions.maxHops {
+		return nil, false, nil
+	}
+
+	// If we have already visited this peer on this path, then we skip
+	// processing it again.
+	if alreadyVisited[node] {
+		return nil, false, nil
+	}
+
+	features, err := g.fetchNodeFeatures(node)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// If this node does not support route blinding, then we can
+	// exit here.
+	if !features.HasFeature(lnwire.RouteBlindingOptional) {
+		return nil, false, nil
+	}
+
+	// At this point, copy the alreadyVisited map.
+	visited := make(map[route.Vertex]bool, len(alreadyVisited))
+	for r := range alreadyVisited {
+		visited[r] = true
+	}
+
+	// Add this node the visited set.
+	visited[node] = true
+
+	var (
+		hopSets   [][]blindedHop
+		chanCount int
+	)
+
+	// Now, iterate over the node's channels.
+	err = g.forEachNodeChannel(node,
+		func(channel *channeldb.DirectedChannel) error {
+			chanCount++
+
+			nextPaths, hasMoreChans, err := processNode(
+				g, channel.OtherNode, visited, restrictions,
+			)
+			if err != nil {
+				return err
+			}
+
+			hop := blindedHop{
+				vertex:     channel.OtherNode,
+				edgePolicy: channel.InPolicy,
+			}
+
+			// For each of the paths returned, unwrap them and
+			// append this hop to them.
+			for _, path := range nextPaths {
+				hopSets = append(
+					hopSets,
+					append([]blindedHop{hop}, path...),
+				)
+			}
+
+			// If this node does have channels other than that lead
+			// to it, and if the hop count up to this node meets
+			// the minHop requirement, then we also add a path that
+			// starts at this node.
+			if hasMoreChans &&
+				len(visited) >= restrictions.minHops {
+
+				hopSets = append(hopSets, []blindedHop{hop})
+			}
+
+			return nil
+		},
+	)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return hopSets, chanCount > 1, nil
 }
 
 // findPath attempts to find a path from the source node within the ChannelGraph
