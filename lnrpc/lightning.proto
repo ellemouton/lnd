@@ -3832,6 +3832,8 @@ message Invoice {
     Note: Output only, don't specify for creating an invoice.
     */
     map<string, AMPInvoiceState> amp_invoice_state = 28;
+
+    bool blind = 29;
 }
 
 enum InvoiceHTLCState {
