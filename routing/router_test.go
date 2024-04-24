@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"math"
 	"math/rand"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -247,6 +248,215 @@ func signErrChanUpdate(t *testing.T, key *btcec.PrivateKey,
 
 	errChanUpdate.Signature, err = lnwire.NewSigFromSignature(sig)
 	require.NoError(t, err, "failed to create new signature")
+}
+
+func TestFindBlindedPathsWithMC(t *testing.T) {
+	t.Parallel()
+
+	rbFeatureBits := []lnwire.FeatureBit{
+		lnwire.RouteBlindingOptional,
+		lnwire.TLVOnionPayloadOptional,
+	}
+
+	/*
+		Create the following graph and let all the nodes advertise
+		support for
+		blinded paths.
+
+				  C
+				/    \
+			       /      \
+			E -- A -- F -- D
+			       \      /
+				\    /
+			          B
+	*/
+	featuresWithRouteBlinding := lnwire.NewFeatureVector(
+		lnwire.NewRawFeatureVector(rbFeatureBits...), lnwire.Features,
+	)
+
+	testChannels := []*testChannel{
+		symmetricTestChannel("eve", "alice", 100000, &testChannelPolicy{
+			Expiry:   144,
+			FeeRate:  400,
+			MinHTLC:  1,
+			MaxHTLC:  100000000,
+			Features: featuresWithRouteBlinding,
+		}, 1),
+		symmetricTestChannel("alice", "charlie", 100000, &testChannelPolicy{
+			Expiry:   144,
+			FeeRate:  400,
+			MinHTLC:  1,
+			MaxHTLC:  100000000,
+			Features: featuresWithRouteBlinding,
+		}, 2),
+		symmetricTestChannel("alice", "bob", 100000, &testChannelPolicy{
+			Expiry:   144,
+			FeeRate:  400,
+			MinHTLC:  1,
+			MaxHTLC:  100000000,
+			Features: featuresWithRouteBlinding,
+		}, 3),
+		symmetricTestChannel("charlie", "dave", 100000, &testChannelPolicy{
+			Expiry:   144,
+			FeeRate:  400,
+			MinHTLC:  1,
+			MaxHTLC:  100000000,
+			Features: featuresWithRouteBlinding,
+		}, 4),
+		symmetricTestChannel("bob", "dave", 100000, &testChannelPolicy{
+			Expiry:   144,
+			FeeRate:  400,
+			MinHTLC:  1,
+			MaxHTLC:  100000000,
+			Features: featuresWithRouteBlinding,
+		}, 5),
+		symmetricTestChannel("alice", "frank", 100000, &testChannelPolicy{
+			Expiry:   144,
+			FeeRate:  400,
+			MinHTLC:  1,
+			MaxHTLC:  100000000,
+			Features: featuresWithRouteBlinding,
+		}, 6),
+		symmetricTestChannel("frank", "dave", 100000, &testChannelPolicy{
+			Expiry:   144,
+			FeeRate:  400,
+			MinHTLC:  1,
+			MaxHTLC:  100000000,
+			Features: featuresWithRouteBlinding,
+		}, 7),
+	}
+
+	testGraph, err := createTestGraphFromChannels(
+		t, true, testChannels, "dave", rbFeatureBits...,
+	)
+	require.NoError(t, err)
+
+	const startingBlockHeight = 101
+	ctx := createTestCtxFromGraphInstance(
+		t, startingBlockHeight, testGraph, true,
+	)
+
+	var (
+		alice   = ctx.aliases["alice"]
+		bob     = ctx.aliases["bob"]
+		charlie = ctx.aliases["charlie"]
+		dave    = ctx.aliases["dave"]
+		eve     = ctx.aliases["eve"]
+		frank   = ctx.aliases["frank"]
+	)
+
+	missionControl := map[route.Vertex]map[route.Vertex]float64{
+		eve: {alice: 1},
+		alice: {
+			charlie: 1,
+			bob:     1,
+			frank:   1,
+		},
+		charlie: {dave: 1},
+		bob:     {dave: 1},
+		frank:   {dave: 1},
+	}
+
+	for alias, pk := range ctx.aliases {
+		fmt.Printf("%s : %s \n", pk, alias)
+	}
+
+	probabilitySrc := func(from route.Vertex, to route.Vertex,
+		amt lnwire.MilliSatoshi, capacity btcutil.Amount) float64 {
+
+		return missionControl[from][to]
+	}
+
+	// All the probabilities are set to 1. So if we restrict the path length
+	// to 2 and allow a max of 3 routes, then we should be all 3 here.
+	routes, err := ctx.router.FindBlindedPaths(
+		dave, 1000, probabilitySrc, &BlindedPathRestrictions{
+			MinNumHops:  2,
+			MaxNumHops:  2,
+			MaxNumPaths: 3,
+		},
+	)
+	require.NoError(t, err, "unable to find any blinded paths")
+	require.Len(t, routes, 3)
+
+	assertPaths := func(paths []*route.Route, expectedPaths []string) {
+		require.Len(t, paths, len(expectedPaths))
+
+		var actualPaths []string
+		for _, path := range paths {
+			label := getAliasFromPubKey(
+				path.SourcePubKey, ctx.aliases,
+			) + ","
+
+			for _, hop := range path.Hops {
+				label += getAliasFromPubKey(
+					hop.PubKeyBytes, ctx.aliases,
+				) + ","
+			}
+
+			actualPaths = append(
+				actualPaths, strings.TrimRight(label, ","),
+			)
+		}
+
+		for i, path := range expectedPaths {
+			require.Equal(t, expectedPaths[i], path)
+		}
+	}
+
+	// Now, let's lower the MC probability of the B-D to 0.5 and F-D link to
+	// 0.25. We will leave the MaxNumPaths as 3 and so all paths should
+	// still be returned but the order should be:
+	// 1) A -> C -> D
+	// 2) A -> B -> D
+	// 3) A -> F -> D
+	missionControl[bob][dave] = 0.5
+	missionControl[frank][dave] = 0.25
+	routes, err = ctx.router.FindBlindedPaths(
+		dave, 1000, probabilitySrc, &BlindedPathRestrictions{
+			MinNumHops:  2,
+			MaxNumHops:  2,
+			MaxNumPaths: 3,
+		},
+	)
+	require.NoError(t, err, "unable to find any blinded paths")
+	assertPaths(routes, []string{
+		"alice,charlie,dave",
+		"alice,bob,dave",
+		"alice,frank,dave",
+	})
+
+	// Just to show that the above result was not a fluke, let's change
+	// the C->D link to be the weak one.
+	missionControl[charlie][dave] = 0.125
+	routes, err = ctx.router.FindBlindedPaths(
+		dave, 1000, probabilitySrc, &BlindedPathRestrictions{
+			MinNumHops:  2,
+			MaxNumHops:  2,
+			MaxNumPaths: 3,
+		},
+	)
+	require.NoError(t, err, "unable to find any blinded paths")
+	assertPaths(routes, []string{
+		"alice,bob,dave",
+		"alice,frank,dave",
+		"alice,charlie,dave",
+	})
+
+	// Change the MaxNumPaths to 1 to assert that only the best route is
+	// returned.
+	routes, err = ctx.router.FindBlindedPaths(
+		dave, 1000, probabilitySrc, &BlindedPathRestrictions{
+			MinNumHops:  2,
+			MaxNumHops:  2,
+			MaxNumPaths: 1,
+		},
+	)
+	require.NoError(t, err, "unable to find any blinded paths")
+	assertPaths(routes, []string{
+		"alice,bob,dave",
+	})
 }
 
 // TestFindRoutesWithFeeLimit asserts that routes found by the FindRoutes method

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2080,45 +2081,95 @@ func (r *RouteRequest) blindedPath() *sphinx.BlindedPath {
 	return r.BlindedPayment.BlindedPath
 }
 
+type probabilitySource func(route.Vertex, route.Vertex, lnwire.MilliSatoshi,
+	btcutil.Amount) float64
+
+type BlindedPathRestrictions struct {
+	MinNumHops  int
+	MaxNumHops  int
+	MaxNumPaths int
+}
+
 func (r *ChannelRouter) FindBlindedPaths(destination route.Vertex,
-	amt lnwire.MilliSatoshi) ([]*route.Route, error) {
+	amt lnwire.MilliSatoshi, probabilitySrc probabilitySource,
+	restrictions *BlindedPathRestrictions) ([]*route.Route, error) {
 
 	paths, err := findBlindedPaths(
-		r.cachedGraph, destination, &blindedPathRestrictions{
-			minHops: 1,
-			maxHops: 2,
-		},
+		r.cachedGraph, destination, restrictions,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	routes := make([]*route.Route, len(paths))
+	type routeWithProbability struct {
+		route       *route.Route
+		probability float64
+	}
 
-	for i, path := range paths {
+	routes := make([]*routeWithProbability, 0, len(paths))
+	for _, path := range paths {
 		if len(path) < 1 {
 			return nil, fmt.Errorf("a blinded path must have at " +
 				"least one hop")
 		}
 
-		introNode := path[0].vertex
-
-		hops := make([]*route.Hop, 0, len(path)-1)
+		var (
+			introNode = path[0].vertex
+			prevNode  = introNode
+			hops      = make(
+				[]*route.Hop, 0, len(path)-1,
+			)
+			totalRouteProbability = float64(1)
+		)
 
 		for j := 1; j < len(path); j++ {
+			probability := probabilitySrc(
+				prevNode, path[j].vertex, amt,
+				path[j-1].edgeCapacity,
+			)
+
+			totalRouteProbability *= probability
+
 			hops = append(hops, &route.Hop{
 				PubKeyBytes: path[j].vertex,
 				ChannelID:   path[j-1].edgePolicy.ChannelID,
 			})
+
+			prevNode = path[j].vertex
 		}
 
-		routes[i] = &route.Route{
-			SourcePubKey: introNode,
-			Hops:         hops,
+		// Don't bother adding a route if it's success probability is
+		// calculated to be 0.
+		if totalRouteProbability == 0 {
+			continue
 		}
+
+		routes = append(routes, &routeWithProbability{
+			route: &route.Route{
+				SourcePubKey: introNode,
+				Hops:         hops,
+			},
+			probability: totalRouteProbability,
+		})
 	}
 
-	return routes, nil
+	// Sort the routes based on probability.
+	sort.Slice(routes, func(i, j int) bool {
+		return routes[i].probability < routes[j].probability
+	})
+
+	// Now just choose the best paths up until the maximum number of allowed
+	// paths.
+	bestRoutes := make([]*route.Route, 0, restrictions.MaxNumPaths)
+	for _, route := range routes {
+		if len(bestRoutes) >= restrictions.MaxNumPaths {
+			break
+		}
+
+		bestRoutes = append(bestRoutes, route.route)
+	}
+
+	return bestRoutes, nil
 }
 
 // FindRoute attempts to query the ChannelRouter for the optimum path to a

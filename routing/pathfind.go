@@ -510,21 +510,17 @@ func getOutgoingBalance(node route.Vertex, outgoingChans map[uint64]struct{},
 	return max, total, err
 }
 
-type blindedPathRestrictions struct {
-	minHops int
-	maxHops int
-}
-
 type blindedHop struct {
-	vertex     route.Vertex
-	edgePolicy *models.CachedEdgePolicy
+	vertex       route.Vertex
+	edgePolicy   *models.CachedEdgePolicy
+	edgeCapacity btcutil.Amount
 }
 
 // TODO(elle):
 //   - take amount into account. Error if not enough cap given amount.
 //   - use mission control to choose the best of the collected paths.
 func findBlindedPaths(g routingGraph, target route.Vertex,
-	restrictions *blindedPathRestrictions) ([][]blindedHop, error) {
+	restrictions *BlindedPathRestrictions) ([][]blindedHop, error) {
 
 	// This function will have some recursion. We will spin out from the
 	// target node & append edges to the paths until we reach various exit
@@ -533,6 +529,9 @@ func findBlindedPaths(g routingGraph, target route.Vertex,
 	// whole path should be ignored.
 
 	paths, _, err := processNode(g, target, nil, restrictions)
+	if err != nil {
+		return nil, err
+	}
 
 	// Reverse each path so that the order is correct and then append this
 	// node on as the destination of each path.
@@ -551,9 +550,9 @@ func findBlindedPaths(g routingGraph, target route.Vertex,
 
 func processNode(g routingGraph, node route.Vertex,
 	alreadyVisited map[route.Vertex]bool,
-	restrictions *blindedPathRestrictions) ([][]blindedHop, bool, error) {
+	restrictions *BlindedPathRestrictions) ([][]blindedHop, bool, error) {
 
-	if len(alreadyVisited) > restrictions.maxHops {
+	if len(alreadyVisited) > restrictions.MaxNumHops {
 		return nil, false, nil
 	}
 
@@ -601,8 +600,9 @@ func processNode(g routingGraph, node route.Vertex,
 			}
 
 			hop := blindedHop{
-				vertex:     channel.OtherNode,
-				edgePolicy: channel.InPolicy,
+				vertex:       channel.OtherNode,
+				edgePolicy:   channel.InPolicy,
+				edgeCapacity: channel.Capacity,
 			}
 
 			// For each of the paths returned, unwrap them and
@@ -619,7 +619,7 @@ func processNode(g routingGraph, node route.Vertex,
 			// the minHop requirement, then we also add a path that
 			// starts at this node.
 			if hasMoreChans &&
-				len(visited) >= restrictions.minHops {
+				len(visited) >= restrictions.MinNumHops {
 
 				hopSets = append(hopSets, []blindedHop{hop})
 			}

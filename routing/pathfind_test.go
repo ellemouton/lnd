@@ -841,9 +841,9 @@ func TestFindBlindedPaths(t *testing.T) {
 		}
 	}
 
-	paths, err := ctx.findBlindedPaths(&blindedPathRestrictions{
-		minHops: 1,
-		maxHops: 1,
+	paths, err := ctx.findBlindedPaths(&BlindedPathRestrictions{
+		MinNumHops: 1,
+		MaxNumHops: 1,
 	})
 	require.NoError(t, err)
 
@@ -853,9 +853,9 @@ func TestFindBlindedPaths(t *testing.T) {
 		"charlie,dave",
 	})
 
-	paths, err = ctx.findBlindedPaths(&blindedPathRestrictions{
-		minHops: 1,
-		maxHops: 2,
+	paths, err = ctx.findBlindedPaths(&BlindedPathRestrictions{
+		MinNumHops: 1,
+		MaxNumHops: 2,
 	})
 	require.NoError(t, err)
 
@@ -873,9 +873,9 @@ func TestFindBlindedPaths(t *testing.T) {
 		"eve,charlie,dave",
 	})
 
-	paths, err = ctx.findBlindedPaths(&blindedPathRestrictions{
-		minHops: 2,
-		maxHops: 3,
+	paths, err = ctx.findBlindedPaths(&BlindedPathRestrictions{
+		MinNumHops: 2,
+		MaxNumHops: 3,
 	})
 	require.NoError(t, err)
 
@@ -3595,7 +3595,7 @@ func (c *pathFindingTestContext) aliasFromKey(pubKey route.Vertex) string {
 }
 
 func (c *pathFindingTestContext) findBlindedPaths(
-	restrictions *blindedPathRestrictions) ([][]blindedHop, error) {
+	restrictions *BlindedPathRestrictions) ([][]blindedHop, error) {
 
 	return dbFindBlindedPaths(c.graph, restrictions)
 }
@@ -3628,7 +3628,7 @@ func (c *pathFindingTestContext) assertPath(path []*unifiedEdge,
 }
 
 func dbFindBlindedPaths(graph *channeldb.ChannelGraph,
-	restrictions *blindedPathRestrictions) ([][]blindedHop, error) {
+	restrictions *BlindedPathRestrictions) ([][]blindedHop, error) {
 
 	sourceNode, err := graph.SourceNode()
 	if err != nil {

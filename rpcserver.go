@@ -5798,6 +5798,12 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 
 			return r.server.chanRouter.FindBlindedPaths(
 				r.selfNode, amt,
+				r.server.missionControl.GetProbability,
+				&routing.BlindedPathRestrictions{
+					MinNumHops:  1,
+					MaxNumHops:  2,
+					MaxNumPaths: 3,
+				},
 			)
 		},
 	}
