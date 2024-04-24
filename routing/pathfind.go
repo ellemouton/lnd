@@ -435,6 +435,10 @@ type RestrictParams struct {
 	// BlindedPayment is necessary to determine the hop size of the
 	// last/exit hop.
 	BlindedPayment *BlindedPayment
+
+	// HopFeatures if set is a set of feature bits that each hop along the
+	// chosen path MUST support.
+	HopFeatures []lnwire.FeatureBit
 }
 
 // PathFindingConfig defines global parameters that control the trade-off in
@@ -657,6 +661,21 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 			"time=%v", nodesVisited, edgesExpanded, timeElapsed)
 	}()
 
+	// verifyCompulsoryFeatures checks that the given feature vector
+	// supports the set of compulsory features required for the entire
+	// path if any are specified.
+	verifyCompulsoryFeatures := func(
+		nodeFeatures *lnwire.FeatureVector) bool {
+
+		for _, featureBit := range r.HopFeatures {
+			if !nodeFeatures.HasFeature(featureBit) {
+				return false
+			}
+		}
+
+		return true
+	}
+
 	// If no destination features are provided, we will load what features
 	// we have for the target node from our graph.
 	features := r.DestFeatures
@@ -683,9 +702,17 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 		return nil, 0, errMissingDependentFeature
 	}
 
-	// Now that we know the feature vector is well formed, we'll proceed in
+	// Now that we know the feature vector is well-formed, we'll proceed in
 	// checking that it supports the features we need, given our
-	// restrictions on the final hop.
+	// restrictions on the final hop along with any feature bit restrictions
+	// for the path.
+
+	// Check that the destination node supports any compulsory feature bits
+	// for the path.
+	if !verifyCompulsoryFeatures(features) {
+		return nil, 0, fmt.Errorf("the destination node is missing a " +
+			"compulsory feature bit")
+	}
 
 	// If the caller needs to send custom records, check that our
 	// destination feature vector supports TLV.
@@ -769,6 +796,14 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 		// Build reverse lookup to find incoming edges. Needed because
 		// search is taken place from target to source.
 		for _, additionalEdge := range additionalEdges {
+			// Skip additional edges if they don't have one of the
+			// compulsory feature bits.
+			if !verifyCompulsoryFeatures(
+				additionalEdge.EdgePolicy().ToNodeFeatures,
+			) {
+				continue
+			}
+
 			outgoingEdgePolicy := additionalEdge.EdgePolicy()
 			toVertex := outgoingEdgePolicy.ToNodePubKey()
 
@@ -1092,6 +1127,19 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 		return fromFeatures, nil
 	}
 
+	// Before we start path finding, let's first check that ths source node
+	// does in fact have all the compulsory feature bits since if it does
+	// not, we will never find the node.
+	sourceFeatures, err := getGraphFeatures(source)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if !verifyCompulsoryFeatures(sourceFeatures) {
+		return nil, 0, fmt.Errorf("the source node is missing one or " +
+			"more of the compulsory feature bits")
+	}
+
 	routeToSelf := source == target
 	for {
 		nodesVisited++
@@ -1161,6 +1209,15 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 			)
 
 			if edge == nil {
+				continue
+			}
+
+			// If the node on the other side of the edge does not
+			// support one of the compulsory feature bits for the
+			// path, then we skip over this edge.
+			if !verifyCompulsoryFeatures(
+				edge.policy.ToNodeFeatures,
+			) {
 				continue
 			}
 

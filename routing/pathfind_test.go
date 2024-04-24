@@ -904,6 +904,9 @@ func TestPathFinding(t *testing.T) {
 		name: "lowest fee path",
 		fn:   runFindLowestFeePath,
 	}, {
+		name: "entire path feature restriction",
+		fn:   runEntirePathFeatureRestriction,
+	}, {
 		name: "basic graph path finding",
 		fn:   runBasicGraphPathFinding,
 	}, {
@@ -1038,6 +1041,112 @@ func runFindPathWithMetadata(t *testing.T, useCache bool) {
 
 	_, err = ctx.findPath(target, paymentAmt)
 	require.ErrorIs(t, errNoTlvPayload, err)
+}
+
+// runEntirePathFeatureRestriction tests that out of two routes where one is
+// the clear winner in terms of the lowest fee, the higher fee path will be
+// chosen if the lower fee one does not satisfy the full-route feature bit
+// restriction requirement.
+func runEntirePathFeatureRestriction(t *testing.T, useCache bool) {
+	featuresWithRouteBlinding := lnwire.NewFeatureVector(
+		lnwire.NewRawFeatureVector(
+			lnwire.TLVOnionPayloadOptional,
+			lnwire.RouteBlindingOptional,
+		), lnwire.Features,
+	)
+
+	// Set up a test graph with two paths from roasbeef to target. Both
+	// paths have equal total time locks, but the path through b has lower
+	// fees (700 compared to 800 for the path through a).
+	testChannels := []*testChannel{
+		symmetricTestChannel("roasbeef", "first", 100000, &testChannelPolicy{
+			Expiry:   144,
+			FeeRate:  400,
+			MinHTLC:  1,
+			MaxHTLC:  100000000,
+			Features: featuresWithRouteBlinding,
+		}),
+		symmetricTestChannel("first", "a", 100000, &testChannelPolicy{
+			Expiry:   144,
+			FeeRate:  400,
+			MinHTLC:  1,
+			MaxHTLC:  100000000,
+			Features: featuresWithRouteBlinding,
+		}),
+		symmetricTestChannel("a", "target", 100000, &testChannelPolicy{
+			Expiry:   144,
+			FeeRate:  400,
+			MinHTLC:  1,
+			MaxHTLC:  100000000,
+			Features: featuresWithRouteBlinding,
+		}),
+		symmetricTestChannel("first", "b", 100000, &testChannelPolicy{
+			Expiry:  144,
+			FeeRate: 100,
+			MinHTLC: 1,
+			MaxHTLC: 100000000,
+		}),
+		symmetricTestChannel("b", "target", 100000, &testChannelPolicy{
+			Expiry:  144,
+			FeeRate: 600,
+			MinHTLC: 1,
+			MaxHTLC: 100000000,
+		}),
+	}
+
+	testGraphInstance, err := createTestGraphFromChannels(
+		t, useCache, testChannels, "roasbeef",
+		lnwire.RouteBlindingOptional, lnwire.TLVOnionPayloadOptional,
+	)
+	require.NoError(t, err, "unable to create graph")
+
+	sourceNode, err := testGraphInstance.graph.SourceNode()
+	require.NoError(t, err, "unable to fetch source node")
+
+	ctx := &pathFindingTestContext{
+		t:                 t,
+		testGraphInstance: testGraphInstance,
+		source:            route.Vertex(sourceNode.PubKeyBytes),
+		pathFindingConfig: *testPathFindingConfig,
+		graph:             testGraphInstance.graph,
+		restrictParams: RestrictParams{
+			FeeLimit:          noFeeLimit,
+			ProbabilitySource: noProbabilitySource,
+			CltvLimit:         math.MaxUint32,
+			HopFeatures: []lnwire.FeatureBit{
+				lnwire.RouteBlindingRequired,
+			},
+		},
+		bandwidthHints: &mockBandwidthHints{},
+	}
+
+	const (
+		startingHeight = 100
+		finalHopCLTV   = 1
+	)
+
+	paymentAmt := lnwire.NewMSatFromSatoshis(100)
+	target := ctx.keyFromAlias("target")
+	path, err := ctx.findPath(target, paymentAmt)
+	require.NoError(t, err, "unable to find path")
+	route, err := newRoute(
+		ctx.source, path, startingHeight,
+		finalHopParams{
+			amt:       paymentAmt,
+			cltvDelta: finalHopCLTV,
+			records:   nil,
+		}, nil,
+	)
+	require.NoError(t, err, "unable to create path")
+
+	// Assert that the route chosen is the route where all the hops
+	// advertise the route blinding bit. This is also the highest fee
+	// route.
+	if route.Hops[1].PubKeyBytes != ctx.keyFromAlias("a") {
+		t.Fatalf("expected route to pass through a, "+
+			"but got a route through %v",
+			ctx.aliasFromKey(route.Hops[1].PubKeyBytes))
+	}
 }
 
 // runFindLowestFeePath tests that out of two routes with identical total
