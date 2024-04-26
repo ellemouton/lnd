@@ -1,7 +1,7 @@
 package hop
 
 import (
-	"github.com/lightningnetwork/lnd/lntypes"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
 
@@ -33,5 +33,5 @@ type ForwardingInfo struct {
 	// sets for itself to ensure that the blinded path has been used in the
 	// correct context. In the payments context, we set this to the
 	// pre-image of the payment.
-	PathID *lntypes.Preimage
+	PathID *chainhash.Hash
 }

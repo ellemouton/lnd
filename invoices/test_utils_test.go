@@ -30,10 +30,15 @@ type mockPayload struct {
 	amp           *record.AMP
 	customRecords record.CustomSet
 	metadata      []byte
+	pathID        *chainhash.Hash
 }
 
 func (p *mockPayload) MultiPath() *record.MPP {
 	return p.mpp
+}
+
+func (p *mockPayload) PathID() *chainhash.Hash {
+	return p.pathID
 }
 
 func (p *mockPayload) AMPRecord() *record.AMP {

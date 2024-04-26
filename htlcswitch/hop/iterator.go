@@ -8,8 +8,8 @@ import (
 	"sync"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	sphinx "github.com/lightningnetwork/lightning-onion"
-	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/record"
 	"github.com/lightningnetwork/lnd/tlv"
@@ -145,7 +145,7 @@ func makeSphinxHopIterator(ogPacket *sphinx.OnionPacket,
 // interface.
 var _ Iterator = (*sphinxHopIterator)(nil)
 
-// Encode encodes iterator and writes it to the writer.
+// EncodeNextHop encodes iterator and writes it to the writer.
 //
 // NOTE: Part of the HopIterator interface.
 func (r *sphinxHopIterator) EncodeNextHop(w io.Writer) error {
@@ -373,11 +373,11 @@ func (b *BlindingKit) DecryptAndValidateFwdInfo(payload *Payload,
 	// TODO(elle): gotta do other checks like checking that other fields
 	// are _not_ set etc.
 	if isFinalHop {
-		var pathID *lntypes.Preimage
+		var pathID *chainhash.Hash
 		routeData.PathID.WhenSome(func(r tlv.RecordT[tlv.TlvType6,
 			[]byte]) {
 
-			var id lntypes.Preimage
+			var id chainhash.Hash
 			copy(id[:], r.Val)
 
 			pathID = &id

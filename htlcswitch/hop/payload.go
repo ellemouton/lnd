@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/record"
@@ -406,6 +407,10 @@ func (h *Payload) EncryptedData() []byte {
 // BlindingPoint returns the route blinding point parsed from the onion payload.
 func (h *Payload) BlindingPoint() *btcec.PublicKey {
 	return h.blindingPoint
+}
+
+func (h *Payload) PathID() *chainhash.Hash {
+	return h.FwdInfo.PathID
 }
 
 // Metadata returns the additional data that is sent along with the

@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"errors"
 
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/lightningnetwork/lnd/amp"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -23,12 +24,16 @@ type invoiceUpdateCtx struct {
 	mpp                  *record.MPP
 	amp                  *record.AMP
 	metadata             []byte
+	pathID               *chainhash.Hash
 }
 
 // invoiceRef returns an identifier that can be used to lookup or update the
 // invoice this HTLC is targeting.
 func (i *invoiceUpdateCtx) invoiceRef() InvoiceRef {
 	switch {
+	case i.pathID != nil:
+		return InvoiceRefByHashAndAddr(i.hash, *i.pathID)
+
 	case i.amp != nil && i.mpp != nil:
 		payAddr := i.mpp.PaymentAddr()
 		return InvoiceRefByAddr(payAddr)

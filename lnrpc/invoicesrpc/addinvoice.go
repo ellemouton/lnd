@@ -454,25 +454,6 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 		}
 	}
 
-	if invoice.Blinded {
-		paths, err := buildBlindedPaymentPaths(&buildBlindedPathCfg{
-			findRoutes:            cfg.QueryBlindedRoutes,
-			fetchChannelEdgesByID: cfg.Graph.FetchChannelEdgesByID,
-			preimage:              *paymentPreimage,
-			value:                 invoice.Value,
-			policyMultiplier:      cfg.BlindedRoutePolicyMultiplier,
-		})
-		if err != nil {
-			return nil, nil, err
-		}
-
-		for _, path := range paths {
-			options = append(options, zpay32.WithBlindedPaymentPath(
-				path,
-			))
-		}
-	}
-
 	// Set our desired invoice features and add them to our list of options.
 	var invoiceFeatures *lnwire.FeatureVector
 	if invoice.Amp {
@@ -490,11 +471,34 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 	// within the encrypted data of the blinded payment path for the final
 	// hop.
 	var paymentAddr [32]byte
+	if _, err := rand.Read(paymentAddr[:]); err != nil {
+		return nil, nil, err
+	}
+
+	// If the invoice has blinded paths, then we will embed the payment
+	// address into the encrypted recipient path ID, but we will not add it
+	// to the actual invoice itself.
 	if !invoice.Blinded {
-		if _, err := rand.Read(paymentAddr[:]); err != nil {
+		options = append(options, zpay32.PaymentAddr(paymentAddr))
+	}
+
+	if invoice.Blinded {
+		paths, err := buildBlindedPaymentPaths(&buildBlindedPathCfg{
+			findRoutes:            cfg.QueryBlindedRoutes,
+			fetchChannelEdgesByID: cfg.Graph.FetchChannelEdgesByID,
+			pathID:                paymentAddr[:],
+			value:                 invoice.Value,
+			policyMultiplier:      cfg.BlindedRoutePolicyMultiplier,
+		})
+		if err != nil {
 			return nil, nil, err
 		}
-		options = append(options, zpay32.PaymentAddr(paymentAddr))
+
+		for _, path := range paths {
+			options = append(options, zpay32.WithBlindedPaymentPath(
+				path,
+			))
+		}
 	}
 
 	// Create and encode the payment request as a bech32 (zpay32) string.
@@ -931,10 +935,7 @@ type buildBlindedPathCfg struct {
 	fetchChannelEdgesByID func(chanID uint64) (*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error)
 
-	// preimage is the preimage that will be used for the payment. This will
-	// be used as the PathID in the encrypted data for the final hop of the
-	// path.
-	preimage lntypes.Preimage
+	pathID []byte
 
 	// value is the payment amount that must be routed. This will be used
 	// for selecting appropriate routes to use for the blinded path.
@@ -1074,7 +1075,7 @@ func buildBlindedPaymentPath(cfg *buildBlindedPathCfg, route *route.Route) (
 
 	// For the final hop, we only need to set the Path ID.
 	info, err = getFinalHopInfo(
-		route.Hops[len(route.Hops)-1].PubKeyBytes, cfg.preimage,
+		route.Hops[len(route.Hops)-1].PubKeyBytes, cfg.pathID,
 	)
 	if err != nil {
 		return nil, err
@@ -1186,10 +1187,10 @@ func getNodeChannelPolicy(cfg *buildBlindedPathCfg, chanID uint64,
 	return policy, nil
 }
 
-func getFinalHopInfo(node route.Vertex, preimage lntypes.Preimage) (
+func getFinalHopInfo(node route.Vertex, pathID []byte) (
 	*sphinx.HopInfo, error) {
 
-	hopData := record.NewFinalHopBlindedRouteData(preimage[:])
+	hopData := record.NewFinalHopBlindedRouteData(pathID[:])
 
 	nodeID, err := btcec.ParsePubKey(node[:])
 	if err != nil {
