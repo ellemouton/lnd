@@ -571,6 +571,10 @@ var allTestCases = []*lntest.TestCase{
 		TestFunc: testRouteBlindingReceivingToInvoice,
 	},
 	{
+		Name:     "rb receive via MPP to single path",
+		TestFunc: testMPPToSingleBlindedPath,
+	},
+	{
 		Name:     "forward blinded",
 		TestFunc: testForwardBlindedRoute,
 	},
