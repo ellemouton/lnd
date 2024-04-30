@@ -5770,6 +5770,14 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 
 	defaultDelta := r.cfg.Bitcoin.TimeLockDelta
 
+	blindingRestrictions := &routing.BlindedPathRestrictions{
+		MinNumHops: int(r.server.cfg.Invoices.BlindedPaths.MinNumHops),
+		MaxNumHops: int(r.server.cfg.Invoices.BlindedPaths.MaxNumHops),
+		MaxNumPaths: int(
+			r.server.cfg.Invoices.BlindedPaths.MaxNumPaths,
+		),
+	}
+
 	addInvoiceCfg := &invoicesrpc.AddInvoiceConfig{
 		AddInvoice:        r.server.invoices.AddInvoice,
 		IsChannelActive:   r.server.htlcSwitch.HasActiveLink,
@@ -5799,11 +5807,7 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 			return r.server.chanRouter.FindBlindedPaths(
 				r.selfNode, amt,
 				r.server.missionControl.GetProbability,
-				&routing.BlindedPathRestrictions{
-					MinNumHops:  1,
-					MaxNumHops:  2,
-					MaxNumPaths: 3,
-				},
+				blindingRestrictions,
 			)
 		},
 	}
