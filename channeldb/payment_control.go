@@ -67,7 +67,7 @@ var (
 
 	// ErrValueMismatch is returned if we try to register a non-MPP attempt
 	// with an amount that doesn't match the payment amount.
-	ErrValueMismatch = errors.New("attempted value doesn't match payment" +
+	ErrValueMismatch = errors.New("attempted value doesn't match payment " +
 		"amount")
 
 	// ErrValueExceedsAmt is returned if we try to register an attempt that
@@ -336,7 +336,9 @@ func (p *PaymentControl) RegisterAttempt(paymentHash lntypes.Hash,
 
 		// Make sure any existing shards match the new one with regards
 		// to MPP options.
+		// TODO(elle): update below for MPP to blinded path.
 		mpp := attempt.Route.FinalHop().MPP
+		isBlinded := len(attempt.Route.FinalHop().EncryptedData) != 0
 		for _, h := range payment.InFlightHTLCs() {
 			hMpp := h.Route.FinalHop().MPP
 
@@ -361,6 +363,9 @@ func (p *PaymentControl) RegisterAttempt(paymentHash lntypes.Hash,
 				return ErrMPPPaymentAddrMismatch
 			}
 
+			// TODO(elle): here should check the hop.TotalAmtMsat
+			//  field.
+
 			if mpp.TotalMsat() != hMpp.TotalMsat() {
 				return ErrMPPTotalAmountMismatch
 			}
@@ -369,7 +374,8 @@ func (p *PaymentControl) RegisterAttempt(paymentHash lntypes.Hash,
 		// If this is a non-MPP attempt, it must match the total amount
 		// exactly.
 		amt := attempt.Route.ReceiverAmt()
-		if mpp == nil && amt != payment.Info.Value {
+		// TODO(elle): remove temp isBlinded work around.
+		if !isBlinded && mpp == nil && amt != payment.Info.Value {
 			return ErrValueMismatch
 		}
 

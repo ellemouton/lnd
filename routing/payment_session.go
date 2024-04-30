@@ -326,8 +326,12 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 		switch {
 		case err == errNoPathFound:
 			// Don't split if this is a legacy payment without mpp
-			// record.
-			if p.payment.PaymentAddr == nil {
+			// record. If it has a blinded path though, then we
+			// can split. Split payments to blinded paths won't have
+			// MPP records.
+			if p.payment.PaymentAddr == nil &&
+				p.payment.BlindedPayment == nil {
+
 				p.log.Debugf("not splitting because payment " +
 					"address is unspecified")
 
@@ -342,7 +346,10 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 
 			destFeatures := p.payment.DestFeatures
 			if !destFeatures.HasFeature(lnwire.MPPOptional) &&
-				!destFeatures.HasFeature(lnwire.AMPOptional) {
+				!destFeatures.HasFeature(lnwire.AMPOptional) &&
+				// TODO(elle): remove this. The dest features
+				//  should be set in the invoice still.
+				p.payment.BlindedPayment == nil {
 
 				p.log.Debug("not splitting because " +
 					"destination doesn't declare MPP or AMP")

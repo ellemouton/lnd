@@ -31,6 +31,7 @@ type mockPayload struct {
 	customRecords record.CustomSet
 	metadata      []byte
 	pathID        *chainhash.Hash
+	totalAmtMsat  lnwire.MilliSatoshi
 }
 
 func (p *mockPayload) MultiPath() *record.MPP {
@@ -39,6 +40,10 @@ func (p *mockPayload) MultiPath() *record.MPP {
 
 func (p *mockPayload) PathID() *chainhash.Hash {
 	return p.pathID
+}
+
+func (p *mockPayload) TotalAmtMsat() lnwire.MilliSatoshi {
+	return p.totalAmtMsat
 }
 
 func (p *mockPayload) AMPRecord() *record.AMP {

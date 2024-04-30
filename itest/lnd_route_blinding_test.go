@@ -33,7 +33,10 @@ func testMPPToSingleBlindedPath(ht *lntest.HarnessTest) {
 
 	// Create a five-node context consisting of Alice, Bob and three new
 	// nodes.
-	dave := ht.NewNode("dave", nil)
+	dave := ht.NewNode("dave", []string{
+		"--invoices.blinding.min-num-hops=1",
+		"--invoices.blinding.max-num-hops=1",
+	})
 	carol := ht.NewNode("carol", nil)
 	eve := ht.NewNode("eve", nil)
 
@@ -98,22 +101,32 @@ func testMPPToSingleBlindedPath(ht *lntest.HarnessTest) {
 
 	// Test here!
 	// Make Dave create an invoice for Alice to pay
-	payReqs, rHashes, invoices := ht.CreatePayReqs(dave, paymentAmt, 1)
-
-	rHash := rHashes[0]
-	payReq := payReqs[0]
+	invoice := &lnrpc.Invoice{
+		Memo:  "test",
+		Value: int64(paymentAmt),
+		Blind: true,
+	}
+	invoiceResp := dave.RPC.AddInvoice(invoice)
 
 	sendReq := &routerrpc.SendPaymentRequest{
-		PaymentRequest: payReq,
+		PaymentRequest: invoiceResp.PaymentRequest,
 		MaxParts:       10,
 		TimeoutSeconds: 60,
 		FeeLimitMsat:   noFeeLimitMsat,
 	}
 	payment := ht.SendPaymentAssertSettled(alice, sendReq)
 
+	preimageBytes, err := hex.DecodeString(payment.PaymentPreimage)
+	require.NoError(ht, err)
+
+	preimage, err := lntypes.MakePreimage(preimageBytes)
+	require.NoError(ht, err)
+
+	hash, err := lntypes.MakeHash(invoiceResp.RHash)
+	require.NoError(ht, err)
+
 	// Make sure we got the preimage.
-	require.Equal(ht, hex.EncodeToString(invoices[0].RPreimage),
-		payment.PaymentPreimage, "preimage doesn't match")
+	require.True(ht, preimage.Matches(hash), "preimage doesn't match")
 
 	// Check that Alice split the payment in at least two shards. Because
 	// the hand-off of the htlc to the link is asynchronous (via a mailbox),
@@ -134,7 +147,7 @@ func testMPPToSingleBlindedPath(ht *lntest.HarnessTest) {
 		"expected shards not reached")
 
 	// Make sure Dave show the invoice as settled for the full amount.
-	inv := dave.RPC.LookupInvoice(rHash)
+	inv := dave.RPC.LookupInvoice(invoiceResp.RHash)
 
 	require.EqualValues(ht, paymentAmt, inv.AmtPaidSat,
 		"incorrect payment amt")

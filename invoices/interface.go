@@ -108,6 +108,7 @@ type Payload interface {
 	Metadata() []byte
 
 	PathID() *chainhash.Hash
+	TotalAmtMsat() lnwire.MilliSatoshi
 }
 
 // InvoiceQuery represents a query to the invoice database. The query allows a
