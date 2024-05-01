@@ -3703,6 +3703,7 @@ func TestBlindedRouteConstruction(t *testing.T) {
 		_, carolPk       = btcec.PrivKeyFromBytes([]byte{3})
 		_, daveBlindedPk = btcec.PrivKeyFromBytes([]byte{4})
 		_, eveBlindedPk  = btcec.PrivKeyFromBytes([]byte{5})
+		_, pk5           = btcec.PrivKeyFromBytes([]byte{6})
 
 		_, blindingPk = btcec.PrivKeyFromBytes([]byte{9})
 
@@ -3758,6 +3759,11 @@ func TestBlindedRouteConstruction(t *testing.T) {
 			Features: tlvFeatures,
 		}
 
+		blindedPathsInfo = &BlindedPathsInfo{
+			PseudoTarget: pk5,
+			Paths:        []*BlindedPayment{blindedPayment},
+		}
+
 		// Create channel edges for the unblinded portion of our
 		// route. Proportional fees are omitted for easy test
 		// calculations, but non-zero base fees ensure our fee is
@@ -3805,7 +3811,7 @@ func TestBlindedRouteConstruction(t *testing.T) {
 	// that make up the graph we'll give to route construction. The hints
 	// map is keyed by source node, so we can retrieve our blinded edges
 	// accordingly.
-	blindedEdges := blindedPayment.toRouteHints()
+	blindedEdges := blindedPathsInfo.toRouteHints()
 	carolDaveEdge := blindedEdges[carolVertex][0]
 	daveEveEdge := blindedEdges[daveBlindedVertex][0]
 
@@ -3904,7 +3910,7 @@ func TestBlindedRouteConstruction(t *testing.T) {
 
 	route, err := newRoute(
 		sourceVertex, edges, currentHeight, finalHopParams,
-		blindedPath,
+		blindedPathsInfo,
 	)
 	require.NoError(t, err)
 	require.Equal(t, expectedRoute, route)
@@ -3993,7 +3999,9 @@ func TestLastHopPayloadSize(t *testing.T) {
 		{
 			name: "Blinded final hop introduction point",
 			restrictions: &RestrictParams{
-				BlindedPayment: oneHopBlindedPayment,
+				BlindedPathsInfo: &BlindedPathsInfo{
+					Paths: []*BlindedPayment{oneHopBlindedPayment},
+				},
 			},
 			amount:         amtToForward,
 			finalHopExpiry: finalHopExpiry,
@@ -4001,7 +4009,9 @@ func TestLastHopPayloadSize(t *testing.T) {
 		{
 			name: "Blinded final hop of a two hop payment",
 			restrictions: &RestrictParams{
-				BlindedPayment: twoHopBlindedPayment,
+				BlindedPathsInfo: &BlindedPathsInfo{
+					Paths: []*BlindedPayment{twoHopBlindedPayment},
+				},
 			},
 			amount:         amtToForward,
 			finalHopExpiry: finalHopExpiry,
@@ -4029,12 +4039,11 @@ func TestLastHopPayloadSize(t *testing.T) {
 			}
 
 			var finalHop route.Hop
-			if tc.restrictions.BlindedPayment != nil {
-				blindedPath := tc.restrictions.BlindedPayment.
-					BlindedPath.BlindedHops
+			if tc.restrictions.BlindedPathsInfo != nil {
+				payment := tc.restrictions.BlindedPathsInfo.Paths[0]
+				blindedPath := payment.BlindedPath.BlindedHops
 
-				blindedPoint := tc.restrictions.BlindedPayment.
-					BlindedPath.BlindingPoint
+				blindedPoint := payment.BlindedPath.BlindingPoint
 
 				//nolint:lll
 				finalHop = route.Hop{

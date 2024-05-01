@@ -128,7 +128,7 @@ type finalHopParams struct {
 // validated by the caller.
 func newRoute(sourceVertex route.Vertex,
 	pathEdges []*unifiedEdge, currentHeight uint32,
-	finalHop finalHopParams, blindedPath *sphinx.BlindedPath) (
+	finalHop finalHopParams, blindedPathsInfo *BlindedPathsInfo) (
 	*route.Route, error) {
 
 	var (
@@ -144,6 +144,8 @@ func newRoute(sourceVertex route.Vertex,
 		// backwards below, this next hop gets closer and closer to the
 		// sender of the payment.
 		nextIncomingAmount lnwire.MilliSatoshi
+
+		blindedPathID *int
 	)
 
 	pathLength := len(pathEdges)
@@ -151,6 +153,14 @@ func newRoute(sourceVertex route.Vertex,
 		// Now we'll start to calculate the items within the per-hop
 		// payload for the hop this edge is leading to.
 		edge := pathEdges[i].policy
+
+		// We need to know which blinded path was used for this route
+		// so that we correctly
+		if edge.BlindedEdge && blindedPathsInfo != nil &&
+			blindedPathID == nil {
+
+			blindedPathID = edge.BlindedEdgeID
+		}
 
 		// We'll calculate the amounts, timelocks, and fees for each hop
 		// in the route. The base case is the final hop which includes
@@ -234,7 +244,7 @@ func newRoute(sourceVertex route.Vertex,
 
 			metadata = finalHop.metadata
 
-			if blindedPath != nil {
+			if blindedPathsInfo != nil {
 				totalAmtMsatBlinded = finalHop.totalAmt
 			}
 		} else {
@@ -295,22 +305,28 @@ func newRoute(sourceVertex route.Vertex,
 	// If we are creating a route to a blinded path, we need to add some
 	// additional data to the route that is required for blinded forwarding.
 	// We do another pass on our edges to append this data.
-	if blindedPath != nil {
+	if blindedPathsInfo != nil {
+		if blindedPathID == nil {
+			pathID := 0
+			blindedPathID = &pathID
+		}
+		expectedIntroNode := route.NewVertex(blindedPathsInfo.Paths[*blindedPathID].BlindedPath.IntroductionPoint)
+
 		var (
 			inBlindedRoute bool
 			dataIndex      = 0
-
-			introVertex = route.NewVertex(
-				blindedPath.IntroductionPoint,
-			)
 		)
 
 		for i, hop := range hops {
-			// Once we locate our introduction node, we know that
+			// Once we locate an introduction node, we know that
 			// every hop after this is part of the blinded route.
-			if bytes.Equal(hop.PubKeyBytes[:], introVertex[:]) {
+			// We only need to do this check while inBlindedRoute is
+			// false.
+			var isIntro bool
+			if bytes.Equal(hop.PubKeyBytes[:], expectedIntroNode[:]) {
+				isIntro = true
 				inBlindedRoute = true
-				hop.BlindingPoint = blindedPath.BlindingPoint
+				hop.BlindingPoint = blindedPathsInfo.Paths[*blindedPathID].BlindedPath.BlindingPoint
 			}
 
 			// We don't need to modify edges outside of our blinded
@@ -319,7 +335,9 @@ func newRoute(sourceVertex route.Vertex,
 				continue
 			}
 
-			payload := blindedPath.BlindedHops[dataIndex].CipherText
+			path := blindedPathsInfo.Paths[*blindedPathID].BlindedPath
+
+			payload := path.BlindedHops[dataIndex].CipherText
 			hop.EncryptedData = payload
 
 			// All of the hops in a blinded route *except* the
@@ -330,6 +348,13 @@ func newRoute(sourceVertex route.Vertex,
 			}
 
 			dataIndex++
+
+			// For the final hop in a blinded path, swap out the
+			// pseudo pub key for the correct one. Unless the last
+			// hop is the intro hop.
+			if i == len(hops)-1 && !isIntro {
+				hop.PubKeyBytes = route.NewVertex(blindedPathsInfo.finalHopMap[*blindedPathID])
+			}
 		}
 	}
 
@@ -434,7 +459,7 @@ type RestrictParams struct {
 
 	// BlindedPayment is necessary to determine the hop size of the
 	// last/exit hop.
-	BlindedPayment *BlindedPayment
+	BlindedPathsInfo *BlindedPathsInfo
 
 	// HopFeatures if set is a set of feature bits that each hop along the
 	// chosen path MUST support.
@@ -1361,9 +1386,12 @@ func getProbabilityBasedDist(weight int64, probability float64,
 func lastHopPayloadSize(r *RestrictParams, finalHtlcExpiry int32,
 	amount lnwire.MilliSatoshi, legacy bool) uint64 {
 
-	if r.BlindedPayment != nil {
-		blindedPath := r.BlindedPayment.BlindedPath.BlindedHops
-		blindedPoint := r.BlindedPayment.BlindedPath.BlindingPoint
+	if r.BlindedPathsInfo != nil {
+		// TODO(elle): enforce that final hop cipher text is same for
+		// all.
+		payment := r.BlindedPathsInfo.Paths[0]
+		blindedPath := payment.BlindedPath.BlindedHops
+		blindedPoint := payment.BlindedPath.BlindingPoint
 
 		encryptedData := blindedPath[len(blindedPath)-1].CipherText
 		finalHop := route.Hop{

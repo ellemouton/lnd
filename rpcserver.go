@@ -5120,7 +5120,7 @@ type rpcPaymentIntent struct {
 	paymentAddr        *[32]byte
 	payReq             []byte
 	metadata           []byte
-	blindedPayment     *routing.BlindedPayment
+	blindedPathsInfo   *routing.BlindedPathsInfo
 
 	destCustomRecords record.CustomSet
 
@@ -5256,16 +5256,23 @@ func (r *rpcServer) extractPaymentIntent(rpcPayReq *rpcPaymentRequest) (rpcPayme
 		payIntent.paymentAddr = payReq.PaymentAddr
 		payIntent.metadata = payReq.Metadata
 		if len(payReq.BlindedPaymentPaths) > 0 {
-			path := payReq.BlindedPaymentPaths[0]
-			finalHop := path.Hops[len(path.Hops)-1]
-			payIntent.blindedPayment =
-				routerrpc.MarshalBlindedPayment(path)
+			pathsInfo, err := routerrpc.BuildBlindedPathsInfo(
+				payReq.BlindedPaymentPaths,
+			)
+			if err != nil {
+				return payIntent, err
+			}
 
-			copy(payIntent.dest[:],
-				finalHop.BlindedNodePub.SerializeCompressed())
+			payIntent.blindedPathsInfo = pathsInfo
 
-			if payReq.BlindedPaymentPaths[0].Features != nil {
-				payIntent.destFeatures = path.Features.Clone()
+			copy(
+				payIntent.dest[:],
+				pathsInfo.PseudoTarget.SerializeCompressed(),
+			)
+
+			if pathsInfo.Features != nil {
+				payIntent.destFeatures = pathsInfo.Features.
+					Clone()
 			} else {
 				payIntent.destFeatures = nil
 			}
@@ -5425,7 +5432,7 @@ func (r *rpcServer) dispatchPaymentIntent(
 			DestFeatures:       payIntent.destFeatures,
 			PaymentAddr:        payIntent.paymentAddr,
 			Metadata:           payIntent.metadata,
-			BlindedPayment:     payIntent.blindedPayment,
+			BlindedPathsInfo:   payIntent.blindedPathsInfo,
 
 			// Don't enable multi-part payments on the main rpc.
 			// Users need to use routerrpc for that.

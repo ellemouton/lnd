@@ -99,8 +99,13 @@ func testMPPToMultipleBlindedPaths(ht *lntest.HarnessTest) {
 	invoice := &lnrpc.Invoice{
 		Memo:  "test",
 		Value: int64(paymentAmt),
+		Blind: true,
 	}
 	invoiceResp := dave.RPC.AddInvoice(invoice)
+
+	// Assert that two blinded paths are included in the invoice.
+	payReq := dave.RPC.DecodePayReq(invoiceResp.PaymentRequest)
+	require.Len(ht, payReq.BlindedPaths, 2)
 
 	sendReq := &routerrpc.SendPaymentRequest{
 		PaymentRequest: invoiceResp.PaymentRequest,
@@ -406,14 +411,9 @@ func testRouteBlindingReceiving(ht *lntest.HarnessTest) {
 
 	// Query for a route to the blinded path constructed above.
 
-	// Choose 1 path. TODO: change this to multiple once that is supported.
-	path := payReq.BlindedPaths[0]
-
 	req := &lnrpc.QueryRoutesRequest{
-		AmtMsat: paymentAmt,
-		BlindedPaymentPaths: []*lnrpc.BlindedPaymentPath{
-			path,
-		},
+		AmtMsat:             paymentAmt,
+		BlindedPaymentPaths: payReq.BlindedPaths,
 	}
 
 	ht.Logf("intro node is: %x", payReq.BlindedPaths[0].BlindedPath.IntroductionNode)
@@ -511,6 +511,10 @@ func testRouteBlindingReceivingToInvoice(ht *lntest.HarnessTest) {
 
 	payReq := dave.RPC.DecodePayReq(invoiceResp.PaymentRequest)
 	ht.Logf("%+v", payReq.BlindedPaths[0])
+
+	for i, p := range payReq.BlindedPaths {
+		ht.Logf(" path %d has %d hops", i, len(p.BlindedPath.BlindedHops))
+	}
 
 	// Try pay it directly.
 	ht.CompletePaymentRequests(alice, []string{invoiceResp.PaymentRequest})

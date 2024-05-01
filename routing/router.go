@@ -1958,7 +1958,7 @@ type RouteRequest struct {
 	// BlindedPayment contains an optional blinded path and parameters
 	// used to reach a target node via a blinded path. This field is
 	// mutually exclusive with the Target field.
-	BlindedPayment *BlindedPayment
+	BlindedPathsInfo *BlindedPathsInfo
 }
 
 // RouteHints is an alias type for a set of route hints, with the source node
@@ -1972,7 +1972,7 @@ type RouteHints map[route.Vertex][]AdditionalEdge
 func NewRouteRequest(source route.Vertex, target *route.Vertex,
 	amount lnwire.MilliSatoshi, timePref float64,
 	restrictions *RestrictParams, customRecords record.CustomSet,
-	routeHints RouteHints, blindedPayment *BlindedPayment,
+	routeHints RouteHints, blindedPathsInfo *BlindedPathsInfo,
 	finalExpiry uint16) (*RouteRequest, error) {
 
 	var (
@@ -1981,19 +1981,7 @@ func NewRouteRequest(source route.Vertex, target *route.Vertex,
 		requestExpiry = finalExpiry
 	)
 
-	if blindedPayment != nil {
-		if err := blindedPayment.Validate(); err != nil {
-			return nil, fmt.Errorf("invalid blinded payment: %w",
-				err)
-		}
-
-		introVertex := route.NewVertex(
-			blindedPayment.BlindedPath.IntroductionPoint,
-		)
-		if source == introVertex {
-			return nil, ErrSelfIntro
-		}
-
+	if blindedPathsInfo != nil {
 		// Check that the values for a clear path have not been set,
 		// as this is an ambiguous signal from the caller.
 		if routeHints != nil {
@@ -2004,6 +1992,20 @@ func NewRouteRequest(source route.Vertex, target *route.Vertex,
 			return nil, ErrExpiryAndBlinded
 		}
 
+		for _, path := range blindedPathsInfo.Paths {
+			if err := path.Validate(); err != nil {
+				return nil, fmt.Errorf("invalid blinded "+
+					"payment: %w", err)
+			}
+
+			introVertex := route.NewVertex(
+				path.BlindedPath.IntroductionPoint,
+			)
+			if source == introVertex {
+				return nil, ErrSelfIntro
+			}
+		}
+
 		// If we have a blinded path with 1 hop, the cltv expiry
 		// will not be included in any hop hints (since we're just
 		// sending to the introduction node and need no blinded hints).
@@ -2012,36 +2014,39 @@ func NewRouteRequest(source route.Vertex, target *route.Vertex,
 		// delta). In the case of a multi-hop route, we set our final
 		// cltv to zero, since it's going to be accounted for in the
 		// delta for our hints.
-		if len(blindedPayment.BlindedPath.BlindedHops) == 1 {
-			requestExpiry = blindedPayment.CltvExpiryDelta
+		// TODO(elle): remove hack... perhaps make requestExpiry a
+		//  callback? since it is dependant on which blinded path is
+		//  chosen.
+		if len(blindedPathsInfo.Paths[0].BlindedPath.BlindedHops) == 1 {
+			requestExpiry = blindedPathsInfo.Paths[0].CltvExpiryDelta
 		}
 
-		requestHints = blindedPayment.toRouteHints()
+		requestHints = blindedPathsInfo.toRouteHints()
 	}
 
-	requestTarget, err := getTargetNode(target, blindedPayment)
+	requestTarget, err := getTargetNode(target, blindedPathsInfo)
 	if err != nil {
 		return nil, err
 	}
 
 	return &RouteRequest{
-		Source:         source,
-		Target:         requestTarget,
-		Amount:         amount,
-		TimePreference: timePref,
-		Restrictions:   restrictions,
-		CustomRecords:  customRecords,
-		RouteHints:     requestHints,
-		FinalExpiry:    requestExpiry,
-		BlindedPayment: blindedPayment,
+		Source:           source,
+		Target:           requestTarget,
+		Amount:           amount,
+		TimePreference:   timePref,
+		Restrictions:     restrictions,
+		CustomRecords:    customRecords,
+		RouteHints:       requestHints,
+		FinalExpiry:      requestExpiry,
+		BlindedPathsInfo: blindedPathsInfo,
 	}, nil
 }
 
-func getTargetNode(target *route.Vertex, blindedPayment *BlindedPayment) (
+func getTargetNode(target *route.Vertex, blindedPathsInfo *BlindedPathsInfo) (
 	route.Vertex, error) {
 
 	var (
-		blinded   = blindedPayment != nil
+		blinded   = blindedPathsInfo != nil
 		targetSet = target != nil
 	)
 
@@ -2054,14 +2059,15 @@ func getTargetNode(target *route.Vertex, blindedPayment *BlindedPayment) (
 		// has an introduction node (first hop expected to be the intro
 		// hop), then we return the unblinded introduction node as our
 		// target.
-		hops := blindedPayment.BlindedPath.BlindedHops
+		// TODO(elle): cover this edge case properly...
+		hops := blindedPathsInfo.Paths[0].BlindedPath.BlindedHops
 		if len(hops) == 1 {
 			return route.NewVertex(
-				blindedPayment.BlindedPath.IntroductionPoint,
+				blindedPathsInfo.Paths[0].BlindedPath.IntroductionPoint,
 			), nil
 		}
 
-		return route.NewVertex(hops[len(hops)-1].BlindedNodePub), nil
+		return route.NewVertex(blindedPathsInfo.PseudoTarget), nil
 
 	case targetSet:
 		return *target, nil
@@ -2073,12 +2079,12 @@ func getTargetNode(target *route.Vertex, blindedPayment *BlindedPayment) (
 
 // blindedPath returns the request's blinded path, which is set if the payment
 // is to a blinded route.
-func (r *RouteRequest) blindedPath() *sphinx.BlindedPath {
-	if r.BlindedPayment == nil {
+func (r *RouteRequest) blindedPathsInfo() *BlindedPathsInfo {
+	if r.BlindedPathsInfo == nil {
 		return nil
 	}
 
-	return r.BlindedPayment.BlindedPath
+	return r.BlindedPathsInfo
 }
 
 type probabilitySource func(route.Vertex, route.Vertex, lnwire.MilliSatoshi,
@@ -2228,7 +2234,7 @@ func (r *ChannelRouter) FindRoute(req *RouteRequest) (*route.Route, float64,
 			totalAmt:  req.Amount,
 			cltvDelta: req.FinalExpiry,
 			records:   req.CustomRecords,
-		}, req.blindedPath(),
+		}, req.blindedPathsInfo(),
 	)
 	if err != nil {
 		return nil, 0, err
@@ -2367,7 +2373,7 @@ type LightningPayment struct {
 	// destination successfully.
 	RouteHints [][]zpay32.HopHint
 
-	BlindedPayment *BlindedPayment
+	BlindedPathsInfo *BlindedPathsInfo
 
 	// OutgoingChannelIDs is the list of channels that are allowed for the
 	// first hop. If nil, any channel may be used.

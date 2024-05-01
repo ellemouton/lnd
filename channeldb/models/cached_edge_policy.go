@@ -63,7 +63,8 @@ type CachedEdgePolicy struct {
 
 	// BlindedEdge is true if this policy was obtained from a blinded path.
 	// We can assume certain node features if it was.
-	BlindedEdge bool
+	BlindedEdge   bool
+	BlindedEdgeID *int
 }
 
 // ComputeFee computes the fee to forward an HTLC of `amt` milli-satoshis over

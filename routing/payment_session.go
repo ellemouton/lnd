@@ -6,7 +6,6 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btclog"
 	"github.com/davecgh/go-spew/spew"
-	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/build"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channeldb/models"
@@ -204,13 +203,13 @@ func newPaymentSession(p *LightningPayment,
 		return nil, err
 	}
 
-	if p.BlindedPayment != nil {
+	if p.BlindedPathsInfo != nil {
 		if len(edges) != 0 {
 			return nil, fmt.Errorf("cant have both route hints " +
-				"and blinded path")
+				"and blinded paths")
 		}
 
-		edges = p.BlindedPayment.toRouteHints()
+		edges = p.BlindedPathsInfo.toRouteHints()
 	}
 
 	logPrefix := fmt.Sprintf("PaymentSession(%x):", p.Identifier())
@@ -330,7 +329,7 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 			// can split. Split payments to blinded paths won't have
 			// MPP records.
 			if p.payment.PaymentAddr == nil &&
-				p.payment.BlindedPayment == nil {
+				p.payment.BlindedPathsInfo == nil {
 
 				p.log.Debugf("not splitting because payment " +
 					"address is unspecified")
@@ -349,7 +348,7 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 				!destFeatures.HasFeature(lnwire.AMPOptional) &&
 				// TODO(elle): remove this. The dest features
 				//  should be set in the invoice still.
-				p.payment.BlindedPayment == nil {
+				p.payment.BlindedPathsInfo == nil {
 
 				p.log.Debug("not splitting because " +
 					"destination doesn't declare MPP or AMP")
@@ -397,11 +396,6 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 			return nil, err
 		}
 
-		var blindedPath *sphinx.BlindedPath
-		if p.payment.BlindedPayment != nil {
-			blindedPath = p.payment.BlindedPayment.BlindedPath
-		}
-
 		// With the next candidate path found, we'll attempt to turn
 		// this into a route by applying the time-lock and fee
 		// requirements.
@@ -414,7 +408,7 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 				records:     p.payment.DestCustomRecords,
 				paymentAddr: p.payment.PaymentAddr,
 				metadata:    p.payment.Metadata,
-			}, blindedPath,
+			}, p.payment.BlindedPathsInfo,
 		)
 		if err != nil {
 			return nil, err

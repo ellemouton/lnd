@@ -48,6 +48,9 @@ var (
 	priv2, _    = btcec.NewPrivateKey()
 	bitcoinKey2 = priv2.PubKey()
 
+	pseudo, _ = btcec.NewPrivateKey()
+	pseudoKey = pseudo.PubKey()
+
 	timeout = time.Second * 5
 )
 

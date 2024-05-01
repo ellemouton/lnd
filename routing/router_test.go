@@ -4143,7 +4143,7 @@ func TestNewRouteRequest(t *testing.T) {
 			// For multi-hop blinded, we have no final cltv.
 			name:           "blinded multi-hop",
 			blindedPayment: blindedMultiHop,
-			expectedTarget: v2,
+			expectedTarget: route.NewVertex(pseudoKey),
 			expectedCltv:   0,
 			err:            nil,
 		},
@@ -4187,9 +4187,19 @@ func TestNewRouteRequest(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
+			var blindedPathInfo *BlindedPathsInfo
+			if testCase.blindedPayment != nil {
+				blindedPathInfo = &BlindedPathsInfo{
+					PseudoTarget: pseudoKey,
+					Paths: []*BlindedPayment{
+						testCase.blindedPayment,
+					},
+				}
+			}
+
 			req, err := NewRouteRequest(
 				source, testCase.target, 1000, 0, nil, nil,
-				testCase.routeHints, testCase.blindedPayment,
+				testCase.routeHints, blindedPathInfo,
 				testCase.finalExpiry,
 			)
 			require.ErrorIs(t, err, testCase.err)

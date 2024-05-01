@@ -85,10 +85,11 @@ func TestBlindedPaymentToHints(t *testing.T) {
 		_, pkb1 = btcec.PrivKeyFromBytes([]byte{2})
 		_, pkb2 = btcec.PrivKeyFromBytes([]byte{3})
 		_, pkb3 = btcec.PrivKeyFromBytes([]byte{4})
+		_, pkb4 = btcec.PrivKeyFromBytes([]byte{5})
 
 		v1  = route.NewVertex(pk1)
 		vb2 = route.NewVertex(pkb2)
-		vb3 = route.NewVertex(pkb3)
+		//vb3 = route.NewVertex(pkb3)
 
 		baseFee   uint32 = 1000
 		ppmFee    uint32 = 500
@@ -128,7 +129,11 @@ func TestBlindedPaymentToHints(t *testing.T) {
 		HtlcMaximum:         htlcMax,
 		Features:            features,
 	}
-	require.Nil(t, blindedPayment.toRouteHints())
+	blindedPathsInfo := &BlindedPathsInfo{
+		PseudoTarget: pkb4,
+		Paths:        []*BlindedPayment{blindedPayment},
+	}
+	require.Nil(t, blindedPathsInfo.toRouteHints())
 
 	// Populate the blinded payment with hops.
 	blindedPayment.BlindedPath.BlindedHops = []*sphinx.BlindedHopInfo{
@@ -146,6 +151,7 @@ func TestBlindedPaymentToHints(t *testing.T) {
 		},
 	}
 
+	var i1 = 0
 	expected := RouteHints{
 		v1: {
 			//nolint:lll
@@ -163,6 +169,7 @@ func TestBlindedPaymentToHints(t *testing.T) {
 					},
 					ToNodeFeatures: features,
 					BlindedEdge:    true,
+					BlindedEdgeID:  &i1,
 				},
 				blindingPoint: blindedPoint,
 				cipherText:    cipherText,
@@ -172,17 +179,18 @@ func TestBlindedPaymentToHints(t *testing.T) {
 			&BlindedEdge{
 				policy: &models.CachedEdgePolicy{
 					ToNodePubKey: func() route.Vertex {
-						return vb3
+						return route.NewVertex(pkb4)
 					},
 					ToNodeFeatures: features,
 					BlindedEdge:    true,
+					BlindedEdgeID:  &i1,
 				},
 				cipherText: cipherText,
 			},
 		},
 	}
 
-	actual := blindedPayment.toRouteHints()
+	actual := blindedPathsInfo.toRouteHints()
 
 	require.Equal(t, len(expected), len(actual))
 	for vertex, expectedHint := range expected {
