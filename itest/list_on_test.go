@@ -575,6 +575,10 @@ var allTestCases = []*lntest.TestCase{
 		TestFunc: testMPPToSingleBlindedPath,
 	},
 	{
+		Name:     "temptemp",
+		TestFunc: testMPPToMultipleBlindedPaths,
+	},
+	{
 		Name:     "forward blinded",
 		TestFunc: testForwardBlindedRoute,
 	},
