@@ -368,9 +368,22 @@ func (b *BlindingKit) DecryptAndValidateFwdInfo(payload *Payload,
 		return nil, err
 	}
 
+	relayInfo, err := routeData.RelayInfo.UnwrapOrErr(
+		fmt.Errorf("relay info not set for non-final blinded hop"),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	nextSCID, err := routeData.ShortChannelID.UnwrapOrErr(
+		fmt.Errorf("next SCID not set for non-final blinded hop"),
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	fwdAmt, err := calculateForwardingAmount(
-		b.IncomingAmount, routeData.RelayInfo.Val.BaseFee,
-		routeData.RelayInfo.Val.FeeRate,
+		b.IncomingAmount, relayInfo.Val.BaseFee, relayInfo.Val.FeeRate,
 	)
 	if err != nil {
 		return nil, err
@@ -400,10 +413,10 @@ func (b *BlindingKit) DecryptAndValidateFwdInfo(payload *Payload,
 	}
 
 	return &ForwardingInfo{
-		NextHop:         routeData.ShortChannelID.Val,
+		NextHop:         nextSCID.Val,
 		AmountToForward: fwdAmt,
 		OutgoingCTLV: b.IncomingCltv - uint32(
-			routeData.RelayInfo.Val.CltvExpiryDelta,
+			relayInfo.Val.CltvExpiryDelta,
 		),
 		// Remap from blinding override type to blinding point type.
 		NextBlinding: tlv.SomeRecordT(
