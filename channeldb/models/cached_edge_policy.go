@@ -60,6 +60,13 @@ type CachedEdgePolicy struct {
 	// the edge is in the cache, only on the copy that is returned in
 	// ForEachChannel().
 	ToNodeFeatures *lnwire.FeatureVector
+
+	// IsBlindedEdge is true if this policy was obtained from a blinded
+	// path. We can assume certain properties about the edge its nodes if
+	// it was. For example, since the `option_route_blinding` feature bit
+	// depends on `var_onion_option`, we can assume that all nodes in a
+	// blinded path support TLV onions.
+	IsBlindedEdge bool
 }
 
 // ComputeFee computes the fee to forward an HTLC of `amt` milli-satoshis over
