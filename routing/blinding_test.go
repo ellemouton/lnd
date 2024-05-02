@@ -162,6 +162,7 @@ func TestBlindedPaymentToHints(t *testing.T) {
 						return vb2
 					},
 					ToNodeFeatures: features,
+					IsBlindedEdge:  true,
 				},
 				blindingPoint: blindedPoint,
 				cipherText:    cipherText,
@@ -174,6 +175,7 @@ func TestBlindedPaymentToHints(t *testing.T) {
 						return vb3
 					},
 					ToNodeFeatures: features,
+					IsBlindedEdge:  true,
 				},
 				cipherText: cipherText,
 			},
