@@ -5754,6 +5754,13 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 
 	defaultDelta := r.cfg.Bitcoin.TimeLockDelta
 
+	blindingRestrictions := &routing.BlindedPathRestrictions{
+		MinDistanceFromIntroNode: r.server.cfg.Invoices.BlindedPaths.
+			MinNumRealHops,
+		NumHops:     r.server.cfg.Invoices.BlindedPaths.NumHops,
+		MaxNumPaths: r.server.cfg.Invoices.BlindedPaths.MaxNumPaths,
+	}
+
 	addInvoiceCfg := &invoicesrpc.AddInvoiceConfig{
 		AddInvoice:        r.server.invoices.AddInvoice,
 		IsChannelActive:   r.server.htlcSwitch.HasActiveLink,
@@ -5763,12 +5770,43 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 		ChanDB:            r.server.chanStateDB,
 		Graph:             r.server.graphDB,
 		GenInvoiceFeatures: func() *lnwire.FeatureVector {
-			return r.server.featureMgr.Get(feature.SetInvoice)
+			v := r.server.featureMgr.Get(feature.SetInvoice)
+
+			if invoice.Blind {
+				// If an invoice includes blinded paths, then a
+				// payment address is not required since we use
+				// the PathID in the final hop's encrypted data
+				// for the payment address.
+				v.Unset(lnwire.PaymentAddrRequired)
+				v.Set(lnwire.PaymentAddrOptional)
+
+				// The invoice payer will also need to
+				// understand the new BOLT 11 tagged field
+				// containing the blinded path, so we switch
+				// the bit to required.
+				v.Unset(lnwire.Bolt11BlindedPathsOptional)
+				v.Set(lnwire.Bolt11BlindedPathsRequired)
+			}
+
+			return v
 		},
 		GenAmpInvoiceFeatures: func() *lnwire.FeatureVector {
 			return r.server.featureMgr.Get(feature.SetInvoiceAmp)
 		},
-		GetAlias: r.server.aliasMgr.GetPeerAlias,
+		GetAlias:   r.server.aliasMgr.GetPeerAlias,
+		BestHeight: r.server.cc.BestBlockTracker.BestHeight,
+		BlindedRoutePolicyMultiplier: r.server.cfg.Invoices.
+			BlindedPaths.PolicyIncreaseMultiplier,
+		QueryBlindedRoutes: func(amt lnwire.MilliSatoshi) (
+			[]*route.Route, error) {
+
+			return r.server.chanRouter.FindBlindedPaths(
+				r.selfNode, amt,
+				r.server.missionControl.GetProbability,
+				blindingRestrictions,
+			)
+		},
+		MinNumHops: r.server.cfg.Invoices.BlindedPaths.NumHops,
 	}
 
 	value, err := lnrpc.UnmarshallAmt(invoice.Value, invoice.ValueMsat)
@@ -5791,6 +5829,7 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 		Private:         invoice.Private,
 		RouteHints:      routeHints,
 		Amp:             invoice.IsAmp,
+		Blind:           invoice.Blind,
 	}
 
 	if invoice.RPreimage != nil {
