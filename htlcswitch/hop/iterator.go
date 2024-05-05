@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/record"
@@ -144,7 +145,7 @@ func makeSphinxHopIterator(ogPacket *sphinx.OnionPacket,
 // interface.
 var _ Iterator = (*sphinxHopIterator)(nil)
 
-// Encode encodes iterator and writes it to the writer.
+// EncodeNextHop encodes iterator and writes it to the writer.
 //
 // NOTE: Part of the HopIterator interface.
 func (r *sphinxHopIterator) EncodeNextHop(w io.Writer) error {
@@ -360,12 +361,37 @@ func (b *BlindingKit) DecryptAndValidateFwdInfo(payload *Payload,
 	if err != nil {
 		return nil, err
 	}
+
 	// Validate the data in the blinded route against our incoming htlc's
 	// information.
 	if err := ValidateBlindedRouteData(
 		routeData, b.IncomingAmount, b.IncomingCltv,
 	); err != nil {
 		return nil, err
+	}
+
+	// If this is the final hop in a blinded path, then we need to check
+	// that the path ID was set.
+	if isFinalHop {
+		var pathID *chainhash.Hash
+		routeData.PathID.WhenSome(func(r tlv.RecordT[tlv.TlvType6,
+			[]byte]) {
+
+			var id chainhash.Hash
+			copy(id[:], r.Val)
+
+			pathID = &id
+		})
+		if pathID == nil {
+			return nil, ErrInvalidPayload{
+				Type:      tlv.Type(6),
+				Violation: InsufficientViolation,
+			}
+		}
+
+		return &ForwardingInfo{
+			PathID: pathID,
+		}, nil
 	}
 
 	relayInfo, err := routeData.RelayInfo.UnwrapOrErr(
