@@ -2180,12 +2180,12 @@ func (h *HarnessTest) AssertFeeReport(hn *node.HarnessNode,
 //
 // TODO(yy): needs refactor to reduce its complexity.
 func (h *HarnessTest) AssertHtlcEvents(client rpc.HtlcEventsClient,
-	fwdCount, fwdFailCount, settleCount int,
+	fwdCount, fwdFailCount, settleCount, linkFailCount int,
 	userType routerrpc.HtlcEvent_EventType) []*routerrpc.HtlcEvent {
 
-	var forwards, forwardFails, settles int
+	var forwards, forwardFails, settles, linkFails int
 
-	numEvents := fwdCount + fwdFailCount + settleCount
+	numEvents := fwdCount + fwdFailCount + settleCount + linkFailCount
 	events := make([]*routerrpc.HtlcEvent, 0)
 
 	// It's either the userType or the unknown type.
@@ -2218,6 +2218,9 @@ func (h *HarnessTest) AssertHtlcEvents(client rpc.HtlcEventsClient,
 				settles++
 			}
 
+		case *routerrpc.HtlcEvent_LinkFailEvent:
+			linkFails++
+
 		default:
 			require.Fail(h, "assert event fail",
 				"unexpected event: %T", event.Event)
@@ -2228,6 +2231,7 @@ func (h *HarnessTest) AssertHtlcEvents(client rpc.HtlcEventsClient,
 	require.Equal(h, fwdFailCount, forwardFails,
 		"num of forward fails mismatch")
 	require.Equal(h, settleCount, settles, "num of settles mismatch")
+	require.Equal(h, linkFailCount, linkFails, "num of link fails mismatch")
 
 	return events
 }
