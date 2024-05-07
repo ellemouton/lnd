@@ -225,8 +225,21 @@ func newRoute(sourceVertex route.Vertex,
 			// As this is the last hop, we'll use the specified
 			// final CLTV delta value instead of the value from the
 			// last link in the route.
-			totalTimeLock += uint32(finalHop.cltvDelta)
-			outgoingTimeLock = totalTimeLock
+			outgoingTimeLock = totalTimeLock +
+				uint32(finalHop.cltvDelta)
+
+			// Only include the final hop CLTV delta in the total
+			// time lock value if this is not a route to a blinded
+			// path. For blinded paths, the total time-lock from the
+			// whole path will be deduced from the introduction
+			// node's cltv delta. The exception is for the case
+			// where the final hop is the blinded path introduction
+			// node.
+			if blindedPath == nil ||
+				len(blindedPath.BlindedHops) == 1 {
+
+				totalTimeLock += uint32(finalHop.cltvDelta)
+			}
 
 			// Attach any custom records to the final hop if the
 			// receiver supports TLV.
