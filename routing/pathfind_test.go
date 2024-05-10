@@ -3551,11 +3551,16 @@ func TestBlindedRouteConstruction(t *testing.T) {
 
 	require.NoError(t, blindedPayment.Validate())
 
+	blindedPathSet, err := NewBlindedPaymentPathSet(
+		[]*BlindedPayment{blindedPayment},
+	)
+	require.NoError(t, err)
+
 	// Generate route hints from our blinded payment and a set of edges
 	// that make up the graph we'll give to route construction. The hints
 	// map is keyed by source node, so we can retrieve our blinded edges
 	// accordingly.
-	blindedEdges := blindedPayment.toRouteHints()
+	blindedEdges := blindedPathSet.toRouteHints()
 	carolDaveEdge := blindedEdges[carolVertex][0]
 	daveEveEdge := blindedEdges[daveBlindedVertex][0]
 
@@ -3654,7 +3659,7 @@ func TestBlindedRouteConstruction(t *testing.T) {
 
 	route, err := newRoute(
 		sourceVertex, edges, currentHeight, finalHopParams,
-		blindedPath,
+		blindedPathSet,
 	)
 	require.NoError(t, err)
 	require.Equal(t, expectedRoute, route)
@@ -3680,31 +3685,34 @@ func TestLastHopPayloadSize(t *testing.T) {
 		ampOptions            = &AMPOptions{}
 		amtToForward          = lnwire.MilliSatoshi(10000)
 		finalHopExpiry  int32 = 144
-
-		oneHopBlindedPayment = &BlindedPayment{
-			BlindedPath: &sphinx.BlindedPath{
-				BlindedHops: []*sphinx.BlindedHopInfo{
-					{
-						CipherText: encrypedData,
-					},
-				},
-				BlindingPoint: blindedPoint,
-			},
-		}
-		twoHopBlindedPayment = &BlindedPayment{
-			BlindedPath: &sphinx.BlindedPath{
-				BlindedHops: []*sphinx.BlindedHopInfo{
-					{
-						CipherText: encrypedData,
-					},
-					{
-						CipherText: encrypedData,
-					},
-				},
-				BlindingPoint: blindedPoint,
-			},
-		}
 	)
+
+	oneHopBlindedPayment, err := NewBlindedPaymentPathSet(
+		[]*BlindedPayment{{BlindedPath: &sphinx.BlindedPath{
+			BlindedHops: []*sphinx.BlindedHopInfo{
+				{
+					CipherText: encrypedData,
+				},
+			},
+			BlindingPoint: blindedPoint,
+		}}},
+	)
+	require.NoError(t, err)
+
+	twoHopBlindedPayment, err := NewBlindedPaymentPathSet(
+		[]*BlindedPayment{{BlindedPath: &sphinx.BlindedPath{
+			BlindedHops: []*sphinx.BlindedHopInfo{
+				{
+					CipherText: encrypedData,
+				},
+				{
+					CipherText: encrypedData,
+				},
+			},
+			BlindingPoint: blindedPoint,
+		}}},
+	)
+	require.NoError(t, err)
 
 	testCases := []struct {
 		name           string
@@ -3743,7 +3751,7 @@ func TestLastHopPayloadSize(t *testing.T) {
 		{
 			name: "Blinded final hop introduction point",
 			restrictions: &RestrictParams{
-				BlindedPayment: oneHopBlindedPayment,
+				BlindedPathPaymentSet: oneHopBlindedPayment,
 			},
 			amount:         amtToForward,
 			finalHopExpiry: finalHopExpiry,
@@ -3751,7 +3759,7 @@ func TestLastHopPayloadSize(t *testing.T) {
 		{
 			name: "Blinded final hop of a two hop payment",
 			restrictions: &RestrictParams{
-				BlindedPayment: twoHopBlindedPayment,
+				BlindedPathPaymentSet: twoHopBlindedPayment,
 			},
 			amount:         amtToForward,
 			finalHopExpiry: finalHopExpiry,
@@ -3779,12 +3787,14 @@ func TestLastHopPayloadSize(t *testing.T) {
 			}
 
 			var finalHop route.Hop
-			if tc.restrictions.BlindedPayment != nil {
-				blindedPath := tc.restrictions.BlindedPayment.
-					BlindedPath.BlindedHops
-
-				blindedPoint := tc.restrictions.BlindedPayment.
-					BlindedPath.BlindingPoint
+			if tc.restrictions.BlindedPathPaymentSet != nil {
+				paymentPath := tc.restrictions.
+					BlindedPathPaymentSet.
+					LargestLastHopPayloadPath()
+				blindedPath := paymentPath.BlindedPath.
+					BlindedHops
+				blindedPoint := paymentPath.BlindedPath.
+					BlindingPoint
 
 				//nolint:lll
 				finalHop = route.Hop{

@@ -1,6 +1,7 @@
 package models
 
 import (
+	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -61,12 +62,14 @@ type CachedEdgePolicy struct {
 	// ForEachChannel().
 	ToNodeFeatures *lnwire.FeatureVector
 
-	// IsBlindedEdge is true if this policy was obtained from a blinded
+	// BlindedEdgeID is set if this policy was obtained from a blinded
 	// path. We can assume certain properties about the edge its nodes if
 	// it was. For example, since the `option_route_blinding` feature bit
 	// depends on `var_onion_option`, we can assume that all nodes in a
-	// blinded path support TLV onions.
-	IsBlindedEdge bool
+	// blinded path support TLV onions. If it is set, it is the index of the
+	// associated blinded path within a set of possible paths for a
+	// specific payment.
+	BlindedEdgeID fn.Option[int]
 }
 
 // ComputeFee computes the fee to forward an HTLC of `amt` milli-satoshis over

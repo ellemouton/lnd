@@ -7,6 +7,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/channeldb/models"
+	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/stretchr/testify/require"
@@ -88,7 +89,6 @@ func TestBlindedPaymentToHints(t *testing.T) {
 
 		v1  = route.NewVertex(pk1)
 		vb2 = route.NewVertex(pkb2)
-		vb3 = route.NewVertex(pkb3)
 
 		baseFee   uint32 = 1000
 		ppmFee    uint32 = 500
@@ -128,7 +128,12 @@ func TestBlindedPaymentToHints(t *testing.T) {
 		HtlcMaximum:         htlcMax,
 		Features:            features,
 	}
-	require.Nil(t, blindedPayment.toRouteHints())
+	blindedPathSet, err := NewBlindedPaymentPathSet(
+		[]*BlindedPayment{blindedPayment},
+	)
+	require.NoError(t, err)
+
+	require.Nil(t, blindedPathSet.toRouteHints())
 
 	// Populate the blinded payment with hops.
 	blindedPayment.BlindedPath.BlindedHops = []*sphinx.BlindedHopInfo{
@@ -162,7 +167,7 @@ func TestBlindedPaymentToHints(t *testing.T) {
 						return vb2
 					},
 					ToNodeFeatures: features,
-					IsBlindedEdge:  true,
+					BlindedEdgeID:  fn.Some[int](0),
 				},
 				blindingPoint: blindedPoint,
 				cipherText:    cipherText,
@@ -172,17 +177,26 @@ func TestBlindedPaymentToHints(t *testing.T) {
 			&BlindedEdge{
 				policy: &models.CachedEdgePolicy{
 					ToNodePubKey: func() route.Vertex {
-						return vb3
+						return route.NewVertex(
+							blindedPathSet.
+								TargetPubKey,
+						)
 					},
 					ToNodeFeatures: features,
-					IsBlindedEdge:  true,
+					BlindedEdgeID:  fn.Some[int](0),
 				},
 				cipherText: cipherText,
 			},
 		},
 	}
 
-	actual := blindedPayment.toRouteHints()
+	actual := blindedPathSet.toRouteHints()
+
+	// Assert that the correct blinded target key gets returned for the
+	// blinded path.
+	realTarget, err := blindedPathSet.GetRealFinalHopPubKey(0)
+	require.NoError(t, err)
+	require.True(t, realTarget.IsEqual(pkb3))
 
 	require.Equal(t, len(expected), len(actual))
 	for vertex, expectedHint := range expected {
