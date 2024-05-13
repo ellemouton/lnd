@@ -51,7 +51,8 @@ func newNodeEdgeUnifier(sourceNode, toNode route.Vertex, useInboundFees bool,
 // incorrectly specified.
 func (u *nodeEdgeUnifier) addPolicy(fromNode route.Vertex,
 	edge *models.CachedEdgePolicy, inboundFee models.InboundFee,
-	capacity btcutil.Amount, hopPayloadSizeFn PayloadSizeFunc) {
+	capacity btcutil.Amount, hopPayloadSizeFn PayloadSizeFunc,
+	blindedPayment *BlindedPayment) {
 
 	localChan := fromNode == u.sourceNode
 
@@ -91,6 +92,7 @@ func (u *nodeEdgeUnifier) addPolicy(fromNode route.Vertex,
 		capacity:         capacity,
 		hopPayloadSizeFn: hopPayloadSizeFn,
 		inboundFees:      inboundFee,
+		blindedPayment:   blindedPayment,
 	})
 }
 
@@ -115,7 +117,7 @@ func (u *nodeEdgeUnifier) addGraphPolicies(g routingGraph) error {
 
 		u.addPolicy(
 			channel.OtherNode, channel.InPolicy, inboundFee,
-			channel.Capacity, defaultHopPayloadSize,
+			channel.Capacity, defaultHopPayloadSize, nil,
 		)
 
 		return nil
@@ -137,6 +139,10 @@ type unifiedEdge struct {
 	// is needed because hops of a blinded path differ in their payload
 	// structure compared to cleartext hops.
 	hopPayloadSizeFn PayloadSizeFunc
+
+	// blindedPayment if set, is the BlindedPayment that this edge was
+	// derived from originally.
+	blindedPayment *BlindedPayment
 }
 
 // amtInRange checks whether an amount falls within the valid range for a

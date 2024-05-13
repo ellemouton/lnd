@@ -29,6 +29,11 @@ type AdditionalEdge interface {
 
 	// EdgePolicy returns the policy of the additional edge.
 	EdgePolicy() *models.CachedEdgePolicy
+
+	// BlindedPayment returns the BlindedPayment that this additional edge
+	// info was derived from. It will return nil if this edge was not
+	// derived from a blinded route.
+	BlindedPayment() *BlindedPayment
 }
 
 // PayloadSizeFunc defines the interface for the payload size function.
@@ -45,6 +50,12 @@ type PrivateEdge struct {
 // EdgePolicy return the policy of the PrivateEdge.
 func (p *PrivateEdge) EdgePolicy() *models.CachedEdgePolicy {
 	return p.policy
+}
+
+// BlindedPayment is a no-op for a PrivateEdge since it is not associated with
+// a blinded payment. This will thus return nil.
+func (p *PrivateEdge) BlindedPayment() *BlindedPayment {
+	return nil
 }
 
 // IntermediatePayloadSize returns the sphinx payload size defined in BOLT04 if
@@ -103,6 +114,12 @@ func NewBlindedEdge(policy *models.CachedEdgePolicy, payment *BlindedPayment,
 // EdgePolicy return the policy of the BlindedEdge.
 func (b *BlindedEdge) EdgePolicy() *models.CachedEdgePolicy {
 	return b.policy
+}
+
+// BlindedPayment returns the blinded payment that this edge is associated
+// with.
+func (b *BlindedEdge) BlindedPayment() *BlindedPayment {
+	return b.blindedPayment
 }
 
 // IntermediatePayloadSize returns the sphinx payload size defined in BOLT04 if

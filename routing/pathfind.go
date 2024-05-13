@@ -151,6 +151,8 @@ func newRoute(sourceVertex route.Vertex,
 		// payload for the hop this edge is leading to.
 		edge := pathEdges[i].policy
 
+		isBlindedEdge := pathEdges[i].blindedPayment != nil
+
 		// We'll calculate the amounts, timelocks, and fees for each hop
 		// in the route. The base case is the final hop which includes
 		// their amount and timelocks. These values will accumulate
@@ -167,11 +169,33 @@ func newRoute(sourceVertex route.Vertex,
 			metadata            []byte
 		)
 
+		// isTLVOptionBit returns true if the given feature bit is
+		// either one of the required or optional TLV Onion feature
+		// bits.
+		isTLVOptionBit := func(feature lnwire.FeatureBit) bool {
+			switch feature {
+			case lnwire.TLVOnionPayloadRequired,
+				lnwire.TLVOnionPayloadOptional:
+
+				return true
+			default:
+				return false
+			}
+		}
+
 		// Define a helper function that checks this edge's feature
 		// vector for support for a given feature. We assume at this
 		// point that the feature vectors transitive dependencies have
 		// been validated.
 		supports := func(feature lnwire.FeatureBit) bool {
+			// Since the `option_route_blinding` feature bit depends
+			// on `var_onion_option`, we can assume that all nodes
+			// in a blinded path support TLV onions without this
+			// being explicitly communicated to us.
+			if isBlindedEdge && isTLVOptionBit(feature) {
+				return true
+			}
+
 			// If this edge comes from router hints, the features
 			// could be nil.
 			if edge.ToNodeFeatures == nil {
@@ -1005,6 +1029,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 				inboundFee,
 				fakeHopHintCapacity,
 				reverseEdge.edge.IntermediatePayloadSize,
+				reverseEdge.edge.BlindedPayment(),
 			)
 		}
 
