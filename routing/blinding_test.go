@@ -7,7 +7,6 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/channeldb/models"
-	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/stretchr/testify/require"
@@ -167,10 +166,9 @@ func TestBlindedPaymentToHints(t *testing.T) {
 						return vb2
 					},
 					ToNodeFeatures: features,
-					BlindedEdgeID:  fn.Some[int](0),
 				},
-				blindingPoint: blindedPoint,
-				cipherText:    cipherText,
+				hopIndex:       0,
+				blindedPayment: blindedPayment,
 			},
 		},
 		vb2: {
@@ -183,20 +181,13 @@ func TestBlindedPaymentToHints(t *testing.T) {
 						)
 					},
 					ToNodeFeatures: features,
-					BlindedEdgeID:  fn.Some[int](0),
 				},
-				cipherText: cipherText,
+				hopIndex: 0,
 			},
 		},
 	}
 
 	actual := blindedPathSet.toRouteHints()
-
-	// Assert that the correct blinded target key gets returned for the
-	// blinded path.
-	realTarget, err := blindedPathSet.GetRealFinalHopPubKey(0)
-	require.NoError(t, err)
-	require.True(t, realTarget.IsEqual(pkb3))
 
 	require.Equal(t, len(expected), len(actual))
 	for vertex, expectedHint := range expected {

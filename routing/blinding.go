@@ -7,7 +7,6 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/channeldb/models"
-	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -45,10 +44,6 @@ type BlindedPaymentPathSet struct {
 	// path a single path (the introduction node is the destination node),
 	// then this will just be the introduction node's real public key.
 	TargetPubKey *btcec.PublicKey
-
-	// finalHopMap maps the index of blinded path in the Paths set to the
-	// real blinded pub key of the destination node of that path.
-	finalHopMap map[int]*btcec.PublicKey
 
 	// FinalCLTV is the final hop's expiry delta of any path in the set.
 	// For any multi-hop path, the final CLTV delta should be seen as zero
@@ -133,21 +128,14 @@ func NewBlindedPaymentPathSet(paths []*BlindedPayment) (*BlindedPaymentPathSet,
 		Features:     features,
 		TargetPubKey: targetPub,
 		FinalCLTV:    finalCLTVDelta,
-		finalHopMap:  make(map[int]*btcec.PublicKey),
 	}, nil
 }
 
 func (ps *BlindedPaymentPathSet) toRouteHints() RouteHints {
 	hints := make(RouteHints)
 
-	ps.finalHopMap = make(map[int]*btcec.PublicKey)
-	for pathID, path := range ps.Paths {
-		pathHints, realFinalHop := path.toRouteHints(
-			ps.TargetPubKey, pathID,
-		)
-		fmt.Println("real final: ", realFinalHop)
-
-		ps.finalHopMap[pathID] = realFinalHop
+	for _, path := range ps.Paths {
+		pathHints := path.toRouteHints(ps.TargetPubKey)
 
 		for from, edges := range pathHints {
 			hints[from] = append(hints[from], edges...)
@@ -176,18 +164,6 @@ func (ps *BlindedPaymentPathSet) LargestLastHopPayloadPath() *BlindedPayment {
 	}
 
 	return largestPath
-}
-
-func (ps *BlindedPaymentPathSet) GetRealFinalHopPubKey(
-	id int) (*btcec.PublicKey, error) {
-
-	key, ok := ps.finalHopMap[id]
-	if !ok {
-		return nil, fmt.Errorf("no key mapping found for blinded "+
-			"path %d", id)
-	}
-
-	return key, nil
 }
 
 // BlindedPayment provides the path and payment parameters required to send a
@@ -253,21 +229,19 @@ func (b *BlindedPayment) Validate() error {
 // the case of multiple blinded hops, CLTV delta is fully accounted for in the
 // hints (both for intermediate hops and the final_cltv_delta for the receiving
 // node).
-func (b *BlindedPayment) toRouteHints(pseudoTarget *btcec.PublicKey,
-	pathIdentifier int) (RouteHints, *btcec.PublicKey) {
+func (b *BlindedPayment) toRouteHints(
+	pseudoTarget *btcec.PublicKey) RouteHints {
 
 	// If we just have a single hop in our blinded route, it just contains
 	// an introduction node (this is a valid path according to the spec).
 	// Since we have the un-blinded node ID for the introduction node, we
 	// don't need to add any route hints.
 	if len(b.BlindedPath.BlindedHops) == 1 {
-		return nil, b.BlindedPath.IntroductionPoint
+		return nil
 	}
 
 	hintCount := len(b.BlindedPath.BlindedHops) - 1
-	hints := make(
-		RouteHints, hintCount,
-	)
+	hints := make(RouteHints, hintCount)
 
 	// Start at the unblinded introduction node, because our pathfinding
 	// will be able to locate this point in the graph.
@@ -301,15 +275,13 @@ func (b *BlindedPayment) toRouteHints(pseudoTarget *btcec.PublicKey,
 			)
 		},
 		ToNodeFeatures: features,
-		BlindedEdgeID:  fn.Some[int](pathIdentifier),
 	}
 
 	lastEdge := &BlindedEdge{
-		policy:        edgePolicy,
-		cipherText:    b.BlindedPath.BlindedHops[0].CipherText,
-		blindingPoint: b.BlindedPath.BlindingPoint,
+		policy:         edgePolicy,
+		hopIndex:       0,
+		blindedPayment: b,
 	}
-	lastEdgePubKey := firstBlindedHop
 	hints[fromNode] = []AdditionalEdge{lastEdge}
 
 	// Start at an offset of 1 because the first node in our blinded hops
@@ -335,16 +307,13 @@ func (b *BlindedPayment) toRouteHints(pseudoTarget *btcec.PublicKey,
 				return nextNode
 			},
 			ToNodeFeatures: features,
-			BlindedEdgeID:  fn.Some[int](pathIdentifier),
 		}
 
 		lastEdge = &BlindedEdge{
-			policy: edgePolicy,
-			cipherText: b.BlindedPath.BlindedHops[i].
-				CipherText,
+			policy:         edgePolicy,
+			hopIndex:       i,
+			blindedPayment: b,
 		}
-		lastEdgePubKey = b.BlindedPath.BlindedHops[nextHopIdx].
-			BlindedNodePub
 
 		hints[fromNode] = []AdditionalEdge{lastEdge}
 	}
@@ -358,5 +327,5 @@ func (b *BlindedPayment) toRouteHints(pseudoTarget *btcec.PublicKey,
 	// Then override the final hint with this updated edge.
 	hints[fromNode] = []AdditionalEdge{lastEdge}
 
-	return hints, lastEdgePubKey
+	return hints
 }

@@ -3299,11 +3299,12 @@ func getRouteUnifiers(source route.Vertex, hops []route.Vertex,
 
 		// Add fee for this hop.
 		if !localChan {
-			runningAmt += edge.policy.ComputeFee(runningAmt)
+			runningAmt += edge.edgeInfo.policy.
+				ComputeFee(runningAmt)
 		}
 
 		log.Tracef("Select channel %v at position %v",
-			edge.policy.ChannelID, i)
+			edge.edgeInfo.policy.ChannelID, i)
 
 		unifiers[i] = edgeUnifier
 	}
@@ -3339,9 +3340,8 @@ func getPathEdges(source route.Vertex, receiverAmt lnwire.MilliSatoshi,
 
 		if i > 0 {
 			// Decrease the amount to send while going forward.
-			receiverAmt -= edge.policy.ComputeFeeFromIncoming(
-				receiverAmt,
-			)
+			receiverAmt -= edge.edgeInfo.policy.
+				ComputeFeeFromIncoming(receiverAmt)
 		}
 
 		pathEdges = append(pathEdges, edge)

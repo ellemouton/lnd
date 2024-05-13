@@ -3,7 +3,6 @@ package routing
 import (
 	"errors"
 
-	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -64,9 +63,9 @@ func (p *PrivateEdge) IntermediatePayloadSize(amount lnwire.MilliSatoshi,
 // BlindedEdge implements the AdditionalEdge interface. Blinded hops are viewed
 // as additional edges because they are appened at the end of a normal route.
 type BlindedEdge struct {
-	policy        *models.CachedEdgePolicy
-	cipherText    []byte
-	blindingPoint *btcec.PublicKey
+	policy         *models.CachedEdgePolicy
+	blindedPayment *BlindedPayment
+	hopIndex       int
 }
 
 // EdgePolicy return the policy of the BlindedEdge.
@@ -80,9 +79,10 @@ func (b *BlindedEdge) IntermediatePayloadSize(_ lnwire.MilliSatoshi, _ uint32,
 	_ bool, _ uint64) uint64 {
 
 	hop := route.Hop{
-		BlindingPoint: b.blindingPoint,
+		BlindingPoint: b.blindedPayment.BlindedPath.BlindingPoint,
 		LegacyPayload: false,
-		EncryptedData: b.cipherText,
+		EncryptedData: b.blindedPayment.BlindedPath.
+			BlindedHops[b.hopIndex].CipherText,
 	}
 
 	// For blinded paths the next chanID is in the encrypted data tlv.

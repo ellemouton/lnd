@@ -144,21 +144,18 @@ func newRoute(sourceVertex route.Vertex, pathEdges []*unifiedEdge,
 		// sender of the payment.
 		nextIncomingAmount lnwire.MilliSatoshi
 
-		blindedPathIndex int
+		blindedPayment *BlindedPayment
 	)
 
 	pathLength := len(pathEdges)
 	for i := pathLength - 1; i >= 0; i-- {
 		// Now we'll start to calculate the items within the per-hop
 		// payload for the hop this edge is leading to.
-		edge := pathEdges[i].policy
+		edge := pathEdges[i].edgeInfo.policy
 
-		// We need to know which blinded path was used for this route
-		// so that we switch out the pseudo destination pub key with the
-		// correct destination blinded pub key.
-		edge.BlindedEdgeID.WhenSome(func(i int) {
-			blindedPathIndex = i
-		})
+		if blindedPayment == nil {
+			blindedPayment = pathEdges[i].edgeInfo.blindedPayment
+		}
 
 		// We'll calculate the amounts, timelocks, and fees for each hop
 		// in the route. The base case is the final hop which includes
@@ -199,9 +196,7 @@ func newRoute(sourceVertex route.Vertex, pathEdges []*unifiedEdge,
 			// on `var_onion_option`, we can assume that all nodes
 			// in a blinded path support TLV onions without this
 			// being explicitly communicated to us.
-			if edge.BlindedEdgeID.IsSome() &&
-				isTLVOptionBit(feature) {
-
+			if blindedPayment != nil && isTLVOptionBit(feature) {
 				return true
 			}
 
@@ -286,9 +281,8 @@ func newRoute(sourceVertex route.Vertex, pathEdges []*unifiedEdge,
 			// and its policy for the outgoing channel. This policy
 			// is stored as part of the incoming channel of
 			// the next hop.
-			outboundFee := pathEdges[i+1].policy.ComputeFee(
-				amtToForward,
-			)
+			outboundFee := pathEdges[i+1].edgeInfo.policy.
+				ComputeFee(amtToForward)
 
 			inboundFee := pathEdges[i].inboundFees.CalcFee(
 				amtToForward + outboundFee,
@@ -304,7 +298,7 @@ func newRoute(sourceVertex route.Vertex, pathEdges []*unifiedEdge,
 			// increment the total timelock incurred by this hop.
 			outgoingTimeLock = totalTimeLock
 			totalTimeLock += uint32(
-				pathEdges[i+1].policy.TimeLockDelta,
+				pathEdges[i+1].edgeInfo.policy.TimeLockDelta,
 			)
 		}
 
@@ -335,12 +329,19 @@ func newRoute(sourceVertex route.Vertex, pathEdges []*unifiedEdge,
 	// additional data to the route that is required for blinded forwarding.
 	// We do another pass on our edges to append this data.
 	if blindedPathsInfo != nil {
+		if blindedPayment == nil {
+			blindedPayment = blindedPathsInfo.Paths[0]
+		}
+
+		numHops := len(blindedPayment.BlindedPath.BlindedHops)
+		realFinal := blindedPayment.BlindedPath.BlindedHops[numHops-1].
+			BlindedNodePub
+
 		var (
 			inBlindedRoute bool
 			dataIndex      = 0
 
-			blindedPath = blindedPathsInfo.Paths[blindedPathIndex].
-					BlindedPath
+			blindedPath = blindedPayment.BlindedPath
 
 			// Get the correct intro node for the blinded path that
 			// was chosen.
@@ -372,15 +373,7 @@ func newRoute(sourceVertex route.Vertex, pathEdges []*unifiedEdge,
 				hop.AmtToForward = 0
 				hop.OutgoingTimeLock = 0
 			} else {
-				// And for the final hop, swap out the
-				// destination node pub key for the correct one.
-				key, err := blindedPathsInfo.
-					GetRealFinalHopPubKey(blindedPathIndex)
-				if err != nil {
-					return nil, err
-				}
-
-				hop.PubKeyBytes = route.NewVertex(key)
+				hop.PubKeyBytes = route.NewVertex(realFinal)
 			}
 
 			dataIndex++
@@ -828,9 +821,9 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 
 		if fromVertex != source {
 			outboundFee = int64(
-				edge.policy.ComputeFee(amountToSend),
+				edge.edgeInfo.policy.ComputeFee(amountToSend),
 			)
-			timeLockDelta = edge.policy.TimeLockDelta
+			timeLockDelta = edge.edgeInfo.policy.TimeLockDelta
 		}
 
 		incomingCltv := toNodeDist.incomingCltv + int32(timeLockDelta)
@@ -945,7 +938,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 			payloadSize = edge.hopPayloadSizeFn(
 				amountToSend,
 				uint32(toNodeDist.incomingCltv),
-				!supportsTlv, edge.policy.ChannelID,
+				!supportsTlv, edge.edgeInfo.policy.ChannelID,
 			)
 		}
 
@@ -1047,6 +1040,12 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 			// bolt11 invoices currently.
 			inboundFee := models.InboundFee{}
 
+			var blindedPayment *BlindedPayment
+			blindedEdge, ok := reverseEdge.edge.(*BlindedEdge)
+			if ok {
+				blindedPayment = blindedEdge.blindedPayment
+			}
+
 			// Hop hints don't contain a capacity. We set one here,
 			// since a capacity is needed for probability
 			// calculations. We set a high capacity to act as if
@@ -1061,6 +1060,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 				inboundFee,
 				fakeHopHintCapacity,
 				reverseEdge.edge.IntermediatePayloadSize,
+				blindedPayment,
 			)
 		}
 
@@ -1143,7 +1143,8 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 		pathEdges = append(pathEdges, currentNodeWithDist.nextHop)
 
 		// Advance current node.
-		currentNode = currentNodeWithDist.nextHop.policy.ToNodePubKey()
+		currentNode = currentNodeWithDist.nextHop.edgeInfo.policy.
+			ToNodePubKey()
 
 		// Check stop condition at the end of this loop. This prevents
 		// breaking out too soon for self-payments that have target set
@@ -1164,7 +1165,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 	// route construction does not care where the features are actually
 	// taken from. In the future we may wish to do route construction within
 	// findPath, and avoid using ChannelEdgePolicy altogether.
-	pathEdges[len(pathEdges)-1].policy.ToNodeFeatures = features
+	pathEdges[len(pathEdges)-1].edgeInfo.policy.ToNodeFeatures = features
 
 	log.Debugf("Found route: probability=%v, hops=%v, fee=%v",
 		distance[source].probability, len(pathEdges),

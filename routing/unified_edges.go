@@ -51,7 +51,8 @@ func newNodeEdgeUnifier(sourceNode, toNode route.Vertex, useInboundFees bool,
 // incorrectly specified.
 func (u *nodeEdgeUnifier) addPolicy(fromNode route.Vertex,
 	edge *models.CachedEdgePolicy, inboundFee models.InboundFee,
-	capacity btcutil.Amount, hopPayloadSizeFn PayloadSizeFunc) {
+	capacity btcutil.Amount, hopPayloadSizeFn PayloadSizeFunc,
+	blindedPayment *BlindedPayment) {
 
 	localChan := fromNode == u.sourceNode
 
@@ -87,7 +88,10 @@ func (u *nodeEdgeUnifier) addPolicy(fromNode route.Vertex,
 	}
 
 	unifier.edges = append(unifier.edges, &unifiedEdge{
-		policy:           edge,
+		edgeInfo: &edgeInfo{
+			policy:         edge,
+			blindedPayment: blindedPayment,
+		},
 		capacity:         capacity,
 		hopPayloadSizeFn: hopPayloadSizeFn,
 		inboundFees:      inboundFee,
@@ -115,7 +119,7 @@ func (u *nodeEdgeUnifier) addGraphPolicies(g routingGraph) error {
 
 		u.addPolicy(
 			channel.OtherNode, channel.InPolicy, inboundFee,
-			channel.Capacity, defaultHopPayloadSize,
+			channel.Capacity, defaultHopPayloadSize, nil,
 		)
 
 		return nil
@@ -125,10 +129,15 @@ func (u *nodeEdgeUnifier) addGraphPolicies(g routingGraph) error {
 	return g.forEachNodeChannel(u.toNode, cb)
 }
 
+type edgeInfo struct {
+	policy         *models.CachedEdgePolicy
+	blindedPayment *BlindedPayment
+}
+
 // unifiedEdge is the individual channel data that is kept inside an edgeUnifier
 // object.
 type unifiedEdge struct {
-	policy      *models.CachedEdgePolicy
+	edgeInfo    *edgeInfo
 	capacity    btcutil.Amount
 	inboundFees models.InboundFee
 
@@ -152,19 +161,21 @@ func (u *unifiedEdge) amtInRange(amt lnwire.MilliSatoshi) bool {
 		return false
 	}
 
+	policy := u.edgeInfo.policy
+
 	// Skip channels for which this htlc is too large.
-	if u.policy.MessageFlags.HasMaxHtlc() &&
-		amt > u.policy.MaxHTLC {
+	if policy.MessageFlags.HasMaxHtlc() &&
+		amt > policy.MaxHTLC {
 
 		log.Tracef("Exceeds policy's MaxHTLC: amt=%v, MaxHTLC=%v",
-			amt, u.policy.MaxHTLC)
+			amt, policy.MaxHTLC)
 		return false
 	}
 
 	// Skip channels for which this htlc is too small.
-	if amt < u.policy.MinHTLC {
+	if amt < policy.MinHTLC {
 		log.Tracef("below policy's MinHTLC: amt=%v, MinHTLC=%v",
-			amt, u.policy.MinHTLC)
+			amt, policy.MinHTLC)
 		return false
 	}
 
@@ -222,6 +233,8 @@ func (u *edgeUnifier) getEdgeLocal(netAmtReceived lnwire.MilliSatoshi,
 	)
 
 	for _, edge := range u.edges {
+		policy := edge.edgeInfo.policy
+
 		// Calculate the inbound fee charged at the receiving node.
 		inboundFee := calcCappedInboundFee(
 			edge, netAmtReceived, nextOutFee,
@@ -234,7 +247,7 @@ func (u *edgeUnifier) getEdgeLocal(netAmtReceived lnwire.MilliSatoshi,
 		// Check valid amount range for the channel.
 		if !edge.amtInRange(amt) {
 			log.Debugf("Amount %v not in range for edge %v",
-				netAmtReceived, edge.policy.ChannelID)
+				netAmtReceived, policy.ChannelID)
 
 			continue
 		}
@@ -251,11 +264,11 @@ func (u *edgeUnifier) getEdgeLocal(netAmtReceived lnwire.MilliSatoshi,
 		// channel. The bandwidth hint is expected to be
 		// available.
 		bandwidth, ok := bandwidthHints.availableChanBandwidth(
-			edge.policy.ChannelID, amt,
+			policy.ChannelID, amt,
 		)
 		if !ok {
 			log.Debugf("Cannot get bandwidth for edge %v, use max "+
-				"instead", edge.policy.ChannelID)
+				"instead", policy.ChannelID)
 			bandwidth = lnwire.MaxMilliSatoshi
 		}
 
@@ -272,7 +285,7 @@ func (u *edgeUnifier) getEdgeLocal(netAmtReceived lnwire.MilliSatoshi,
 		// Skip channels that can't carry the payment.
 		if amt > bandwidth {
 			log.Debugf("Skipped edge %v: not enough bandwidth, "+
-				"bandwidth=%v, amt=%v", edge.policy.ChannelID,
+				"bandwidth=%v, amt=%v", policy.ChannelID,
 				bandwidth, amt)
 
 			continue
@@ -294,7 +307,7 @@ func (u *edgeUnifier) getEdgeLocal(netAmtReceived lnwire.MilliSatoshi,
 
 		// Update best edge.
 		bestEdge = &unifiedEdge{
-			policy:           edge.policy,
+			edgeInfo:         edge.edgeInfo,
 			capacity:         edge.capacity,
 			hopPayloadSizeFn: edge.hopPayloadSizeFn,
 			inboundFees:      edge.inboundFees,
@@ -320,6 +333,8 @@ func (u *edgeUnifier) getEdgeNetwork(netAmtReceived lnwire.MilliSatoshi,
 	)
 
 	for _, edge := range u.edges {
+		policy := edge.edgeInfo.policy
+
 		// Calculate the inbound fee charged at the receiving node.
 		inboundFee := calcCappedInboundFee(
 			edge, netAmtReceived, nextOutFee,
@@ -332,38 +347,38 @@ func (u *edgeUnifier) getEdgeNetwork(netAmtReceived lnwire.MilliSatoshi,
 		// Check valid amount range for the channel.
 		if !edge.amtInRange(amt) {
 			log.Debugf("Amount %v not in range for edge %v",
-				amt, edge.policy.ChannelID)
+				amt, policy.ChannelID)
 			continue
 		}
 
 		// For network channels, skip the disabled ones.
-		edgeFlags := edge.policy.ChannelFlags
+		edgeFlags := policy.ChannelFlags
 		isDisabled := edgeFlags&lnwire.ChanUpdateDisabled != 0
 		if isDisabled {
 			log.Debugf("Skipped edge %v due to it being disabled",
-				edge.policy.ChannelID)
+				policy.ChannelID)
 			continue
 		}
 
 		// Track the maximal capacity for usable channels. If we don't
 		// know the capacity, we fall back to MaxHTLC.
 		capMsat := lnwire.NewMSatFromSatoshis(edge.capacity)
-		if capMsat == 0 && edge.policy.MessageFlags.HasMaxHtlc() {
+		if capMsat == 0 && policy.MessageFlags.HasMaxHtlc() {
 			log.Tracef("No capacity available for channel %v, "+
 				"using MaxHtlcMsat (%v) as a fallback.",
-				edge.policy.ChannelID, edge.policy.MaxHTLC)
+				policy.ChannelID, policy.MaxHTLC)
 
-			capMsat = edge.policy.MaxHTLC
+			capMsat = policy.MaxHTLC
 		}
 		maxCapMsat = lntypes.Max(capMsat, maxCapMsat)
 
 		// Track the maximum time lock of all channels that are
 		// candidate for non-strict forwarding at the routing node.
 		maxTimelock = lntypes.Max(
-			maxTimelock, edge.policy.TimeLockDelta,
+			maxTimelock, policy.TimeLockDelta,
 		)
 
-		outboundFee := int64(edge.policy.ComputeFee(amt))
+		outboundFee := int64(policy.ComputeFee(amt))
 		fee := outboundFee + inboundFee
 
 		// Use the policy that results in the highest fee for this
@@ -371,14 +386,14 @@ func (u *edgeUnifier) getEdgeNetwork(netAmtReceived lnwire.MilliSatoshi,
 		if fee < maxFee {
 			log.Debugf("Skipped edge %v due to it produces less "+
 				"fee: fee=%v, maxFee=%v",
-				edge.policy.ChannelID, fee, maxFee)
+				policy.ChannelID, fee, maxFee)
 
 			continue
 		}
 		maxFee = fee
 
 		bestPolicy = &unifiedEdge{
-			policy:      edge.policy,
+			edgeInfo:    edge.edgeInfo,
 			inboundFees: edge.inboundFees,
 		}
 
@@ -404,12 +419,15 @@ func (u *edgeUnifier) getEdgeNetwork(netAmtReceived lnwire.MilliSatoshi,
 	// get forwarded. Because we penalize pair-wise, there won't be a second
 	// chance for this node pair. But this is all only needed for nodes that
 	// have distinct policies for channels to the same peer.
-	policyCopy := *bestPolicy.policy
+	policyCopy := *bestPolicy.edgeInfo.policy
 	modifiedEdge := unifiedEdge{
-		policy:      &policyCopy,
+		edgeInfo: &edgeInfo{
+			policy:         &policyCopy,
+			blindedPayment: bestPolicy.edgeInfo.blindedPayment,
+		},
 		inboundFees: bestPolicy.inboundFees,
 	}
-	modifiedEdge.policy.TimeLockDelta = maxTimelock
+	modifiedEdge.edgeInfo.policy.TimeLockDelta = maxTimelock
 	modifiedEdge.capacity = maxCapMsat.ToSatoshis()
 	modifiedEdge.hopPayloadSizeFn = hopPayloadSizeFn
 
@@ -420,7 +438,7 @@ func (u *edgeUnifier) getEdgeNetwork(netAmtReceived lnwire.MilliSatoshi,
 func (u *edgeUnifier) minAmt() lnwire.MilliSatoshi {
 	min := lnwire.MaxMilliSatoshi
 	for _, edge := range u.edges {
-		min = lntypes.Min(min, edge.policy.MinHTLC)
+		min = lntypes.Min(min, edge.edgeInfo.policy.MinHTLC)
 	}
 
 	return min
