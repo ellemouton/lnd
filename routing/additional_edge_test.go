@@ -54,8 +54,17 @@ func TestIntermediatePayloadSize(t *testing.T) {
 			hop: route.Hop{
 				EncryptedData: []byte{12, 13},
 			},
+			//nolint:lll
 			edge: &BlindedEdge{
-				cipherText: []byte{12, 13},
+				blindedPayment: &BlindedPayment{
+					BlindedPath: &sphinx.BlindedPath{
+						BlindedHops: []*sphinx.BlindedHopInfo{
+							{
+								CipherText: []byte{12, 13},
+							},
+						},
+					},
+				},
 			},
 		},
 		{
@@ -64,9 +73,18 @@ func TestIntermediatePayloadSize(t *testing.T) {
 				EncryptedData: []byte{12, 13},
 				BlindingPoint: blindedPoint,
 			},
+			//nolint:lll
 			edge: &BlindedEdge{
-				cipherText:    []byte{12, 13},
-				blindingPoint: blindedPoint,
+				blindedPayment: &BlindedPayment{
+					BlindedPath: &sphinx.BlindedPath{
+						BlindingPoint: blindedPoint,
+						BlindedHops: []*sphinx.BlindedHopInfo{
+							{
+								CipherText: []byte{12, 13},
+							},
+						},
+					},
+				},
 			},
 		},
 	}
