@@ -1978,6 +1978,7 @@ func NewRouteRequest(source route.Vertex, target *route.Vertex,
 		// Assume that we're starting off with a regular payment.
 		requestHints  = routeHints
 		requestExpiry = finalExpiry
+		err           error
 	)
 
 	if blindedPayment != nil {
@@ -2015,7 +2016,10 @@ func NewRouteRequest(source route.Vertex, target *route.Vertex,
 			requestExpiry = blindedPayment.CltvExpiryDelta
 		}
 
-		requestHints = blindedPayment.toRouteHints()
+		requestHints, err = blindedPayment.toRouteHints()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	requestTarget, err := getTargetNode(target, blindedPayment)
