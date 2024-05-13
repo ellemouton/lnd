@@ -87,13 +87,12 @@ func (u *nodeEdgeUnifier) addPolicy(fromNode route.Vertex,
 		inboundFee = models.InboundFee{}
 	}
 
-	unifier.edges = append(unifier.edges, &unifiedEdge{
-		policy:           edge,
-		capacity:         capacity,
-		hopPayloadSizeFn: hopPayloadSizeFn,
-		inboundFees:      inboundFee,
-		blindedPayment:   blindedPayment,
-	})
+	unifier.edges = append(unifier.edges,
+		newUnifiedEdge(
+			edge, capacity, inboundFee, hopPayloadSizeFn,
+			blindedPayment,
+		),
+	)
 }
 
 // addGraphPolicies adds all policies that are known for the toNode in the
@@ -143,6 +142,19 @@ type unifiedEdge struct {
 	// blindedPayment if set, is the BlindedPayment that this edge was
 	// derived from originally.
 	blindedPayment *BlindedPayment
+}
+
+func newUnifiedEdge(policy *models.CachedEdgePolicy, capacity btcutil.Amount,
+	inboundFees models.InboundFee, hopPayloadSizeFn PayloadSizeFunc,
+	blindedPayment *BlindedPayment) *unifiedEdge {
+
+	return &unifiedEdge{
+		policy:           policy,
+		capacity:         capacity,
+		inboundFees:      inboundFees,
+		hopPayloadSizeFn: hopPayloadSizeFn,
+		blindedPayment:   blindedPayment,
+	}
 }
 
 // amtInRange checks whether an amount falls within the valid range for a
@@ -299,12 +311,10 @@ func (u *edgeUnifier) getEdgeLocal(netAmtReceived lnwire.MilliSatoshi,
 		maxBandwidth = bandwidth
 
 		// Update best edge.
-		bestEdge = &unifiedEdge{
-			policy:           edge.policy,
-			capacity:         edge.capacity,
-			hopPayloadSizeFn: edge.hopPayloadSizeFn,
-			inboundFees:      edge.inboundFees,
-		}
+		bestEdge = newUnifiedEdge(
+			edge.policy, edge.capacity, edge.inboundFees,
+			edge.hopPayloadSizeFn, edge.blindedPayment,
+		)
 	}
 
 	return bestEdge
@@ -383,10 +393,10 @@ func (u *edgeUnifier) getEdgeNetwork(netAmtReceived lnwire.MilliSatoshi,
 		}
 		maxFee = fee
 
-		bestPolicy = &unifiedEdge{
-			policy:      edge.policy,
-			inboundFees: edge.inboundFees,
-		}
+		bestPolicy = newUnifiedEdge(
+			edge.policy, 0, edge.inboundFees, edge.hopPayloadSizeFn,
+			edge.blindedPayment,
+		)
 
 		// The payload size function for edges to a connected peer is
 		// always the same hence there is not need to find the maximum.
@@ -411,15 +421,14 @@ func (u *edgeUnifier) getEdgeNetwork(netAmtReceived lnwire.MilliSatoshi,
 	// chance for this node pair. But this is all only needed for nodes that
 	// have distinct policies for channels to the same peer.
 	policyCopy := *bestPolicy.policy
-	modifiedEdge := unifiedEdge{
-		policy:      &policyCopy,
-		inboundFees: bestPolicy.inboundFees,
-	}
-	modifiedEdge.policy.TimeLockDelta = maxTimelock
-	modifiedEdge.capacity = maxCapMsat.ToSatoshis()
-	modifiedEdge.hopPayloadSizeFn = hopPayloadSizeFn
 
-	return &modifiedEdge
+	modifiedEdge := newUnifiedEdge(
+		&policyCopy, maxCapMsat.ToSatoshis(), bestPolicy.inboundFees,
+		hopPayloadSizeFn, bestPolicy.blindedPayment,
+	)
+	modifiedEdge.policy.TimeLockDelta = maxTimelock
+
+	return modifiedEdge
 }
 
 // minAmt returns the minimum amount that can be forwarded on this connection.
