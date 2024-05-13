@@ -2017,7 +2017,7 @@ func NewRouteRequest(source route.Vertex, target *route.Vertex,
 			requestExpiry = blindedPayment.CltvExpiryDelta
 		}
 
-		requestHints, err = blindedPayment.toRouteHints()
+		requestHints, err = blindedPayment.toRouteHints(nil)
 		if err != nil {
 			return nil, err
 		}
