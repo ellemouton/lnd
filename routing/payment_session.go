@@ -210,7 +210,7 @@ func newPaymentSession(p *LightningPayment,
 				"and blinded path")
 		}
 
-		edges, err = p.BlindedPayment.toRouteHints()
+		edges, err = p.BlindedPayment.toRouteHints(nil)
 		if err != nil {
 			return nil, err
 		}
