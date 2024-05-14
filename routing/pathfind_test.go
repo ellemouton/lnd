@@ -1354,7 +1354,7 @@ func runPathFindingMaxPayloadRestriction(t *testing.T, useCache bool) {
 			mockedPayloadSize: 1300 - sphinx.LegacyHopDataSize,
 		},
 		{
-			// We increase the enrypted data size by one byte.
+			// We increase the encrypted data size by one byte.
 			name: "route 1 bytes bigger than max " +
 				"payload",
 			mockedPayloadSize: 1300 - sphinx.LegacyHopDataSize + 1,
