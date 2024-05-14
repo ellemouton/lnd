@@ -3469,8 +3469,7 @@ func TestBlindedRouteConstruction(t *testing.T) {
 			BlindedPath:     blindedPath,
 			CltvExpiryDelta: 120,
 			// Set only a base fee for easier calculations.
-			BaseFee:  5000,
-			Features: tlvFeatures,
+			BaseFee: 5000,
 		}
 
 		// Create channel edges for the unblinded portion of our
@@ -3529,8 +3528,14 @@ func TestBlindedRouteConstruction(t *testing.T) {
 	edges := []*unifiedEdge{
 		{policy: aliceBobEdge},
 		{policy: bobCarolEdge},
-		{policy: carolDaveEdge.EdgePolicy()},
-		{policy: daveEveEdge.EdgePolicy()},
+		{
+			policy:         carolDaveEdge.EdgePolicy(),
+			blindedPayment: blindedPayment,
+		},
+		{
+			policy:         daveEveEdge.EdgePolicy(),
+			blindedPayment: blindedPayment,
+		},
 	}
 
 	// Total timelock for the route should include:
