@@ -1378,6 +1378,7 @@ func runPathFindingMaxPayloadRestriction(t *testing.T, useCache bool) {
 			mockedEdge := &mockAdditionalEdge{}
 
 			mockedEdge.On("EdgePolicy").Return(songokuToDogePolicy)
+			mockedEdge.On("BlindedPayment").Return(nil)
 
 			mockedEdge.On("IntermediatePayloadSize",
 				paymentAmt, uint32(finalHtlcExpiry), true,
