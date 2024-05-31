@@ -9,6 +9,53 @@ import (
 	"github.com/lightningnetwork/lnd/routing/route"
 )
 
+type BlindedPathSet map[route.Vertex]*MCRoute
+
+func (p BlindedPathSet) Serialise(w io.Writer) error {
+	for key, rt := range p {
+		// Write 33 byte key.
+		if err := wire.WriteVarBytes(w, 0, key[:]); err != nil {
+			return err
+		}
+
+		// Serialise and write the route.
+		err := rt.Serialize(w)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func DeserialiseBlindedPathSet(r io.Reader) (BlindedPathSet, error) {
+	set := make(BlindedPathSet)
+	for {
+		key, err := wire.ReadVarBytes(r, 0, 66000, "[]byte")
+		switch {
+
+		// We'll silence an EOF when zero bytes remain, meaning the
+		// stream was cleanly encoded.
+		case err == io.EOF:
+			return set, nil
+
+		// Other unexpected errors.
+		case err != nil:
+			return nil, err
+		}
+
+		r, err := DeserializeRoute(r)
+		if err != nil {
+			return nil, err
+		}
+
+		var k route.Vertex
+		copy(k[:], key)
+
+		set[k] = r
+	}
+}
+
 var byteOrder = binary.BigEndian
 
 type MCRoute struct {

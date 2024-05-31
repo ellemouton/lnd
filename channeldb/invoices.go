@@ -1634,6 +1634,7 @@ func deserializeInvoice(r io.Reader) (invpkg.Invoice, error) {
 
 	var i invpkg.Invoice
 	i.AMPState = make(invpkg.AMPInvoiceState)
+	i.BlindedPathMap = make(models.BlindedPathSet)
 	tlvStream, err := tlv.NewStream(
 		// Memo and payreq.
 		tlv.MakePrimitiveRecord(memoType, &i.Memo),
@@ -1794,7 +1795,7 @@ func decodeCircuitKeys(r io.Reader, val interface{}, buf *[8]byte,
 }
 
 func blindedPathRouteEncoder(w io.Writer, val interface{}, buf *[8]byte) error {
-	if v, ok := val.(*map[route.Vertex]*models.MCRoute); ok {
+	if v, ok := val.(*models.BlindedPathSet); ok {
 		for key, route := range *v {
 			// Write 33 byte key.
 			if err := WriteElement(w, key[:]); err != nil {
@@ -1819,7 +1820,7 @@ func blindedPathRouteEncoder(w io.Writer, val interface{}, buf *[8]byte) error {
 func blindedPathRouteDecoder(r io.Reader, val interface{}, buf *[8]byte,
 	l uint64) error {
 
-	if v, ok := val.(*map[route.Vertex]*models.MCRoute); ok {
+	if v, ok := val.(*models.BlindedPathSet); ok {
 
 		for {
 			var key []byte

@@ -11,7 +11,6 @@ import (
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/record"
-	"github.com/lightningnetwork/lnd/routing/route"
 )
 
 const (
@@ -422,7 +421,7 @@ type Invoice struct {
 	// Accepted state or be settled right away.
 	HodlInvoice bool
 
-	BlindedPathMap map[route.Vertex]*models.MCRoute
+	BlindedPathMap models.BlindedPathSet
 }
 
 // HTLCSet returns the set of HTLCs belonging to setID and in the provided
@@ -826,8 +825,9 @@ func CopyInvoice(src *Invoice) (*Invoice, error) {
 		Htlcs: make(
 			map[CircuitKey]*InvoiceHTLC, len(src.Htlcs),
 		),
-		AMPState:    make(map[SetID]InvoiceStateAMP),
-		HodlInvoice: src.HodlInvoice,
+		AMPState:       make(map[SetID]InvoiceStateAMP),
+		BlindedPathMap: make(models.BlindedPathSet),
+		HodlInvoice:    src.HodlInvoice,
 	}
 
 	dest.Terms.Features = src.Terms.Features.Clone()
