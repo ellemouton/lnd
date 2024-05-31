@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -260,13 +261,13 @@ type MissionController interface {
 	// input for future probability estimates. It returns a bool indicating
 	// whether this error is a final error and no further payment attempts
 	// need to be made.
-	ReportPaymentFail(attemptID uint64, rt *route.Route,
+	ReportPaymentFail(attemptID uint64, rt *models.MCRoute,
 		failureSourceIdx *int, failure lnwire.FailureMessage) (
 		*channeldb.FailureReason, error)
 
 	// ReportPaymentSuccess reports a successful payment to mission control
 	// as input for future probability estimates.
-	ReportPaymentSuccess(attemptID uint64, rt *route.Route) error
+	ReportPaymentSuccess(attemptID uint64, rt *models.MCRoute) error
 
 	// GetProbability is expected to return the success probability of a
 	// payment from fromNode along edge.
@@ -1955,10 +1956,10 @@ type RouteRequest struct {
 	// in blinded payment.
 	FinalExpiry uint16
 
-	// BlindedPayment contains an optional blinded path and parameters
-	// used to reach a target node via a blinded path. This field is
+	// BlindedPathSet contains a set of optional blinded paths and
+	// parameters used to reach a target node blinded paths. This field is
 	// mutually exclusive with the Target field.
-	BlindedPayment *BlindedPayment
+	BlindedPathSet *BlindedPaymentPathSet
 }
 
 // RouteHints is an alias type for a set of route hints, with the source node
@@ -1972,25 +1973,18 @@ type RouteHints map[route.Vertex][]AdditionalEdge
 func NewRouteRequest(source route.Vertex, target *route.Vertex,
 	amount lnwire.MilliSatoshi, timePref float64,
 	restrictions *RestrictParams, customRecords record.CustomSet,
-	routeHints RouteHints, blindedPayment *BlindedPayment,
+	routeHints RouteHints, blindedPathSet *BlindedPaymentPathSet,
 	finalExpiry uint16) (*RouteRequest, error) {
 
 	var (
 		// Assume that we're starting off with a regular payment.
 		requestHints  = routeHints
 		requestExpiry = finalExpiry
+		err           error
 	)
 
-	if blindedPayment != nil {
-		if err := blindedPayment.Validate(); err != nil {
-			return nil, fmt.Errorf("invalid blinded payment: %w",
-				err)
-		}
-
-		introVertex := route.NewVertex(
-			blindedPayment.BlindedPath.IntroductionPoint,
-		)
-		if source == introVertex {
+	if blindedPathSet != nil {
+		if blindedPathSet.IsIntroNode(source) {
 			return nil, ErrSelfIntro
 		}
 
@@ -2004,22 +1998,15 @@ func NewRouteRequest(source route.Vertex, target *route.Vertex,
 			return nil, ErrExpiryAndBlinded
 		}
 
-		// If we have a blinded path with 1 hop, the cltv expiry
-		// will not be included in any hop hints (since we're just
-		// sending to the introduction node and need no blinded hints).
-		// In this case, we include it to make sure that the final
-		// cltv delta is accounted for (since it's part of the blinded
-		// delta). In the case of a multi-hop route, we set our final
-		// cltv to zero, since it's going to be accounted for in the
-		// delta for our hints.
-		if len(blindedPayment.BlindedPath.BlindedHops) == 1 {
-			requestExpiry = blindedPayment.CltvExpiryDelta
-		}
+		requestExpiry = blindedPathSet.FinalCLTVDelta()
 
-		requestHints = blindedPayment.toRouteHints()
+		requestHints, err = blindedPathSet.ToRouteHints()
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	requestTarget, err := getTargetNode(target, blindedPayment)
+	requestTarget, err := getTargetNode(target, blindedPathSet)
 	if err != nil {
 		return nil, err
 	}
@@ -2033,15 +2020,15 @@ func NewRouteRequest(source route.Vertex, target *route.Vertex,
 		CustomRecords:  customRecords,
 		RouteHints:     requestHints,
 		FinalExpiry:    requestExpiry,
-		BlindedPayment: blindedPayment,
+		BlindedPathSet: blindedPathSet,
 	}, nil
 }
 
-func getTargetNode(target *route.Vertex, blindedPayment *BlindedPayment) (
-	route.Vertex, error) {
+func getTargetNode(target *route.Vertex,
+	blindedPathSet *BlindedPaymentPathSet) (route.Vertex, error) {
 
 	var (
-		blinded   = blindedPayment != nil
+		blinded   = blindedPathSet != nil
 		targetSet = target != nil
 	)
 
@@ -2050,18 +2037,7 @@ func getTargetNode(target *route.Vertex, blindedPayment *BlindedPayment) (
 		return route.Vertex{}, ErrTargetAndBlinded
 
 	case blinded:
-		// If we're dealing with an edge-case blinded path that just
-		// has an introduction node (first hop expected to be the intro
-		// hop), then we return the unblinded introduction node as our
-		// target.
-		hops := blindedPayment.BlindedPath.BlindedHops
-		if len(hops) == 1 {
-			return route.NewVertex(
-				blindedPayment.BlindedPath.IntroductionPoint,
-			), nil
-		}
-
-		return route.NewVertex(hops[len(hops)-1].BlindedNodePub), nil
+		return route.NewVertex(blindedPathSet.TargetPubKey()), nil
 
 	case targetSet:
 		return *target, nil
@@ -2069,16 +2045,6 @@ func getTargetNode(target *route.Vertex, blindedPayment *BlindedPayment) (
 	default:
 		return route.Vertex{}, ErrNoTarget
 	}
-}
-
-// blindedPath returns the request's blinded path, which is set if the payment
-// is to a blinded route.
-func (r *RouteRequest) blindedPath() *sphinx.BlindedPath {
-	if r.BlindedPayment == nil {
-		return nil
-	}
-
-	return r.BlindedPayment.BlindedPath
 }
 
 // FindRoute attempts to query the ChannelRouter for the optimum path to a
@@ -2137,7 +2103,7 @@ func (r *ChannelRouter) FindRoute(req *RouteRequest) (*route.Route, float64,
 			totalAmt:  req.Amount,
 			cltvDelta: req.FinalExpiry,
 			records:   req.CustomRecords,
-		}, req.blindedPath(),
+		}, req.BlindedPathSet,
 	)
 	if err != nil {
 		return nil, 0, err
@@ -2150,6 +2116,127 @@ func (r *ChannelRouter) FindRoute(req *RouteRequest) (*route.Route, float64,
 	)
 
 	return route, probability, nil
+}
+
+// probabilitySource defines the signature of a function that can be used to
+// query the success probability of sending a given amount between the two
+// given vertices.
+type probabilitySource func(route.Vertex, route.Vertex, lnwire.MilliSatoshi,
+	btcutil.Amount) float64
+
+// BlindedPathRestrictions are a set of constraints to adhere to when
+// choosing a set of blinded paths to this node.
+type BlindedPathRestrictions struct {
+	// MinNumHops is the minimum number of hops to include in a blinded
+	// path. This doesn't include our node, so if the minimum is 1, then
+	// the path will contain at minimum our node along with an introduction
+	// node hop.
+	MinNumHops uint8
+
+	// MaxNumHops is the maximum number of hops to include in a blinded
+	// path. This doesn't include our node, so if the maximum is 1, then
+	// the path will contain our node along with an introduction node hop.
+	MaxNumHops uint8
+
+	// MaxNumPaths is the maximum number of blinded paths to select.
+	MaxNumPaths uint8
+}
+
+// FindBlindedPaths finds a selection of paths to the destination node that can
+// be used in blinded payment paths.
+func (r *ChannelRouter) FindBlindedPaths(destination route.Vertex,
+	amt lnwire.MilliSatoshi, probabilitySrc probabilitySource,
+	restrictions *BlindedPathRestrictions) ([]*route.Route, error) {
+
+	// First, find a set of candidate paths given the destination node and
+	// path length restrictions.
+	paths, err := findBlindedPaths(
+		r.cachedGraph, destination, &blindedPathRestrictions{
+			minNumHops: restrictions.MinNumHops,
+			maxNumHops: restrictions.MaxNumHops,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// routeWithProbability groups a route with the probability of a
+	// payment of the given amount succeeding on that path.
+	type routeWithProbability struct {
+		route       *route.Route
+		probability float64
+	}
+
+	// Iterate over all the candidate paths and determine the success
+	// probability of each path given the data we have about forwards
+	// between any two nodes on a path.
+	routes := make([]*routeWithProbability, 0, len(paths))
+	for _, path := range paths {
+		if len(path) < 1 {
+			return nil, fmt.Errorf("a blinded path must have at " +
+				"least one hop")
+		}
+
+		var (
+			introNode = path[0].vertex
+			prevNode  = introNode
+			hops      = make(
+				[]*route.Hop, 0, len(path)-1,
+			)
+			totalRouteProbability = float64(1)
+		)
+
+		// For each set of hops on the path, get the success probability
+		// of a forward between those two vertices and use that to
+		// update the overall route probability.
+		for j := 1; j < len(path); j++ {
+			probability := probabilitySrc(
+				prevNode, path[j].vertex, amt,
+				path[j-1].edgeCapacity,
+			)
+
+			totalRouteProbability *= probability
+
+			hops = append(hops, &route.Hop{
+				PubKeyBytes: path[j].vertex,
+				ChannelID:   path[j-1].edgePolicy.ChannelID,
+			})
+
+			prevNode = path[j].vertex
+		}
+
+		// Don't bother adding a route if its success probability is
+		// calculated to be 0.
+		if totalRouteProbability == 0 {
+			continue
+		}
+
+		routes = append(routes, &routeWithProbability{
+			route: &route.Route{
+				SourcePubKey: introNode,
+				Hops:         hops,
+			},
+			probability: totalRouteProbability,
+		})
+	}
+
+	// Sort the routes based on probability.
+	sort.Slice(routes, func(i, j int) bool {
+		return routes[i].probability < routes[j].probability
+	})
+
+	// Now just choose the best paths up until the maximum number of allowed
+	// paths.
+	bestRoutes := make([]*route.Route, 0, restrictions.MaxNumPaths)
+	for _, route := range routes {
+		if len(bestRoutes) >= int(restrictions.MaxNumPaths) {
+			break
+		}
+
+		bestRoutes = append(bestRoutes, route.route)
+	}
+
+	return bestRoutes, nil
 }
 
 // generateNewSessionKey generates a new ephemeral private key to be used for a
@@ -2273,8 +2360,14 @@ type LightningPayment struct {
 	// NOTE: This is optional unless required by the payment. When providing
 	// multiple routes, ensure the hop hints within each route are chained
 	// together and sorted in forward order in order to reach the
-	// destination successfully.
+	// destination successfully. This is mutually exclusive to the
+	// BlindedPayment field.
 	RouteHints [][]zpay32.HopHint
+
+	// BlindedPathSet holds the information about a set of blinded paths to
+	// the payment recipient. This is mutually exclusive to the RouteHints
+	// field.
+	BlindedPathSet *BlindedPaymentPathSet
 
 	// OutgoingChannelIDs is the list of channels that are allowed for the
 	// first hop. If nil, any channel may be used.

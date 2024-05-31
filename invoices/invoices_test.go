@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/clock"
@@ -18,6 +19,7 @@ import (
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/record"
+	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/sqldb"
 	"github.com/stretchr/testify/require"
 )
@@ -75,8 +77,9 @@ func randInvoice(value lnwire.MilliSatoshi) (*invpkg.Invoice, error) {
 			Value:           value,
 			Features:        emptyFeatures,
 		},
-		Htlcs:    map[models.CircuitKey]*invpkg.InvoiceHTLC{},
-		AMPState: map[invpkg.SetID]invpkg.InvoiceStateAMP{},
+		Htlcs:          map[models.CircuitKey]*invpkg.InvoiceHTLC{},
+		AMPState:       map[invpkg.SetID]invpkg.InvoiceStateAMP{},
+		BlindedPathMap: map[route.Vertex]*models.MCRoute{},
 	}
 	i.Memo = []byte("memo")
 
@@ -186,6 +189,10 @@ func TestInvoices(t *testing.T) {
 		{
 			name: "AddInvoiceWithHTLCs",
 			test: testAddInvoiceWithHTLCs,
+		},
+		{
+			name: "AddInvoiceWithBlindedPathInfo",
+			test: testAddInvoiceWithBlindedPathSet,
 		},
 		{
 			name: "SetIDIndex",
@@ -2098,6 +2105,71 @@ func testAddInvoiceWithHTLCs(t *testing.T,
 	payHash := testInvoice.Terms.PaymentPreimage.Hash()
 	_, err = db.AddInvoice(context.Background(), testInvoice, payHash)
 	require.Equal(t, invpkg.ErrInvoiceHasHtlcs, err)
+}
+
+func genPubKey(t *testing.T) route.Vertex {
+	pk, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	return route.NewVertex(pk.PubKey())
+}
+
+func testAddInvoiceWithBlindedPathSet(t *testing.T,
+	makeDB func(t *testing.T) invpkg.InvoiceDB) {
+
+	ctx := context.Background()
+
+	t.Parallel()
+	db := makeDB(t)
+
+	testInvoice, err := randInvoice(1000)
+	require.Nil(t, err)
+
+	blindedPath := map[route.Vertex]*models.MCRoute{
+		genPubKey(t): {
+			SourcePubKey: genPubKey(t),
+			TotalAmount:  10000,
+			Hops: []*models.MCHop{
+				{
+					PubKeyBytes:  genPubKey(t),
+					AmtToForward: 60,
+					ChannelID:    40,
+				},
+				{
+					PubKeyBytes:      genPubKey(t),
+					AmtToForward:     50,
+					ChannelID:        10,
+					HasBlindingPoint: true,
+				},
+			},
+		},
+		genPubKey(t): {
+			SourcePubKey: genPubKey(t),
+			TotalAmount:  30,
+			Hops: []*models.MCHop{
+				{
+					PubKeyBytes:      genPubKey(t),
+					AmtToForward:     50,
+					ChannelID:        10,
+					HasBlindingPoint: true,
+				},
+			},
+		},
+	}
+
+	testInvoice.BlindedPathMap = blindedPath
+
+	payHash := testInvoice.Terms.PaymentPreimage.Hash()
+	_, err = db.AddInvoice(context.Background(), testInvoice, payHash)
+	require.NoError(t, err)
+
+	ref := invpkg.InvoiceRefByHash(payHash)
+
+	dbInvoice, err := db.LookupInvoice(ctx, ref)
+	require.Nil(t, err)
+
+	require.Len(t, dbInvoice.BlindedPathMap, 2)
+	require.EqualValues(t, dbInvoice.BlindedPathMap, blindedPath)
 }
 
 // testSetIDIndex asserts that the set id index properly adds new invoices as we

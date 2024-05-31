@@ -30,3 +30,15 @@ func (m *mockAdditionalEdge) EdgePolicy() *models.CachedEdgePolicy {
 
 	return edgePolicy.(*models.CachedEdgePolicy)
 }
+
+// BlindedPayment return the blinded payment of the mockAdditionalEdge.
+func (m *mockAdditionalEdge) BlindedPayment() *BlindedPayment {
+	args := m.Called()
+
+	blindedPayment := args.Get(0)
+	if blindedPayment == nil {
+		return nil
+	}
+
+	return blindedPayment.(*BlindedPayment)
+}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -57,12 +58,11 @@ func TestMissionControlStore(t *testing.T) {
 		t.Fatal("expected no results")
 	}
 
-	testRoute := route.Route{
+	testRoute := models.MCRoute{
 		SourcePubKey: route.Vertex{1},
-		Hops: []*route.Hop{
+		Hops: []*models.MCHop{
 			{
-				PubKeyBytes:   route.Vertex{2},
-				LegacyPayload: true,
+				PubKeyBytes: route.Vertex{2},
 			},
 		},
 	}

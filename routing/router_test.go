@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"math"
 	"math/rand"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -3518,7 +3519,7 @@ func TestSendToRouteSkipTempErrSuccess(t *testing.T) {
 	})
 
 	missionControl.On("ReportPaymentSuccess",
-		mock.Anything, rt,
+		mock.Anything, models.ToMCRoute(rt),
 	).Return(nil)
 
 	// Mock the control tower to return the mocked payment.
@@ -3657,7 +3658,7 @@ func TestSendToRouteSkipTempErrTempFailure(t *testing.T) {
 	// Mock the mission control to return a nil reason from reporting the
 	// attempt failure.
 	missionControl.On("ReportPaymentFail",
-		mock.Anything, rt, mock.Anything, mock.Anything,
+		mock.Anything, models.ToMCRoute(rt), mock.Anything, mock.Anything,
 	).Return(nil, nil)
 
 	// Mock the payment to return nil failure reason.
@@ -3739,7 +3740,7 @@ func TestSendToRouteSkipTempErrPermanentFailure(t *testing.T) {
 
 	failureReason := channeldb.FailureReasonPaymentDetails
 	missionControl.On("ReportPaymentFail",
-		mock.Anything, rt, mock.Anything, mock.Anything,
+		mock.Anything, models.ToMCRoute(rt), mock.Anything, mock.Anything,
 	).Return(&failureReason, nil)
 
 	// Mock the control tower to return the mocked payment.
@@ -3830,7 +3831,7 @@ func TestSendToRouteTempFailure(t *testing.T) {
 
 	// Return a nil reason to mock a temporary failure.
 	missionControl.On("ReportPaymentFail",
-		mock.Anything, rt, mock.Anything, mock.Anything,
+		mock.Anything, models.ToMCRoute(rt), mock.Anything, mock.Anything,
 	).Return(nil, nil)
 
 	// Expect a failed send to route.
@@ -3964,11 +3965,6 @@ func TestNewRouteRequest(t *testing.T) {
 			finalExpiry:    unblindedCltv,
 			err:            ErrExpiryAndBlinded,
 		},
-		{
-			name:           "invalid blinded payment",
-			blindedPayment: &BlindedPayment{},
-			err:            ErrNoBlindedPath,
-		},
 	}
 
 	for _, testCase := range testCases {
@@ -3977,9 +3973,26 @@ func TestNewRouteRequest(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
+			var (
+				blindedPathInfo *BlindedPaymentPathSet
+				expectedTarget  = testCase.expectedTarget
+			)
+			if testCase.blindedPayment != nil {
+				blindedPathInfo, err = NewBlindedPaymentPathSet(
+					[]*BlindedPayment{
+						testCase.blindedPayment,
+					},
+				)
+				require.NoError(t, err)
+
+				expectedTarget = route.NewVertex(
+					blindedPathInfo.TargetPubKey(),
+				)
+			}
+
 			req, err := NewRouteRequest(
 				source, testCase.target, 1000, 0, nil, nil,
-				testCase.routeHints, testCase.blindedPayment,
+				testCase.routeHints, blindedPathInfo,
 				testCase.finalExpiry,
 			)
 			require.ErrorIs(t, err, testCase.err)
@@ -3989,10 +4002,248 @@ func TestNewRouteRequest(t *testing.T) {
 				return
 			}
 
-			require.Equal(t, req.Target, testCase.expectedTarget)
+			require.Equal(t, req.Target, expectedTarget)
 			require.Equal(
 				t, req.FinalExpiry, testCase.expectedCltv,
 			)
 		})
 	}
+}
+
+// TestFindBlindedPathsWithMC tests that the FindBlindedPaths method correctly
+// selects a set of blinded paths by using mission control data to select the
+// paths with the highest success probability.
+func TestFindBlindedPathsWithMC(t *testing.T) {
+	t.Parallel()
+
+	rbFeatureBits := []lnwire.FeatureBit{
+		lnwire.RouteBlindingOptional,
+		lnwire.TLVOnionPayloadOptional,
+	}
+
+	// Create the following graph and let all the nodes advertise support
+	// for blinded paths.
+	//
+	//			  C
+	//			/   \
+	//		       /     \
+	//		E -- A -- F -- D
+	//		       \     /
+	//			\   /
+	//		          B
+	//
+	featuresWithRouteBlinding := lnwire.NewFeatureVector(
+		lnwire.NewRawFeatureVector(rbFeatureBits...), lnwire.Features,
+	)
+
+	testChannels := []*testChannel{
+		symmetricTestChannel(
+			"eve", "alice", 100000, &testChannelPolicy{
+				Expiry:   144,
+				FeeRate:  400,
+				MinHTLC:  1,
+				MaxHTLC:  100000000,
+				Features: featuresWithRouteBlinding,
+			}, 1,
+		),
+		symmetricTestChannel(
+			"alice", "charlie", 100000,
+			&testChannelPolicy{
+				Expiry:   144,
+				FeeRate:  400,
+				MinHTLC:  1,
+				MaxHTLC:  100000000,
+				Features: featuresWithRouteBlinding,
+			}, 2,
+		),
+		symmetricTestChannel(
+			"alice", "bob", 100000, &testChannelPolicy{
+				Expiry:   144,
+				FeeRate:  400,
+				MinHTLC:  1,
+				MaxHTLC:  100000000,
+				Features: featuresWithRouteBlinding,
+			}, 3,
+		),
+		symmetricTestChannel(
+			"charlie", "dave", 100000, &testChannelPolicy{
+				Expiry:   144,
+				FeeRate:  400,
+				MinHTLC:  1,
+				MaxHTLC:  100000000,
+				Features: featuresWithRouteBlinding,
+			}, 4,
+		),
+		symmetricTestChannel(
+			"bob", "dave", 100000, &testChannelPolicy{
+				Expiry:   144,
+				FeeRate:  400,
+				MinHTLC:  1,
+				MaxHTLC:  100000000,
+				Features: featuresWithRouteBlinding,
+			}, 5,
+		),
+		symmetricTestChannel(
+			"alice", "frank", 100000, &testChannelPolicy{
+				Expiry:   144,
+				FeeRate:  400,
+				MinHTLC:  1,
+				MaxHTLC:  100000000,
+				Features: featuresWithRouteBlinding,
+			}, 6,
+		),
+		symmetricTestChannel(
+			"frank", "dave", 100000, &testChannelPolicy{
+				Expiry:   144,
+				FeeRate:  400,
+				MinHTLC:  1,
+				MaxHTLC:  100000000,
+				Features: featuresWithRouteBlinding,
+			}, 7,
+		),
+	}
+
+	testGraph, err := createTestGraphFromChannels(
+		t, true, testChannels, "dave", rbFeatureBits...,
+	)
+	require.NoError(t, err)
+
+	ctx := createTestCtxFromGraphInstance(t, 101, testGraph, true)
+
+	var (
+		alice   = ctx.aliases["alice"]
+		bob     = ctx.aliases["bob"]
+		charlie = ctx.aliases["charlie"]
+		dave    = ctx.aliases["dave"]
+		eve     = ctx.aliases["eve"]
+		frank   = ctx.aliases["frank"]
+	)
+
+	// Create a mission control store which initially sets the success
+	// probability of each node pair to 1.
+	missionControl := map[route.Vertex]map[route.Vertex]float64{
+		eve: {alice: 1},
+		alice: {
+			charlie: 1,
+			bob:     1,
+			frank:   1,
+		},
+		charlie: {dave: 1},
+		bob:     {dave: 1},
+		frank:   {dave: 1},
+	}
+
+	// probabilitySrc is a helper that returns the mission control success
+	// probability of a forward between two vertices.
+	probabilitySrc := func(from route.Vertex, to route.Vertex,
+		amt lnwire.MilliSatoshi, capacity btcutil.Amount) float64 {
+
+		return missionControl[from][to]
+	}
+
+	// All the probabilities are set to 1. So if we restrict the path length
+	// to 2 and allow a max of 3 routes, then we expect three paths here.
+	routes, err := ctx.router.FindBlindedPaths(
+		dave, 1000, probabilitySrc, &BlindedPathRestrictions{
+			MinNumHops:  2,
+			MaxNumHops:  2,
+			MaxNumPaths: 3,
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, routes, 3)
+
+	// assertPaths checks that the resulting set of paths is equal to the
+	// expected set and that the order of the paths is correct.
+	assertPaths := func(paths []*route.Route, expectedPaths []string) {
+		require.Len(t, paths, len(expectedPaths))
+
+		var actualPaths []string
+		for _, path := range paths {
+			label := getAliasFromPubKey(
+				path.SourcePubKey, ctx.aliases,
+			) + ","
+
+			for _, hop := range path.Hops {
+				label += getAliasFromPubKey(
+					hop.PubKeyBytes, ctx.aliases,
+				) + ","
+			}
+
+			actualPaths = append(
+				actualPaths, strings.TrimRight(label, ","),
+			)
+		}
+
+		for i, path := range expectedPaths {
+			require.Equal(t, expectedPaths[i], path)
+		}
+	}
+
+	// Now, let's lower the MC probability of the B-D to 0.5 and F-D link to
+	// 0.25. We will leave the MaxNumPaths as 3 and so all paths should
+	// still be returned but the order should be:
+	// 1) A -> C -> D
+	// 2) A -> B -> D
+	// 3) A -> F -> D
+	missionControl[bob][dave] = 0.5
+	missionControl[frank][dave] = 0.25
+	routes, err = ctx.router.FindBlindedPaths(
+		dave, 1000, probabilitySrc, &BlindedPathRestrictions{
+			MinNumHops:  2,
+			MaxNumHops:  2,
+			MaxNumPaths: 3,
+		},
+	)
+	require.NoError(t, err)
+	assertPaths(routes, []string{
+		"alice,charlie,dave",
+		"alice,bob,dave",
+		"alice,frank,dave",
+	})
+
+	// Just to show that the above result was not a fluke, let's change
+	// the C->D link to be the weak one.
+	missionControl[charlie][dave] = 0.125
+	routes, err = ctx.router.FindBlindedPaths(
+		dave, 1000, probabilitySrc, &BlindedPathRestrictions{
+			MinNumHops:  2,
+			MaxNumHops:  2,
+			MaxNumPaths: 3,
+		},
+	)
+	require.NoError(t, err)
+	assertPaths(routes, []string{
+		"alice,bob,dave",
+		"alice,frank,dave",
+		"alice,charlie,dave",
+	})
+
+	// Change the MaxNumPaths to 1 to assert that only the best route is
+	// returned.
+	routes, err = ctx.router.FindBlindedPaths(
+		dave, 1000, probabilitySrc, &BlindedPathRestrictions{
+			MinNumHops:  2,
+			MaxNumHops:  2,
+			MaxNumPaths: 1,
+		},
+	)
+	require.NoError(t, err)
+	assertPaths(routes, []string{
+		"alice,bob,dave",
+	})
+
+	// Test the edge case where Dave, the recipient, is also the
+	// introduction node.
+	routes, err = ctx.router.FindBlindedPaths(
+		dave, 1000, probabilitySrc, &BlindedPathRestrictions{
+			MinNumHops:  0,
+			MaxNumHops:  0,
+			MaxNumPaths: 1,
+		},
+	)
+	require.NoError(t, err)
+	assertPaths(routes, []string{
+		"dave",
+	})
 }

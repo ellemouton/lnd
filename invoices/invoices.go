@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/feature"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -419,6 +420,8 @@ type Invoice struct {
 	// HodlInvoice indicates whether the invoice should be held in the
 	// Accepted state or be settled right away.
 	HodlInvoice bool
+
+	BlindedPathMap models.BlindedPathSet
 }
 
 // HTLCSet returns the set of HTLCs belonging to setID and in the provided
@@ -822,8 +825,9 @@ func CopyInvoice(src *Invoice) (*Invoice, error) {
 		Htlcs: make(
 			map[CircuitKey]*InvoiceHTLC, len(src.Htlcs),
 		),
-		AMPState:    make(map[SetID]InvoiceStateAMP),
-		HodlInvoice: src.HodlInvoice,
+		AMPState:       make(map[SetID]InvoiceStateAMP),
+		BlindedPathMap: make(models.BlindedPathSet),
+		HodlInvoice:    src.HodlInvoice,
 	}
 
 	dest.Terms.Features = src.Terms.Features.Clone()

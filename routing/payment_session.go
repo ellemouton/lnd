@@ -203,6 +203,18 @@ func newPaymentSession(p *LightningPayment,
 		return nil, err
 	}
 
+	if p.BlindedPathSet != nil {
+		if len(edges) != 0 {
+			return nil, fmt.Errorf("cannot have both route hints " +
+				"and blinded path")
+		}
+
+		edges, err = p.BlindedPathSet.ToRouteHints()
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	logPrefix := fmt.Sprintf("PaymentSession(%x):", p.Identifier())
 
 	return &paymentSession{
@@ -316,8 +328,12 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 		switch {
 		case err == errNoPathFound:
 			// Don't split if this is a legacy payment without mpp
-			// record.
-			if p.payment.PaymentAddr == nil {
+			// record. If it has a blinded path though, then we
+			// can split. Split payments to blinded paths won't have
+			// MPP records.
+			if p.payment.PaymentAddr == nil &&
+				p.payment.BlindedPathSet == nil {
+
 				p.log.Debugf("not splitting because payment " +
 					"address is unspecified")
 
@@ -335,7 +351,8 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 				!destFeatures.HasFeature(lnwire.AMPOptional) {
 
 				p.log.Debug("not splitting because " +
-					"destination doesn't declare MPP or AMP")
+					"destination doesn't declare MPP or " +
+					"AMP")
 
 				return nil, errNoPathFound
 			}
@@ -392,7 +409,7 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 				records:     p.payment.DestCustomRecords,
 				paymentAddr: p.payment.PaymentAddr,
 				metadata:    p.payment.Metadata,
-			}, nil,
+			}, p.payment.BlindedPathSet,
 		)
 		if err != nil {
 			return nil, err

@@ -5121,6 +5121,7 @@ type rpcPaymentIntent struct {
 	paymentAddr        *[32]byte
 	payReq             []byte
 	metadata           []byte
+	blindedPathSet     *routing.BlindedPaymentPathSet
 
 	destCustomRecords record.CustomSet
 
@@ -5255,6 +5256,28 @@ func (r *rpcServer) extractPaymentIntent(rpcPayReq *rpcPaymentRequest) (rpcPayme
 		payIntent.destFeatures = payReq.Features
 		payIntent.paymentAddr = payReq.PaymentAddr
 		payIntent.metadata = payReq.Metadata
+
+		if len(payReq.BlindedPaymentPaths) > 0 {
+			pathSet, err := routerrpc.BuildBlindedPathSet(
+				payReq.BlindedPaymentPaths,
+			)
+			if err != nil {
+				return payIntent, err
+			}
+			payIntent.blindedPathSet = pathSet
+
+			// Replace the destination node with the target public
+			// key of the blinded path set.
+			copy(
+				payIntent.dest[:],
+				pathSet.TargetPubKey().SerializeCompressed(),
+			)
+
+			pathFeatures := pathSet.Features()
+			if !pathFeatures.IsEmpty() {
+				payIntent.destFeatures = pathFeatures.Clone()
+			}
+		}
 
 		if err := validateDest(payIntent.dest); err != nil {
 			return payIntent, err
@@ -5410,6 +5433,7 @@ func (r *rpcServer) dispatchPaymentIntent(
 			DestFeatures:       payIntent.destFeatures,
 			PaymentAddr:        payIntent.paymentAddr,
 			Metadata:           payIntent.metadata,
+			BlindedPathSet:     payIntent.blindedPathSet,
 
 			// Don't enable multi-part payments on the main rpc.
 			// Users need to use routerrpc for that.
@@ -5754,6 +5778,12 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 
 	defaultDelta := r.cfg.Bitcoin.TimeLockDelta
 
+	blindingRestrictions := &routing.BlindedPathRestrictions{
+		MinNumHops:  r.server.cfg.Invoices.BlindedPaths.MinNumHops,
+		MaxNumHops:  r.server.cfg.Invoices.BlindedPaths.MaxNumHops,
+		MaxNumPaths: r.server.cfg.Invoices.BlindedPaths.MaxNumPaths,
+	}
+
 	addInvoiceCfg := &invoicesrpc.AddInvoiceConfig{
 		AddInvoice:        r.server.invoices.AddInvoice,
 		IsChannelActive:   r.server.htlcSwitch.HasActiveLink,
@@ -5763,12 +5793,35 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 		ChanDB:            r.server.chanStateDB,
 		Graph:             r.server.graphDB,
 		GenInvoiceFeatures: func() *lnwire.FeatureVector {
-			return r.server.featureMgr.Get(feature.SetInvoice)
+			v := r.server.featureMgr.Get(feature.SetInvoice)
+
+			// If an invoice includes blinded paths, then a payment
+			// address is not required since we use the PathID in
+			// the final hop's encrypted data for the payment
+			// address.
+			if invoice.Blind {
+				v.Unset(lnwire.PaymentAddrRequired)
+				v.Set(lnwire.PaymentAddrOptional)
+			}
+
+			return v
 		},
 		GenAmpInvoiceFeatures: func() *lnwire.FeatureVector {
 			return r.server.featureMgr.Get(feature.SetInvoiceAmp)
 		},
-		GetAlias: r.server.aliasMgr.GetPeerAlias,
+		GetAlias:   r.server.aliasMgr.GetPeerAlias,
+		BestHeight: r.server.cc.BestBlockTracker.BestHeight,
+		BlindedRoutePolicyMultiplier: r.server.cfg.Invoices.
+			BlindedPaths.PolicyIncreaseMultiplier,
+		QueryBlindedRoutes: func(amt lnwire.MilliSatoshi) (
+			[]*route.Route, error) {
+
+			return r.server.chanRouter.FindBlindedPaths(
+				r.selfNode, amt,
+				r.server.missionControl.GetProbability,
+				blindingRestrictions,
+			)
+		},
 	}
 
 	value, err := lnrpc.UnmarshallAmt(invoice.Value, invoice.ValueMsat)
@@ -5791,6 +5844,7 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 		Private:         invoice.Private,
 		RouteHints:      routeHints,
 		Amp:             invoice.IsAmp,
+		Blind:           invoice.Blind,
 	}
 
 	if invoice.RPreimage != nil {
@@ -6946,6 +7000,13 @@ func (r *rpcServer) DecodePayReq(ctx context.Context,
 	// Convert between the `lnrpc` and `routing` types.
 	routeHints := invoicesrpc.CreateRPCRouteHints(payReq.RouteHints)
 
+	blindedPaymentPaths, err := invoicesrpc.CreateRPCBlindedPayments(
+		payReq.BlindedPaymentPaths,
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	var amtSat, amtMsat int64
 	if payReq.MilliSat != nil {
 		amtSat = int64(payReq.MilliSat.ToSatoshis())
@@ -6971,6 +7032,7 @@ func (r *rpcServer) DecodePayReq(ctx context.Context,
 		Expiry:          expiry,
 		CltvExpiry:      int64(payReq.MinFinalCLTVExpiry()),
 		RouteHints:      routeHints,
+		BlindedPaths:    blindedPaymentPaths,
 		PaymentAddr:     paymentAddr,
 		Features:        invoicesrpc.CreateRPCFeatures(payReq.Features),
 	}, nil

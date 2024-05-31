@@ -57,7 +57,7 @@ func (q *Queries) DeleteInvoice(ctx context.Context, arg DeleteInvoiceParams) (s
 
 const filterInvoices = `-- name: FilterInvoices :many
 SELECT
-    invoices.id, invoices.hash, invoices.preimage, invoices.settle_index, invoices.settled_at, invoices.memo, invoices.amount_msat, invoices.cltv_delta, invoices.expiry, invoices.payment_addr, invoices.payment_request, invoices.payment_request_hash, invoices.state, invoices.amount_paid_msat, invoices.is_amp, invoices.is_hodl, invoices.is_keysend, invoices.created_at
+    invoices.id, invoices.hash, invoices.preimage, invoices.settle_index, invoices.settled_at, invoices.memo, invoices.amount_msat, invoices.cltv_delta, invoices.expiry, invoices.payment_addr, invoices.payment_request, invoices.payment_request_hash, invoices.state, invoices.amount_paid_msat, invoices.is_amp, invoices.is_hodl, invoices.is_keysend, invoices.created_at, invoices.blinded_paths
 FROM invoices
 WHERE (
     id >= $1 OR 
@@ -152,6 +152,7 @@ func (q *Queries) FilterInvoices(ctx context.Context, arg FilterInvoicesParams) 
 			&i.IsHodl,
 			&i.IsKeysend,
 			&i.CreatedAt,
+			&i.BlindedPaths,
 		); err != nil {
 			return nil, err
 		}
@@ -168,7 +169,7 @@ func (q *Queries) FilterInvoices(ctx context.Context, arg FilterInvoicesParams) 
 
 const getInvoice = `-- name: GetInvoice :many
 
-SELECT i.id, i.hash, i.preimage, i.settle_index, i.settled_at, i.memo, i.amount_msat, i.cltv_delta, i.expiry, i.payment_addr, i.payment_request, i.payment_request_hash, i.state, i.amount_paid_msat, i.is_amp, i.is_hodl, i.is_keysend, i.created_at
+SELECT i.id, i.hash, i.preimage, i.settle_index, i.settled_at, i.memo, i.amount_msat, i.cltv_delta, i.expiry, i.payment_addr, i.payment_request, i.payment_request_hash, i.state, i.amount_paid_msat, i.is_amp, i.is_hodl, i.is_keysend, i.created_at, i.blinded_paths
 FROM invoices i
 LEFT JOIN amp_sub_invoices a on i.id = a.invoice_id
 WHERE (
@@ -236,6 +237,7 @@ func (q *Queries) GetInvoice(ctx context.Context, arg GetInvoiceParams) ([]Invoi
 			&i.IsHodl,
 			&i.IsKeysend,
 			&i.CreatedAt,
+			&i.BlindedPaths,
 		); err != nil {
 			return nil, err
 		}
@@ -359,9 +361,9 @@ const insertInvoice = `-- name: InsertInvoice :one
 INSERT INTO invoices (
     hash, preimage, memo, amount_msat, cltv_delta, expiry, payment_addr, 
     payment_request, payment_request_hash, state, amount_paid_msat, is_amp,
-    is_hodl, is_keysend, created_at
+    is_hodl, is_keysend, created_at, blinded_paths
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
 ) RETURNING id
 `
 
@@ -381,6 +383,7 @@ type InsertInvoiceParams struct {
 	IsHodl             bool
 	IsKeysend          bool
 	CreatedAt          time.Time
+	BlindedPaths       []byte
 }
 
 func (q *Queries) InsertInvoice(ctx context.Context, arg InsertInvoiceParams) (int64, error) {
@@ -400,6 +403,7 @@ func (q *Queries) InsertInvoice(ctx context.Context, arg InsertInvoiceParams) (i
 		arg.IsHodl,
 		arg.IsKeysend,
 		arg.CreatedAt,
+		arg.BlindedPaths,
 	)
 	var id int64
 	err := row.Scan(&id)

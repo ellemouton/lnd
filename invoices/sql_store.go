@@ -1,6 +1,7 @@
 package invoices
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -15,6 +16,7 @@ import (
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/record"
+	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/sqldb"
 	"github.com/lightningnetwork/lnd/sqldb/sqlc"
 )
@@ -193,7 +195,13 @@ func (i *SQLStore) AddInvoice(ctx context.Context,
 		paymentRequestHash = h.Sum(nil)
 	}
 
-	err := i.db.ExecTx(ctx, &writeTxOpts, func(db SQLInvoiceQueries) error {
+	var buf bytes.Buffer
+	err := newInvoice.BlindedPathMap.Serialise(&buf)
+	if err != nil {
+		return 0, err
+	}
+
+	err = i.db.ExecTx(ctx, &writeTxOpts, func(db SQLInvoiceQueries) error {
 		params := sqlc.InsertInvoiceParams{
 			Hash:       paymentHash[:],
 			Memo:       sqldb.SQLStr(string(newInvoice.Memo)),
@@ -214,6 +222,7 @@ func (i *SQLStore) AddInvoice(ctx context.Context,
 			IsHodl:             newInvoice.HodlInvoice,
 			IsKeysend:          newInvoice.IsKeysend(),
 			CreatedAt:          newInvoice.CreationDate.UTC(),
+			BlindedPaths:       buf.Bytes(),
 		}
 
 		// Some invoices may not have a preimage, like in the case of
@@ -1587,6 +1596,16 @@ func unmarshalInvoice(row sqlc.Invoice) (*lntypes.Hash, *Invoice,
 		cltvDelta = row.CltvDelta.Int32
 	}
 
+	blindedPathMap := make(map[route.Vertex]*models.MCRoute)
+	if len(row.BlindedPaths) != 0 {
+		blindedPathMap, err = models.DeserialiseBlindedPathSet(bytes.NewReader(
+			row.BlindedPaths,
+		))
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
 	invoice := &Invoice{
 		SettleIndex:    uint64(settleIndex),
 		SettleDate:     settledAt,
@@ -1600,12 +1619,13 @@ func unmarshalInvoice(row sqlc.Invoice) (*lntypes.Hash, *Invoice,
 			Value:           lnwire.MilliSatoshi(row.AmountMsat),
 			PaymentAddr:     paymentAddr,
 		},
-		AddIndex:    uint64(row.ID),
-		State:       ContractState(row.State),
-		AmtPaid:     lnwire.MilliSatoshi(row.AmountPaidMsat),
-		Htlcs:       make(map[models.CircuitKey]*InvoiceHTLC),
-		AMPState:    AMPInvoiceState{},
-		HodlInvoice: row.IsHodl,
+		AddIndex:       uint64(row.ID),
+		State:          ContractState(row.State),
+		AmtPaid:        lnwire.MilliSatoshi(row.AmountPaidMsat),
+		Htlcs:          make(map[models.CircuitKey]*InvoiceHTLC),
+		AMPState:       AMPInvoiceState{},
+		HodlInvoice:    row.IsHodl,
+		BlindedPathMap: blindedPathMap,
 	}
 
 	return &hash, invoice, nil

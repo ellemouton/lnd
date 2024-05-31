@@ -47,6 +47,7 @@ type Invoice struct {
 	IsHodl             bool
 	IsKeysend          bool
 	CreatedAt          time.Time
+	BlindedPaths       []byte
 }
 
 type InvoiceEvent struct {

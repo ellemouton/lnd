@@ -8,6 +8,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -199,7 +200,7 @@ type MissionControlPairSnapshot struct {
 type paymentResult struct {
 	id                 uint64
 	timeFwd, timeReply time.Time
-	route              *route.Route
+	route              *models.MCRoute
 	success            bool
 	failureSourceIdx   *int
 	failure            lnwire.FailureMessage
@@ -408,7 +409,7 @@ func (m *MissionControl) GetPairHistorySnapshot(
 // failure source. If it is nil, the failure source is unknown. This function
 // returns a reason if this failure is a final failure. In that case no further
 // payment attempts need to be made.
-func (m *MissionControl) ReportPaymentFail(paymentID uint64, rt *route.Route,
+func (m *MissionControl) ReportPaymentFail(paymentID uint64, rt *models.MCRoute,
 	failureSourceIdx *int, failure lnwire.FailureMessage) (
 	*channeldb.FailureReason, error) {
 
@@ -430,7 +431,7 @@ func (m *MissionControl) ReportPaymentFail(paymentID uint64, rt *route.Route,
 // ReportPaymentSuccess reports a successful payment to mission control as input
 // for future probability estimates.
 func (m *MissionControl) ReportPaymentSuccess(paymentID uint64,
-	rt *route.Route) error {
+	route *models.MCRoute) error {
 
 	timestamp := m.now()
 
@@ -439,7 +440,7 @@ func (m *MissionControl) ReportPaymentSuccess(paymentID uint64,
 		timeReply: timestamp,
 		id:        paymentID,
 		success:   true,
-		route:     rt,
+		route:     route,
 	}
 
 	_, err := m.processPaymentResult(result)
