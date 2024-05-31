@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/lightningnetwork/lnd/amp"
 	"github.com/lightningnetwork/lnd/lntypes"
@@ -27,6 +28,7 @@ type invoiceUpdateCtx struct {
 	metadata             []byte
 	pathID               *chainhash.Hash
 	totalAmtMsat         lnwire.MilliSatoshi
+	blindingPoint        *btcec.PublicKey
 }
 
 // invoiceRef returns an identifier that can be used to lookup or update the
