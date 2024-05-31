@@ -6,10 +6,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/feature"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/record"
+	"github.com/lightningnetwork/lnd/routing/route"
 )
 
 const (
@@ -419,6 +421,8 @@ type Invoice struct {
 	// HodlInvoice indicates whether the invoice should be held in the
 	// Accepted state or be settled right away.
 	HodlInvoice bool
+
+	BlindedPathMap map[route.Vertex]*models.MCRoute
 }
 
 // HTLCSet returns the set of HTLCs belonging to setID and in the provided

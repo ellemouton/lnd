@@ -122,7 +122,7 @@ type mockMissionControlOld struct {
 var _ MissionController = (*mockMissionControlOld)(nil)
 
 func (m *mockMissionControlOld) ReportPaymentFail(
-	_ uint64, _ *MCRoute, _ *int, failure lnwire.FailureMessage) (
+	_ uint64, _ *models.MCRoute, _ *int, failure lnwire.FailureMessage) (
 	*channeldb.FailureReason, error) {
 
 	// Report a permanent failure if this is an error caused
@@ -136,7 +136,7 @@ func (m *mockMissionControlOld) ReportPaymentFail(
 }
 
 func (m *mockMissionControlOld) ReportPaymentSuccess(paymentID uint64,
-	_ *MCRoute) error {
+	_ *models.MCRoute) error {
 
 	return nil
 }
@@ -637,7 +637,7 @@ type mockMissionControl struct {
 var _ MissionController = (*mockMissionControl)(nil)
 
 func (m *mockMissionControl) ReportPaymentFail(
-	paymentID uint64, rt *MCRoute,
+	paymentID uint64, rt *models.MCRoute,
 	failureSourceIdx *int, failure lnwire.FailureMessage) (
 	*channeldb.FailureReason, error) {
 
@@ -652,7 +652,7 @@ func (m *mockMissionControl) ReportPaymentFail(
 }
 
 func (m *mockMissionControl) ReportPaymentSuccess(paymentID uint64,
-	rt *MCRoute) error {
+	rt *models.MCRoute) error {
 
 	args := m.Called(paymentID, rt)
 	return args.Error(0)

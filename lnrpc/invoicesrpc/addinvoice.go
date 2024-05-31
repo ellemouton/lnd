@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math"
@@ -18,6 +19,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/davecgh/go-spew/spew"
+	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channeldb/models"
@@ -476,6 +478,7 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 	if _, err := rand.Read(paymentAddr[:]); err != nil {
 		return nil, nil, err
 	}
+	var blindedPathMap map[route.Vertex]*models.MCRoute
 	if invoice.Blind {
 		// Use the 10-min-per-block assumption to get a rough estimate
 		// of the number of blocks until the invoice expires. We want
@@ -485,7 +488,9 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 		blindedPathExpiry := invoiceExpiry * 2
 
 		//nolint:lll
-		paths, err := buildBlindedPaymentPaths(&buildBlindedPathCfg{
+		var paths []*zpay32.BlindedPaymentPath
+
+		blindedPathCfg := &buildBlindedPathCfg{
 			findRoutes:              cfg.QueryBlindedRoutes,
 			fetchChannelEdgesByID:   cfg.Graph.FetchChannelEdgesByID,
 			pathID:                  paymentAddr[:],
@@ -500,7 +505,11 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 					p, cfg.BlindedRoutePolicyMultiplier, 1,
 				)
 			},
-		})
+		}
+
+		paths, blindedPathMap, err = buildBlindedPaymentPaths(
+			blindedPathCfg,
+		)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -564,7 +573,8 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 			PaymentAddr:     paymentAddr,
 			Features:        invoiceFeatures,
 		},
-		HodlInvoice: invoice.HodlInvoice,
+		HodlInvoice:    invoice.HodlInvoice,
+		BlindedPathMap: blindedPathMap,
 	}
 
 	log.Tracef("[addinvoice] adding new invoice %v",
@@ -980,38 +990,52 @@ type buildBlindedPathCfg struct {
 // buildBlindedPaymentPaths uses the passed config to construct a set of blinded
 // payment paths that can be added to the invoice.
 func buildBlindedPaymentPaths(cfg *buildBlindedPathCfg) (
-	[]*zpay32.BlindedPaymentPath, error) {
+	[]*zpay32.BlindedPaymentPath, map[route.Vertex]*models.MCRoute,
+	error) {
 
 	// Find some appropriate routes for the value to be routed.
 	routes, err := cfg.findRoutes(cfg.valueMsat)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	paths := make([]*zpay32.BlindedPaymentPath, len(routes))
 
+	m := make(map[route.Vertex]*models.MCRoute, len(routes))
+
 	// For each route returned, we will construct the associated blinded
 	// payment path.
-	for i, route := range routes {
-		path, err := buildBlindedPaymentPath(cfg, route)
+	for i, r := range routes {
+		path, sessionKey, err := buildBlindedPaymentPath(cfg, r)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
+
+		sphinxPath, err := r.ToSphinxPath()
+		if err != nil {
+			return nil, nil, err
+		}
+
+		finalEphemeralKey, err := deriveFinalEphemeralKey(
+			sphinxPath.NodeKeys(), sessionKey,
+		)
+
+		m[route.NewVertex(finalEphemeralKey)] = models.ToMCRoute(r)
 
 		paths[i] = path
 	}
 
-	return paths, nil
+	return paths, m, nil
 }
 
 // buildBlindedPaymentPath takes a route from an introduction node to this node
 // and uses the give config to convert it into a blinded payment path.
 func buildBlindedPaymentPath(cfg *buildBlindedPathCfg, path *route.Route) (
-	*zpay32.BlindedPaymentPath, error) {
+	*zpay32.BlindedPaymentPath, *btcec.PrivateKey, error) {
 
 	hops, minHTLC, maxHTLC, err := collectRelayInfo(cfg, path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	relayInfo := make([]*record.PaymentRelayInfo, len(hops))
@@ -1027,7 +1051,7 @@ func buildBlindedPaymentPath(cfg *buildBlindedPathCfg, path *route.Route) (
 
 	currentHeight, err := cfg.bestHeight()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// The next step is to calculate the payment constraints to communicate
@@ -1056,7 +1080,7 @@ func buildBlindedPaymentPath(cfg *buildBlindedPathCfg, path *route.Route) (
 		finalHopPubKey, cfg.pathID, constraints,
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	hopDataSet = append(hopDataSet, info)
 
@@ -1076,7 +1100,7 @@ func buildBlindedPaymentPath(cfg *buildBlindedPathCfg, path *route.Route) (
 			constraints,
 		)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		hopDataSet = append(hopDataSet, info)
@@ -1092,24 +1116,24 @@ func buildBlindedPaymentPath(cfg *buildBlindedPathCfg, path *route.Route) (
 	// blobs are all the same size.
 	paymentPath, _, err := padHopInfo(hopDataSet)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Derive an ephemeral session key.
 	sessionKey, err := btcec.NewPrivateKey()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Encrypt the hop info.
 	blindedPath, err := sphinx.BuildBlindedPath(sessionKey, paymentPath)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if len(blindedPath.BlindedHops) < 1 {
-		return nil, fmt.Errorf("blinded path must have at least one " +
-			"hop")
+		return nil, nil, fmt.Errorf("blinded path must have at " +
+			"least one hop")
 	}
 
 	// Overwrite the introduction point's blinded pub key with the real
@@ -1129,7 +1153,127 @@ func buildBlindedPaymentPath(cfg *buildBlindedPathCfg, path *route.Route) (
 		Features:                    lnwire.EmptyFeatureVector(),
 		FirstEphemeralBlindingPoint: blindedPath.BlindingPoint,
 		Hops:                        blindedPath.BlindedHops,
-	}, nil
+	}, sessionKey, nil
+}
+
+func deriveFinalEphemeralKey(paymentPath []*btcec.PublicKey,
+	sessionKey *btcec.PrivateKey) (*btcec.PublicKey, error) {
+
+	// Each hop performs ECDH with our ephemeral key pair to arrive at a
+	// shared secret. Additionally, each hop randomizes the group element
+	// for the next hop by multiplying it by the blinding factor. This way
+	// we only need to transmit a single group element, and hops can't link
+	// a session back to us if they have several nodes in the path.
+	numHops := len(paymentPath)
+	hopSharedSecrets := make([]sphinx.Hash256, numHops)
+
+	// Compute the triplet for the first hop outside of the main loop.
+	// Within the loop each new triplet will be computed recursively based
+	// off of the blinding factor of the last hop.
+	lastEphemeralPubKey := sessionKey.PubKey()
+	sessionKeyECDH := &sphinx.PrivKeyECDH{PrivKey: sessionKey}
+	sharedSecret, err := sessionKeyECDH.ECDH(paymentPath[0])
+	if err != nil {
+		return nil, err
+	}
+	hopSharedSecrets[0] = sharedSecret
+	lastBlindingFactor := computeBlindingFactor(
+		lastEphemeralPubKey, hopSharedSecrets[0][:],
+	)
+
+	// The cached blinding factor will contain the running product of the
+	// session private key x and blinding factors b_i, computed as
+	//   c_0 = x
+	//   c_i = c_{i-1} * b_{i-1} 		 (mod |F(G)|).
+	//       = x * b_0 * b_1 * ... * b_{i-1} (mod |F(G)|).
+	//
+	// We begin with just the session private key x, so that base case
+	// c_0 = x. At the beginning of each iteration, the previous blinding
+	// factor is aggregated into the modular product, and used as the scalar
+	// value in deriving the hop ephemeral keys and shared secrets.
+	var cachedBlindingFactor btcec.ModNScalar
+	cachedBlindingFactor.Set(&sessionKey.Key)
+
+	// Now recursively compute the cached blinding factor, ephemeral ECDH
+	// pub keys, and shared secret for each hop.
+	var nextBlindingFactor btcec.ModNScalar
+	for i := 1; i <= numHops-1; i++ {
+		// Update the cached blinding factor with b_{i-1}.
+		nextBlindingFactor.Set(&lastBlindingFactor)
+		cachedBlindingFactor.Mul(&nextBlindingFactor)
+
+		// a_i = g ^ c_i
+		//     = g^( x * b_0 * ... * b_{i-1} )
+		//     = X^( b_0 * ... * b_{i-1} )
+		// X_our_session_pub_key x all prev blinding factors
+		lastEphemeralPubKey = blindBaseElement(cachedBlindingFactor)
+
+		// e_i = Y_i ^ c_i
+		//     = ( Y_i ^ x )^( b_0 * ... * b_{i-1} )
+		// (Y_their_pub_key x x_our_priv) x all prev blinding factors
+		hopBlindedPubKey := blindGroupElement(
+			paymentPath[i], cachedBlindingFactor,
+		)
+
+		// s_i = sha256( e_i )
+		//     = sha256( Y_i ^ (x * b_0 * ... * b_{i-1} )
+		hopSharedSecrets[i] = sha256.Sum256(hopBlindedPubKey.SerializeCompressed())
+
+		// Only need to evaluate up to the penultimate blinding factor.
+		if i >= numHops-1 {
+			break
+		}
+
+		// b_i = sha256( a_i || s_i )
+		lastBlindingFactor = computeBlindingFactor(
+			lastEphemeralPubKey, hopSharedSecrets[i][:],
+		)
+	}
+
+	return lastEphemeralPubKey, nil
+}
+
+// computeBlindingFactor for the next hop given the ephemeral pubKey and
+// sharedSecret for this hop. The blinding factor is computed as the
+// sha-256(pubkey || sharedSecret).
+func computeBlindingFactor(hopPubKey *btcec.PublicKey,
+	hopSharedSecret []byte) btcec.ModNScalar {
+
+	sha := sha256.New()
+	sha.Write(hopPubKey.SerializeCompressed())
+	sha.Write(hopSharedSecret)
+
+	var hash sphinx.Hash256
+	copy(hash[:], sha.Sum(nil))
+
+	var blindingBytes btcec.ModNScalar
+	blindingBytes.SetByteSlice(hash[:])
+
+	return blindingBytes
+}
+
+// blindGroupElement blinds the group element P by performing scalar
+// multiplication of the group element by blindingFactor: blindingFactor * P.
+func blindGroupElement(hopPubKey *btcec.PublicKey, blindingFactor btcec.ModNScalar) *btcec.PublicKey {
+	var hopPubKeyJ btcec.JacobianPoint
+	hopPubKey.AsJacobian(&hopPubKeyJ)
+
+	var blindedPoint btcec.JacobianPoint
+	btcec.ScalarMultNonConst(
+		&blindingFactor, &hopPubKeyJ, &blindedPoint,
+	)
+	blindedPoint.ToAffine()
+
+	return btcec.NewPublicKey(&blindedPoint.X, &blindedPoint.Y)
+}
+
+// blindBaseElement blinds the groups's generator G by performing scalar base
+// multiplication using the blindingFactor: blindingFactor * G.
+func blindBaseElement(blindingFactor btcec.ModNScalar) *btcec.PublicKey {
+	// TODO(roasbeef): remove after btcec version bump to add alias for
+	// this method
+	priv := secp.NewPrivateKey(&blindingFactor)
+	return priv.PubKey()
 }
 
 // hopRelayInfo packages together the relay info to send to hop on a blinded

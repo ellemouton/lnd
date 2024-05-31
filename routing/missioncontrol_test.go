@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -12,9 +13,9 @@ import (
 )
 
 var (
-	mcTestRoute = &MCRoute{
+	mcTestRoute = &models.MCRoute{
 		SourcePubKey: mcTestSelf,
-		Hops: []*MCHop{
+		Hops: []*models.MCHop{
 			{
 				ChannelID:    1,
 				PubKeyBytes:  route.Vertex{11},

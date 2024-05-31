@@ -11,6 +11,7 @@ import (
 
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
@@ -181,7 +182,7 @@ func serializeResult(rp *paymentResult) ([]byte, []byte, error) {
 		return nil, nil, err
 	}
 
-	if err := rp.route.serialize(&b); err != nil {
+	if err := rp.route.Serialize(&b); err != nil {
 		return nil, nil, err
 	}
 
@@ -238,7 +239,7 @@ func deserializeResult(k, v []byte) (*paymentResult, error) {
 	}
 
 	// Read route.
-	result.route, err = deserializeRoute(r)
+	result.route, err = models.DeserializeRoute(r)
 	if err != nil {
 		return nil, err
 	}

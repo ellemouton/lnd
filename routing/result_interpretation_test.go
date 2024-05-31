@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/davecgh/go-spew/spew"
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -14,37 +15,37 @@ var (
 		{1, 0}, {1, 1}, {1, 2}, {1, 3}, {1, 4},
 	}
 
-	routeOneHop = MCRoute{
+	routeOneHop = models.MCRoute{
 		SourcePubKey: hops[0],
 		TotalAmount:  100,
-		Hops: []*MCHop{
+		Hops: []*models.MCHop{
 			{PubKeyBytes: hops[1], AmtToForward: 99},
 		},
 	}
 
-	routeTwoHop = MCRoute{
+	routeTwoHop = models.MCRoute{
 		SourcePubKey: hops[0],
 		TotalAmount:  100,
-		Hops: []*MCHop{
+		Hops: []*models.MCHop{
 			{PubKeyBytes: hops[1], AmtToForward: 99},
 			{PubKeyBytes: hops[2], AmtToForward: 97},
 		},
 	}
 
-	routeThreeHop = MCRoute{
+	routeThreeHop = models.MCRoute{
 		SourcePubKey: hops[0],
 		TotalAmount:  100,
-		Hops: []*MCHop{
+		Hops: []*models.MCHop{
 			{PubKeyBytes: hops[1], AmtToForward: 99},
 			{PubKeyBytes: hops[2], AmtToForward: 97},
 			{PubKeyBytes: hops[3], AmtToForward: 94},
 		},
 	}
 
-	routeFourHop = MCRoute{
+	routeFourHop = models.MCRoute{
 		SourcePubKey: hops[0],
 		TotalAmount:  100,
-		Hops: []*MCHop{
+		Hops: []*models.MCHop{
 			{PubKeyBytes: hops[1], AmtToForward: 99},
 			{PubKeyBytes: hops[2], AmtToForward: 97},
 			{PubKeyBytes: hops[3], AmtToForward: 94},
@@ -55,10 +56,10 @@ var (
 	// blindedMultiHop is a blinded path where there are cleartext hops
 	// before the introduction node, and an intermediate blinded hop before
 	// the recipient after it.
-	blindedMultiHop = MCRoute{
+	blindedMultiHop = models.MCRoute{
 		SourcePubKey: hops[0],
 		TotalAmount:  100,
-		Hops: []*MCHop{
+		Hops: []*models.MCHop{
 			{PubKeyBytes: hops[1], AmtToForward: 99},
 			{
 				PubKeyBytes:      hops[2],
@@ -72,10 +73,10 @@ var (
 
 	// blindedSingleHop is a blinded path with a single blinded hop after
 	// the introduction node.
-	blindedSingleHop = MCRoute{
+	blindedSingleHop = models.MCRoute{
 		SourcePubKey: hops[0],
 		TotalAmount:  100,
-		Hops: []*MCHop{
+		Hops: []*models.MCHop{
 			{PubKeyBytes: hops[1], AmtToForward: 99},
 			{
 				PubKeyBytes:      hops[2],
@@ -88,10 +89,10 @@ var (
 
 	// blindedMultiToIntroduction is a blinded path which goes directly
 	// to the introduction node, with multiple blinded hops after it.
-	blindedMultiToIntroduction = MCRoute{
+	blindedMultiToIntroduction = models.MCRoute{
 		SourcePubKey: hops[0],
 		TotalAmount:  100,
-		Hops: []*MCHop{
+		Hops: []*models.MCHop{
 			{
 				PubKeyBytes:      hops[1],
 				AmtToForward:     90,
@@ -104,10 +105,10 @@ var (
 
 	// blindedIntroReceiver is a blinded path where the introduction node
 	// is the recipient.
-	blindedIntroReceiver = MCRoute{
+	blindedIntroReceiver = models.MCRoute{
 		SourcePubKey: hops[0],
 		TotalAmount:  100,
-		Hops: []*MCHop{
+		Hops: []*models.MCHop{
 			{PubKeyBytes: hops[1], AmtToForward: 95},
 			{
 				PubKeyBytes:      hops[2],
@@ -129,7 +130,7 @@ func getPolicyFailure(from, to int) *DirectedNodePair {
 
 type resultTestCase struct {
 	name          string
-	route         *MCRoute
+	route         *models.MCRoute
 	success       bool
 	failureSrcIdx int
 	failure       lnwire.FailureMessage

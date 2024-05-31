@@ -16,6 +16,7 @@ import (
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/record"
+	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/tlv"
 )
 
@@ -125,6 +126,7 @@ const (
 	amtPaidType         tlv.Type = 13
 	hodlInvoiceType     tlv.Type = 14
 	invoiceAmpStateType tlv.Type = 15
+	blindedPathMapType  tlv.Type = 16
 
 	// A set of tlv type definitions used to serialize the invoice AMP
 	// state along-side the main invoice body.
@@ -1145,6 +1147,28 @@ func putInvoice(invoices, invoiceIndex, payAddrIndex, addIndex kvdb.RwBucket,
 	return nextAddSeqNo, nil
 }
 
+func blindedPathMapRecordSize(
+	a map[route.Vertex]*models.MCRoute) func() uint64 {
+
+	var (
+		b   bytes.Buffer
+		buf [8]byte
+	)
+
+	// We know that encoding works since the tests pass in the build this
+	// file is checked into, so we'll simplify things and simply encode it
+	// ourselves then report the total amount of bytes used.
+	if err := blindedPathRouteEncoder(&b, a, &buf); err != nil {
+		// This should never error out, but we log it just in case it
+		// does.
+		log.Errorf("encoding the blinded path map failed: %v", err)
+	}
+
+	return func() uint64 {
+		return uint64(len(b.Bytes()))
+	}
+}
+
 // recordSize returns the amount of bytes this TLV record will occupy when
 // encoded.
 func ampRecordSize(a *invpkg.AMPInvoiceState) func() uint64 {
@@ -1239,6 +1263,13 @@ func serializeInvoice(w io.Writer, i *invpkg.Invoice) error {
 			invoiceAmpStateType, &i.AMPState,
 			ampRecordSize(&i.AMPState),
 			ampStateEncoder, ampStateDecoder,
+		),
+
+		// Blinded Path info.
+		tlv.MakeDynamicRecord(
+			blindedPathMapType, &i.BlindedPathMap,
+			blindedPathMapRecordSize(i.BlindedPathMap),
+			blindedPathRouteEncoder, blindedPathRouteDecoder,
 		),
 	)
 	if err != nil {
@@ -1633,6 +1664,12 @@ func deserializeInvoice(r io.Reader) (invpkg.Invoice, error) {
 			invoiceAmpStateType, &i.AMPState, nil,
 			ampStateEncoder, ampStateDecoder,
 		),
+
+		// Blinded Path info.
+		tlv.MakeDynamicRecord(
+			blindedPathMapType, &i.BlindedPathMap, nil,
+			blindedPathRouteEncoder, blindedPathRouteDecoder,
+		),
 	)
 	if err != nil {
 		return i, err
@@ -1754,6 +1791,66 @@ func decodeCircuitKeys(r io.Reader, val interface{}, buf *[8]byte,
 	}
 
 	return tlv.NewTypeForDecodingErr(val, "*map[CircuitKey]struct{}", l, l)
+}
+
+func blindedPathRouteEncoder(w io.Writer, val interface{}, buf *[8]byte) error {
+	if v, ok := val.(*map[route.Vertex]*models.MCRoute); ok {
+		for key, route := range *v {
+			// Write 33 byte key.
+			if err := WriteElement(w, key[:]); err != nil {
+				return err
+			}
+
+			// Serialise and write the route.
+			err := route.Serialize(w)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+
+	return tlv.NewTypeForEncodingErr(
+		val, "map[route.Vertex]*routing.MCRoute",
+	)
+}
+
+func blindedPathRouteDecoder(r io.Reader, val interface{}, buf *[8]byte,
+	l uint64) error {
+
+	if v, ok := val.(*map[route.Vertex]*models.MCRoute); ok {
+
+		for {
+			var key []byte
+			err := ReadElement(r, &key)
+			switch {
+
+			// We'll silence an EOF when zero bytes remain, meaning the
+			// stream was cleanly encoded.
+			case err == io.EOF:
+				return nil
+
+			// Other unexpected errors.
+			case err != nil:
+				return err
+			}
+
+			r, err := models.DeserializeRoute(r)
+			if err != nil {
+				return err
+			}
+
+			var k route.Vertex
+			copy(k[:], key)
+
+			(*v)[k] = r
+		}
+	}
+
+	return tlv.NewTypeForDecodingErr(
+		val, "map[route.Vertex]*routing.MCRoute", l, l,
+	)
 }
 
 // ampStateEncoder is a custom TLV encoder for the AMPInvoiceState record.
