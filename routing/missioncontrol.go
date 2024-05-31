@@ -3,6 +3,7 @@ package routing
 import (
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -199,7 +200,7 @@ type MissionControlPairSnapshot struct {
 type paymentResult struct {
 	id                 uint64
 	timeFwd, timeReply time.Time
-	route              *route.Route
+	route              *MCRoute
 	success            bool
 	failureSourceIdx   *int
 	failure            lnwire.FailureMessage
@@ -408,7 +409,7 @@ func (m *MissionControl) GetPairHistorySnapshot(
 // failure source. If it is nil, the failure source is unknown. This function
 // returns a reason if this failure is a final failure. In that case no further
 // payment attempts need to be made.
-func (m *MissionControl) ReportPaymentFail(paymentID uint64, rt *route.Route,
+func (m *MissionControl) ReportPaymentFail(paymentID uint64, rt *MCRoute,
 	failureSourceIdx *int, failure lnwire.FailureMessage) (
 	*channeldb.FailureReason, error) {
 
@@ -427,10 +428,117 @@ func (m *MissionControl) ReportPaymentFail(paymentID uint64, rt *route.Route,
 	return m.processPaymentResult(result)
 }
 
+type MCRoute struct {
+	SourcePubKey route.Vertex
+	TotalAmount  lnwire.MilliSatoshi
+	Hops         []*MCHop
+}
+
+type MCHop struct {
+	PubKeyBytes      route.Vertex
+	AmtToForward     lnwire.MilliSatoshi
+	ChannelID        uint64
+	HasBlindingPoint bool
+}
+
+func (r *MCRoute) serialize(w io.Writer) error {
+	err := channeldb.WriteElements(w, r.TotalAmount, r.SourcePubKey[:])
+	if err != nil {
+		return err
+	}
+
+	if err := channeldb.WriteElements(w, uint32(len(r.Hops))); err != nil {
+		return err
+	}
+
+	for _, h := range r.Hops {
+		if err := h.serialize(w); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func deserializeRoute(r io.Reader) (*MCRoute, error) {
+	var (
+		rt      MCRoute
+		pub     []byte
+		numHops uint32
+	)
+	err := channeldb.ReadElements(r, &rt.TotalAmount, &pub, &numHops)
+	if err != nil {
+		return nil, err
+	}
+
+	copy(rt.SourcePubKey[:], pub)
+
+	hops := make([]*MCHop, numHops)
+	for i := uint32(0); i < numHops; i++ {
+		hop, err := deserializeHop(r)
+		if err != nil {
+			return nil, err
+		}
+
+		hops[i] = hop
+	}
+	rt.Hops = hops
+
+	return &rt, nil
+}
+
+func (h *MCHop) serialize(w io.Writer) error {
+	return channeldb.WriteElements(
+		w,
+		h.PubKeyBytes[:],
+		h.AmtToForward,
+		h.ChannelID,
+		h.HasBlindingPoint,
+	)
+}
+
+func deserializeHop(r io.Reader) (*MCHop, error) {
+	var (
+		h   MCHop
+		pub []byte
+	)
+	if err := channeldb.ReadElements(
+		r,
+		&pub,
+		&h.AmtToForward,
+		&h.ChannelID,
+		&h.HasBlindingPoint,
+	); err != nil {
+		return nil, err
+	}
+	copy(h.PubKeyBytes[:], pub)
+
+	return &h, nil
+}
+
+func ToMCRoute(route *route.Route) *MCRoute {
+	hops := make([]*MCHop, len(route.Hops))
+
+	for i, hop := range route.Hops {
+		hops[i] = &MCHop{
+			PubKeyBytes:      hop.PubKeyBytes,
+			AmtToForward:     hop.AmtToForward,
+			ChannelID:        hop.ChannelID,
+			HasBlindingPoint: hop.BlindingPoint != nil,
+		}
+	}
+
+	return &MCRoute{
+		SourcePubKey: route.SourcePubKey,
+		TotalAmount:  route.TotalAmount,
+		Hops:         hops,
+	}
+}
+
 // ReportPaymentSuccess reports a successful payment to mission control as input
 // for future probability estimates.
 func (m *MissionControl) ReportPaymentSuccess(paymentID uint64,
-	rt *route.Route) error {
+	route *MCRoute) error {
 
 	timestamp := m.now()
 
@@ -439,7 +547,7 @@ func (m *MissionControl) ReportPaymentSuccess(paymentID uint64,
 		timeReply: timestamp,
 		id:        paymentID,
 		success:   true,
-		route:     rt,
+		route:     route,
 	}
 
 	_, err := m.processPaymentResult(result)

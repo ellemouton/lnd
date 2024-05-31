@@ -4,7 +4,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -15,41 +14,37 @@ var (
 		{1, 0}, {1, 1}, {1, 2}, {1, 3}, {1, 4},
 	}
 
-	// blindingPoint provides a non-nil blinding point (value is never
-	// used).
-	blindingPoint = &btcec.PublicKey{}
-
-	routeOneHop = route.Route{
+	routeOneHop = MCRoute{
 		SourcePubKey: hops[0],
 		TotalAmount:  100,
-		Hops: []*route.Hop{
+		Hops: []*MCHop{
 			{PubKeyBytes: hops[1], AmtToForward: 99},
 		},
 	}
 
-	routeTwoHop = route.Route{
+	routeTwoHop = MCRoute{
 		SourcePubKey: hops[0],
 		TotalAmount:  100,
-		Hops: []*route.Hop{
+		Hops: []*MCHop{
 			{PubKeyBytes: hops[1], AmtToForward: 99},
 			{PubKeyBytes: hops[2], AmtToForward: 97},
 		},
 	}
 
-	routeThreeHop = route.Route{
+	routeThreeHop = MCRoute{
 		SourcePubKey: hops[0],
 		TotalAmount:  100,
-		Hops: []*route.Hop{
+		Hops: []*MCHop{
 			{PubKeyBytes: hops[1], AmtToForward: 99},
 			{PubKeyBytes: hops[2], AmtToForward: 97},
 			{PubKeyBytes: hops[3], AmtToForward: 94},
 		},
 	}
 
-	routeFourHop = route.Route{
+	routeFourHop = MCRoute{
 		SourcePubKey: hops[0],
 		TotalAmount:  100,
-		Hops: []*route.Hop{
+		Hops: []*MCHop{
 			{PubKeyBytes: hops[1], AmtToForward: 99},
 			{PubKeyBytes: hops[2], AmtToForward: 97},
 			{PubKeyBytes: hops[3], AmtToForward: 94},
@@ -60,15 +55,15 @@ var (
 	// blindedMultiHop is a blinded path where there are cleartext hops
 	// before the introduction node, and an intermediate blinded hop before
 	// the recipient after it.
-	blindedMultiHop = route.Route{
+	blindedMultiHop = MCRoute{
 		SourcePubKey: hops[0],
 		TotalAmount:  100,
-		Hops: []*route.Hop{
+		Hops: []*MCHop{
 			{PubKeyBytes: hops[1], AmtToForward: 99},
 			{
-				PubKeyBytes:   hops[2],
-				AmtToForward:  95,
-				BlindingPoint: blindingPoint,
+				PubKeyBytes:      hops[2],
+				AmtToForward:     95,
+				HasBlindingPoint: true,
 			},
 			{PubKeyBytes: hops[3], AmtToForward: 88},
 			{PubKeyBytes: hops[4], AmtToForward: 77},
@@ -77,15 +72,15 @@ var (
 
 	// blindedSingleHop is a blinded path with a single blinded hop after
 	// the introduction node.
-	blindedSingleHop = route.Route{
+	blindedSingleHop = MCRoute{
 		SourcePubKey: hops[0],
 		TotalAmount:  100,
-		Hops: []*route.Hop{
+		Hops: []*MCHop{
 			{PubKeyBytes: hops[1], AmtToForward: 99},
 			{
-				PubKeyBytes:   hops[2],
-				AmtToForward:  95,
-				BlindingPoint: blindingPoint,
+				PubKeyBytes:      hops[2],
+				AmtToForward:     95,
+				HasBlindingPoint: true,
 			},
 			{PubKeyBytes: hops[3], AmtToForward: 88},
 		},
@@ -93,14 +88,14 @@ var (
 
 	// blindedMultiToIntroduction is a blinded path which goes directly
 	// to the introduction node, with multiple blinded hops after it.
-	blindedMultiToIntroduction = route.Route{
+	blindedMultiToIntroduction = MCRoute{
 		SourcePubKey: hops[0],
 		TotalAmount:  100,
-		Hops: []*route.Hop{
+		Hops: []*MCHop{
 			{
-				PubKeyBytes:   hops[1],
-				AmtToForward:  90,
-				BlindingPoint: blindingPoint,
+				PubKeyBytes:      hops[1],
+				AmtToForward:     90,
+				HasBlindingPoint: true,
 			},
 			{PubKeyBytes: hops[2], AmtToForward: 75},
 			{PubKeyBytes: hops[3], AmtToForward: 58},
@@ -109,15 +104,15 @@ var (
 
 	// blindedIntroReceiver is a blinded path where the introduction node
 	// is the recipient.
-	blindedIntroReceiver = route.Route{
+	blindedIntroReceiver = MCRoute{
 		SourcePubKey: hops[0],
 		TotalAmount:  100,
-		Hops: []*route.Hop{
+		Hops: []*MCHop{
 			{PubKeyBytes: hops[1], AmtToForward: 95},
 			{
-				PubKeyBytes:   hops[2],
-				AmtToForward:  90,
-				BlindingPoint: blindingPoint,
+				PubKeyBytes:      hops[2],
+				AmtToForward:     90,
+				HasBlindingPoint: true,
 			},
 		},
 	}
@@ -134,7 +129,7 @@ func getPolicyFailure(from, to int) *DirectedNodePair {
 
 type resultTestCase struct {
 	name          string
-	route         *route.Route
+	route         *MCRoute
 	success       bool
 	failureSrcIdx int
 	failure       lnwire.FailureMessage

@@ -57,12 +57,11 @@ func TestMissionControlStore(t *testing.T) {
 		t.Fatal("expected no results")
 	}
 
-	testRoute := route.Route{
+	testRoute := MCRoute{
 		SourcePubKey: route.Vertex{1},
-		Hops: []*route.Hop{
+		Hops: []*MCHop{
 			{
-				PubKeyBytes:   route.Vertex{2},
-				LegacyPayload: true,
+				PubKeyBytes: route.Vertex{2},
 			},
 		},
 	}

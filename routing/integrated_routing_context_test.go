@@ -257,7 +257,7 @@ func (c *integratedRoutingContext) testPayment(maxParts uint32,
 		if success {
 			inFlightHtlcs++
 
-			err := mc.ReportPaymentSuccess(pid, route)
+			err := mc.ReportPaymentSuccess(pid, ToMCRoute(route))
 			if err != nil {
 				c.t.Fatal(err)
 			}
@@ -276,7 +276,7 @@ func (c *integratedRoutingContext) testPayment(maxParts uint32,
 
 		// Failure, update mission control and retry.
 		finalResult, err := mc.ReportPaymentFail(
-			pid, route,
+			pid, ToMCRoute(route),
 			getNodeIndex(route, htlcResult.failureSource),
 			htlcResult.failure,
 		)

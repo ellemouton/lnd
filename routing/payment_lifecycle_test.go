@@ -1436,7 +1436,7 @@ func TestCollectResultExitOnSettleErr(t *testing.T) {
 	// Once the result is received, `ReportPaymentSuccess` should be
 	// called.
 	m.missionControl.On("ReportPaymentSuccess",
-		attempt.AttemptID, &attempt.Route,
+		attempt.AttemptID, ToMCRoute(&attempt.Route),
 	).Return(nil).Once()
 
 	// Now mock an error being returned from `SettleAttempt`.
@@ -1483,7 +1483,7 @@ func TestCollectResultSuccess(t *testing.T) {
 	// Once the result is received, `ReportPaymentSuccess` should be
 	// called.
 	m.missionControl.On("ReportPaymentSuccess",
-		attempt.AttemptID, &attempt.Route,
+		attempt.AttemptID, ToMCRoute(&attempt.Route),
 	).Return(nil).Once()
 
 	// Now the settled htlc being returned from `SettleAttempt`.
@@ -1531,7 +1531,7 @@ func TestCollectResultAsyncSuccess(t *testing.T) {
 	// Once the result is received, `ReportPaymentSuccess` should be
 	// called.
 	m.missionControl.On("ReportPaymentSuccess",
-		attempt.AttemptID, &attempt.Route,
+		attempt.AttemptID, ToMCRoute(&attempt.Route),
 	).Return(nil).Once()
 
 	// Now the settled htlc being returned from `SettleAttempt`.

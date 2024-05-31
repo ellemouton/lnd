@@ -76,7 +76,7 @@ type interpretedResult struct {
 
 // interpretResult interprets a payment outcome and returns an object that
 // contains information required to update mission control.
-func interpretResult(rt *route.Route, success bool, failureSrcIdx *int,
+func interpretResult(rt *MCRoute, success bool, failureSrcIdx *int,
 	failure lnwire.FailureMessage) *interpretedResult {
 
 	i := &interpretedResult{
@@ -92,15 +92,14 @@ func interpretResult(rt *route.Route, success bool, failureSrcIdx *int,
 }
 
 // processSuccess processes a successful payment attempt.
-func (i *interpretedResult) processSuccess(route *route.Route) {
+func (i *interpretedResult) processSuccess(route *MCRoute) {
 	// For successes, all nodes must have acted in the right way. Therefore
 	// we mark all of them with a success result.
 	i.successPairRange(route, 0, len(route.Hops)-1)
 }
 
 // processFail processes a failed payment attempt.
-func (i *interpretedResult) processFail(
-	rt *route.Route, errSourceIdx *int,
+func (i *interpretedResult) processFail(rt *MCRoute, errSourceIdx *int,
 	failure lnwire.FailureMessage) {
 
 	if errSourceIdx == nil {
@@ -144,7 +143,7 @@ func (i *interpretedResult) processFail(
 // node. This indicates that the introduction node is not obeying the route
 // blinding specification, as we expect all errors from the introduction node
 // to be source from it.
-func (i *interpretedResult) processPaymentOutcomeBadIntro(route *route.Route,
+func (i *interpretedResult) processPaymentOutcomeBadIntro(route *MCRoute,
 	introIdx, errSourceIdx int) {
 
 	// We fail the introduction node for not obeying the specification.
@@ -168,7 +167,7 @@ func (i *interpretedResult) processPaymentOutcomeBadIntro(route *route.Route,
 
 // processPaymentOutcomeSelf handles failures sent by ourselves.
 func (i *interpretedResult) processPaymentOutcomeSelf(
-	rt *route.Route, failure lnwire.FailureMessage) {
+	rt *MCRoute, failure lnwire.FailureMessage) {
 
 	switch failure.(type) {
 
@@ -197,7 +196,7 @@ func (i *interpretedResult) processPaymentOutcomeSelf(
 
 // processPaymentOutcomeFinal handles failures sent by the final hop.
 func (i *interpretedResult) processPaymentOutcomeFinal(
-	route *route.Route, failure lnwire.FailureMessage) {
+	route *MCRoute, failure lnwire.FailureMessage) {
 
 	n := len(route.Hops)
 
@@ -293,8 +292,7 @@ func (i *interpretedResult) processPaymentOutcomeFinal(
 // processPaymentOutcomeIntermediate handles failures sent by an intermediate
 // hop.
 func (i *interpretedResult) processPaymentOutcomeIntermediate(
-	route *route.Route, errorSourceIdx int,
-	failure lnwire.FailureMessage) {
+	route *MCRoute, errorSourceIdx int, failure lnwire.FailureMessage) {
 
 	reportOutgoing := func() {
 		i.failPair(
@@ -525,9 +523,9 @@ func (i *interpretedResult) processPaymentOutcomeIntermediate(
 // route, using the same indexing in the route that we use for errorSourceIdx
 // (i.e., that we consider our own node to be at index zero). A boolean is
 // returned to indicate whether the route contains a blinded portion at all.
-func introductionPointIndex(route *route.Route) (int, bool) {
+func introductionPointIndex(route *MCRoute) (int, bool) {
 	for i, hop := range route.Hops {
-		if hop.BlindingPoint != nil {
+		if hop.HasBlindingPoint {
 			return i + 1, true
 		}
 	}
@@ -537,7 +535,7 @@ func introductionPointIndex(route *route.Route) (int, bool) {
 
 // processPaymentOutcomeUnknown processes a payment outcome for which no failure
 // message or source is available.
-func (i *interpretedResult) processPaymentOutcomeUnknown(route *route.Route) {
+func (i *interpretedResult) processPaymentOutcomeUnknown(route *MCRoute) {
 	n := len(route.Hops)
 
 	// If this is a direct payment, the destination must be at fault.
@@ -556,7 +554,7 @@ func (i *interpretedResult) processPaymentOutcomeUnknown(route *route.Route) {
 // failNode marks the node indicated by idx in the route as failed. It also
 // marks the incoming and outgoing channels of the node as failed. This function
 // intentionally panics when the self node is failed.
-func (i *interpretedResult) failNode(rt *route.Route, idx int) {
+func (i *interpretedResult) failNode(rt *MCRoute, idx int) {
 	// Mark the node as failing.
 	i.nodeFailure = &rt.Hops[idx-1].PubKeyBytes
 
@@ -584,18 +582,14 @@ func (i *interpretedResult) failNode(rt *route.Route, idx int) {
 
 // failPairRange marks the node pairs from node fromIdx to node toIdx as failed
 // in both direction.
-func (i *interpretedResult) failPairRange(
-	rt *route.Route, fromIdx, toIdx int) {
-
+func (i *interpretedResult) failPairRange(rt *MCRoute, fromIdx, toIdx int) {
 	for idx := fromIdx; idx <= toIdx; idx++ {
 		i.failPair(rt, idx)
 	}
 }
 
 // failPair marks a pair as failed in both directions.
-func (i *interpretedResult) failPair(
-	rt *route.Route, idx int) {
-
+func (i *interpretedResult) failPair(rt *MCRoute, idx int) {
 	pair, _ := getPair(rt, idx)
 
 	// Report pair in both directions without a minimum penalization amount.
@@ -604,9 +598,7 @@ func (i *interpretedResult) failPair(
 }
 
 // failPairBalance marks a pair as failed with a minimum penalization amount.
-func (i *interpretedResult) failPairBalance(
-	rt *route.Route, channelIdx int) {
-
+func (i *interpretedResult) failPairBalance(rt *MCRoute, channelIdx int) {
 	pair, amt := getPair(rt, channelIdx)
 
 	i.pairResults[pair] = failPairResult(amt)
@@ -615,7 +607,7 @@ func (i *interpretedResult) failPairBalance(
 // successPairRange marks the node pairs from node fromIdx to node toIdx as
 // succeeded.
 func (i *interpretedResult) successPairRange(
-	rt *route.Route, fromIdx, toIdx int) {
+	rt *MCRoute, fromIdx, toIdx int) {
 
 	for idx := fromIdx; idx <= toIdx; idx++ {
 		pair, amt := getPair(rt, idx)
@@ -626,7 +618,7 @@ func (i *interpretedResult) successPairRange(
 
 // getPair returns a node pair from the route and the amount passed between that
 // pair.
-func getPair(rt *route.Route, channelIdx int) (DirectedNodePair,
+func getPair(rt *MCRoute, channelIdx int) (DirectedNodePair,
 	lnwire.MilliSatoshi) {
 
 	nodeTo := rt.Hops[channelIdx].PubKeyBytes

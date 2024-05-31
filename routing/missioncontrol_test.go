@@ -12,19 +12,17 @@ import (
 )
 
 var (
-	mcTestRoute = &route.Route{
+	mcTestRoute = &MCRoute{
 		SourcePubKey: mcTestSelf,
-		Hops: []*route.Hop{
+		Hops: []*MCHop{
 			{
-				ChannelID:     1,
-				PubKeyBytes:   route.Vertex{11},
-				AmtToForward:  1000,
-				LegacyPayload: true,
+				ChannelID:    1,
+				PubKeyBytes:  route.Vertex{11},
+				AmtToForward: 1000,
 			},
 			{
-				ChannelID:     2,
-				PubKeyBytes:   route.Vertex{12},
-				LegacyPayload: true,
+				ChannelID:   2,
+				PubKeyBytes: route.Vertex{12},
 			},
 		},
 	}

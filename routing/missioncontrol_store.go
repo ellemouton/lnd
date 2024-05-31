@@ -181,7 +181,7 @@ func serializeResult(rp *paymentResult) ([]byte, []byte, error) {
 		return nil, nil, err
 	}
 
-	if err := channeldb.SerializeRoute(&b, *rp.route); err != nil {
+	if err := rp.route.serialize(&b); err != nil {
 		return nil, nil, err
 	}
 
@@ -238,11 +238,10 @@ func deserializeResult(k, v []byte) (*paymentResult, error) {
 	}
 
 	// Read route.
-	route, err := channeldb.DeserializeRoute(r)
+	result.route, err = deserializeRoute(r)
 	if err != nil {
 		return nil, err
 	}
-	result.route = &route
 
 	// Read failure.
 	failureBytes, err := wire.ReadVarBytes(
