@@ -195,6 +195,11 @@ jobs:
     steps:
       - name: git checkout
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: fetch and rebase on ${{ github.base_ref }}
+        uses: ./.github/actions/rebase
 
       - name: git checkout fuzzing seeds
         uses: actions/checkout@v3
@@ -261,6 +266,11 @@ jobs:
     steps:
       - name: git checkout
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: fetch and rebase on ${{ github.base_ref }}
+        uses: ./.github/actions/rebase
 
       - name: setup go ${{ env.GO_VERSION }}
         uses: ./.github/actions/setup-go
@@ -306,6 +316,11 @@ jobs:
     steps:
       - name: git checkout
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: fetch and rebase on ${{ github.base_ref }}
+        uses: ./.github/actions/rebase
 
       - name: setup go ${{ env.GO_VERSION }}
         uses: ./.github/actions/setup-go
@@ -344,6 +359,11 @@ jobs:
     steps:
       - name: git checkout
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: fetch and rebase on ${{ github.base_ref }}
+        uses: ./.github/actions/rebase
 
       - name: setup go ${{ env.GO_VERSION }}
         uses: ./.github/actions/setup-go
