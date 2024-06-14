@@ -1007,17 +1007,14 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	s.chanRouter, err = routing.New(routing.Config{
 		SelfNode:           selfNode.PubKeyBytes,
-		GraphMgr:           s.graphMgr,
 		RoutingGraph:       routing.NewNodeAgnosticGraph(chanGraph),
 		Chain:              cc.ChainIO,
-		ChainView:          cc.ChainView,
 		Payer:              s.htlcSwitch,
 		Control:            s.controlTower,
 		MissionControl:     s.missionControl,
 		SessionSource:      paymentSessionSource,
 		ChannelPruneExpiry: graph.DefaultChannelPruneExpiry,
 		GetLink:            s.htlcSwitch.GetLinkByShortID,
-		AssumeChannelValid: cfg.Routing.AssumeChannelValid,
 		NextPaymentID:      sequencer.NextID,
 		PathFindingConfig:  pathFindingConfig,
 		Clock:              clock.NewDefaultClock(),
@@ -1038,6 +1035,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	}
 
 	s.authGossiper = discovery.New(discovery.Config{
+		Graph:                 s.graphMgr,
 		GraphDB:               s.graphMgr,
 		Notifier:              s.cc.ChainNotifier,
 		ChainHash:             *s.cfg.ActiveNetParams.GenesisHash,

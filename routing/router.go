@@ -18,13 +18,11 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/fn"
-	"github.com/lightningnetwork/lnd/graph"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/record"
-	"github.com/lightningnetwork/lnd/routing/chainview"
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/routing/shards"
 	"github.com/lightningnetwork/lnd/zpay32"
@@ -216,8 +214,6 @@ type ChannelPolicy struct {
 // the configuration MUST be non-nil for the ChannelRouter to carry out its
 // duties.
 type Config struct {
-	GraphMgr graph.Graph
-
 	SelfNode route.Vertex
 
 	// RoutingGraph is a graph source that will be used for pathfinding.
@@ -227,12 +223,6 @@ type Config struct {
 	// All incoming advertised channels will be checked against the chain
 	// to ensure that the channels advertised are still open.
 	Chain lnwallet.BlockChainIO
-
-	// ChainView is an instance of a FilteredChainView which is used to
-	// watch the sub-set of the UTXO set (the set of active channels) that
-	// we need in order to properly maintain the channel graph.
-	// The ChainView MUST have already been started.
-	ChainView chainview.FilteredChainView
 
 	// Payer is an instance of a PaymentAttemptDispatcher and is used by
 	// the router to send payment attempts onto the network, and receive
@@ -275,11 +265,6 @@ type Config struct {
 	// unique payment ID for each payment it attempts to send, such that
 	// the switch can properly handle the HTLC.
 	NextPaymentID func() (uint64, error)
-
-	// AssumeChannelValid toggles whether or not the router will check for
-	// spentness of channel outpoints. For neutrino, this saves long rescans
-	// from blocking initial usage of the daemon.
-	AssumeChannelValid bool
 
 	// PathFindingConfig defines global path finding parameters.
 	PathFindingConfig PathFindingConfig
