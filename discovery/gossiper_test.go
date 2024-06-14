@@ -25,6 +25,7 @@ import (
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channeldb/models"
+	"github.com/lightningnetwork/lnd/graph"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnpeer"
@@ -350,7 +351,7 @@ func (r *mockGraphSource) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 		// Since it exists within our zombie index, we'll check that it
 		// respects the router's live edge horizon to determine whether
 		// it is stale or not.
-		return time.Since(timestamp) > routing.DefaultChannelPruneExpiry
+		return time.Since(timestamp) > graph.DefaultChannelPruneExpiry
 	}
 
 	switch {
@@ -2257,7 +2258,7 @@ func TestProcessZombieEdgeNowLive(t *testing.T) {
 
 	// We'll generate a channel update with a timestamp far enough in the
 	// past to consider it a zombie.
-	zombieTimestamp := time.Now().Add(-routing.DefaultChannelPruneExpiry)
+	zombieTimestamp := time.Now().Add(-graph.DefaultChannelPruneExpiry)
 	batch.chanUpdAnn2.Timestamp = uint32(zombieTimestamp.Unix())
 	if err := signUpdate(remoteKeyPriv2, batch.chanUpdAnn2); err != nil {
 		t.Fatalf("unable to sign update with new timestamp: %v", err)

@@ -20,6 +20,7 @@ import (
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channeldb/models"
+	"github.com/lightningnetwork/lnd/graph"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnpeer"
@@ -170,6 +171,8 @@ type Config struct {
 	// updates announcements are validated they are sent to the router in
 	// order to be included in the LN graph.
 	Router routing.ChannelGraphSource
+
+	Graph graph.Graph
 
 	// ChanSeries is an interfaces that provides access to a time series
 	// view of the current known channel graph. Each GossipSyncer enabled
@@ -2725,7 +2728,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 		graphScid = upd.ShortChannelID
 	}
 
-	if d.cfg.Router.IsStaleEdgePolicy(
+	if d.cfg.Graph.IsStaleEdgePolicy(
 		graphScid, timestamp, upd.ChannelFlags,
 	) {
 

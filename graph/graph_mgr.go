@@ -10,8 +10,21 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/lnwallet"
+	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/chainview"
 	"github.com/lightningnetwork/lnd/routing/route"
+)
+
+const (
+	// DefaultFirstTimePruneDelay is the time we'll wait after startup
+	// before attempting to prune the graph for zombie channels. We don't
+	// do it immediately after startup to allow lnd to start up without
+	// getting blocked by this job.
+	DefaultFirstTimePruneDelay = 30 * time.Second
+
+	// DefaultChannelPruneExpiry is the default duration used to determine
+	// if a channel should be pruned or not.
+	DefaultChannelPruneExpiry = time.Duration(time.Hour * 24 * 14)
 )
 
 var (
@@ -21,7 +34,7 @@ var (
 )
 
 type Config struct {
-	Graph Graph
+	Graph GraphDB
 
 	// Chain is the router's source to the most up-to-date blockchain data.
 	// All incoming advertised channels will be checked against the chain
@@ -75,15 +88,6 @@ type Manager struct {
 	// and vertices not to prune.
 	selfNode route.Vertex
 
-	// newBlocks is a channel in which new blocks connected to the end of
-	// the main chain are sent over, and blocks updated after a call to
-	// UpdateFilter.
-	newBlocks <-chan *chainview.FilteredBlock
-
-	// staleBlocks is a channel in which blocks disconnected from the end
-	// of our currently known best chain are sent over.
-	staleBlocks <-chan *chainview.FilteredBlock
-
 	quit chan struct{}
 	wg   sync.WaitGroup
 }
@@ -106,7 +110,7 @@ func (m *Manager) Start() error {
 		return nil
 	}
 
-	log.Info("Graph Manager starting")
+	log.Info("GraphDB Manager starting")
 
 	bestHash, bestHeight, err := m.cfg.Chain.GetBestBlock()
 	if err != nil {
@@ -157,11 +161,6 @@ func (m *Manager) Start() error {
 		if err := m.cfg.ChainView.Start(); err != nil {
 			return err
 		}
-
-		// Once the instance is active, we'll fetch the channel we'll
-		// receive notifications over.
-		m.newBlocks = m.cfg.ChainView.FilteredBlocks()
-		m.staleBlocks = m.cfg.ChainView.DisconnectedBlocks()
 
 		// Before we perform our manual block pruning, we'll construct
 		// and apply a fresh chain filter to the active
@@ -223,8 +222,8 @@ func (m *Manager) Stop() error {
 		return nil
 	}
 
-	log.Info("Graph Manager shutting down...")
-	defer log.Debug("Graph Manager shutdown complete")
+	log.Info("GraphDB Manager shutting down...")
+	defer log.Debug("GraphDB Manager shutdown complete")
 
 	// Our filtered chain view could've only been started if
 	// AssumeChannelValid isn't present.
@@ -422,7 +421,7 @@ func (m *Manager) syncGraphWithChain() error {
 		}
 	}
 
-	log.Infof("Prune tip for Channel Graph: height=%v, hash=%v",
+	log.Infof("Prune tip for Channel GraphDB: height=%v, hash=%v",
 		pruneHeight, pruneHash)
 
 	switch {
@@ -531,7 +530,7 @@ func (m *Manager) syncGraphWithChain() error {
 		return err
 	}
 
-	log.Infof("Graph pruning complete: %v channels were closed since "+
+	log.Infof("GraphDB pruning complete: %v channels were closed since "+
 		"height %v", len(closedChans), pruneHeight)
 	return nil
 }
@@ -583,4 +582,62 @@ func (m *Manager) IsZombieChannel(updateTime1,
 	// Otherwise, if we're using the less strict variant, then a channel is
 	// considered live if either of the edges have a recent update.
 	return e1Zombie && e2Zombie
+}
+
+// IsStaleEdgePolicy returns true if the graph source has a channel edge for
+// the passed channel ID (and flags) that have a more recent timestamp.
+//
+// NOTE: This method is part of the Graph interface.
+func (m *Manager) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
+	timestamp time.Time, flags lnwire.ChanUpdateChanFlags) bool {
+
+	edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
+		m.cfg.Graph.HasChannelEdge(chanID.ToUint64())
+	if err != nil {
+		log.Debugf("Check stale edge policy got error: %v", err)
+		return false
+
+	}
+
+	// If we know of the edge as a zombie, then we'll make some additional
+	// checks to determine if the new policy is fresh.
+	if isZombie {
+		// When running with AssumeChannelValid, we also prune channels
+		// if both of their edges are disabled. We'll mark the new
+		// policy as stale if it remains disabled.
+		if m.cfg.AssumeChannelValid {
+			isDisabled := flags&lnwire.ChanUpdateDisabled ==
+				lnwire.ChanUpdateDisabled
+			if isDisabled {
+				return true
+			}
+		}
+
+		// Otherwise, we'll fall back to our usual ChannelPruneExpiry.
+		return time.Since(timestamp) > m.cfg.ChannelPruneExpiry
+	}
+
+	// If we don't know of the edge, then it means it's fresh (thus not
+	// stale).
+	if !exists {
+		return false
+	}
+
+	// As edges are directional edge node has a unique policy for the
+	// direction of the edge they control. Therefore we first check if we
+	// already have the most up to date information for that edge. If so,
+	// then we can exit early.
+	switch {
+	// A flag set of 0 indicates this is an announcement for the "first"
+	// node in the channel.
+	case flags&lnwire.ChanUpdateDirection == 0:
+		return !edge1Timestamp.Before(timestamp)
+
+	// Similarly, a flag set of 1 indicates this is an announcement for the
+	// "second" node in the channel.
+	case flags&lnwire.ChanUpdateDirection == 1:
+		return !edge2Timestamp.Before(timestamp)
+	}
+
+	return false
 }

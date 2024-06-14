@@ -47,16 +47,6 @@ const (
 	// trying more routes for a payment.
 	DefaultPayAttemptTimeout = time.Duration(time.Second * 60)
 
-	// DefaultChannelPruneExpiry is the default duration used to determine
-	// if a channel should be pruned or not.
-	DefaultChannelPruneExpiry = time.Duration(time.Hour * 24 * 14)
-
-	// DefaultFirstTimePruneDelay is the time we'll wait after startup
-	// before attempting to prune the graph for zombie channels. We don't
-	// do it immediately after startup to allow lnd to start up without
-	// getting blocked by this job.
-	DefaultFirstTimePruneDelay = 30 * time.Second
-
 	// defaultStatInterval governs how often the router will log non-empty
 	// stats related to processing new channels, updates, or node
 	// announcements.
@@ -166,12 +156,6 @@ type ChannelGraphSource interface {
 	// IsKnownEdge returns true if the graph source already knows of the
 	// passed channel ID either as a live or zombie edge.
 	IsKnownEdge(chanID lnwire.ShortChannelID) bool
-
-	// IsStaleEdgePolicy returns true if the graph source has a channel
-	// edge for the passed channel ID (and flags) that have a more recent
-	// timestamp.
-	IsStaleEdgePolicy(chanID lnwire.ShortChannelID, timestamp time.Time,
-		flags lnwire.ChanUpdateChanFlags) bool
 
 	// MarkEdgeLive clears an edge from our zombie index, deeming it as
 	// live.
@@ -334,6 +318,7 @@ type Config struct {
 	// ChainView is an instance of a FilteredChainView which is used to
 	// watch the sub-set of the UTXO set (the set of active channels) that
 	// we need in order to properly maintain the channel graph.
+	// The ChainView MUST have already been started.
 	ChainView chainview.FilteredChainView
 
 	// Notifier is a reference to the ChainNotifier, used to grab
@@ -368,16 +353,6 @@ type Config struct {
 	// the channel is marked as a zombie channel eligible for pruning.
 	ChannelPruneExpiry time.Duration
 
-	// GraphPruneInterval is used as an interval to determine how often we
-	// should examine the channel graph to garbage collect zombie channels.
-	GraphPruneInterval time.Duration
-
-	// FirstTimePruneDelay is the time we'll wait after startup before
-	// attempting to prune the graph for zombie channels. We don't do it
-	// immediately after startup to allow lnd to start up without getting
-	// blocked by this job.
-	FirstTimePruneDelay time.Duration
-
 	// QueryBandwidth is a method that allows the router to query the lower
 	// link layer to determine the up to date available bandwidth at a
 	// prospective link to be traversed. If the  link isn't available, then
@@ -402,13 +377,6 @@ type Config struct {
 
 	// Clock is mockable time provider.
 	Clock clock.Clock
-
-	// StrictZombiePruning determines if we attempt to prune zombie
-	// channels according to a stricter criteria. If true, then we'll prune
-	// a channel if only *one* of the edges is considered a zombie.
-	// Otherwise, we'll only prune the channel when both edges have a very
-	// dated last update.
-	StrictZombiePruning bool
 
 	// IsAlias returns whether a passed ShortChannelID is an alias. This is
 	// only used for our local channels.
@@ -537,105 +505,17 @@ func (r *ChannelRouter) Start() error {
 
 	log.Info("Channel Router starting")
 
-	bestHash, bestHeight, err := r.cfg.Chain.GetBestBlock()
+	_, bestHeight, err := r.cfg.Chain.GetBestBlock()
 	if err != nil {
 		return err
 	}
+	r.bestHeight = uint32(bestHeight)
 
-	// If the graph has never been pruned, or hasn't fully been created yet,
-	// then we don't treat this as an explicit error.
-	if _, _, err := r.cfg.Graph.PruneTip(); err != nil {
-		switch {
-		case err == channeldb.ErrGraphNeverPruned:
-			fallthrough
-		case err == channeldb.ErrGraphNotFound:
-			// If the graph has never been pruned, then we'll set
-			// the prune height to the current best height of the
-			// chain backend.
-			_, err = r.cfg.Graph.PruneGraph(
-				nil, bestHash, uint32(bestHeight),
-			)
-			if err != nil {
-				return err
-			}
-		default:
-			return err
-		}
-	}
-
-	// If AssumeChannelValid is present, then we won't rely on pruning
-	// channels from the graph based on their spentness, but whether they
-	// are considered zombies or not. We will start zombie pruning after a
-	// small delay, to avoid slowing down startup of lnd.
-	if r.cfg.AssumeChannelValid {
-		time.AfterFunc(r.cfg.FirstTimePruneDelay, func() {
-			select {
-			case <-r.quit:
-				return
-			default:
-			}
-
-			log.Info("Initial zombie prune starting")
-			if err := r.pruneZombieChans(); err != nil {
-				log.Errorf("Unable to prune zombies: %v", err)
-			}
-		})
-	} else {
-		// Otherwise, we'll use our filtered chain view to prune
-		// channels as soon as they are detected as spent on-chain.
-		if err := r.cfg.ChainView.Start(); err != nil {
-			return err
-		}
-
+	if !r.cfg.AssumeChannelValid {
 		// Once the instance is active, we'll fetch the channel we'll
 		// receive notifications over.
 		r.newBlocks = r.cfg.ChainView.FilteredBlocks()
 		r.staleBlocks = r.cfg.ChainView.DisconnectedBlocks()
-
-		// Before we perform our manual block pruning, we'll construct
-		// and apply a fresh chain filter to the active
-		// FilteredChainView instance.  We do this before, as otherwise
-		// we may miss on-chain events as the filter hasn't properly
-		// been applied.
-		channelView, err := r.cfg.Graph.ChannelView()
-		if err != nil && err != channeldb.ErrGraphNoEdgesFound {
-			return err
-		}
-
-		log.Infof("Filtering chain using %v channels active",
-			len(channelView))
-
-		if len(channelView) != 0 {
-			err = r.cfg.ChainView.UpdateFilter(
-				channelView, uint32(bestHeight),
-			)
-			if err != nil {
-				return err
-			}
-		}
-
-		// The graph pruning might have taken a while and there could be
-		// new blocks available.
-		_, bestHeight, err = r.cfg.Chain.GetBestBlock()
-		if err != nil {
-			return err
-		}
-		r.bestHeight = uint32(bestHeight)
-
-		// Before we begin normal operation of the router, we first need
-		// to synchronize the channel graph to the latest state of the
-		// UTXO set.
-		if err := r.syncGraphWithChain(); err != nil {
-			return err
-		}
-
-		// Finally, before we proceed, we'll prune any unconnected nodes
-		// from the graph in order to ensure we maintain a tight graph
-		// of "useful" nodes.
-		err = r.cfg.Graph.PruneGraphNodes()
-		if err != nil && err != channeldb.ErrGraphNodesNotFound {
-			return err
-		}
 	}
 
 	// If any payments are still in flight, we resume, to make sure their
@@ -739,337 +619,8 @@ func (r *ChannelRouter) Stop() error {
 	log.Info("Channel Router shutting down...")
 	defer log.Debug("Channel Router shutdown complete")
 
-	// Our filtered chain view could've only been started if
-	// AssumeChannelValid isn't present.
-	if !r.cfg.AssumeChannelValid {
-		if err := r.cfg.ChainView.Stop(); err != nil {
-			return err
-		}
-	}
-
 	close(r.quit)
 	r.wg.Wait()
-
-	return nil
-}
-
-// syncGraphWithChain attempts to synchronize the current channel graph with
-// the latest UTXO set state. This process involves pruning from the channel
-// graph any channels which have been closed by spending their funding output
-// since we've been down.
-func (r *ChannelRouter) syncGraphWithChain() error {
-	// First, we'll need to check to see if we're already in sync with the
-	// latest state of the UTXO set.
-	bestHash, bestHeight, err := r.cfg.Chain.GetBestBlock()
-	if err != nil {
-		return err
-	}
-	r.bestHeight = uint32(bestHeight)
-
-	pruneHash, pruneHeight, err := r.cfg.Graph.PruneTip()
-	if err != nil {
-		switch {
-		// If the graph has never been pruned, or hasn't fully been
-		// created yet, then we don't treat this as an explicit error.
-		case err == channeldb.ErrGraphNeverPruned:
-		case err == channeldb.ErrGraphNotFound:
-		default:
-			return err
-		}
-	}
-
-	log.Infof("Prune tip for Channel Graph: height=%v, hash=%v",
-		pruneHeight, pruneHash)
-
-	switch {
-
-	// If the graph has never been pruned, then we can exit early as this
-	// entails it's being created for the first time and hasn't seen any
-	// block or created channels.
-	case pruneHeight == 0 || pruneHash == nil:
-		return nil
-
-	// If the block hashes and heights match exactly, then we don't need to
-	// prune the channel graph as we're already fully in sync.
-	case bestHash.IsEqual(pruneHash) && uint32(bestHeight) == pruneHeight:
-		return nil
-	}
-
-	// If the main chain blockhash at prune height is different from the
-	// prune hash, this might indicate the database is on a stale branch.
-	mainBlockHash, err := r.cfg.Chain.GetBlockHash(int64(pruneHeight))
-	if err != nil {
-		return err
-	}
-
-	// While we are on a stale branch of the chain, walk backwards to find
-	// first common block.
-	for !pruneHash.IsEqual(mainBlockHash) {
-		log.Infof("channel graph is stale. Disconnecting block %v "+
-			"(hash=%v)", pruneHeight, pruneHash)
-		// Prune the graph for every channel that was opened at height
-		// >= pruneHeight.
-		_, err := r.cfg.Graph.DisconnectBlockAtHeight(pruneHeight)
-		if err != nil {
-			return err
-		}
-
-		pruneHash, pruneHeight, err = r.cfg.Graph.PruneTip()
-		if err != nil {
-			switch {
-			// If at this point the graph has never been pruned, we
-			// can exit as this entails we are back to the point
-			// where it hasn't seen any block or created channels,
-			// alas there's nothing left to prune.
-			case err == channeldb.ErrGraphNeverPruned:
-				return nil
-			case err == channeldb.ErrGraphNotFound:
-				return nil
-			default:
-				return err
-			}
-		}
-		mainBlockHash, err = r.cfg.Chain.GetBlockHash(int64(pruneHeight))
-		if err != nil {
-			return err
-		}
-	}
-
-	log.Infof("Syncing channel graph from height=%v (hash=%v) to height=%v "+
-		"(hash=%v)", pruneHeight, pruneHash, bestHeight, bestHash)
-
-	// If we're not yet caught up, then we'll walk forward in the chain
-	// pruning the channel graph with each new block that hasn't yet been
-	// consumed by the channel graph.
-	var spentOutputs []*wire.OutPoint
-	for nextHeight := pruneHeight + 1; nextHeight <= uint32(bestHeight); nextHeight++ {
-		// Break out of the rescan early if a shutdown has been
-		// requested, otherwise long rescans will block the daemon from
-		// shutting down promptly.
-		select {
-		case <-r.quit:
-			return ErrRouterShuttingDown
-		default:
-		}
-
-		// Using the next height, request a manual block pruning from
-		// the chainview for the particular block hash.
-		log.Infof("Filtering block for closed channels, at height: %v",
-			int64(nextHeight))
-		nextHash, err := r.cfg.Chain.GetBlockHash(int64(nextHeight))
-		if err != nil {
-			return err
-		}
-		log.Tracef("Running block filter on block with hash: %v",
-			nextHash)
-		filterBlock, err := r.cfg.ChainView.FilterBlock(nextHash)
-		if err != nil {
-			return err
-		}
-
-		// We're only interested in all prior outputs that have been
-		// spent in the block, so collate all the referenced previous
-		// outpoints within each tx and input.
-		for _, tx := range filterBlock.Transactions {
-			for _, txIn := range tx.TxIn {
-				spentOutputs = append(spentOutputs,
-					&txIn.PreviousOutPoint)
-			}
-		}
-	}
-
-	// With the spent outputs gathered, attempt to prune the channel graph,
-	// also passing in the best hash+height so the prune tip can be updated.
-	closedChans, err := r.cfg.Graph.PruneGraph(
-		spentOutputs, bestHash, uint32(bestHeight),
-	)
-	if err != nil {
-		return err
-	}
-
-	log.Infof("Graph pruning complete: %v channels were closed since "+
-		"height %v", len(closedChans), pruneHeight)
-	return nil
-}
-
-// isZombieChannel takes two edge policy updates and determines if the
-// corresponding channel should be considered a zombie. The first boolean is
-// true if the policy update from node 1 is considered a zombie, the second
-// boolean is that of node 2, and the final boolean is true if the channel
-// is considered a zombie.
-func (r *ChannelRouter) isZombieChannel(e1,
-	e2 *models.ChannelEdgePolicy) (bool, bool, bool) {
-
-	chanExpiry := r.cfg.ChannelPruneExpiry
-
-	e1Zombie := e1 == nil || time.Since(e1.LastUpdate) >= chanExpiry
-	e2Zombie := e2 == nil || time.Since(e2.LastUpdate) >= chanExpiry
-
-	var e1Time, e2Time time.Time
-	if e1 != nil {
-		e1Time = e1.LastUpdate
-	}
-	if e2 != nil {
-		e2Time = e2.LastUpdate
-	}
-
-	return e1Zombie, e2Zombie, r.IsZombieChannel(e1Time, e2Time)
-}
-
-// IsZombieChannel takes the timestamps of the latest channel updates for a
-// channel and returns true if the channel should be considered a zombie based
-// on these timestamps.
-func (r *ChannelRouter) IsZombieChannel(updateTime1,
-	updateTime2 time.Time) bool {
-
-	chanExpiry := r.cfg.ChannelPruneExpiry
-
-	e1Zombie := updateTime1.IsZero() ||
-		time.Since(updateTime1) >= chanExpiry
-
-	e2Zombie := updateTime2.IsZero() ||
-		time.Since(updateTime2) >= chanExpiry
-
-	// If we're using strict zombie pruning, then a channel is only
-	// considered live if both edges have a recent update we know of.
-	if r.cfg.StrictZombiePruning {
-		return e1Zombie || e2Zombie
-	}
-
-	// Otherwise, if we're using the less strict variant, then a channel is
-	// considered live if either of the edges have a recent update.
-	return e1Zombie && e2Zombie
-}
-
-// pruneZombieChans is a method that will be called periodically to prune out
-// any "zombie" channels. We consider channels zombies if *both* edges haven't
-// been updated since our zombie horizon. If AssumeChannelValid is present,
-// we'll also consider channels zombies if *both* edges are disabled. This
-// usually signals that a channel has been closed on-chain. We do this
-// periodically to keep a healthy, lively routing table.
-func (r *ChannelRouter) pruneZombieChans() error {
-	chansToPrune := make(map[uint64]struct{})
-	chanExpiry := r.cfg.ChannelPruneExpiry
-
-	log.Infof("Examining channel graph for zombie channels")
-
-	// A helper method to detect if the channel belongs to this node
-	isSelfChannelEdge := func(info *models.ChannelEdgeInfo) bool {
-		return info.NodeKey1Bytes == r.selfNode.PubKeyBytes ||
-			info.NodeKey2Bytes == r.selfNode.PubKeyBytes
-	}
-
-	// First, we'll collect all the channels which are eligible for garbage
-	// collection due to being zombies.
-	filterPruneChans := func(info *models.ChannelEdgeInfo,
-		e1, e2 *models.ChannelEdgePolicy) error {
-
-		// Exit early in case this channel is already marked to be
-		// pruned
-		_, markedToPrune := chansToPrune[info.ChannelID]
-		if markedToPrune {
-			return nil
-		}
-
-		// We'll ensure that we don't attempt to prune our *own*
-		// channels from the graph, as in any case this should be
-		// re-advertised by the sub-system above us.
-		if isSelfChannelEdge(info) {
-			return nil
-		}
-
-		e1Zombie, e2Zombie, isZombieChan := r.isZombieChannel(e1, e2)
-
-		if e1Zombie {
-			log.Tracef("Node1 pubkey=%x of chan_id=%v is zombie",
-				info.NodeKey1Bytes, info.ChannelID)
-		}
-
-		if e2Zombie {
-			log.Tracef("Node2 pubkey=%x of chan_id=%v is zombie",
-				info.NodeKey2Bytes, info.ChannelID)
-		}
-
-		// If either edge hasn't been updated for a period of
-		// chanExpiry, then we'll mark the channel itself as eligible
-		// for graph pruning.
-		if !isZombieChan {
-			return nil
-		}
-
-		log.Debugf("ChannelID(%v) is a zombie, collecting to prune",
-			info.ChannelID)
-
-		// TODO(roasbeef): add ability to delete single directional edge
-		chansToPrune[info.ChannelID] = struct{}{}
-
-		return nil
-	}
-
-	// If AssumeChannelValid is present we'll look at the disabled bit for
-	// both edges. If they're both disabled, then we can interpret this as
-	// the channel being closed and can prune it from our graph.
-	if r.cfg.AssumeChannelValid {
-		disabledChanIDs, err := r.cfg.Graph.DisabledChannelIDs()
-		if err != nil {
-			return fmt.Errorf("unable to get disabled channels "+
-				"ids chans: %v", err)
-		}
-
-		disabledEdges, err := r.cfg.Graph.FetchChanInfos(
-			disabledChanIDs,
-		)
-		if err != nil {
-			return fmt.Errorf("unable to fetch disabled channels "+
-				"edges chans: %v", err)
-		}
-
-		// Ensuring we won't prune our own channel from the graph.
-		for _, disabledEdge := range disabledEdges {
-			if !isSelfChannelEdge(disabledEdge.Info) {
-				chansToPrune[disabledEdge.Info.ChannelID] =
-					struct{}{}
-			}
-		}
-	}
-
-	startTime := time.Unix(0, 0)
-	endTime := time.Now().Add(-1 * chanExpiry)
-	oldEdges, err := r.cfg.Graph.ChanUpdatesInHorizon(startTime, endTime)
-	if err != nil {
-		return fmt.Errorf("unable to fetch expired channel updates "+
-			"chans: %v", err)
-	}
-
-	for _, u := range oldEdges {
-		filterPruneChans(u.Info, u.Policy1, u.Policy2)
-	}
-
-	log.Infof("Pruning %v zombie channels", len(chansToPrune))
-	if len(chansToPrune) == 0 {
-		return nil
-	}
-
-	// With the set of zombie-like channels obtained, we'll do another pass
-	// to delete them from the channel graph.
-	toPrune := make([]uint64, 0, len(chansToPrune))
-	for chanID := range chansToPrune {
-		toPrune = append(toPrune, chanID)
-		log.Tracef("Pruning zombie channel with ChannelID(%v)", chanID)
-	}
-	err = r.cfg.Graph.DeleteChannelEdges(
-		r.cfg.StrictZombiePruning, true, toPrune...,
-	)
-	if err != nil {
-		return fmt.Errorf("unable to delete zombie channels: %w", err)
-	}
-
-	// With the channels pruned, we'll also attempt to prune any nodes that
-	// were a part of them.
-	err = r.cfg.Graph.PruneGraphNodes()
-	if err != nil && err != channeldb.ErrGraphNodesNotFound {
-		return fmt.Errorf("unable to prune graph nodes: %w", err)
-	}
 
 	return nil
 }
@@ -1154,10 +705,6 @@ func (r *ChannelRouter) handleNetworkUpdate(vb *ValidationBarrier,
 // NOTE: This MUST be run as a goroutine.
 func (r *ChannelRouter) networkHandler() {
 	defer r.wg.Done()
-
-	graphPruneTicker := time.NewTicker(r.cfg.GraphPruneInterval)
-	defer graphPruneTicker.Stop()
-
 	defer r.statTicker.Stop()
 
 	r.stats.Reset()
@@ -1303,14 +850,6 @@ func (r *ChannelRouter) networkHandler() {
 				ntfnChan: ntfnUpdate.ntfnChan,
 				exit:     make(chan struct{}),
 			})
-
-		// The graph prune ticker has ticked, so we'll examine the
-		// state of the known graph to filter out any zombie channels
-		// for pruning.
-		case <-graphPruneTicker.C:
-			if err := r.pruneZombieChans(); err != nil {
-				log.Errorf("Unable to prune zombies: %v", err)
-			}
 
 		// Log any stats if we've processed a non-empty number of
 		// channels, updates, or nodes. We'll only pause the ticker if
@@ -2976,64 +2515,6 @@ func (r *ChannelRouter) IsKnownEdge(chanID lnwire.ShortChannelID) bool {
 		chanID.ToUint64(),
 	)
 	return exists || isZombie
-}
-
-// IsStaleEdgePolicy returns true if the graph source has a channel edge for
-// the passed channel ID (and flags) that have a more recent timestamp.
-//
-// NOTE: This method is part of the ChannelGraphSource interface.
-func (r *ChannelRouter) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
-	timestamp time.Time, flags lnwire.ChanUpdateChanFlags) bool {
-
-	edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
-		r.cfg.Graph.HasChannelEdge(chanID.ToUint64())
-	if err != nil {
-		log.Debugf("Check stale edge policy got error: %v", err)
-		return false
-
-	}
-
-	// If we know of the edge as a zombie, then we'll make some additional
-	// checks to determine if the new policy is fresh.
-	if isZombie {
-		// When running with AssumeChannelValid, we also prune channels
-		// if both of their edges are disabled. We'll mark the new
-		// policy as stale if it remains disabled.
-		if r.cfg.AssumeChannelValid {
-			isDisabled := flags&lnwire.ChanUpdateDisabled ==
-				lnwire.ChanUpdateDisabled
-			if isDisabled {
-				return true
-			}
-		}
-
-		// Otherwise, we'll fall back to our usual ChannelPruneExpiry.
-		return time.Since(timestamp) > r.cfg.ChannelPruneExpiry
-	}
-
-	// If we don't know of the edge, then it means it's fresh (thus not
-	// stale).
-	if !exists {
-		return false
-	}
-
-	// As edges are directional edge node has a unique policy for the
-	// direction of the edge they control. Therefore we first check if we
-	// already have the most up to date information for that edge. If so,
-	// then we can exit early.
-	switch {
-	// A flag set of 0 indicates this is an announcement for the "first"
-	// node in the channel.
-	case flags&lnwire.ChanUpdateDirection == 0:
-		return !edge1Timestamp.Before(timestamp)
-
-	// Similarly, a flag set of 1 indicates this is an announcement for the
-	// "second" node in the channel.
-	case flags&lnwire.ChanUpdateDirection == 1:
-		return !edge2Timestamp.Before(timestamp)
-	}
-
-	return false
 }
 
 // MarkEdgeLive clears an edge from our zombie index, deeming it as live.

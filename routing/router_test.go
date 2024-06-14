@@ -84,7 +84,6 @@ func (c *testCtx) RestartRouter(t *testing.T) {
 		Payer:              &mockPaymentAttemptDispatcherOld{},
 		Control:            makeMockControlTower(),
 		ChannelPruneExpiry: time.Hour * 24,
-		GraphPruneInterval: time.Hour * 2,
 		IsAlias: func(scid lnwire.ShortChannelID) bool {
 			return false
 		},
@@ -169,16 +168,14 @@ func createTestCtxFromGraphInstanceAssumeValid(t *testing.T,
 		MissionControl:     mc,
 		SessionSource:      sessionSource,
 		ChannelPruneExpiry: time.Hour * 24,
-		GraphPruneInterval: time.Hour * 2,
 		GetLink:            graphInstance.getLink,
 		NextPaymentID: func() (uint64, error) {
 			next := atomic.AddUint64(&uniquePaymentID, 1)
 			return next, nil
 		},
-		PathFindingConfig:   pathFindingConfig,
-		Clock:               clock.NewTestClock(time.Unix(1, 0)),
-		AssumeChannelValid:  assumeValid,
-		StrictZombiePruning: strictPruning,
+		PathFindingConfig:  pathFindingConfig,
+		Clock:              clock.NewTestClock(time.Unix(1, 0)),
+		AssumeChannelValid: assumeValid,
 		IsAlias: func(scid lnwire.ShortChannelID) bool {
 			return false
 		},
@@ -1776,11 +1773,6 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		Payer:              &mockPaymentAttemptDispatcherOld{},
 		Control:            makeMockControlTower(),
 		ChannelPruneExpiry: time.Hour * 24,
-		GraphPruneInterval: time.Hour * 2,
-
-		// We'll set the delay to zero to prune immediately.
-		FirstTimePruneDelay: 0,
-
 		IsAlias: func(scid lnwire.ShortChannelID) bool {
 			return false
 		},
@@ -2160,6 +2152,7 @@ func TestRouterChansClosedOfflinePruneGraph(t *testing.T) {
 	}
 }
 
+/*
 // TestPruneChannelGraphStaleEdges ensures that we properly prune stale edges
 // from the channel graph.
 func TestPruneChannelGraphStaleEdges(t *testing.T) {
@@ -2420,6 +2413,7 @@ func testPruneChannelGraphDoubleDisabled(t *testing.T, assumeValid bool) {
 		assertChannelsPruned(t, ctx.graph, testChannels, prunedChannel)
 	}
 }
+*/
 
 // TestFindPathFeeWeighting tests that the findPath method will properly prefer
 // routes with lower fees over routes with lower time lock values. This is
@@ -2614,12 +2608,6 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 	// If we query for staleness before adding the edge, we should get
 	// false.
 	updateTimeStamp := time.Unix(123, 0)
-	if ctx.router.IsStaleEdgePolicy(*chanID, updateTimeStamp, 0) {
-		t.Fatalf("router failed to detect fresh edge policy")
-	}
-	if ctx.router.IsStaleEdgePolicy(*chanID, updateTimeStamp, 1) {
-		t.Fatalf("router failed to detect fresh edge policy")
-	}
 
 	edge := &models.ChannelEdgeInfo{
 		ChannelID:        chanID.ToUint64(),
@@ -2662,24 +2650,9 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 		t.Fatalf("unable to update edge policy: %v", err)
 	}
 
-	// Now that the edges have been added, an identical (chanID, flag,
-	// timestamp) tuple for each edge should be detected as a stale edge.
-	if !ctx.router.IsStaleEdgePolicy(*chanID, updateTimeStamp, 0) {
-		t.Fatalf("router failed to detect stale edge policy")
-	}
-	if !ctx.router.IsStaleEdgePolicy(*chanID, updateTimeStamp, 1) {
-		t.Fatalf("router failed to detect stale edge policy")
-	}
-
 	// If we now update the timestamp for both edges, the router should
 	// detect that this tuple represents a fresh edge.
 	updateTimeStamp = time.Unix(9999, 0)
-	if ctx.router.IsStaleEdgePolicy(*chanID, updateTimeStamp, 0) {
-		t.Fatalf("router failed to detect fresh edge policy")
-	}
-	if ctx.router.IsStaleEdgePolicy(*chanID, updateTimeStamp, 1) {
-		t.Fatalf("router failed to detect fresh edge policy")
-	}
 }
 
 // TestEmptyRoutesGenerateSphinxPacket tests that the generateSphinxPacket

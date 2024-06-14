@@ -40,6 +40,7 @@ import (
 	"github.com/lightningnetwork/lnd/feature"
 	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/funding"
+	"github.com/lightningnetwork/lnd/graph"
 	"github.com/lightningnetwork/lnd/healthcheck"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
@@ -269,6 +270,8 @@ type server struct {
 	breachArbitrator *contractcourt.BreachArbitrator
 
 	missionControl *routing.MissionControl
+
+	graphMgr *graph.Manager
 
 	chanRouter *routing.ChannelRouter
 
@@ -983,28 +986,40 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	s.controlTower = routing.NewControlTower(paymentControl)
 
-	strictPruning := (cfg.Bitcoin.Node == "neutrino" ||
-		cfg.Routing.StrictZombiePruning)
-	s.chanRouter, err = routing.New(routing.Config{
-		RoutingGraph:        routing.NewNodeAgnosticGraph(chanGraph),
+	strictPruning := cfg.Bitcoin.Node == "neutrino" ||
+		cfg.Routing.StrictZombiePruning
+
+	s.graphMgr, err = graph.NewManager(&graph.Config{
 		Graph:               chanGraph,
 		Chain:               cc.ChainIO,
 		ChainView:           cc.ChainView,
-		Notifier:            cc.ChainNotifier,
-		Payer:               s.htlcSwitch,
-		Control:             s.controlTower,
-		MissionControl:      s.missionControl,
-		SessionSource:       paymentSessionSource,
-		ChannelPruneExpiry:  routing.DefaultChannelPruneExpiry,
+		ChannelPruneExpiry:  graph.DefaultChannelPruneExpiry,
 		GraphPruneInterval:  time.Hour,
-		FirstTimePruneDelay: routing.DefaultFirstTimePruneDelay,
-		GetLink:             s.htlcSwitch.GetLinkByShortID,
 		AssumeChannelValid:  cfg.Routing.AssumeChannelValid,
-		NextPaymentID:       sequencer.NextID,
-		PathFindingConfig:   pathFindingConfig,
-		Clock:               clock.NewDefaultClock(),
+		FirstTimePruneDelay: graph.DefaultFirstTimePruneDelay,
 		StrictZombiePruning: strictPruning,
-		IsAlias:             aliasmgr.IsAlias,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("can't create graph manager: %w", err)
+	}
+
+	s.chanRouter, err = routing.New(routing.Config{
+		RoutingGraph:       routing.NewNodeAgnosticGraph(chanGraph),
+		Graph:              chanGraph,
+		Chain:              cc.ChainIO,
+		ChainView:          cc.ChainView,
+		Notifier:           cc.ChainNotifier,
+		Payer:              s.htlcSwitch,
+		Control:            s.controlTower,
+		MissionControl:     s.missionControl,
+		SessionSource:      paymentSessionSource,
+		ChannelPruneExpiry: graph.DefaultChannelPruneExpiry,
+		GetLink:            s.htlcSwitch.GetLinkByShortID,
+		AssumeChannelValid: cfg.Routing.AssumeChannelValid,
+		NextPaymentID:      sequencer.NextID,
+		PathFindingConfig:  pathFindingConfig,
+		Clock:              clock.NewDefaultClock(),
+		IsAlias:            aliasmgr.IsAlias,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("can't create router: %w", err)
@@ -1056,7 +1071,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		FindBaseByAlias:         s.aliasMgr.FindBaseSCID,
 		GetAlias:                s.aliasMgr.GetPeerAlias,
 		FindChannel:             s.findChannel,
-		IsStillZombieChannel:    s.chanRouter.IsZombieChannel,
+		IsStillZombieChannel:    s.graphMgr.IsZombieChannel,
 	}, nodeKeyDesc)
 
 	s.localChanMgr = &localchans.Manager{
@@ -2029,6 +2044,12 @@ func (s *server) Start() error {
 			return
 		}
 		cleanup = cleanup.add(s.authGossiper.Stop)
+
+		if err := s.graphMgr.Start(); err != nil {
+			startErr = err
+			return
+		}
+		cleanup = cleanup.add(s.graphMgr.Stop)
 
 		if err := s.chanRouter.Start(); err != nil {
 			startErr = err
