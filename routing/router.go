@@ -1022,7 +1022,7 @@ func (r *ChannelRouter) pruneZombieChans() error {
 		}
 
 		disabledEdges, err := r.cfg.Graph.FetchChanInfos(
-			nil, disabledChanIDs,
+			disabledChanIDs,
 		)
 		if err != nil {
 			return fmt.Errorf("unable to fetch disabled channels "+
