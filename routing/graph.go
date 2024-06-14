@@ -18,9 +18,6 @@ type routingGraph interface {
 	forEachNodeChannel(nodePub route.Vertex,
 		cb func(channel *channeldb.DirectedChannel) error) error
 
-	// sourceNode returns the source node of the graph.
-	sourceNode() route.Vertex
-
 	// fetchNodeFeatures returns the features of the given node.
 	fetchNodeFeatures(nodePub route.Vertex) (*lnwire.FeatureVector, error)
 }
