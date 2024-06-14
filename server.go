@@ -970,6 +970,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	strictPruning := (cfg.Bitcoin.Node == "neutrino" ||
 		cfg.Routing.StrictZombiePruning)
 	s.chanRouter, err = routing.New(routing.Config{
+		RoutingGraph:        routing.NewNodeAgnosticGraph(chanGraph),
 		Graph:               chanGraph,
 		Chain:               cc.ChainIO,
 		ChainView:           cc.ChainView,
