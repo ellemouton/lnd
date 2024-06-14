@@ -23,11 +23,11 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/fn"
+	"github.com/lightningnetwork/lnd/graph"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lntypes"
-	"github.com/lightningnetwork/lnd/lnutils"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwallet/btcwallet"
 	"github.com/lightningnetwork/lnd/lnwallet/chanvalidate"
@@ -302,6 +302,8 @@ type ChannelPolicy struct {
 // the configuration MUST be non-nil for the ChannelRouter to carry out its
 // duties.
 type Config struct {
+	GraphMgr graph.Graph
+
 	// RoutingGraph is a graph source that will be used for pathfinding.
 	RoutingGraph RoutingGraph
 
@@ -315,15 +317,13 @@ type Config struct {
 	// to ensure that the channels advertised are still open.
 	Chain lnwallet.BlockChainIO
 
+	BestBlockView chainntnfs.BestBlockView
+
 	// ChainView is an instance of a FilteredChainView which is used to
 	// watch the sub-set of the UTXO set (the set of active channels) that
 	// we need in order to properly maintain the channel graph.
 	// The ChainView MUST have already been started.
 	ChainView chainview.FilteredChainView
-
-	// Notifier is a reference to the ChainNotifier, used to grab
-	// the latest blocks if the router is missing any.
-	Notifier chainntnfs.ChainNotifier
 
 	// Payer is an instance of a PaymentAttemptDispatcher and is used by
 	// the router to send payment attempts onto the network, and receive
@@ -407,12 +407,8 @@ func (e *EdgeLocator) String() string {
 // automatically as new blocks are discovered which spend certain known funding
 // outpoints, thereby closing their respective channels.
 type ChannelRouter struct {
-	ntfnClientCounter uint64 // To be used atomically.
-
 	started uint32 // To be used atomically.
 	stopped uint32 // To be used atomically.
-
-	bestHeight uint32 // To be used atomically.
 
 	// cfg is a copy of the configuration struct that the ChannelRouter was
 	// initialized with.
@@ -423,30 +419,10 @@ type ChannelRouter struct {
 	// when doing any path finding.
 	selfNode *channeldb.LightningNode
 
-	// newBlocks is a channel in which new blocks connected to the end of
-	// the main chain are sent over, and blocks updated after a call to
-	// UpdateFilter.
-	newBlocks <-chan *chainview.FilteredBlock
-
-	// staleBlocks is a channel in which blocks disconnected from the end
-	// of our currently known best chain are sent over.
-	staleBlocks <-chan *chainview.FilteredBlock
-
 	// networkUpdates is a channel that carries new topology updates
 	// messages from outside the ChannelRouter to be processed by the
 	// networkHandler.
 	networkUpdates chan *routingMsg
-
-	// topologyClients maps a client's unique notification ID to a
-	// topologyClient client that contains its notification dispatch
-	// channel.
-	topologyClients *lnutils.SyncMap[uint64, *topologyClient]
-
-	// ntfnClientUpdates is a channel that's used to send new updates to
-	// topology notification clients to the ChannelRouter. Updates either
-	// add a new notification client, or cancel notifications for an
-	// existing client.
-	ntfnClientUpdates chan *topologyClientUpdate
 
 	// channelEdgeMtx is a mutex we use to make sure we process only one
 	// ChannelEdgePolicy at a time for a given channelID, to ensure
@@ -481,15 +457,13 @@ func New(cfg Config) (*ChannelRouter, error) {
 	}
 
 	r := &ChannelRouter{
-		cfg:               &cfg,
-		networkUpdates:    make(chan *routingMsg),
-		topologyClients:   &lnutils.SyncMap[uint64, *topologyClient]{},
-		ntfnClientUpdates: make(chan *topologyClientUpdate),
-		channelEdgeMtx:    multimutex.NewMutex[uint64](),
-		selfNode:          selfNode,
-		statTicker:        ticker.New(defaultStatInterval),
-		stats:             new(routerStats),
-		quit:              make(chan struct{}),
+		cfg:            &cfg,
+		networkUpdates: make(chan *routingMsg),
+		channelEdgeMtx: multimutex.NewMutex[uint64](),
+		selfNode:       selfNode,
+		statTicker:     ticker.New(defaultStatInterval),
+		stats:          new(routerStats),
+		quit:           make(chan struct{}),
 	}
 
 	return r, nil
@@ -504,19 +478,6 @@ func (r *ChannelRouter) Start() error {
 	}
 
 	log.Info("Channel Router starting")
-
-	_, bestHeight, err := r.cfg.Chain.GetBestBlock()
-	if err != nil {
-		return err
-	}
-	r.bestHeight = uint32(bestHeight)
-
-	if !r.cfg.AssumeChannelValid {
-		// Once the instance is active, we'll fetch the channel we'll
-		// receive notifications over.
-		r.newBlocks = r.cfg.ChainView.FilteredBlocks()
-		r.staleBlocks = r.cfg.ChainView.DisconnectedBlocks()
-	}
 
 	// If any payments are still in flight, we resume, to make sure their
 	// results are properly handled.
@@ -684,17 +645,7 @@ func (r *ChannelRouter) handleNetworkUpdate(vb *ValidationBarrier,
 
 	// Otherwise, we'll send off a new notification for the newly accepted
 	// update, if any.
-	topChange := &TopologyChange{}
-	err = addToTopologyChange(r.cfg.Graph, topChange, update.msg)
-	if err != nil {
-		log.Errorf("unable to update topology change notification: %v",
-			err)
-		return
-	}
-
-	if !topChange.isEmpty() {
-		r.notifyTopologyChange(topChange)
-	}
+	r.cfg.GraphMgr.AddTopologyChange(update.msg)
 }
 
 // networkHandler is the primary goroutine for the ChannelRouter. The roles of
@@ -758,99 +709,6 @@ func (r *ChannelRouter) networkHandler() {
 			// after N blocks pass with no corresponding
 			// announcements.
 
-		case chainUpdate, ok := <-r.staleBlocks:
-			// If the channel has been closed, then this indicates
-			// the daemon is shutting down, so we exit ourselves.
-			if !ok {
-				return
-			}
-
-			// Since this block is stale, we update our best height
-			// to the previous block.
-			blockHeight := uint32(chainUpdate.Height)
-			atomic.StoreUint32(&r.bestHeight, blockHeight-1)
-
-			// Update the channel graph to reflect that this block
-			// was disconnected.
-			_, err := r.cfg.Graph.DisconnectBlockAtHeight(blockHeight)
-			if err != nil {
-				log.Errorf("unable to prune graph with stale "+
-					"block: %v", err)
-				continue
-			}
-
-			// TODO(halseth): notify client about the reorg?
-
-		// A new block has arrived, so we can prune the channel graph
-		// of any channels which were closed in the block.
-		case chainUpdate, ok := <-r.newBlocks:
-			// If the channel has been closed, then this indicates
-			// the daemon is shutting down, so we exit ourselves.
-			if !ok {
-				return
-			}
-
-			// We'll ensure that any new blocks received attach
-			// directly to the end of our main chain. If not, then
-			// we've somehow missed some blocks. Here we'll catch
-			// up the chain with the latest blocks.
-			currentHeight := atomic.LoadUint32(&r.bestHeight)
-			switch {
-			case chainUpdate.Height == currentHeight+1:
-				err := r.updateGraphWithClosedChannels(
-					chainUpdate,
-				)
-				if err != nil {
-					log.Errorf("unable to prune graph "+
-						"with closed channels: %v", err)
-				}
-
-			case chainUpdate.Height > currentHeight+1:
-				log.Errorf("out of order block: expecting "+
-					"height=%v, got height=%v",
-					currentHeight+1, chainUpdate.Height)
-
-				err := r.getMissingBlocks(currentHeight, chainUpdate)
-				if err != nil {
-					log.Errorf("unable to retrieve missing"+
-						"blocks: %v", err)
-				}
-
-			case chainUpdate.Height < currentHeight+1:
-				log.Errorf("out of order block: expecting "+
-					"height=%v, got height=%v",
-					currentHeight+1, chainUpdate.Height)
-
-				log.Infof("Skipping channel pruning since "+
-					"received block height %v was already"+
-					" processed.", chainUpdate.Height)
-			}
-
-		// A new notification client update has arrived. We're either
-		// gaining a new client, or cancelling notifications for an
-		// existing client.
-		case ntfnUpdate := <-r.ntfnClientUpdates:
-			clientID := ntfnUpdate.clientID
-
-			if ntfnUpdate.cancel {
-				client, ok := r.topologyClients.LoadAndDelete(
-					clientID,
-				)
-				if ok {
-					close(client.exit)
-					client.wg.Wait()
-
-					close(client.ntfnChan)
-				}
-
-				continue
-			}
-
-			r.topologyClients.Store(clientID, &topologyClient{
-				ntfnChan: ntfnUpdate.ntfnChan,
-				exit:     make(chan struct{}),
-			})
-
 		// Log any stats if we've processed a non-empty number of
 		// channels, updates, or nodes. We'll only pause the ticker if
 		// the last window contained no updates to avoid resuming and
@@ -869,117 +727,6 @@ func (r *ChannelRouter) networkHandler() {
 			return
 		}
 	}
-}
-
-// getMissingBlocks walks through all missing blocks and updates the graph
-// closed channels accordingly.
-func (r *ChannelRouter) getMissingBlocks(currentHeight uint32,
-	chainUpdate *chainview.FilteredBlock) error {
-
-	outdatedHash, err := r.cfg.Chain.GetBlockHash(int64(currentHeight))
-	if err != nil {
-		return err
-	}
-
-	outdatedBlock := &chainntnfs.BlockEpoch{
-		Height: int32(currentHeight),
-		Hash:   outdatedHash,
-	}
-
-	epochClient, err := r.cfg.Notifier.RegisterBlockEpochNtfn(
-		outdatedBlock,
-	)
-	if err != nil {
-		return err
-	}
-	defer epochClient.Cancel()
-
-	blockDifference := int(chainUpdate.Height - currentHeight)
-
-	// We'll walk through all the outdated blocks and make sure we're able
-	// to update the graph with any closed channels from them.
-	for i := 0; i < blockDifference; i++ {
-		var (
-			missingBlock *chainntnfs.BlockEpoch
-			ok           bool
-		)
-
-		select {
-		case missingBlock, ok = <-epochClient.Epochs:
-			if !ok {
-				return nil
-			}
-
-		case <-r.quit:
-			return nil
-		}
-
-		filteredBlock, err := r.cfg.ChainView.FilterBlock(
-			missingBlock.Hash,
-		)
-		if err != nil {
-			return err
-		}
-
-		err = r.updateGraphWithClosedChannels(
-			filteredBlock,
-		)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// updateGraphWithClosedChannels prunes the channel graph of closed channels
-// that are no longer needed.
-func (r *ChannelRouter) updateGraphWithClosedChannels(
-	chainUpdate *chainview.FilteredBlock) error {
-
-	// Once a new block arrives, we update our running track of the height
-	// of the chain tip.
-	blockHeight := chainUpdate.Height
-
-	atomic.StoreUint32(&r.bestHeight, blockHeight)
-	log.Infof("Pruning channel graph using block %v (height=%v)",
-		chainUpdate.Hash, blockHeight)
-
-	// We're only interested in all prior outputs that have been spent in
-	// the block, so collate all the referenced previous outpoints within
-	// each tx and input.
-	var spentOutputs []*wire.OutPoint
-	for _, tx := range chainUpdate.Transactions {
-		for _, txIn := range tx.TxIn {
-			spentOutputs = append(spentOutputs,
-				&txIn.PreviousOutPoint)
-		}
-	}
-
-	// With the spent outputs gathered, attempt to prune the channel graph,
-	// also passing in the hash+height of the block being pruned so the
-	// prune tip can be updated.
-	chansClosed, err := r.cfg.Graph.PruneGraph(spentOutputs,
-		&chainUpdate.Hash, chainUpdate.Height)
-	if err != nil {
-		log.Errorf("unable to prune routing table: %v", err)
-		return err
-	}
-
-	log.Infof("Block %v (height=%v) closed %v channels", chainUpdate.Hash,
-		blockHeight, len(chansClosed))
-
-	if len(chansClosed) == 0 {
-		return err
-	}
-
-	// Notify all currently registered clients of the newly closed channels.
-	closeSummaries := createCloseSummaries(blockHeight, chansClosed...)
-	r.notifyTopologyChange(&TopologyChange{
-		ClosedChannels: closeSummaries,
-	})
-
-	return nil
 }
 
 // assertNodeAnnFreshness returns a non-nil error if we have an announcement in
@@ -1282,12 +1029,17 @@ func (r *ChannelRouter) processUpdate(msg interface{},
 				OutPoint:        *fundingPoint,
 			},
 		}
-		err = r.cfg.ChainView.UpdateFilter(
-			filterUpdate, atomic.LoadUint32(&r.bestHeight),
-		)
+
+		bestHeight, err := r.cfg.BestBlockView.BestHeight()
 		if err != nil {
-			return errors.Errorf("unable to update chain "+
-				"view: %v", err)
+			return errors.Errorf("could not get best height: %v",
+				err)
+		}
+
+		err = r.cfg.ChainView.UpdateFilter(filterUpdate, bestHeight)
+		if err != nil {
+			return errors.Errorf("unable to update chain view: %v",
+				err)
 		}
 
 	case *models.ChannelEdgePolicy:
@@ -2399,13 +2151,6 @@ func (r *ChannelRouter) UpdateEdge(update *models.ChannelEdgePolicy,
 func (r *ChannelRouter) CurrentBlockHeight() (uint32, error) {
 	_, height, err := r.cfg.Chain.GetBestBlock()
 	return uint32(height), err
-}
-
-// SyncedHeight returns the block height to which the router subsystem currently
-// is synced to. This can differ from the above chain height if the goroutine
-// responsible for processing the blocks isn't yet up to speed.
-func (r *ChannelRouter) SyncedHeight() uint32 {
-	return atomic.LoadUint32(&r.bestHeight)
 }
 
 // GetChannelByID return the channel by the channel id.

@@ -341,7 +341,7 @@ type server struct {
 // updatePersistentPeerAddrs subscribes to topology changes and stores
 // advertised addresses for any NodeAnnouncements from our persisted peers.
 func (s *server) updatePersistentPeerAddrs() error {
-	graphSub, err := s.chanRouter.SubscribeTopology()
+	graphSub, err := s.graphMgr.SubscribeTopology()
 	if err != nil {
 		return err
 	}
@@ -993,6 +993,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		Graph:               chanGraph,
 		Chain:               cc.ChainIO,
 		ChainView:           cc.ChainView,
+		Notifier:            cc.ChainNotifier,
 		ChannelPruneExpiry:  graph.DefaultChannelPruneExpiry,
 		GraphPruneInterval:  time.Hour,
 		AssumeChannelValid:  cfg.Routing.AssumeChannelValid,
@@ -1005,10 +1006,10 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	s.chanRouter, err = routing.New(routing.Config{
 		RoutingGraph:       routing.NewNodeAgnosticGraph(chanGraph),
+		BestBlockView:      cc.BestBlockTracker,
 		Graph:              chanGraph,
 		Chain:              cc.ChainIO,
 		ChainView:          cc.ChainView,
-		Notifier:           cc.ChainNotifier,
 		Payer:              s.htlcSwitch,
 		Control:            s.controlTower,
 		MissionControl:     s.missionControl,

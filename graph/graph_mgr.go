@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/wire"
+	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channeldb/models"
+	"github.com/lightningnetwork/lnd/lnutils"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/chainview"
@@ -46,6 +48,10 @@ type Config struct {
 	// we need in order to properly maintain the channel graph.
 	ChainView chainview.FilteredChainView
 
+	// Notifier is a reference to the ChainNotifier, used to grab
+	// the latest blocks if the router is missing any.
+	Notifier chainntnfs.ChainNotifier
+
 	// ChannelPruneExpiry is the duration used to determine if a channel
 	// should be pruned or not. If the delta between now and when the
 	// channel was last updated is greater than ChannelPruneExpiry, then
@@ -80,13 +86,34 @@ type Manager struct {
 	started uint32 // To be used atomically.
 	stopped uint32 // To be used atomically.
 
-	bestHeight uint32 // To be used atomically.
+	bestHeight        uint32 // To be used atomically.
+	ntfnClientCounter uint64 // To be used atomically.
 
 	cfg *Config
 
 	// selfNode is this node's public key. It is used to know which edges
 	// and vertices not to prune.
 	selfNode route.Vertex
+
+	// newBlocks is a channel in which new blocks connected to the end of
+	// the main chain are sent over, and blocks updated after a call to
+	// UpdateFilter.
+	newBlocks <-chan *chainview.FilteredBlock
+
+	// staleBlocks is a channel in which blocks disconnected from the end
+	// of our currently known best chain are sent over.
+	staleBlocks <-chan *chainview.FilteredBlock
+
+	// topologyClients maps a client's unique notification ID to a
+	// topologyClient client that contains its notification dispatch
+	// channel.
+	topologyClients *lnutils.SyncMap[uint64, *topologyClient]
+
+	// ntfnClientUpdates is a channel that's used to send new updates to
+	// topology notification clients to the ChannelRouter. Updates either
+	// add a new notification client, or cancel notifications for an
+	// existing client.
+	ntfnClientUpdates chan *topologyClientUpdate
 
 	quit chan struct{}
 	wg   sync.WaitGroup
@@ -99,9 +126,11 @@ func NewManager(cfg *Config) (*Manager, error) {
 	}
 
 	return &Manager{
-		cfg:      cfg,
-		selfNode: selfNode.PubKeyBytes,
-		quit:     make(chan struct{}),
+		cfg:               cfg,
+		selfNode:          selfNode.PubKeyBytes,
+		topologyClients:   &lnutils.SyncMap[uint64, *topologyClient]{},
+		ntfnClientUpdates: make(chan *topologyClientUpdate),
+		quit:              make(chan struct{}),
 	}, nil
 }
 
@@ -162,6 +191,11 @@ func (m *Manager) Start() error {
 			return err
 		}
 
+		// Once the instance is active, we'll fetch the channel we'll
+		// receive notifications over.
+		m.newBlocks = m.cfg.ChainView.FilteredBlocks()
+		m.staleBlocks = m.cfg.ChainView.DisconnectedBlocks()
+
 		// Before we perform our manual block pruning, we'll construct
 		// and apply a fresh chain filter to the active
 		// FilteredChainView instance.  We do this before, as otherwise
@@ -209,7 +243,7 @@ func (m *Manager) Start() error {
 	}
 
 	m.wg.Add(1)
-	go m.pruneHandler()
+	go m.graphHandler()
 
 	return nil
 }
@@ -239,7 +273,7 @@ func (m *Manager) Stop() error {
 	return nil
 }
 
-func (m *Manager) pruneHandler() {
+func (m *Manager) graphHandler() {
 	defer m.wg.Done()
 
 	pruneTicker := time.NewTicker(m.cfg.GraphPruneInterval)
@@ -255,12 +289,214 @@ func (m *Manager) pruneHandler() {
 				log.Errorf("Unable to prune zombies: %v", err)
 			}
 
+		case chainUpdate, ok := <-m.staleBlocks:
+			// If the channel has been closed, then this indicates
+			// the daemon is shutting down, so we exit ourselves.
+			if !ok {
+				return
+			}
+
+			// Since this block is stale, we update our best height
+			// to the previous block.
+			blockHeight := uint32(chainUpdate.Height)
+			atomic.StoreUint32(&m.bestHeight, blockHeight-1)
+
+			// Update the channel graph to reflect that this block
+			// was disconnected.
+			_, err := m.cfg.Graph.DisconnectBlockAtHeight(blockHeight)
+			if err != nil {
+				log.Errorf("unable to prune graph with stale "+
+					"block: %v", err)
+				continue
+			}
+
+			// TODO(halseth): notify client about the reorg?
+
+		// A new block has arrived, so we can prune the channel graph
+		// of any channels which were closed in the block.
+		case chainUpdate, ok := <-m.newBlocks:
+			// If the channel has been closed, then this indicates
+			// the daemon is shutting down, so we exit ourselves.
+			if !ok {
+				return
+			}
+
+			// We'll ensure that any new blocks received attach
+			// directly to the end of our main chain. If not, then
+			// we've somehow missed some blocks. Here we'll catch
+			// up the chain with the latest blocks.
+			currentHeight := atomic.LoadUint32(&m.bestHeight)
+			switch {
+			case chainUpdate.Height == currentHeight+1:
+				err := m.updateGraphWithClosedChannels(
+					chainUpdate,
+				)
+				if err != nil {
+					log.Errorf("unable to prune graph "+
+						"with closed channels: %v", err)
+				}
+
+			case chainUpdate.Height > currentHeight+1:
+				log.Errorf("out of order block: expecting "+
+					"height=%v, got height=%v",
+					currentHeight+1, chainUpdate.Height)
+
+				err := m.getMissingBlocks(currentHeight, chainUpdate)
+				if err != nil {
+					log.Errorf("unable to retrieve missing"+
+						"blocks: %v", err)
+				}
+
+			case chainUpdate.Height < currentHeight+1:
+				log.Errorf("out of order block: expecting "+
+					"height=%v, got height=%v",
+					currentHeight+1, chainUpdate.Height)
+
+				log.Infof("Skipping channel pruning since "+
+					"received block height %v was already"+
+					" processed.", chainUpdate.Height)
+			}
+
+		// A new notification client update has arrived. We're either
+		// gaining a new client, or cancelling notifications for an
+		// existing client.
+		case ntfnUpdate := <-m.ntfnClientUpdates:
+			clientID := ntfnUpdate.clientID
+
+			if ntfnUpdate.cancel {
+				client, ok := m.topologyClients.LoadAndDelete(
+					clientID,
+				)
+				if ok {
+					close(client.exit)
+					client.wg.Wait()
+
+					close(client.ntfnChan)
+				}
+
+				continue
+			}
+
+			m.topologyClients.Store(clientID, &topologyClient{
+				ntfnChan: ntfnUpdate.ntfnChan,
+				exit:     make(chan struct{}),
+			})
+
 		// The router has been signalled to exit, to we exit our main
 		// loop so the wait group can be decremented.
 		case <-m.quit:
 			return
 		}
 	}
+}
+
+// getMissingBlocks walks through all missing blocks and updates the graph
+// closed channels accordingly.
+func (m *Manager) getMissingBlocks(currentHeight uint32,
+	chainUpdate *chainview.FilteredBlock) error {
+
+	outdatedHash, err := m.cfg.Chain.GetBlockHash(int64(currentHeight))
+	if err != nil {
+		return err
+	}
+
+	outdatedBlock := &chainntnfs.BlockEpoch{
+		Height: int32(currentHeight),
+		Hash:   outdatedHash,
+	}
+
+	epochClient, err := m.cfg.Notifier.RegisterBlockEpochNtfn(
+		outdatedBlock,
+	)
+	if err != nil {
+		return err
+	}
+	defer epochClient.Cancel()
+
+	blockDifference := int(chainUpdate.Height - currentHeight)
+
+	// We'll walk through all the outdated blocks and make sure we're able
+	// to update the graph with any closed channels from them.
+	for i := 0; i < blockDifference; i++ {
+		var (
+			missingBlock *chainntnfs.BlockEpoch
+			ok           bool
+		)
+
+		select {
+		case missingBlock, ok = <-epochClient.Epochs:
+			if !ok {
+				return nil
+			}
+
+		case <-m.quit:
+			return nil
+		}
+
+		filteredBlock, err := m.cfg.ChainView.FilterBlock(
+			missingBlock.Hash,
+		)
+		if err != nil {
+			return err
+		}
+
+		err = m.updateGraphWithClosedChannels(filteredBlock)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// updateGraphWithClosedChannels prunes the channel graph of closed channels
+// that are no longer needed.
+func (m *Manager) updateGraphWithClosedChannels(
+	chainUpdate *chainview.FilteredBlock) error {
+
+	// Once a new block arrives, we update our running track of the height
+	// of the chain tip.
+	blockHeight := chainUpdate.Height
+
+	atomic.StoreUint32(&m.bestHeight, blockHeight)
+	log.Infof("Pruning channel graph using block %v (height=%v)",
+		chainUpdate.Hash, blockHeight)
+
+	// We're only interested in all prior outputs that have been spent in
+	// the block, so collate all the referenced previous outpoints within
+	// each tx and input.
+	var spentOutputs []*wire.OutPoint
+	for _, tx := range chainUpdate.Transactions {
+		for _, txIn := range tx.TxIn {
+			spentOutputs = append(spentOutputs,
+				&txIn.PreviousOutPoint)
+		}
+	}
+
+	// With the spent outputs gathered, attempt to prune the channel graph,
+	// also passing in the hash+height of the block being pruned so the
+	// prune tip can be updated.
+	chansClosed, err := m.cfg.Graph.PruneGraph(spentOutputs,
+		&chainUpdate.Hash, chainUpdate.Height)
+	if err != nil {
+		log.Errorf("unable to prune routing table: %v", err)
+		return err
+	}
+
+	log.Infof("Block %v (height=%v) closed %v channels", chainUpdate.Hash,
+		blockHeight, len(chansClosed))
+
+	if len(chansClosed) == 0 {
+		return err
+	}
+
+	// Notify all currently registered clients of the newly closed channels.
+	closeSummaries := createCloseSummaries(blockHeight, chansClosed...)
+	m.notifyTopologyChange(&TopologyChange{
+		ClosedChannels: closeSummaries,
+	})
+
+	return nil
 }
 
 // pruneZombieChans is a method that will be called periodically to prune out
@@ -640,4 +876,25 @@ func (m *Manager) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 	}
 
 	return false
+}
+
+// SyncedHeight returns the block height to which the router subsystem currently
+// is synced to. This can differ from the above chain height if the goroutine
+// responsible for processing the blocks isn't yet up to speed.
+func (m *Manager) SyncedHeight() uint32 {
+	return atomic.LoadUint32(&m.bestHeight)
+}
+
+func (m *Manager) AddTopologyChange(msg interface{}) {
+	var topChange TopologyChange
+	err := m.addToTopologyChange(&topChange, msg)
+	if err != nil {
+		log.Errorf("unable to update topology change notification: %v",
+			err)
+		return
+	}
+
+	if !topChange.isEmpty() {
+		m.notifyTopologyChange(&topChange)
+	}
 }

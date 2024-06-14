@@ -16,6 +16,9 @@ type Graph interface {
 	// timestamp.
 	IsStaleEdgePolicy(chanID lnwire.ShortChannelID, timestamp time.Time,
 		flags lnwire.ChanUpdateChanFlags) bool
+
+	// TODO(elle): remove this.
+	AddTopologyChange(msg interface{})
 }
 
 type GraphDB interface {
@@ -44,4 +47,7 @@ type GraphDB interface {
 		error)
 
 	HasChannelEdge(chanID uint64) (time.Time, time.Time, bool, bool, error)
+
+	FetchChannelEdgesByID(chanID uint64) (*models.ChannelEdgeInfo,
+		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error)
 }
