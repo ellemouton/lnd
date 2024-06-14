@@ -955,8 +955,25 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	if err != nil {
 		return nil, fmt.Errorf("error getting source node: %w", err)
 	}
+
+	// getRoutingGraph returns a routing graph and a clean-up function for
+	// pathfinding.
+	getRoutingGraph := func() (routing.Graph, func(), error) {
+		routingTx, err := routing.NewCachedGraph(sourceNode, chanGraph)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		return routingTx, func() {
+			err := routingTx.Close()
+			if err != nil {
+				srvrLog.Errorf("Error closing db tx: %v", err)
+			}
+		}, nil
+	}
+
 	paymentSessionSource := &routing.SessionSource{
-		Graph:             chanGraph,
+		GetGraph:          getRoutingGraph,
 		SourceNode:        sourceNode,
 		MissionControl:    s.missionControl,
 		GetLink:           s.htlcSwitch.GetLinkByShortID,
