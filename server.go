@@ -1006,8 +1006,9 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	}
 
 	s.chanRouter, err = routing.New(routing.Config{
+		SelfNode:           selfNode.PubKeyBytes,
+		GraphMgr:           s.graphMgr,
 		RoutingGraph:       routing.NewNodeAgnosticGraph(chanGraph),
-		Graph:              chanGraph,
 		Chain:              cc.ChainIO,
 		ChainView:          cc.ChainView,
 		Payer:              s.htlcSwitch,
@@ -1020,9 +1021,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		NextPaymentID:      sequencer.NextID,
 		PathFindingConfig:  pathFindingConfig,
 		Clock:              clock.NewDefaultClock(),
-		UpdateEdge: func(update *models.ChannelEdgePolicy) error {
-			return s.graphMgr.UpdateEdge(update)
-		},
+		ApplyChannelUpdate: s.graphMgr.ApplyChannelUpdate,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("can't create router: %w", err)

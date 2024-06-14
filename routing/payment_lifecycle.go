@@ -905,7 +905,7 @@ func (p *paymentLifecycle) handleFailureMessage(rt *route.Route,
 	}
 
 	// Apply channel update to the channel edge policy in our db.
-	if !p.router.cfg.GraphMgr.ApplyChannelUpdate(update) {
+	if !p.router.cfg.ApplyChannelUpdate(update) {
 		log.Debugf("Invalid channel update received: node=%v",
 			errVertex)
 	}

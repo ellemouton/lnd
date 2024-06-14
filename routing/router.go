@@ -218,12 +218,10 @@ type ChannelPolicy struct {
 type Config struct {
 	GraphMgr graph.Graph
 
+	SelfNode route.Vertex
+
 	// RoutingGraph is a graph source that will be used for pathfinding.
 	RoutingGraph RoutingGraph
-
-	// Graph is the channel graph that the ChannelRouter will use to gather
-	// metrics from and also to carry out path finding queries.
-	Graph graph.GraphDB
 
 	// Chain is the router's source to the most up-to-date blockchain data.
 	// All incoming advertised channels will be checked against the chain
@@ -289,7 +287,7 @@ type Config struct {
 	// Clock is mockable time provider.
 	Clock clock.Clock
 
-	UpdateEdge func(update *models.ChannelEdgePolicy) error
+	ApplyChannelUpdate func(msg *lnwire.ChannelUpdate) bool
 }
 
 // EdgeLocator is a struct used to identify a specific edge.
@@ -323,11 +321,6 @@ type ChannelRouter struct {
 	// initialized with.
 	cfg *Config
 
-	// selfNode is the center of the star-graph centered around the
-	// ChannelRouter. The ChannelRouter uses this node as a starting point
-	// when doing any path finding.
-	selfNode *channeldb.LightningNode
-
 	quit chan struct{}
 	wg   sync.WaitGroup
 }
@@ -338,15 +331,9 @@ type ChannelRouter struct {
 // channel graph is a subset of the UTXO set) set, then the router will proceed
 // to fully sync to the latest state of the UTXO set.
 func New(cfg Config) (*ChannelRouter, error) {
-	selfNode, err := cfg.Graph.SourceNode()
-	if err != nil {
-		return nil, err
-	}
-
 	r := &ChannelRouter{
-		cfg:      &cfg,
-		selfNode: selfNode,
-		quit:     make(chan struct{}),
+		cfg:  &cfg,
+		quit: make(chan struct{}),
 	}
 
 	return r, nil
@@ -642,7 +629,7 @@ func (r *ChannelRouter) FindRoute(req *RouteRequest) (*route.Route, float64,
 	// We'll attempt to obtain a set of bandwidth hints that can help us
 	// eliminate certain routes early on in the path finding process.
 	bandwidthHints, err := newBandwidthManager(
-		r.cfg.RoutingGraph, r.selfNode.PubKeyBytes, r.cfg.GetLink,
+		r.cfg.RoutingGraph, r.cfg.SelfNode, r.cfg.GetLink,
 	)
 	if err != nil {
 		return nil, 0, err
@@ -672,7 +659,7 @@ func (r *ChannelRouter) FindRoute(req *RouteRequest) (*route.Route, float64,
 			graph:           r.cfg.RoutingGraph,
 		},
 		req.Restrictions, &r.cfg.PathFindingConfig,
-		r.selfNode.PubKeyBytes, req.Source, req.Target, req.Amount,
+		r.cfg.SelfNode, req.Source, req.Target, req.Amount,
 		req.TimePreference, finalHtlcExpiry,
 	)
 	if err != nil {
@@ -1325,7 +1312,7 @@ func (r *ChannelRouter) BuildRoute(amt *lnwire.MilliSatoshi,
 	// We'll attempt to obtain a set of bandwidth hints that helps us select
 	// the best outgoing channel to use in case no outgoing channel is set.
 	bandwidthHints, err := newBandwidthManager(
-		r.cfg.RoutingGraph, r.selfNode.PubKeyBytes, r.cfg.GetLink,
+		r.cfg.RoutingGraph, r.cfg.SelfNode, r.cfg.GetLink,
 	)
 	if err != nil {
 		return nil, err
@@ -1338,7 +1325,7 @@ func (r *ChannelRouter) BuildRoute(amt *lnwire.MilliSatoshi,
 		return nil, err
 	}
 
-	sourceNode := r.selfNode.PubKeyBytes
+	sourceNode := r.cfg.SelfNode
 	unifiers, senderAmt, err := getRouteUnifiers(
 		sourceNode, hops, useMinAmt, runningAmt, outgoingChans,
 		r.cfg.RoutingGraph, bandwidthHints,
