@@ -1181,7 +1181,7 @@ func (f *Manager) stateStep(channel *channeldb.OpenChannel,
 			channel, shortChanID, pendingChanID, updateChan,
 		)
 
-	// The channel was added to the Router's topology, but the channel
+	// The channel was added to the GraphDB's topology, but the channel
 	// announcement was not sent.
 	case addedToRouterGraph:
 		if channel.IsZeroConf() {
@@ -3375,7 +3375,7 @@ func (f *Manager) extractAnnounceParams(c *channeldb.OpenChannel) (
 }
 
 // addToRouterGraph sends a ChannelAnnouncement and a ChannelUpdate to the
-// gossiper so that the channel is added to the Router's internal graph.
+// gossiper so that the channel is added to the GraphDB's internal graph.
 // These announcement messages are NOT broadcasted to the greater network,
 // only to the channel counter party. The proofs required to announce the
 // channel to the greater network will be created and sent in annAfterSixConfs.
@@ -3404,7 +3404,7 @@ func (f *Manager) addToRouterGraph(completeChan *channeldb.OpenChannel,
 	}
 
 	// Send ChannelAnnouncement and ChannelUpdate to the gossiper to add
-	// to the Router's topology.
+	// to the GraphDB's topology.
 	errChan := f.cfg.SendAnnouncement(
 		ann.chanAnn, discovery.ChannelCapacity(completeChan.Capacity),
 		discovery.ChannelPoint(completeChan.FundingOutpoint),
@@ -3415,7 +3415,7 @@ func (f *Manager) addToRouterGraph(completeChan *channeldb.OpenChannel,
 			if routing.IsError(err, routing.ErrOutdated,
 				routing.ErrIgnored) {
 
-				log.Debugf("Router rejected "+
+				log.Debugf("GraphDB rejected "+
 					"ChannelAnnouncement: %v", err)
 			} else {
 				return fmt.Errorf("error sending channel "+
@@ -3435,7 +3435,7 @@ func (f *Manager) addToRouterGraph(completeChan *channeldb.OpenChannel,
 			if routing.IsError(err, routing.ErrOutdated,
 				routing.ErrIgnored) {
 
-				log.Debugf("Router rejected "+
+				log.Debugf("GraphDB rejected "+
 					"ChannelUpdate: %v", err)
 			} else {
 				return fmt.Errorf("error sending channel "+
@@ -4354,7 +4354,7 @@ func (f *Manager) announceChannel(localIDKey, remoteIDKey *btcec.PublicKey,
 			if routing.IsError(err, routing.ErrOutdated,
 				routing.ErrIgnored) {
 
-				log.Debugf("Router rejected "+
+				log.Debugf("GraphDB rejected "+
 					"AnnounceSignatures: %v", err)
 			} else {
 				log.Errorf("Unable to send channel "+
@@ -4384,7 +4384,7 @@ func (f *Manager) announceChannel(localIDKey, remoteIDKey *btcec.PublicKey,
 			if routing.IsError(err, routing.ErrOutdated,
 				routing.ErrIgnored) {
 
-				log.Debugf("Router rejected "+
+				log.Debugf("GraphDB rejected "+
 					"NodeAnnouncement: %v", err)
 			} else {
 				log.Errorf("Unable to send node "+

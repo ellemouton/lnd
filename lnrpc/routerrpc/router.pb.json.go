@@ -21,7 +21,7 @@ func RegisterRouterJSONCallbacks(registry map[string]func(ctx context.Context,
 		},
 	}
 
-	registry["routerrpc.Router.SendPaymentV2"] = func(ctx context.Context,
+	registry["routerrpc.GraphDB.SendPaymentV2"] = func(ctx context.Context,
 		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
 
 		req := &SendPaymentRequest{}
@@ -63,7 +63,7 @@ func RegisterRouterJSONCallbacks(registry map[string]func(ctx context.Context,
 		}()
 	}
 
-	registry["routerrpc.Router.TrackPaymentV2"] = func(ctx context.Context,
+	registry["routerrpc.GraphDB.TrackPaymentV2"] = func(ctx context.Context,
 		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
 
 		req := &TrackPaymentRequest{}
@@ -105,7 +105,7 @@ func RegisterRouterJSONCallbacks(registry map[string]func(ctx context.Context,
 		}()
 	}
 
-	registry["routerrpc.Router.TrackPayments"] = func(ctx context.Context,
+	registry["routerrpc.GraphDB.TrackPayments"] = func(ctx context.Context,
 		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
 
 		req := &TrackPaymentsRequest{}
@@ -147,7 +147,7 @@ func RegisterRouterJSONCallbacks(registry map[string]func(ctx context.Context,
 		}()
 	}
 
-	registry["routerrpc.Router.EstimateRouteFee"] = func(ctx context.Context,
+	registry["routerrpc.GraphDB.EstimateRouteFee"] = func(ctx context.Context,
 		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
 
 		req := &RouteFeeRequest{}
@@ -172,7 +172,7 @@ func RegisterRouterJSONCallbacks(registry map[string]func(ctx context.Context,
 		callback(string(respBytes), nil)
 	}
 
-	registry["routerrpc.Router.SendToRoute"] = func(ctx context.Context,
+	registry["routerrpc.GraphDB.SendToRoute"] = func(ctx context.Context,
 		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
 
 		req := &SendToRouteRequest{}
@@ -197,7 +197,7 @@ func RegisterRouterJSONCallbacks(registry map[string]func(ctx context.Context,
 		callback(string(respBytes), nil)
 	}
 
-	registry["routerrpc.Router.SendToRouteV2"] = func(ctx context.Context,
+	registry["routerrpc.GraphDB.SendToRouteV2"] = func(ctx context.Context,
 		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
 
 		req := &SendToRouteRequest{}
@@ -222,7 +222,7 @@ func RegisterRouterJSONCallbacks(registry map[string]func(ctx context.Context,
 		callback(string(respBytes), nil)
 	}
 
-	registry["routerrpc.Router.ResetMissionControl"] = func(ctx context.Context,
+	registry["routerrpc.GraphDB.ResetMissionControl"] = func(ctx context.Context,
 		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
 
 		req := &ResetMissionControlRequest{}
@@ -247,7 +247,7 @@ func RegisterRouterJSONCallbacks(registry map[string]func(ctx context.Context,
 		callback(string(respBytes), nil)
 	}
 
-	registry["routerrpc.Router.QueryMissionControl"] = func(ctx context.Context,
+	registry["routerrpc.GraphDB.QueryMissionControl"] = func(ctx context.Context,
 		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
 
 		req := &QueryMissionControlRequest{}
@@ -272,7 +272,7 @@ func RegisterRouterJSONCallbacks(registry map[string]func(ctx context.Context,
 		callback(string(respBytes), nil)
 	}
 
-	registry["routerrpc.Router.XImportMissionControl"] = func(ctx context.Context,
+	registry["routerrpc.GraphDB.XImportMissionControl"] = func(ctx context.Context,
 		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
 
 		req := &XImportMissionControlRequest{}
@@ -297,7 +297,7 @@ func RegisterRouterJSONCallbacks(registry map[string]func(ctx context.Context,
 		callback(string(respBytes), nil)
 	}
 
-	registry["routerrpc.Router.GetMissionControlConfig"] = func(ctx context.Context,
+	registry["routerrpc.GraphDB.GetMissionControlConfig"] = func(ctx context.Context,
 		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
 
 		req := &GetMissionControlConfigRequest{}
@@ -322,7 +322,7 @@ func RegisterRouterJSONCallbacks(registry map[string]func(ctx context.Context,
 		callback(string(respBytes), nil)
 	}
 
-	registry["routerrpc.Router.SetMissionControlConfig"] = func(ctx context.Context,
+	registry["routerrpc.GraphDB.SetMissionControlConfig"] = func(ctx context.Context,
 		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
 
 		req := &SetMissionControlConfigRequest{}
@@ -347,7 +347,7 @@ func RegisterRouterJSONCallbacks(registry map[string]func(ctx context.Context,
 		callback(string(respBytes), nil)
 	}
 
-	registry["routerrpc.Router.QueryProbability"] = func(ctx context.Context,
+	registry["routerrpc.GraphDB.QueryProbability"] = func(ctx context.Context,
 		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
 
 		req := &QueryProbabilityRequest{}
@@ -372,7 +372,7 @@ func RegisterRouterJSONCallbacks(registry map[string]func(ctx context.Context,
 		callback(string(respBytes), nil)
 	}
 
-	registry["routerrpc.Router.BuildRoute"] = func(ctx context.Context,
+	registry["routerrpc.GraphDB.BuildRoute"] = func(ctx context.Context,
 		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
 
 		req := &BuildRouteRequest{}
@@ -397,7 +397,7 @@ func RegisterRouterJSONCallbacks(registry map[string]func(ctx context.Context,
 		callback(string(respBytes), nil)
 	}
 
-	registry["routerrpc.Router.SubscribeHtlcEvents"] = func(ctx context.Context,
+	registry["routerrpc.GraphDB.SubscribeHtlcEvents"] = func(ctx context.Context,
 		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
 
 		req := &SubscribeHtlcEventsRequest{}
@@ -439,7 +439,7 @@ func RegisterRouterJSONCallbacks(registry map[string]func(ctx context.Context,
 		}()
 	}
 
-	registry["routerrpc.Router.SendPayment"] = func(ctx context.Context,
+	registry["routerrpc.GraphDB.SendPayment"] = func(ctx context.Context,
 		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
 
 		req := &SendPaymentRequest{}
@@ -481,7 +481,7 @@ func RegisterRouterJSONCallbacks(registry map[string]func(ctx context.Context,
 		}()
 	}
 
-	registry["routerrpc.Router.TrackPayment"] = func(ctx context.Context,
+	registry["routerrpc.GraphDB.TrackPayment"] = func(ctx context.Context,
 		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
 
 		req := &TrackPaymentRequest{}
@@ -523,7 +523,7 @@ func RegisterRouterJSONCallbacks(registry map[string]func(ctx context.Context,
 		}()
 	}
 
-	registry["routerrpc.Router.UpdateChanStatus"] = func(ctx context.Context,
+	registry["routerrpc.GraphDB.UpdateChanStatus"] = func(ctx context.Context,
 		conn *grpc.ClientConn, reqJSON string, callback func(string, error)) {
 
 		req := &UpdateChanStatusRequest{}

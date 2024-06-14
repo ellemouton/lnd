@@ -999,6 +999,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		AssumeChannelValid:  cfg.Routing.AssumeChannelValid,
 		FirstTimePruneDelay: graph.DefaultFirstTimePruneDelay,
 		StrictZombiePruning: strictPruning,
+		IsAlias:             aliasmgr.IsAlias,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("can't create graph manager: %w", err)
@@ -1006,7 +1007,6 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	s.chanRouter, err = routing.New(routing.Config{
 		RoutingGraph:       routing.NewNodeAgnosticGraph(chanGraph),
-		BestBlockView:      cc.BestBlockTracker,
 		Graph:              chanGraph,
 		Chain:              cc.ChainIO,
 		ChainView:          cc.ChainView,
@@ -1020,7 +1020,6 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		NextPaymentID:      sequencer.NextID,
 		PathFindingConfig:  pathFindingConfig,
 		Clock:              clock.NewDefaultClock(),
-		IsAlias:            aliasmgr.IsAlias,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("can't create router: %w", err)
@@ -1037,7 +1036,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	}
 
 	s.authGossiper = discovery.New(discovery.Config{
-		Router:                s.chanRouter,
+		GraphDB:               s.graphMgr,
 		Notifier:              s.cc.ChainNotifier,
 		ChainHash:             *s.cfg.ActiveNetParams.GenesisHash,
 		Broadcast:             s.BroadcastMessage,
@@ -1076,7 +1075,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	}, nodeKeyDesc)
 
 	s.localChanMgr = &localchans.Manager{
-		ForAllOutgoingChannels:    s.chanRouter.ForAllOutgoingChannels,
+		ForAllOutgoingChannels:    s.graphMgr.ForAllOutgoingChannels,
 		PropagateChanPolicyUpdate: s.authGossiper.PropagateChanPolicyUpdate,
 		UpdateForwardingPolicies:  s.htlcSwitch.UpdateForwardingPolicies,
 		FetchChannel:              s.chanStateDB.FetchChannel,
@@ -4686,7 +4685,7 @@ func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
 
 	ourPubKey := s.identityECDH.PubKey().SerializeCompressed()
 	return func(cid lnwire.ShortChannelID) (*lnwire.ChannelUpdate, error) {
-		info, edge1, edge2, err := s.chanRouter.GetChannelByID(cid)
+		info, edge1, edge2, err := s.graphMgr.GetChannelByID(cid)
 		if err != nil {
 			return nil, err
 		}

@@ -36,7 +36,7 @@ func createNewSubServer(configRegistry lnrpc.SubServerConfigDispatcher) (
 	// some sanity checks on the arguments to ensure that they're usable.
 	switch {
 	case config.Router == nil:
-		return nil, nil, fmt.Errorf("Router must be set to create " +
+		return nil, nil, fmt.Errorf("GraphDB must be set to create " +
 			"Routerpc")
 	}
 

@@ -69,75 +69,75 @@ var (
 
 	// macPermissions maps RPC calls to the permissions they require.
 	macPermissions = map[string][]bakery.Op{
-		"/routerrpc.Router/SendPaymentV2": {{
+		"/routerrpc.GraphDB/SendPaymentV2": {{
 			Entity: "offchain",
 			Action: "write",
 		}},
-		"/routerrpc.Router/SendToRouteV2": {{
+		"/routerrpc.GraphDB/SendToRouteV2": {{
 			Entity: "offchain",
 			Action: "write",
 		}},
-		"/routerrpc.Router/SendToRoute": {{
+		"/routerrpc.GraphDB/SendToRoute": {{
 			Entity: "offchain",
 			Action: "write",
 		}},
-		"/routerrpc.Router/TrackPaymentV2": {{
+		"/routerrpc.GraphDB/TrackPaymentV2": {{
 			Entity: "offchain",
 			Action: "read",
 		}},
-		"/routerrpc.Router/TrackPayments": {{
+		"/routerrpc.GraphDB/TrackPayments": {{
 			Entity: "offchain",
 			Action: "read",
 		}},
-		"/routerrpc.Router/EstimateRouteFee": {{
+		"/routerrpc.GraphDB/EstimateRouteFee": {{
 			Entity: "offchain",
 			Action: "read",
 		}},
-		"/routerrpc.Router/QueryMissionControl": {{
+		"/routerrpc.GraphDB/QueryMissionControl": {{
 			Entity: "offchain",
 			Action: "read",
 		}},
-		"/routerrpc.Router/XImportMissionControl": {{
+		"/routerrpc.GraphDB/XImportMissionControl": {{
 			Entity: "offchain",
 			Action: "write",
 		}},
-		"/routerrpc.Router/GetMissionControlConfig": {{
+		"/routerrpc.GraphDB/GetMissionControlConfig": {{
 			Entity: "offchain",
 			Action: "read",
 		}},
-		"/routerrpc.Router/SetMissionControlConfig": {{
+		"/routerrpc.GraphDB/SetMissionControlConfig": {{
 			Entity: "offchain",
 			Action: "write",
 		}},
-		"/routerrpc.Router/QueryProbability": {{
+		"/routerrpc.GraphDB/QueryProbability": {{
 			Entity: "offchain",
 			Action: "read",
 		}},
-		"/routerrpc.Router/ResetMissionControl": {{
+		"/routerrpc.GraphDB/ResetMissionControl": {{
 			Entity: "offchain",
 			Action: "write",
 		}},
-		"/routerrpc.Router/BuildRoute": {{
+		"/routerrpc.GraphDB/BuildRoute": {{
 			Entity: "offchain",
 			Action: "read",
 		}},
-		"/routerrpc.Router/SubscribeHtlcEvents": {{
+		"/routerrpc.GraphDB/SubscribeHtlcEvents": {{
 			Entity: "offchain",
 			Action: "read",
 		}},
-		"/routerrpc.Router/SendPayment": {{
+		"/routerrpc.GraphDB/SendPayment": {{
 			Entity: "offchain",
 			Action: "write",
 		}},
-		"/routerrpc.Router/TrackPayment": {{
+		"/routerrpc.GraphDB/TrackPayment": {{
 			Entity: "offchain",
 			Action: "read",
 		}},
-		"/routerrpc.Router/HtlcInterceptor": {{
+		"/routerrpc.GraphDB/HtlcInterceptor": {{
 			Entity: "offchain",
 			Action: "write",
 		}},
-		"/routerrpc.Router/UpdateChanStatus": {{
+		"/routerrpc.GraphDB/UpdateChanStatus": {{
 			Entity: "offchain",
 			Action: "write",
 		}},
@@ -198,7 +198,7 @@ func New(cfg *Config) (*Server, lnrpc.MacaroonPerms, error) {
 	if cfg.MacService != nil && !cfg.MacService.StatelessInit &&
 		!lnrpc.FileExists(macFilePath) {
 
-		log.Infof("Making macaroons for Router RPC Server at: %v",
+		log.Infof("Making macaroons for GraphDB RPC Server at: %v",
 			macFilePath)
 
 		// At this point, we know that the router macaroon doesn't yet,
@@ -271,7 +271,7 @@ func (r *ServerShell) RegisterWithRootServer(grpcServer *grpc.Server) error {
 	// all our methods are routed properly.
 	RegisterRouterServer(grpcServer, r)
 
-	log.Debugf("Router RPC server successfully register with root gRPC " +
+	log.Debugf("GraphDB RPC server successfully register with root gRPC " +
 		"server")
 
 	return nil
@@ -289,12 +289,12 @@ func (r *ServerShell) RegisterWithRestServer(ctx context.Context,
 	// all our methods are routed properly.
 	err := RegisterRouterHandlerFromEndpoint(ctx, mux, dest, opts)
 	if err != nil {
-		log.Errorf("Could not register Router REST server "+
+		log.Errorf("Could not register GraphDB REST server "+
 			"with root REST server: %v", err)
 		return err
 	}
 
-	log.Debugf("Router REST server successfully registered with " +
+	log.Debugf("GraphDB REST server successfully registered with " +
 		"root REST server")
 	return nil
 }

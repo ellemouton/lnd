@@ -4,6 +4,7 @@ package routerrpc
 
 import (
 	context "context"
+
 	lnrpc "github.com/lightningnetwork/lnd/lnrpc"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
@@ -15,7 +16,7 @@ import (
 // Requires gRPC-Go v1.32.0 or later.
 const _ = grpc.SupportPackageIsVersion7
 
-// RouterClient is the client API for Router service.
+// RouterClient is the client API for GraphDB service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type RouterClient interface {
@@ -127,7 +128,7 @@ func NewRouterClient(cc grpc.ClientConnInterface) RouterClient {
 }
 
 func (c *routerClient) SendPaymentV2(ctx context.Context, in *SendPaymentRequest, opts ...grpc.CallOption) (Router_SendPaymentV2Client, error) {
-	stream, err := c.cc.NewStream(ctx, &Router_ServiceDesc.Streams[0], "/routerrpc.Router/SendPaymentV2", opts...)
+	stream, err := c.cc.NewStream(ctx, &Router_ServiceDesc.Streams[0], "/routerrpc.GraphDB/SendPaymentV2", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +160,7 @@ func (x *routerSendPaymentV2Client) Recv() (*lnrpc.Payment, error) {
 }
 
 func (c *routerClient) TrackPaymentV2(ctx context.Context, in *TrackPaymentRequest, opts ...grpc.CallOption) (Router_TrackPaymentV2Client, error) {
-	stream, err := c.cc.NewStream(ctx, &Router_ServiceDesc.Streams[1], "/routerrpc.Router/TrackPaymentV2", opts...)
+	stream, err := c.cc.NewStream(ctx, &Router_ServiceDesc.Streams[1], "/routerrpc.GraphDB/TrackPaymentV2", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +192,7 @@ func (x *routerTrackPaymentV2Client) Recv() (*lnrpc.Payment, error) {
 }
 
 func (c *routerClient) TrackPayments(ctx context.Context, in *TrackPaymentsRequest, opts ...grpc.CallOption) (Router_TrackPaymentsClient, error) {
-	stream, err := c.cc.NewStream(ctx, &Router_ServiceDesc.Streams[2], "/routerrpc.Router/TrackPayments", opts...)
+	stream, err := c.cc.NewStream(ctx, &Router_ServiceDesc.Streams[2], "/routerrpc.GraphDB/TrackPayments", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +225,7 @@ func (x *routerTrackPaymentsClient) Recv() (*lnrpc.Payment, error) {
 
 func (c *routerClient) EstimateRouteFee(ctx context.Context, in *RouteFeeRequest, opts ...grpc.CallOption) (*RouteFeeResponse, error) {
 	out := new(RouteFeeResponse)
-	err := c.cc.Invoke(ctx, "/routerrpc.Router/EstimateRouteFee", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/routerrpc.GraphDB/EstimateRouteFee", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -234,7 +235,7 @@ func (c *routerClient) EstimateRouteFee(ctx context.Context, in *RouteFeeRequest
 // Deprecated: Do not use.
 func (c *routerClient) SendToRoute(ctx context.Context, in *SendToRouteRequest, opts ...grpc.CallOption) (*SendToRouteResponse, error) {
 	out := new(SendToRouteResponse)
-	err := c.cc.Invoke(ctx, "/routerrpc.Router/SendToRoute", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/routerrpc.GraphDB/SendToRoute", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +244,7 @@ func (c *routerClient) SendToRoute(ctx context.Context, in *SendToRouteRequest, 
 
 func (c *routerClient) SendToRouteV2(ctx context.Context, in *SendToRouteRequest, opts ...grpc.CallOption) (*lnrpc.HTLCAttempt, error) {
 	out := new(lnrpc.HTLCAttempt)
-	err := c.cc.Invoke(ctx, "/routerrpc.Router/SendToRouteV2", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/routerrpc.GraphDB/SendToRouteV2", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +253,7 @@ func (c *routerClient) SendToRouteV2(ctx context.Context, in *SendToRouteRequest
 
 func (c *routerClient) ResetMissionControl(ctx context.Context, in *ResetMissionControlRequest, opts ...grpc.CallOption) (*ResetMissionControlResponse, error) {
 	out := new(ResetMissionControlResponse)
-	err := c.cc.Invoke(ctx, "/routerrpc.Router/ResetMissionControl", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/routerrpc.GraphDB/ResetMissionControl", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +262,7 @@ func (c *routerClient) ResetMissionControl(ctx context.Context, in *ResetMission
 
 func (c *routerClient) QueryMissionControl(ctx context.Context, in *QueryMissionControlRequest, opts ...grpc.CallOption) (*QueryMissionControlResponse, error) {
 	out := new(QueryMissionControlResponse)
-	err := c.cc.Invoke(ctx, "/routerrpc.Router/QueryMissionControl", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/routerrpc.GraphDB/QueryMissionControl", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +271,7 @@ func (c *routerClient) QueryMissionControl(ctx context.Context, in *QueryMission
 
 func (c *routerClient) XImportMissionControl(ctx context.Context, in *XImportMissionControlRequest, opts ...grpc.CallOption) (*XImportMissionControlResponse, error) {
 	out := new(XImportMissionControlResponse)
-	err := c.cc.Invoke(ctx, "/routerrpc.Router/XImportMissionControl", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/routerrpc.GraphDB/XImportMissionControl", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +280,7 @@ func (c *routerClient) XImportMissionControl(ctx context.Context, in *XImportMis
 
 func (c *routerClient) GetMissionControlConfig(ctx context.Context, in *GetMissionControlConfigRequest, opts ...grpc.CallOption) (*GetMissionControlConfigResponse, error) {
 	out := new(GetMissionControlConfigResponse)
-	err := c.cc.Invoke(ctx, "/routerrpc.Router/GetMissionControlConfig", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/routerrpc.GraphDB/GetMissionControlConfig", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +289,7 @@ func (c *routerClient) GetMissionControlConfig(ctx context.Context, in *GetMissi
 
 func (c *routerClient) SetMissionControlConfig(ctx context.Context, in *SetMissionControlConfigRequest, opts ...grpc.CallOption) (*SetMissionControlConfigResponse, error) {
 	out := new(SetMissionControlConfigResponse)
-	err := c.cc.Invoke(ctx, "/routerrpc.Router/SetMissionControlConfig", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/routerrpc.GraphDB/SetMissionControlConfig", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +298,7 @@ func (c *routerClient) SetMissionControlConfig(ctx context.Context, in *SetMissi
 
 func (c *routerClient) QueryProbability(ctx context.Context, in *QueryProbabilityRequest, opts ...grpc.CallOption) (*QueryProbabilityResponse, error) {
 	out := new(QueryProbabilityResponse)
-	err := c.cc.Invoke(ctx, "/routerrpc.Router/QueryProbability", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/routerrpc.GraphDB/QueryProbability", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -306,7 +307,7 @@ func (c *routerClient) QueryProbability(ctx context.Context, in *QueryProbabilit
 
 func (c *routerClient) BuildRoute(ctx context.Context, in *BuildRouteRequest, opts ...grpc.CallOption) (*BuildRouteResponse, error) {
 	out := new(BuildRouteResponse)
-	err := c.cc.Invoke(ctx, "/routerrpc.Router/BuildRoute", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/routerrpc.GraphDB/BuildRoute", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +315,7 @@ func (c *routerClient) BuildRoute(ctx context.Context, in *BuildRouteRequest, op
 }
 
 func (c *routerClient) SubscribeHtlcEvents(ctx context.Context, in *SubscribeHtlcEventsRequest, opts ...grpc.CallOption) (Router_SubscribeHtlcEventsClient, error) {
-	stream, err := c.cc.NewStream(ctx, &Router_ServiceDesc.Streams[3], "/routerrpc.Router/SubscribeHtlcEvents", opts...)
+	stream, err := c.cc.NewStream(ctx, &Router_ServiceDesc.Streams[3], "/routerrpc.GraphDB/SubscribeHtlcEvents", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +348,7 @@ func (x *routerSubscribeHtlcEventsClient) Recv() (*HtlcEvent, error) {
 
 // Deprecated: Do not use.
 func (c *routerClient) SendPayment(ctx context.Context, in *SendPaymentRequest, opts ...grpc.CallOption) (Router_SendPaymentClient, error) {
-	stream, err := c.cc.NewStream(ctx, &Router_ServiceDesc.Streams[4], "/routerrpc.Router/SendPayment", opts...)
+	stream, err := c.cc.NewStream(ctx, &Router_ServiceDesc.Streams[4], "/routerrpc.GraphDB/SendPayment", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -380,7 +381,7 @@ func (x *routerSendPaymentClient) Recv() (*PaymentStatus, error) {
 
 // Deprecated: Do not use.
 func (c *routerClient) TrackPayment(ctx context.Context, in *TrackPaymentRequest, opts ...grpc.CallOption) (Router_TrackPaymentClient, error) {
-	stream, err := c.cc.NewStream(ctx, &Router_ServiceDesc.Streams[5], "/routerrpc.Router/TrackPayment", opts...)
+	stream, err := c.cc.NewStream(ctx, &Router_ServiceDesc.Streams[5], "/routerrpc.GraphDB/TrackPayment", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -412,7 +413,7 @@ func (x *routerTrackPaymentClient) Recv() (*PaymentStatus, error) {
 }
 
 func (c *routerClient) HtlcInterceptor(ctx context.Context, opts ...grpc.CallOption) (Router_HtlcInterceptorClient, error) {
-	stream, err := c.cc.NewStream(ctx, &Router_ServiceDesc.Streams[6], "/routerrpc.Router/HtlcInterceptor", opts...)
+	stream, err := c.cc.NewStream(ctx, &Router_ServiceDesc.Streams[6], "/routerrpc.GraphDB/HtlcInterceptor", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -444,14 +445,14 @@ func (x *routerHtlcInterceptorClient) Recv() (*ForwardHtlcInterceptRequest, erro
 
 func (c *routerClient) UpdateChanStatus(ctx context.Context, in *UpdateChanStatusRequest, opts ...grpc.CallOption) (*UpdateChanStatusResponse, error) {
 	out := new(UpdateChanStatusResponse)
-	err := c.cc.Invoke(ctx, "/routerrpc.Router/UpdateChanStatus", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/routerrpc.GraphDB/UpdateChanStatus", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// RouterServer is the server API for Router service.
+// RouterServer is the server API for GraphDB service.
 // All implementations must embed UnimplementedRouterServer
 // for forward compatibility
 type RouterServer interface {
@@ -699,7 +700,7 @@ func _Router_EstimateRouteFee_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/routerrpc.Router/EstimateRouteFee",
+		FullMethod: "/routerrpc.GraphDB/EstimateRouteFee",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RouterServer).EstimateRouteFee(ctx, req.(*RouteFeeRequest))
@@ -717,7 +718,7 @@ func _Router_SendToRoute_Handler(srv interface{}, ctx context.Context, dec func(
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/routerrpc.Router/SendToRoute",
+		FullMethod: "/routerrpc.GraphDB/SendToRoute",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RouterServer).SendToRoute(ctx, req.(*SendToRouteRequest))
@@ -735,7 +736,7 @@ func _Router_SendToRouteV2_Handler(srv interface{}, ctx context.Context, dec fun
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/routerrpc.Router/SendToRouteV2",
+		FullMethod: "/routerrpc.GraphDB/SendToRouteV2",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RouterServer).SendToRouteV2(ctx, req.(*SendToRouteRequest))
@@ -753,7 +754,7 @@ func _Router_ResetMissionControl_Handler(srv interface{}, ctx context.Context, d
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/routerrpc.Router/ResetMissionControl",
+		FullMethod: "/routerrpc.GraphDB/ResetMissionControl",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RouterServer).ResetMissionControl(ctx, req.(*ResetMissionControlRequest))
@@ -771,7 +772,7 @@ func _Router_QueryMissionControl_Handler(srv interface{}, ctx context.Context, d
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/routerrpc.Router/QueryMissionControl",
+		FullMethod: "/routerrpc.GraphDB/QueryMissionControl",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RouterServer).QueryMissionControl(ctx, req.(*QueryMissionControlRequest))
@@ -789,7 +790,7 @@ func _Router_XImportMissionControl_Handler(srv interface{}, ctx context.Context,
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/routerrpc.Router/XImportMissionControl",
+		FullMethod: "/routerrpc.GraphDB/XImportMissionControl",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RouterServer).XImportMissionControl(ctx, req.(*XImportMissionControlRequest))
@@ -807,7 +808,7 @@ func _Router_GetMissionControlConfig_Handler(srv interface{}, ctx context.Contex
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/routerrpc.Router/GetMissionControlConfig",
+		FullMethod: "/routerrpc.GraphDB/GetMissionControlConfig",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RouterServer).GetMissionControlConfig(ctx, req.(*GetMissionControlConfigRequest))
@@ -825,7 +826,7 @@ func _Router_SetMissionControlConfig_Handler(srv interface{}, ctx context.Contex
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/routerrpc.Router/SetMissionControlConfig",
+		FullMethod: "/routerrpc.GraphDB/SetMissionControlConfig",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RouterServer).SetMissionControlConfig(ctx, req.(*SetMissionControlConfigRequest))
@@ -843,7 +844,7 @@ func _Router_QueryProbability_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/routerrpc.Router/QueryProbability",
+		FullMethod: "/routerrpc.GraphDB/QueryProbability",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RouterServer).QueryProbability(ctx, req.(*QueryProbabilityRequest))
@@ -861,7 +862,7 @@ func _Router_BuildRoute_Handler(srv interface{}, ctx context.Context, dec func(i
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/routerrpc.Router/BuildRoute",
+		FullMethod: "/routerrpc.GraphDB/BuildRoute",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RouterServer).BuildRoute(ctx, req.(*BuildRouteRequest))
@@ -968,7 +969,7 @@ func _Router_UpdateChanStatus_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/routerrpc.Router/UpdateChanStatus",
+		FullMethod: "/routerrpc.GraphDB/UpdateChanStatus",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RouterServer).UpdateChanStatus(ctx, req.(*UpdateChanStatusRequest))
@@ -976,11 +977,11 @@ func _Router_UpdateChanStatus_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
-// Router_ServiceDesc is the grpc.ServiceDesc for Router service.
+// Router_ServiceDesc is the grpc.ServiceDesc for GraphDB service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var Router_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "routerrpc.Router",
+	ServiceName: "routerrpc.GraphDB",
 	HandlerType: (*RouterServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{

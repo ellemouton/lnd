@@ -784,7 +784,7 @@ func createTestCtx(t *testing.T, startHeight uint32) (*testCtx, error) {
 				Timestamp: testTimestamp,
 			}, nil
 		},
-		Router:                router,
+		GraphDB:               router,
 		TrickleDelay:          trickleDelay,
 		RetransmitTicker:      ticker.NewForce(retransmitDelay),
 		RebroadcastInterval:   rebroadcastInterval,
@@ -1458,7 +1458,7 @@ func TestSignatureAnnouncementRetryAtStartup(t *testing.T) {
 		NotifyWhenOffline:      ctx.gossiper.reliableSender.cfg.NotifyWhenOffline,
 		FetchSelfAnnouncement:  ctx.gossiper.cfg.FetchSelfAnnouncement,
 		UpdateSelfAnnouncement: ctx.gossiper.cfg.UpdateSelfAnnouncement,
-		Router:                 ctx.gossiper.cfg.Router,
+		GraphDB:                ctx.gossiper.cfg.GraphDB,
 		TrickleDelay:           trickleDelay,
 		RetransmitTicker:       ticker.NewForce(retransmitDelay),
 		RebroadcastInterval:    rebroadcastInterval,

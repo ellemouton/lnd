@@ -7,11 +7,12 @@
 package routerrpc
 
 import (
+	reflect "reflect"
+	sync "sync"
+
 	lnrpc "github.com/lightningnetwork/lnd/lnrpc"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	reflect "reflect"
-	sync "sync"
 )
 
 const (
@@ -4023,42 +4024,42 @@ var file_routerrpc_router_proto_depIdxs = []int32{
 	54, // 33: routerrpc.ForwardHtlcInterceptResponse.failure_code:type_name -> lnrpc.Failure.FailureCode
 	56, // 34: routerrpc.UpdateChanStatusRequest.chan_point:type_name -> lnrpc.ChannelPoint
 	3,  // 35: routerrpc.UpdateChanStatusRequest.action:type_name -> routerrpc.ChanStatusAction
-	6,  // 36: routerrpc.Router.SendPaymentV2:input_type -> routerrpc.SendPaymentRequest
-	7,  // 37: routerrpc.Router.TrackPaymentV2:input_type -> routerrpc.TrackPaymentRequest
-	8,  // 38: routerrpc.Router.TrackPayments:input_type -> routerrpc.TrackPaymentsRequest
-	9,  // 39: routerrpc.Router.EstimateRouteFee:input_type -> routerrpc.RouteFeeRequest
-	11, // 40: routerrpc.Router.SendToRoute:input_type -> routerrpc.SendToRouteRequest
-	11, // 41: routerrpc.Router.SendToRouteV2:input_type -> routerrpc.SendToRouteRequest
-	13, // 42: routerrpc.Router.ResetMissionControl:input_type -> routerrpc.ResetMissionControlRequest
-	15, // 43: routerrpc.Router.QueryMissionControl:input_type -> routerrpc.QueryMissionControlRequest
-	17, // 44: routerrpc.Router.XImportMissionControl:input_type -> routerrpc.XImportMissionControlRequest
-	21, // 45: routerrpc.Router.GetMissionControlConfig:input_type -> routerrpc.GetMissionControlConfigRequest
-	23, // 46: routerrpc.Router.SetMissionControlConfig:input_type -> routerrpc.SetMissionControlConfigRequest
-	28, // 47: routerrpc.Router.QueryProbability:input_type -> routerrpc.QueryProbabilityRequest
-	30, // 48: routerrpc.Router.BuildRoute:input_type -> routerrpc.BuildRouteRequest
-	32, // 49: routerrpc.Router.SubscribeHtlcEvents:input_type -> routerrpc.SubscribeHtlcEventsRequest
-	6,  // 50: routerrpc.Router.SendPayment:input_type -> routerrpc.SendPaymentRequest
-	7,  // 51: routerrpc.Router.TrackPayment:input_type -> routerrpc.TrackPaymentRequest
-	44, // 52: routerrpc.Router.HtlcInterceptor:input_type -> routerrpc.ForwardHtlcInterceptResponse
-	45, // 53: routerrpc.Router.UpdateChanStatus:input_type -> routerrpc.UpdateChanStatusRequest
-	57, // 54: routerrpc.Router.SendPaymentV2:output_type -> lnrpc.Payment
-	57, // 55: routerrpc.Router.TrackPaymentV2:output_type -> lnrpc.Payment
-	57, // 56: routerrpc.Router.TrackPayments:output_type -> lnrpc.Payment
-	10, // 57: routerrpc.Router.EstimateRouteFee:output_type -> routerrpc.RouteFeeResponse
-	12, // 58: routerrpc.Router.SendToRoute:output_type -> routerrpc.SendToRouteResponse
-	55, // 59: routerrpc.Router.SendToRouteV2:output_type -> lnrpc.HTLCAttempt
-	14, // 60: routerrpc.Router.ResetMissionControl:output_type -> routerrpc.ResetMissionControlResponse
-	16, // 61: routerrpc.Router.QueryMissionControl:output_type -> routerrpc.QueryMissionControlResponse
-	18, // 62: routerrpc.Router.XImportMissionControl:output_type -> routerrpc.XImportMissionControlResponse
-	22, // 63: routerrpc.Router.GetMissionControlConfig:output_type -> routerrpc.GetMissionControlConfigResponse
-	24, // 64: routerrpc.Router.SetMissionControlConfig:output_type -> routerrpc.SetMissionControlConfigResponse
-	29, // 65: routerrpc.Router.QueryProbability:output_type -> routerrpc.QueryProbabilityResponse
-	31, // 66: routerrpc.Router.BuildRoute:output_type -> routerrpc.BuildRouteResponse
-	33, // 67: routerrpc.Router.SubscribeHtlcEvents:output_type -> routerrpc.HtlcEvent
-	41, // 68: routerrpc.Router.SendPayment:output_type -> routerrpc.PaymentStatus
-	41, // 69: routerrpc.Router.TrackPayment:output_type -> routerrpc.PaymentStatus
-	43, // 70: routerrpc.Router.HtlcInterceptor:output_type -> routerrpc.ForwardHtlcInterceptRequest
-	46, // 71: routerrpc.Router.UpdateChanStatus:output_type -> routerrpc.UpdateChanStatusResponse
+	6,  // 36: routerrpc.GraphDB.SendPaymentV2:input_type -> routerrpc.SendPaymentRequest
+	7,  // 37: routerrpc.GraphDB.TrackPaymentV2:input_type -> routerrpc.TrackPaymentRequest
+	8,  // 38: routerrpc.GraphDB.TrackPayments:input_type -> routerrpc.TrackPaymentsRequest
+	9,  // 39: routerrpc.GraphDB.EstimateRouteFee:input_type -> routerrpc.RouteFeeRequest
+	11, // 40: routerrpc.GraphDB.SendToRoute:input_type -> routerrpc.SendToRouteRequest
+	11, // 41: routerrpc.GraphDB.SendToRouteV2:input_type -> routerrpc.SendToRouteRequest
+	13, // 42: routerrpc.GraphDB.ResetMissionControl:input_type -> routerrpc.ResetMissionControlRequest
+	15, // 43: routerrpc.GraphDB.QueryMissionControl:input_type -> routerrpc.QueryMissionControlRequest
+	17, // 44: routerrpc.GraphDB.XImportMissionControl:input_type -> routerrpc.XImportMissionControlRequest
+	21, // 45: routerrpc.GraphDB.GetMissionControlConfig:input_type -> routerrpc.GetMissionControlConfigRequest
+	23, // 46: routerrpc.GraphDB.SetMissionControlConfig:input_type -> routerrpc.SetMissionControlConfigRequest
+	28, // 47: routerrpc.GraphDB.QueryProbability:input_type -> routerrpc.QueryProbabilityRequest
+	30, // 48: routerrpc.GraphDB.BuildRoute:input_type -> routerrpc.BuildRouteRequest
+	32, // 49: routerrpc.GraphDB.SubscribeHtlcEvents:input_type -> routerrpc.SubscribeHtlcEventsRequest
+	6,  // 50: routerrpc.GraphDB.SendPayment:input_type -> routerrpc.SendPaymentRequest
+	7,  // 51: routerrpc.GraphDB.TrackPayment:input_type -> routerrpc.TrackPaymentRequest
+	44, // 52: routerrpc.GraphDB.HtlcInterceptor:input_type -> routerrpc.ForwardHtlcInterceptResponse
+	45, // 53: routerrpc.GraphDB.UpdateChanStatus:input_type -> routerrpc.UpdateChanStatusRequest
+	57, // 54: routerrpc.GraphDB.SendPaymentV2:output_type -> lnrpc.Payment
+	57, // 55: routerrpc.GraphDB.TrackPaymentV2:output_type -> lnrpc.Payment
+	57, // 56: routerrpc.GraphDB.TrackPayments:output_type -> lnrpc.Payment
+	10, // 57: routerrpc.GraphDB.EstimateRouteFee:output_type -> routerrpc.RouteFeeResponse
+	12, // 58: routerrpc.GraphDB.SendToRoute:output_type -> routerrpc.SendToRouteResponse
+	55, // 59: routerrpc.GraphDB.SendToRouteV2:output_type -> lnrpc.HTLCAttempt
+	14, // 60: routerrpc.GraphDB.ResetMissionControl:output_type -> routerrpc.ResetMissionControlResponse
+	16, // 61: routerrpc.GraphDB.QueryMissionControl:output_type -> routerrpc.QueryMissionControlResponse
+	18, // 62: routerrpc.GraphDB.XImportMissionControl:output_type -> routerrpc.XImportMissionControlResponse
+	22, // 63: routerrpc.GraphDB.GetMissionControlConfig:output_type -> routerrpc.GetMissionControlConfigResponse
+	24, // 64: routerrpc.GraphDB.SetMissionControlConfig:output_type -> routerrpc.SetMissionControlConfigResponse
+	29, // 65: routerrpc.GraphDB.QueryProbability:output_type -> routerrpc.QueryProbabilityResponse
+	31, // 66: routerrpc.GraphDB.BuildRoute:output_type -> routerrpc.BuildRouteResponse
+	33, // 67: routerrpc.GraphDB.SubscribeHtlcEvents:output_type -> routerrpc.HtlcEvent
+	41, // 68: routerrpc.GraphDB.SendPayment:output_type -> routerrpc.PaymentStatus
+	41, // 69: routerrpc.GraphDB.TrackPayment:output_type -> routerrpc.PaymentStatus
+	43, // 70: routerrpc.GraphDB.HtlcInterceptor:output_type -> routerrpc.ForwardHtlcInterceptRequest
+	46, // 71: routerrpc.GraphDB.UpdateChanStatus:output_type -> routerrpc.UpdateChanStatusResponse
 	54, // [54:72] is the sub-list for method output_type
 	36, // [36:54] is the sub-list for method input_type
 	36, // [36:36] is the sub-list for extension type_name

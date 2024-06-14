@@ -6438,7 +6438,7 @@ func marshalNode(node *channeldb.LightningNode) *lnrpc.LightningNode {
 	}
 }
 
-// QueryRoutes attempts to query the daemons' Channel Router for a possible
+// QueryRoutes attempts to query the daemons' Channel GraphDB for a possible
 // route to a target destination capable of carrying a specific amount of
 // satoshis within the route's flow. The returned route contains the full
 // details required to craft and send an HTLC, also including the necessary

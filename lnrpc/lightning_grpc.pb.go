@@ -4,6 +4,7 @@ package lnrpc
 
 import (
 	context "context"
+
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -277,7 +278,7 @@ type LightningClient interface {
 	// channel information for the specified node identified by its public key.
 	GetNodeInfo(ctx context.Context, in *NodeInfoRequest, opts ...grpc.CallOption) (*NodeInfo, error)
 	// lncli: `queryroutes`
-	// QueryRoutes attempts to query the daemon's Channel Router for a possible
+	// QueryRoutes attempts to query the daemon's Channel GraphDB for a possible
 	// route to a target destination capable of carrying a specific amount of
 	// satoshis. The returned route contains the full details required to craft and
 	// send an HTLC, also including the necessary information that should be
@@ -1598,7 +1599,7 @@ type LightningServer interface {
 	// channel information for the specified node identified by its public key.
 	GetNodeInfo(context.Context, *NodeInfoRequest) (*NodeInfo, error)
 	// lncli: `queryroutes`
-	// QueryRoutes attempts to query the daemon's Channel Router for a possible
+	// QueryRoutes attempts to query the daemon's Channel GraphDB for a possible
 	// route to a target destination capable of carrying a specific amount of
 	// satoshis. The returned route contains the full details required to craft and
 	// send an HTLC, also including the necessary information that should be

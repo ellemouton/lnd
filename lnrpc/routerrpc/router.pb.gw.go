@@ -564,7 +564,7 @@ func local_request_Router_UpdateChanStatus_0(ctx context.Context, marshaler runt
 
 }
 
-// RegisterRouterHandlerServer registers the http handlers for service Router to "mux".
+// RegisterRouterHandlerServer registers the http handlers for service GraphDB to "mux".
 // UnaryRPC     :call RouterServer directly.
 // StreamingRPC :currently unsupported pending https://github.com/grpc/grpc-go/issues/906.
 // Note that using this registration option will cause many gRPC library features to stop working. Consider using RegisterRouterHandlerFromEndpoint instead.
@@ -597,7 +597,7 @@ func RegisterRouterHandlerServer(ctx context.Context, mux *runtime.ServeMux, ser
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/routerrpc.Router/EstimateRouteFee", runtime.WithHTTPPathPattern("/v2/router/route/estimatefee"))
+		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/routerrpc.GraphDB/EstimateRouteFee", runtime.WithHTTPPathPattern("/v2/router/route/estimatefee"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -620,7 +620,7 @@ func RegisterRouterHandlerServer(ctx context.Context, mux *runtime.ServeMux, ser
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/routerrpc.Router/SendToRouteV2", runtime.WithHTTPPathPattern("/v2/router/route/send"))
+		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/routerrpc.GraphDB/SendToRouteV2", runtime.WithHTTPPathPattern("/v2/router/route/send"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -643,7 +643,7 @@ func RegisterRouterHandlerServer(ctx context.Context, mux *runtime.ServeMux, ser
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/routerrpc.Router/ResetMissionControl", runtime.WithHTTPPathPattern("/v2/router/mc/reset"))
+		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/routerrpc.GraphDB/ResetMissionControl", runtime.WithHTTPPathPattern("/v2/router/mc/reset"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -666,7 +666,7 @@ func RegisterRouterHandlerServer(ctx context.Context, mux *runtime.ServeMux, ser
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/routerrpc.Router/QueryMissionControl", runtime.WithHTTPPathPattern("/v2/router/mc"))
+		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/routerrpc.GraphDB/QueryMissionControl", runtime.WithHTTPPathPattern("/v2/router/mc"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -689,7 +689,7 @@ func RegisterRouterHandlerServer(ctx context.Context, mux *runtime.ServeMux, ser
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/routerrpc.Router/XImportMissionControl", runtime.WithHTTPPathPattern("/v2/router/x/importhistory"))
+		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/routerrpc.GraphDB/XImportMissionControl", runtime.WithHTTPPathPattern("/v2/router/x/importhistory"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -712,7 +712,7 @@ func RegisterRouterHandlerServer(ctx context.Context, mux *runtime.ServeMux, ser
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/routerrpc.Router/GetMissionControlConfig", runtime.WithHTTPPathPattern("/v2/router/mccfg"))
+		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/routerrpc.GraphDB/GetMissionControlConfig", runtime.WithHTTPPathPattern("/v2/router/mccfg"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -735,7 +735,7 @@ func RegisterRouterHandlerServer(ctx context.Context, mux *runtime.ServeMux, ser
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/routerrpc.Router/SetMissionControlConfig", runtime.WithHTTPPathPattern("/v2/router/mccfg"))
+		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/routerrpc.GraphDB/SetMissionControlConfig", runtime.WithHTTPPathPattern("/v2/router/mccfg"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -758,7 +758,7 @@ func RegisterRouterHandlerServer(ctx context.Context, mux *runtime.ServeMux, ser
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/routerrpc.Router/QueryProbability", runtime.WithHTTPPathPattern("/v2/router/mc/probability/{from_node}/{to_node}/{amt_msat}"))
+		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/routerrpc.GraphDB/QueryProbability", runtime.WithHTTPPathPattern("/v2/router/mc/probability/{from_node}/{to_node}/{amt_msat}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -781,7 +781,7 @@ func RegisterRouterHandlerServer(ctx context.Context, mux *runtime.ServeMux, ser
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/routerrpc.Router/BuildRoute", runtime.WithHTTPPathPattern("/v2/router/route"))
+		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/routerrpc.GraphDB/BuildRoute", runtime.WithHTTPPathPattern("/v2/router/route"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -818,7 +818,7 @@ func RegisterRouterHandlerServer(ctx context.Context, mux *runtime.ServeMux, ser
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/routerrpc.Router/UpdateChanStatus", runtime.WithHTTPPathPattern("/v2/router/updatechanstatus"))
+		rctx, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/routerrpc.GraphDB/UpdateChanStatus", runtime.WithHTTPPathPattern("/v2/router/updatechanstatus"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -863,13 +863,13 @@ func RegisterRouterHandlerFromEndpoint(ctx context.Context, mux *runtime.ServeMu
 	return RegisterRouterHandler(ctx, mux, conn)
 }
 
-// RegisterRouterHandler registers the http handlers for service Router to "mux".
+// RegisterRouterHandler registers the http handlers for service GraphDB to "mux".
 // The handlers forward requests to the grpc endpoint over "conn".
 func RegisterRouterHandler(ctx context.Context, mux *runtime.ServeMux, conn *grpc.ClientConn) error {
 	return RegisterRouterHandlerClient(ctx, mux, NewRouterClient(conn))
 }
 
-// RegisterRouterHandlerClient registers the http handlers for service Router
+// RegisterRouterHandlerClient registers the http handlers for service GraphDB
 // to "mux". The handlers forward requests to the grpc endpoint over the given implementation of "RouterClient".
 // Note: the gRPC framework executes interceptors within the gRPC handler. If the passed in "RouterClient"
 // doesn't go through the normal gRPC flow (creating a gRPC client etc.) then it will be up to the passed in
@@ -880,7 +880,7 @@ func RegisterRouterHandlerClient(ctx context.Context, mux *runtime.ServeMux, cli
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.Router/SendPaymentV2", runtime.WithHTTPPathPattern("/v2/router/send"))
+		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.GraphDB/SendPaymentV2", runtime.WithHTTPPathPattern("/v2/router/send"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -900,7 +900,7 @@ func RegisterRouterHandlerClient(ctx context.Context, mux *runtime.ServeMux, cli
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.Router/TrackPaymentV2", runtime.WithHTTPPathPattern("/v2/router/track/{payment_hash}"))
+		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.GraphDB/TrackPaymentV2", runtime.WithHTTPPathPattern("/v2/router/track/{payment_hash}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -920,7 +920,7 @@ func RegisterRouterHandlerClient(ctx context.Context, mux *runtime.ServeMux, cli
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.Router/TrackPayments", runtime.WithHTTPPathPattern("/v2/router/payments"))
+		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.GraphDB/TrackPayments", runtime.WithHTTPPathPattern("/v2/router/payments"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -940,7 +940,7 @@ func RegisterRouterHandlerClient(ctx context.Context, mux *runtime.ServeMux, cli
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.Router/EstimateRouteFee", runtime.WithHTTPPathPattern("/v2/router/route/estimatefee"))
+		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.GraphDB/EstimateRouteFee", runtime.WithHTTPPathPattern("/v2/router/route/estimatefee"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -960,7 +960,7 @@ func RegisterRouterHandlerClient(ctx context.Context, mux *runtime.ServeMux, cli
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.Router/SendToRouteV2", runtime.WithHTTPPathPattern("/v2/router/route/send"))
+		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.GraphDB/SendToRouteV2", runtime.WithHTTPPathPattern("/v2/router/route/send"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -980,7 +980,7 @@ func RegisterRouterHandlerClient(ctx context.Context, mux *runtime.ServeMux, cli
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.Router/ResetMissionControl", runtime.WithHTTPPathPattern("/v2/router/mc/reset"))
+		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.GraphDB/ResetMissionControl", runtime.WithHTTPPathPattern("/v2/router/mc/reset"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1000,7 +1000,7 @@ func RegisterRouterHandlerClient(ctx context.Context, mux *runtime.ServeMux, cli
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.Router/QueryMissionControl", runtime.WithHTTPPathPattern("/v2/router/mc"))
+		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.GraphDB/QueryMissionControl", runtime.WithHTTPPathPattern("/v2/router/mc"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1020,7 +1020,7 @@ func RegisterRouterHandlerClient(ctx context.Context, mux *runtime.ServeMux, cli
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.Router/XImportMissionControl", runtime.WithHTTPPathPattern("/v2/router/x/importhistory"))
+		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.GraphDB/XImportMissionControl", runtime.WithHTTPPathPattern("/v2/router/x/importhistory"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1040,7 +1040,7 @@ func RegisterRouterHandlerClient(ctx context.Context, mux *runtime.ServeMux, cli
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.Router/GetMissionControlConfig", runtime.WithHTTPPathPattern("/v2/router/mccfg"))
+		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.GraphDB/GetMissionControlConfig", runtime.WithHTTPPathPattern("/v2/router/mccfg"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1060,7 +1060,7 @@ func RegisterRouterHandlerClient(ctx context.Context, mux *runtime.ServeMux, cli
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.Router/SetMissionControlConfig", runtime.WithHTTPPathPattern("/v2/router/mccfg"))
+		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.GraphDB/SetMissionControlConfig", runtime.WithHTTPPathPattern("/v2/router/mccfg"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1080,7 +1080,7 @@ func RegisterRouterHandlerClient(ctx context.Context, mux *runtime.ServeMux, cli
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.Router/QueryProbability", runtime.WithHTTPPathPattern("/v2/router/mc/probability/{from_node}/{to_node}/{amt_msat}"))
+		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.GraphDB/QueryProbability", runtime.WithHTTPPathPattern("/v2/router/mc/probability/{from_node}/{to_node}/{amt_msat}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1100,7 +1100,7 @@ func RegisterRouterHandlerClient(ctx context.Context, mux *runtime.ServeMux, cli
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.Router/BuildRoute", runtime.WithHTTPPathPattern("/v2/router/route"))
+		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.GraphDB/BuildRoute", runtime.WithHTTPPathPattern("/v2/router/route"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1120,7 +1120,7 @@ func RegisterRouterHandlerClient(ctx context.Context, mux *runtime.ServeMux, cli
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.Router/SubscribeHtlcEvents", runtime.WithHTTPPathPattern("/v2/router/htlcevents"))
+		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.GraphDB/SubscribeHtlcEvents", runtime.WithHTTPPathPattern("/v2/router/htlcevents"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1140,7 +1140,7 @@ func RegisterRouterHandlerClient(ctx context.Context, mux *runtime.ServeMux, cli
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.Router/HtlcInterceptor", runtime.WithHTTPPathPattern("/v2/router/htlcinterceptor"))
+		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.GraphDB/HtlcInterceptor", runtime.WithHTTPPathPattern("/v2/router/htlcinterceptor"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -1160,7 +1160,7 @@ func RegisterRouterHandlerClient(ctx context.Context, mux *runtime.ServeMux, cli
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.Router/UpdateChanStatus", runtime.WithHTTPPathPattern("/v2/router/updatechanstatus"))
+		rctx, err := runtime.AnnotateContext(ctx, mux, req, "/routerrpc.GraphDB/UpdateChanStatus", runtime.WithHTTPPathPattern("/v2/router/updatechanstatus"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
