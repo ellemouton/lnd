@@ -22,6 +22,43 @@ type Graph interface {
 	FetchNodeFeatures(nodePub route.Vertex) (*lnwire.FeatureVector, error)
 }
 
+// routingGraph implements the RoutingGraph and is backed by a
+// channeldb.ChannelGraph.
+type routingGraph struct {
+	graph *channeldb.ChannelGraph
+}
+
+// NewRoutingGraph returns a new instance of Graph backed by a
+// channeldb.ChannelGraph.
+func NewRoutingGraph(graph *channeldb.ChannelGraph) Graph {
+	return &routingGraph{
+		graph: graph,
+	}
+}
+
+// ForEachNodeChannel calls the callback for every channel of the given node.
+//
+// NOTE: Part of the RoutingGraph interface.
+func (g *routingGraph) ForEachNodeChannel(nodePub route.Vertex,
+	cb func(channel *channeldb.DirectedChannel) error) error {
+
+	return g.graph.ForEachNodeDirectedChannel(nil, nodePub, cb)
+}
+
+// FetchNodeFeatures returns the features of the given node. If the node is
+// unknown, assume no additional features are supported.
+//
+// NOTE: Part of the RoutingGraph interface.
+func (g *routingGraph) FetchNodeFeatures(nodePub route.Vertex) (
+	*lnwire.FeatureVector, error) {
+
+	return g.graph.FetchNodeFeatures(nodePub)
+}
+
+// A compile time assertion to make sure routingGraph implements the Graph
+// interface.
+var _ Graph = (*routingGraph)(nil)
+
 // CachedGraph is a Graph implementation that retrieves from the
 // database.
 type CachedGraph struct {
