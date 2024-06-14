@@ -1745,3 +1745,58 @@ func (m *Manager) IsKnownEdge(chanID lnwire.ShortChannelID) bool {
 func (m *Manager) MarkEdgeLive(chanID lnwire.ShortChannelID) error {
 	return m.cfg.Graph.MarkEdgeLive(chanID.ToUint64())
 }
+
+// ApplyChannelUpdate validates a channel update and if valid, applies it to the
+// database. It returns a bool indicating whether the updates were successful.
+func (m *Manager) ApplyChannelUpdate(msg *lnwire.ChannelUpdate) bool {
+	ch, _, _, err := m.cfg.Graph.FetchChannelEdgesByID(
+		msg.ShortChannelID.ToUint64(),
+	)
+	if err != nil {
+		log.Errorf("Unable to retrieve channel by id: %v", err)
+		return false
+	}
+
+	var pubKey *btcec.PublicKey
+
+	switch msg.ChannelFlags & lnwire.ChanUpdateDirection {
+	case 0:
+		pubKey, _ = ch.NodeKey1()
+
+	case 1:
+		pubKey, _ = ch.NodeKey2()
+	}
+
+	// Exit early if the pubkey cannot be decided.
+	if pubKey == nil {
+		log.Errorf("Unable to decide pubkey with ChannelFlags=%v",
+			msg.ChannelFlags)
+		return false
+	}
+
+	err = ValidateChannelUpdateAnn(pubKey, ch.Capacity, msg)
+	if err != nil {
+		log.Errorf("Unable to validate channel update: %v", err)
+		return false
+	}
+
+	err = m.cfg.Graph.UpdateEdgePolicy(&models.ChannelEdgePolicy{
+		SigBytes:                  msg.Signature.ToSignatureBytes(),
+		ChannelID:                 msg.ShortChannelID.ToUint64(),
+		LastUpdate:                time.Unix(int64(msg.Timestamp), 0),
+		MessageFlags:              msg.MessageFlags,
+		ChannelFlags:              msg.ChannelFlags,
+		TimeLockDelta:             msg.TimeLockDelta,
+		MinHTLC:                   msg.HtlcMinimumMsat,
+		MaxHTLC:                   msg.HtlcMaximumMsat,
+		FeeBaseMSat:               lnwire.MilliSatoshi(msg.BaseFee),
+		FeeProportionalMillionths: lnwire.MilliSatoshi(msg.FeeRate),
+		ExtraOpaqueData:           msg.ExtraOpaqueData,
+	})
+	if err != nil && !IsError(err, ErrIgnored, ErrOutdated) {
+		log.Errorf("Unable to apply channel update: %v", err)
+		return false
+	}
+
+	return true
+}

@@ -1020,6 +1020,9 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		NextPaymentID:      sequencer.NextID,
 		PathFindingConfig:  pathFindingConfig,
 		Clock:              clock.NewDefaultClock(),
+		UpdateEdge: func(update *models.ChannelEdgePolicy) error {
+			return s.graphMgr.UpdateEdge(update)
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("can't create router: %w", err)

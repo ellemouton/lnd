@@ -20,8 +20,7 @@ type Graph interface {
 	IsStaleEdgePolicy(chanID lnwire.ShortChannelID, timestamp time.Time,
 		flags lnwire.ChanUpdateChanFlags) bool
 
-	UpdateEdge(update *models.ChannelEdgePolicy,
-		op ...batch.SchedulerOption) error
+	ApplyChannelUpdate(msg *lnwire.ChannelUpdate) bool
 }
 
 type GraphDB interface {

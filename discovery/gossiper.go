@@ -1863,7 +1863,7 @@ func (d *AuthenticatedGossiper) processRejectedEdge(
 	if err != nil {
 		return nil, err
 	}
-	err = routing.ValidateChannelAnn(chanAnn)
+	err = graph.ValidateChannelAnn(chanAnn)
 	if err != nil {
 		err := fmt.Errorf("assembled channel announcement proof "+
 			"for shortChanID=%v isn't valid: %v",
@@ -1912,7 +1912,7 @@ func (d *AuthenticatedGossiper) processRejectedEdge(
 func (d *AuthenticatedGossiper) addNode(msg *lnwire.NodeAnnouncement,
 	op ...batch.SchedulerOption) error {
 
-	if err := routing.ValidateNodeAnn(msg); err != nil {
+	if err := graph.ValidateNodeAnn(msg); err != nil {
 		return fmt.Errorf("unable to validate node announcement: %w",
 			err)
 	}
@@ -2066,7 +2066,7 @@ func (d *AuthenticatedGossiper) processZombieUpdate(
 			"with chan_id=%v", msg.ShortChannelID)
 	}
 
-	err := routing.VerifyChannelUpdateSignature(msg, pubKey)
+	err := graph.VerifyChannelUpdateSignature(msg, pubKey)
 	if err != nil {
 		return fmt.Errorf("unable to verify channel "+
 			"update signature: %v", err)
@@ -2203,7 +2203,7 @@ func (d *AuthenticatedGossiper) updateChannel(info *models.ChannelEdgeInfo,
 
 	// To ensure that our signature is valid, we'll verify it ourself
 	// before committing it to the slice returned.
-	err = routing.ValidateChannelUpdateAnn(d.selfKey, info.Capacity, chanUpdate)
+	err = graph.ValidateChannelUpdateAnn(d.selfKey, info.Capacity, chanUpdate)
 	if err != nil {
 		return nil, nil, fmt.Errorf("generated invalid channel "+
 			"update sig: %v", err)
@@ -2459,7 +2459,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 	// the signatures within the proof as it should be well formed.
 	var proof *models.ChannelAuthProof
 	if nMsg.isRemote {
-		if err := routing.ValidateChannelAnn(ann); err != nil {
+		if err := graph.ValidateChannelAnn(ann); err != nil {
 			err := fmt.Errorf("unable to validate announcement: "+
 				"%v", err)
 
@@ -2864,7 +2864,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 	// Validate the channel announcement with the expected public key and
 	// channel capacity. In the case of an invalid channel update, we'll
 	// return an error to the caller and exit early.
-	err = routing.ValidateChannelUpdateAnn(pubKey, chanInfo.Capacity, upd)
+	err = graph.ValidateChannelUpdateAnn(pubKey, chanInfo.Capacity, upd)
 	if err != nil {
 		rErr := fmt.Errorf("unable to validate channel update "+
 			"announcement for short_chan_id=%v: %v",
@@ -3270,7 +3270,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 
 	// With all the necessary components assembled validate the full
 	// channel announcement proof.
-	if err := routing.ValidateChannelAnn(chanAnn); err != nil {
+	if err := graph.ValidateChannelAnn(chanAnn); err != nil {
 		err := fmt.Errorf("channel announcement proof for "+
 			"short_chan_id=%v isn't valid: %v", shortChanID, err)
 
