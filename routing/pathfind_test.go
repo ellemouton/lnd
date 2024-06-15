@@ -2405,7 +2405,7 @@ func TestPathFindSpecExample(t *testing.T) {
 	// Carol, so we set "B" as the source node so path finding starts from
 	// Bob.
 	bob := ctx.aliases["B"]
-	bobNode, err := ctx.graph.FetchLightningNode(nil, bob)
+	bobNode, err := ctx.graph.FetchLightningNode(bob)
 	require.NoError(t, err, "unable to find bob")
 	if err := ctx.graph.SetSourceNode(bobNode); err != nil {
 		t.Fatalf("unable to set source node: %v", err)
@@ -2454,7 +2454,7 @@ func TestPathFindSpecExample(t *testing.T) {
 	// Next, we'll set A as the source node so we can assert that we create
 	// the proper route for any queries starting with Alice.
 	alice := ctx.aliases["A"]
-	aliceNode, err := ctx.graph.FetchLightningNode(nil, alice)
+	aliceNode, err := ctx.graph.FetchLightningNode(alice)
 	require.NoError(t, err, "unable to find alice")
 	if err := ctx.graph.SetSourceNode(aliceNode); err != nil {
 		t.Fatalf("unable to set source node: %v", err)
