@@ -1,22 +1,41 @@
 package channeldb
 
 import (
+	"image/color"
 	"math"
 	"math/rand"
 	"net"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/lightningnetwork/lnd/graphdb"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/shachain"
 	"github.com/stretchr/testify/require"
+)
+
+var (
+	testAddr = &net.TCPAddr{IP: (net.IP)([]byte{0xA, 0x0, 0x0, 0x1}),
+		Port: 9000}
+	anotherAddr, _ = net.ResolveTCPAddr("tcp",
+		"[2001:db8:85a3:0:0:8a2e:370:7334]:80")
+	testAddrs = []net.Addr{testAddr, anotherAddr}
+
+	testFeatures = lnwire.NewFeatureVector(
+		lnwire.NewRawFeatureVector(lnwire.GossipQueriesRequired),
+		lnwire.Features,
+	)
+
+	testPub = route.Vertex{2, 202, 4}
 )
 
 func TestOpenWithCreate(t *testing.T) {
@@ -262,6 +281,35 @@ func TestFetchChannel(t *testing.T) {
 	chanID2 := lnwire.NewChanIDFromOutPoint(channelState2.FundingOutpoint)
 	_, err = cdb.FetchChannelByID(nil, chanID2)
 	require.ErrorIs(t, err, ErrChannelNotFound)
+}
+
+func createLightningNode(db kvdb.Backend, priv *btcec.PrivateKey) (
+	*graphdb.LightningNode, error) {
+
+	updateTime := rand.Int63()
+
+	pub := priv.PubKey().SerializeCompressed()
+	n := &graphdb.LightningNode{
+		HaveNodeAnnouncement: true,
+		AuthSigBytes:         testSig.Serialize(),
+		LastUpdate:           time.Unix(updateTime, 0),
+		Color:                color.RGBA{1, 2, 3, 0},
+		Alias:                "kek" + string(pub[:]),
+		Features:             testFeatures,
+		Addresses:            testAddrs,
+	}
+	copy(n.PubKeyBytes[:], priv.PubKey().SerializeCompressed())
+
+	return n, nil
+}
+
+func createTestVertex(db kvdb.Backend) (*graphdb.LightningNode, error) {
+	priv, err := btcec.NewPrivateKey()
+	if err != nil {
+		return nil, err
+	}
+
+	return createLightningNode(db, priv)
 }
 
 func genRandomChannelShell() (*ChannelShell, error) {

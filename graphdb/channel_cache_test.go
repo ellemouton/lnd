@@ -1,10 +1,10 @@
-package channeldb
+package graphdb
 
 import (
 	"reflect"
 	"testing"
 
-	"github.com/lightningnetwork/lnd/channeldb/models"
+	"github.com/lightningnetwork/lnd/graphdb/models"
 )
 
 // TestChannelCache checks the behavior of the channelCache with respect to

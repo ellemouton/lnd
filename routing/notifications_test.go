@@ -15,8 +15,9 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/go-errors/errors"
-	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channeldb/models"
+	"github.com/lightningnetwork/lnd/graphdb"
+	models2 "github.com/lightningnetwork/lnd/graphdb/models"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwallet/btcwallet"
@@ -51,7 +52,7 @@ var (
 	timeout = time.Second * 5
 )
 
-func createTestNode() (*channeldb.LightningNode, error) {
+func createTestNode() (*graphdb.LightningNode, error) {
 	updateTime := prand.Int63()
 
 	priv, err := btcec.NewPrivateKey()
@@ -60,7 +61,7 @@ func createTestNode() (*channeldb.LightningNode, error) {
 	}
 
 	pub := priv.PubKey().SerializeCompressed()
-	n := &channeldb.LightningNode{
+	n := &graphdb.LightningNode{
 		HaveNodeAnnouncement: true,
 		LastUpdate:           time.Unix(updateTime, 0),
 		Addresses:            testAddrs,
@@ -75,7 +76,7 @@ func createTestNode() (*channeldb.LightningNode, error) {
 }
 
 func randEdgePolicy(chanID *lnwire.ShortChannelID,
-	node *channeldb.LightningNode) (*models.ChannelEdgePolicy, error) {
+	node *graphdb.LightningNode) (*models2.ChannelEdgePolicy, error) {
 
 	InboundFee := models.InboundFee{
 		Base: prand.Int31() * -1,
@@ -88,7 +89,7 @@ func randEdgePolicy(chanID *lnwire.ShortChannelID,
 		return nil, err
 	}
 
-	return &models.ChannelEdgePolicy{
+	return &models2.ChannelEdgePolicy{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 chanID.ToUint64(),
 		LastUpdate:                time.Unix(int64(prand.Int31()), 0),
@@ -291,7 +292,7 @@ func (m *mockChainView) Reset() {
 	m.staleBlocks = make(chan *chainview.FilteredBlock, 10)
 }
 
-func (m *mockChainView) UpdateFilter(ops []channeldb.EdgePoint, updateHeight uint32) error {
+func (m *mockChainView) UpdateFilter(ops []graphdb.EdgePoint, updateHeight uint32) error {
 	m.Lock()
 	defer m.Unlock()
 
@@ -444,11 +445,11 @@ func TestEdgeUpdateNotification(t *testing.T) {
 
 	// Finally, to conclude our test set up, we'll create a channel
 	// update to announce the created channel between the two nodes.
-	edge := &models.ChannelEdgeInfo{
+	edge := &models2.ChannelEdgeInfo{
 		ChannelID:     chanID.ToUint64(),
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
-		AuthProof: &models.ChannelAuthProof{
+		AuthProof: &models2.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
@@ -485,7 +486,7 @@ func TestEdgeUpdateNotification(t *testing.T) {
 	}
 
 	assertEdgeCorrect := func(t *testing.T, edgeUpdate *ChannelEdgeUpdate,
-		edgeAnn *models.ChannelEdgePolicy) {
+		edgeAnn *models2.ChannelEdgePolicy) {
 
 		if edgeUpdate.ChanID != edgeAnn.ChannelID {
 			t.Fatalf("channel ID of edge doesn't match: "+
@@ -633,11 +634,11 @@ func TestNodeUpdateNotification(t *testing.T) {
 	testFeaturesBuf := new(bytes.Buffer)
 	require.NoError(t, testFeatures.Encode(testFeaturesBuf))
 
-	edge := &models.ChannelEdgeInfo{
+	edge := &models2.ChannelEdgeInfo{
 		ChannelID:     chanID.ToUint64(),
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
-		AuthProof: &models.ChannelAuthProof{
+		AuthProof: &models2.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
@@ -666,7 +667,7 @@ func TestNodeUpdateNotification(t *testing.T) {
 		t.Fatalf("unable to add node: %v", err)
 	}
 
-	assertNodeNtfnCorrect := func(t *testing.T, ann *channeldb.LightningNode,
+	assertNodeNtfnCorrect := func(t *testing.T, ann *graphdb.LightningNode,
 		nodeUpdate *NetworkNodeUpdate) {
 
 		nodeKey, _ := ann.PubKey()
@@ -819,11 +820,11 @@ func TestNotificationCancellation(t *testing.T) {
 	// to the client.
 	ntfnClient.Cancel()
 
-	edge := &models.ChannelEdgeInfo{
+	edge := &models2.ChannelEdgeInfo{
 		ChannelID:     chanID.ToUint64(),
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
-		AuthProof: &models.ChannelAuthProof{
+		AuthProof: &models2.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
@@ -890,11 +891,11 @@ func TestChannelCloseNotification(t *testing.T) {
 
 	// Finally, to conclude our test set up, we'll create a channel
 	// announcement to announce the created channel between the two nodes.
-	edge := &models.ChannelEdgeInfo{
+	edge := &models2.ChannelEdgeInfo{
 		ChannelID:     chanID.ToUint64(),
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
-		AuthProof: &models.ChannelAuthProof{
+		AuthProof: &models2.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),

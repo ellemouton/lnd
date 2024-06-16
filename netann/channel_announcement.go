@@ -3,7 +3,7 @@ package netann
 import (
 	"bytes"
 
-	"github.com/lightningnetwork/lnd/channeldb/models"
+	models2 "github.com/lightningnetwork/lnd/graphdb/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
 
@@ -12,9 +12,9 @@ import (
 // function is used to transform out database structs into the corresponding wire
 // structs for announcing new channels to other peers, or simply syncing up a
 // peer's initial routing table upon connect.
-func CreateChanAnnouncement(chanProof *models.ChannelAuthProof,
-	chanInfo *models.ChannelEdgeInfo,
-	e1, e2 *models.ChannelEdgePolicy) (*lnwire.ChannelAnnouncement,
+func CreateChanAnnouncement(chanProof *models2.ChannelAuthProof,
+	chanInfo *models2.ChannelEdgeInfo,
+	e1, e2 *models2.ChannelEdgePolicy) (*lnwire.ChannelAnnouncement,
 	*lnwire.ChannelUpdate, *lnwire.ChannelUpdate, error) {
 
 	// First, using the parameters of the channel, along with the channel

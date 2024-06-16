@@ -30,6 +30,8 @@ import (
 	"github.com/lightningnetwork/lnd/feature"
 	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/funding"
+	"github.com/lightningnetwork/lnd/graphdb"
+	models2 "github.com/lightningnetwork/lnd/graphdb/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/htlcswitch/hodl"
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
@@ -218,7 +220,7 @@ type Config struct {
 
 	// ChannelGraph is a pointer to the channel graph which is used to
 	// query information about the set of known active channels.
-	ChannelGraph *channeldb.ChannelGraph
+	ChannelGraph *graphdb.ChannelGraph
 
 	// ChainArb is used to subscribe to channel events, update contract signals,
 	// and force close channels.
@@ -974,7 +976,7 @@ func (p *Brontide) loadActiveChannels(chans []*channeldb.OpenChannel) (
 		info, p1, p2, err := graph.FetchChannelEdgesByOutpoint(
 			&chanPoint,
 		)
-		if err != nil && !errors.Is(err, channeldb.ErrEdgeNotFound) {
+		if err != nil && !errors.Is(err, graphdb.ErrEdgeNotFound) {
 			return nil, err
 		}
 
@@ -985,7 +987,7 @@ func (p *Brontide) loadActiveChannels(chans []*channeldb.OpenChannel) (
 		//
 		// TODO(roasbeef): can add helper method to get policy for
 		// particular channel.
-		var selfPolicy *models.ChannelEdgePolicy
+		var selfPolicy *models2.ChannelEdgePolicy
 		if info != nil && bytes.Equal(info.NodeKey1Bytes[:],
 			p.cfg.ServerPubKey[:]) {
 

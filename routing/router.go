@@ -24,6 +24,8 @@ import (
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/graph"
+	"github.com/lightningnetwork/lnd/graphdb"
+	models2 "github.com/lightningnetwork/lnd/graphdb/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/kvdb"
@@ -249,7 +251,7 @@ type Config struct {
 	// Graph is the channel graph that the ChannelRouter will use to gather
 	// metrics from and also to carry out path finding queries.
 	// TODO(roasbeef): make into an interface
-	Graph *channeldb.ChannelGraph
+	Graph *graphdb.ChannelGraph
 
 	// Chain is the router's source to the most up-to-date blockchain data.
 	// All incoming advertised channels will be checked against the chain
@@ -378,7 +380,7 @@ type ChannelRouter struct {
 	// selfNode is the center of the star-graph centered around the
 	// ChannelRouter. The ChannelRouter uses this node as a starting point
 	// when doing any path finding.
-	selfNode *channeldb.LightningNode
+	selfNode *graphdb.LightningNode
 
 	// newBlocks is a channel in which new blocks connected to the end of
 	// the main chain are sent over, and blocks updated after a call to
@@ -471,9 +473,9 @@ func (r *ChannelRouter) Start() error {
 	// then we don't treat this as an explicit error.
 	if _, _, err := r.cfg.Graph.PruneTip(); err != nil {
 		switch {
-		case err == channeldb.ErrGraphNeverPruned:
+		case err == graphdb.ErrGraphNeverPruned:
 			fallthrough
-		case err == channeldb.ErrGraphNotFound:
+		case err == graphdb.ErrGraphNotFound:
 			// If the graph has never been pruned, then we'll set
 			// the prune height to the current best height of the
 			// chain backend.
@@ -523,7 +525,7 @@ func (r *ChannelRouter) Start() error {
 		// we may miss on-chain events as the filter hasn't properly
 		// been applied.
 		channelView, err := r.cfg.Graph.ChannelView()
-		if err != nil && err != channeldb.ErrGraphNoEdgesFound {
+		if err != nil && err != graphdb.ErrGraphNoEdgesFound {
 			return err
 		}
 
@@ -558,7 +560,7 @@ func (r *ChannelRouter) Start() error {
 		// from the graph in order to ensure we maintain a tight graph
 		// of "useful" nodes.
 		err = r.cfg.Graph.PruneGraphNodes()
-		if err != nil && err != channeldb.ErrGraphNodesNotFound {
+		if err != nil && err != graphdb.ErrGraphNodesNotFound {
 			return err
 		}
 	}
@@ -696,8 +698,8 @@ func (r *ChannelRouter) syncGraphWithChain() error {
 		switch {
 		// If the graph has never been pruned, or hasn't fully been
 		// created yet, then we don't treat this as an explicit error.
-		case err == channeldb.ErrGraphNeverPruned:
-		case err == channeldb.ErrGraphNotFound:
+		case err == graphdb.ErrGraphNeverPruned:
+		case err == graphdb.ErrGraphNotFound:
 		default:
 			return err
 		}
@@ -746,9 +748,9 @@ func (r *ChannelRouter) syncGraphWithChain() error {
 			// can exit as this entails we are back to the point
 			// where it hasn't seen any block or created channels,
 			// alas there's nothing left to prune.
-			case err == channeldb.ErrGraphNeverPruned:
+			case err == graphdb.ErrGraphNeverPruned:
 				return nil
-			case err == channeldb.ErrGraphNotFound:
+			case err == graphdb.ErrGraphNotFound:
 				return nil
 			default:
 				return err
@@ -823,7 +825,7 @@ func (r *ChannelRouter) syncGraphWithChain() error {
 // boolean is that of node 2, and the final boolean is true if the channel
 // is considered a zombie.
 func (r *ChannelRouter) isZombieChannel(e1,
-	e2 *models.ChannelEdgePolicy) (bool, bool, bool) {
+	e2 *models2.ChannelEdgePolicy) (bool, bool, bool) {
 
 	chanExpiry := r.cfg.ChannelPruneExpiry
 
@@ -879,15 +881,15 @@ func (r *ChannelRouter) pruneZombieChans() error {
 	log.Infof("Examining channel graph for zombie channels")
 
 	// A helper method to detect if the channel belongs to this node
-	isSelfChannelEdge := func(info *models.ChannelEdgeInfo) bool {
+	isSelfChannelEdge := func(info *models2.ChannelEdgeInfo) bool {
 		return info.NodeKey1Bytes == r.selfNode.PubKeyBytes ||
 			info.NodeKey2Bytes == r.selfNode.PubKeyBytes
 	}
 
 	// First, we'll collect all the channels which are eligible for garbage
 	// collection due to being zombies.
-	filterPruneChans := func(info *models.ChannelEdgeInfo,
-		e1, e2 *models.ChannelEdgePolicy) error {
+	filterPruneChans := func(info *models2.ChannelEdgeInfo,
+		e1, e2 *models2.ChannelEdgePolicy) error {
 
 		// Exit early in case this channel is already marked to be
 		// pruned
@@ -992,7 +994,7 @@ func (r *ChannelRouter) pruneZombieChans() error {
 	// With the channels pruned, we'll also attempt to prune any nodes that
 	// were a part of them.
 	err = r.cfg.Graph.PruneGraphNodes()
-	if err != nil && err != channeldb.ErrGraphNodesNotFound {
+	if err != nil && err != graphdb.ErrGraphNodesNotFound {
 		return fmt.Errorf("unable to prune graph nodes: %w", err)
 	}
 
@@ -1492,7 +1494,7 @@ func (r *ChannelRouter) processUpdate(msg interface{},
 	op ...batch.SchedulerOption) error {
 
 	switch msg := msg.(type) {
-	case *channeldb.LightningNode:
+	case *graphdb.LightningNode:
 		// Before we add the node to the database, we'll check to see
 		// if the announcement is "fresh" or not. If it isn't, then
 		// we'll return an error.
@@ -1509,7 +1511,7 @@ func (r *ChannelRouter) processUpdate(msg interface{},
 		log.Tracef("Updated vertex data for node=%x", msg.PubKeyBytes)
 		r.stats.incNumNodeUpdates()
 
-	case *models.ChannelEdgeInfo:
+	case *models2.ChannelEdgeInfo:
 		log.Debugf("Received ChannelEdgeInfo for channel %v",
 			msg.ChannelID)
 
@@ -1518,7 +1520,7 @@ func (r *ChannelRouter) processUpdate(msg interface{},
 		_, _, exists, isZombie, err := r.cfg.Graph.HasChannelEdge(
 			msg.ChannelID,
 		)
-		if err != nil && err != channeldb.ErrGraphNoEdgesFound {
+		if err != nil && err != graphdb.ErrGraphNoEdgesFound {
 			return errors.Errorf("unable to check for edge "+
 				"existence: %v", err)
 		}
@@ -1662,7 +1664,7 @@ func (r *ChannelRouter) processUpdate(msg interface{},
 		// update the current UTXO filter within our active
 		// FilteredChainView so we are notified if/when this channel is
 		// closed.
-		filterUpdate := []channeldb.EdgePoint{
+		filterUpdate := []graphdb.EdgePoint{
 			{
 				FundingPkScript: fundingPkScript,
 				OutPoint:        *fundingPoint,
@@ -1676,7 +1678,7 @@ func (r *ChannelRouter) processUpdate(msg interface{},
 				"view: %v", err)
 		}
 
-	case *models.ChannelEdgePolicy:
+	case *models2.ChannelEdgePolicy:
 		log.Debugf("Received ChannelEdgePolicy for channel %v",
 			msg.ChannelID)
 
@@ -1688,7 +1690,7 @@ func (r *ChannelRouter) processUpdate(msg interface{},
 
 		edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
 			r.cfg.Graph.HasChannelEdge(msg.ChannelID)
-		if err != nil && err != channeldb.ErrGraphNoEdgesFound {
+		if err != nil && err != graphdb.ErrGraphNoEdgesFound {
 			return errors.Errorf("unable to check for edge "+
 				"existence: %v", err)
 
@@ -2678,7 +2680,7 @@ func (r *ChannelRouter) applyChannelUpdate(msg *lnwire.ChannelUpdate) bool {
 		return false
 	}
 
-	err = r.UpdateEdge(&models.ChannelEdgePolicy{
+	err = r.UpdateEdge(&models2.ChannelEdgePolicy{
 		SigBytes:                  msg.Signature.ToSignatureBytes(),
 		ChannelID:                 msg.ShortChannelID.ToUint64(),
 		LastUpdate:                time.Unix(int64(msg.Timestamp), 0),
@@ -2704,7 +2706,7 @@ func (r *ChannelRouter) applyChannelUpdate(msg *lnwire.ChannelUpdate) bool {
 // be ignored.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (r *ChannelRouter) AddNode(node *channeldb.LightningNode,
+func (r *ChannelRouter) AddNode(node *graphdb.LightningNode,
 	op ...batch.SchedulerOption) error {
 
 	rMsg := &routingMsg{
@@ -2731,7 +2733,7 @@ func (r *ChannelRouter) AddNode(node *channeldb.LightningNode,
 // in construction of payment path.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (r *ChannelRouter) AddEdge(edge *models.ChannelEdgeInfo,
+func (r *ChannelRouter) AddEdge(edge *models2.ChannelEdgeInfo,
 	op ...batch.SchedulerOption) error {
 
 	rMsg := &routingMsg{
@@ -2757,7 +2759,7 @@ func (r *ChannelRouter) AddEdge(edge *models.ChannelEdgeInfo,
 // considered as not fully constructed.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (r *ChannelRouter) UpdateEdge(update *models.ChannelEdgePolicy,
+func (r *ChannelRouter) UpdateEdge(update *models2.ChannelEdgePolicy,
 	op ...batch.SchedulerOption) error {
 
 	rMsg := &routingMsg{
@@ -2798,20 +2800,20 @@ func (r *ChannelRouter) SyncedHeight() uint32 {
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (r *ChannelRouter) GetChannelByID(chanID lnwire.ShortChannelID) (
-	*models.ChannelEdgeInfo,
-	*models.ChannelEdgePolicy,
-	*models.ChannelEdgePolicy, error) {
+	*models2.ChannelEdgeInfo,
+	*models2.ChannelEdgePolicy,
+	*models2.ChannelEdgePolicy, error) {
 
 	return r.cfg.Graph.FetchChannelEdgesByID(chanID.ToUint64())
 }
 
 // FetchLightningNode attempts to look up a target node by its identity public
-// key. channeldb.ErrGraphNodeNotFound is returned if the node doesn't exist
+// key. graphdb.ErrGraphNodeNotFound is returned if the node doesn't exist
 // within the graph.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (r *ChannelRouter) FetchLightningNode(
-	node route.Vertex) (*channeldb.LightningNode, error) {
+	node route.Vertex) (*graphdb.LightningNode, error) {
 
 	return r.cfg.Graph.FetchLightningNode(node)
 }
@@ -2820,10 +2822,10 @@ func (r *ChannelRouter) FetchLightningNode(
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (r *ChannelRouter) ForEachNode(
-	cb func(*channeldb.LightningNode) error) error {
+	cb func(*graphdb.LightningNode) error) error {
 
 	return r.cfg.Graph.ForEachNode(
-		func(_ kvdb.RTx, n *channeldb.LightningNode) error {
+		func(_ kvdb.RTx, n *graphdb.LightningNode) error {
 			return cb(n)
 		})
 }
@@ -2833,12 +2835,12 @@ func (r *ChannelRouter) ForEachNode(
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (r *ChannelRouter) ForAllOutgoingChannels(cb func(kvdb.RTx,
-	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy) error) error {
+	*models2.ChannelEdgeInfo, *models2.ChannelEdgePolicy) error) error {
 
 	return r.cfg.Graph.ForEachNodeChannel(r.selfNode.PubKeyBytes,
-		func(tx kvdb.RTx, c *models.ChannelEdgeInfo,
-			e *models.ChannelEdgePolicy,
-			_ *models.ChannelEdgePolicy) error {
+		func(tx kvdb.RTx, c *models2.ChannelEdgeInfo,
+			e *models2.ChannelEdgePolicy,
+			_ *models2.ChannelEdgePolicy) error {
 
 			if e == nil {
 				return fmt.Errorf("channel from self node " +
@@ -2855,7 +2857,7 @@ func (r *ChannelRouter) ForAllOutgoingChannels(cb func(kvdb.RTx,
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (r *ChannelRouter) AddProof(chanID lnwire.ShortChannelID,
-	proof *models.ChannelAuthProof) error {
+	proof *models2.ChannelAuthProof) error {
 
 	info, _, _, err := r.cfg.Graph.FetchChannelEdgesByID(chanID.ToUint64())
 	if err != nil {

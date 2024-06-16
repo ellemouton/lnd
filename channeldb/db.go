@@ -28,6 +28,7 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb/migration31"
 	"github.com/lightningnetwork/lnd/channeldb/migration_01_to_11"
 	"github.com/lightningnetwork/lnd/clock"
+	"github.com/lightningnetwork/lnd/graphdb"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -325,7 +326,7 @@ type DB struct {
 	channelStateDB *ChannelStateDB
 
 	dbPath                    string
-	graph                     *ChannelGraph
+	graph                     *graphdb.ChannelGraph
 	clock                     clock.Clock
 	dryRun                    bool
 	keepFailedPaymentAttempts bool
@@ -399,7 +400,7 @@ func CreateWithBackend(backend kvdb.Backend,
 	chanDB.channelStateDB.parent = chanDB
 
 	var err error
-	chanDB.graph, err = NewChannelGraph(
+	chanDB.graph, err = graphdb.NewChannelGraph(
 		backend, opts.RejectCacheSize, opts.ChannelCacheSize,
 		opts.BatchCommitInterval, opts.PreAllocCacheNumNodes,
 		opts.UseGraphCache, opts.NoMigration,
@@ -1352,12 +1353,12 @@ func (d *DB) AddrsForNode(nodePub *btcec.PublicKey) ([]net.Addr,
 		return nil, err
 	}
 	graphNode, err := d.graph.FetchLightningNode(pubKey)
-	if err != nil && err != ErrGraphNodeNotFound {
+	if err != nil && err != graphdb.ErrGraphNodeNotFound {
 		return nil, err
-	} else if err == ErrGraphNodeNotFound {
+	} else if err == graphdb.ErrGraphNodeNotFound {
 		// If the node isn't found, then that's OK, as we still have the
 		// link node data. But any other error needs to be returned.
-		graphNode = &LightningNode{}
+		graphNode = &graphdb.LightningNode{}
 	}
 
 	// Now that we have both sources of addrs for this node, we'll use a
@@ -1629,7 +1630,7 @@ func (d *DB) applyOptionalVersions(cfg OptionalMiragtionConfig) error {
 }
 
 // ChannelGraph returns the current instance of the directed channel graph.
-func (d *DB) ChannelGraph() *ChannelGraph {
+func (d *DB) ChannelGraph() *graphdb.ChannelGraph {
 	return d.graph
 }
 

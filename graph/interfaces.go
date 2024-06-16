@@ -4,8 +4,8 @@ import (
 	"time"
 
 	"github.com/lightningnetwork/lnd/batch"
-	"github.com/lightningnetwork/lnd/channeldb"
-	"github.com/lightningnetwork/lnd/channeldb/models"
+	"github.com/lightningnetwork/lnd/graphdb"
+	models2 "github.com/lightningnetwork/lnd/graphdb/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -21,23 +21,23 @@ type ChannelGraphSource interface {
 	// AddNode is used to add information about a node to the router
 	// database. If the node with this pubkey is not present in an existing
 	// channel, it will be ignored.
-	AddNode(node *channeldb.LightningNode,
+	AddNode(node *graphdb.LightningNode,
 		op ...batch.SchedulerOption) error
 
 	// AddEdge is used to add edge/channel to the topology of the router,
 	// after all information about channel will be gathered this
 	// edge/channel might be used in construction of payment path.
-	AddEdge(edge *models.ChannelEdgeInfo,
+	AddEdge(edge *models2.ChannelEdgeInfo,
 		op ...batch.SchedulerOption) error
 
 	// AddProof updates the channel edge info with proof which is needed to
 	// properly announce the edge to the rest of the network.
 	AddProof(chanID lnwire.ShortChannelID,
-		proof *models.ChannelAuthProof) error
+		proof *models2.ChannelAuthProof) error
 
 	// UpdateEdge is used to update edge information, without this message
 	// edge considered as not fully constructed.
-	UpdateEdge(policy *models.ChannelEdgePolicy,
+	UpdateEdge(policy *models2.ChannelEdgePolicy,
 		op ...batch.SchedulerOption) error
 
 	// IsStaleNode returns true if the graph source has a node announcement
@@ -68,8 +68,8 @@ type ChannelGraphSource interface {
 	// emanating from the "source" node which is the center of the
 	// star-graph.
 	ForAllOutgoingChannels(cb func(tx kvdb.RTx,
-		c *models.ChannelEdgeInfo,
-		e *models.ChannelEdgePolicy) error) error
+		c *models2.ChannelEdgeInfo,
+		e *models2.ChannelEdgePolicy) error) error
 
 	// CurrentBlockHeight returns the block height from POV of the router
 	// subsystem.
@@ -77,14 +77,14 @@ type ChannelGraphSource interface {
 
 	// GetChannelByID return the channel by the channel id.
 	GetChannelByID(chanID lnwire.ShortChannelID) (
-		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
-		*models.ChannelEdgePolicy, error)
+		*models2.ChannelEdgeInfo, *models2.ChannelEdgePolicy,
+		*models2.ChannelEdgePolicy, error)
 
 	// FetchLightningNode attempts to look up a target node by its identity
-	// public key. channeldb.ErrGraphNodeNotFound is returned if the node
+	// public key. graphdb.ErrGraphNodeNotFound is returned if the node
 	// doesn't exist within the graph.
-	FetchLightningNode(route.Vertex) (*channeldb.LightningNode, error)
+	FetchLightningNode(route.Vertex) (*graphdb.LightningNode, error)
 
 	// ForEachNode is used to iterate over every node in the known graph.
-	ForEachNode(func(node *channeldb.LightningNode) error) error
+	ForEachNode(func(node *graphdb.LightningNode) error) error
 }

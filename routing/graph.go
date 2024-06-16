@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcutil"
-	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/graphdb"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -16,7 +16,7 @@ type Graph interface {
 	// ForEachNodeChannel calls the callback for every channel of the given
 	// node.
 	ForEachNodeChannel(nodePub route.Vertex,
-		cb func(channel *channeldb.DirectedChannel) error) error
+		cb func(channel *graphdb.DirectedChannel) error) error
 
 	// FetchNodeFeatures returns the features of the given node.
 	FetchNodeFeatures(nodePub route.Vertex) (*lnwire.FeatureVector, error)
@@ -25,12 +25,12 @@ type Graph interface {
 // routingGraph implements the RoutingGraph and is backed by a
 // channeldb.ChannelGraph.
 type routingGraph struct {
-	graph *channeldb.ChannelGraph
+	graph *graphdb.ChannelGraph
 }
 
 // NewRoutingGraph returns a new instance of Graph backed by a
 // channeldb.ChannelGraph.
-func NewRoutingGraph(graph *channeldb.ChannelGraph) Graph {
+func NewRoutingGraph(graph *graphdb.ChannelGraph) Graph {
 	return &routingGraph{
 		graph: graph,
 	}
@@ -40,7 +40,7 @@ func NewRoutingGraph(graph *channeldb.ChannelGraph) Graph {
 //
 // NOTE: Part of the RoutingGraph interface.
 func (g *routingGraph) ForEachNodeChannel(nodePub route.Vertex,
-	cb func(channel *channeldb.DirectedChannel) error) error {
+	cb func(channel *graphdb.DirectedChannel) error) error {
 
 	return g.graph.ForEachNodeDirectedChannel(nil, nodePub, cb)
 }
@@ -62,7 +62,7 @@ var _ Graph = (*routingGraph)(nil)
 // CachedGraph is a Graph implementation that retrieves from the
 // database.
 type CachedGraph struct {
-	graph  *channeldb.ChannelGraph
+	graph  *graphdb.ChannelGraph
 	tx     kvdb.RTx
 	source route.Vertex
 }
@@ -73,8 +73,8 @@ var _ Graph = (*CachedGraph)(nil)
 
 // NewCachedGraph instantiates a new db-connected routing graph. It implicitly
 // instantiates a new read transaction.
-func NewCachedGraph(sourceNode *channeldb.LightningNode,
-	graph *channeldb.ChannelGraph) (*CachedGraph, error) {
+func NewCachedGraph(sourceNode *graphdb.LightningNode,
+	graph *graphdb.ChannelGraph) (*CachedGraph, error) {
 
 	tx, err := graph.NewPathFindTx()
 	if err != nil {
@@ -102,7 +102,7 @@ func (g *CachedGraph) Close() error {
 //
 // NOTE: Part of the Graph interface.
 func (g *CachedGraph) ForEachNodeChannel(nodePub route.Vertex,
-	cb func(channel *channeldb.DirectedChannel) error) error {
+	cb func(channel *graphdb.DirectedChannel) error) error {
 
 	return g.graph.ForEachNodeDirectedChannel(g.tx, nodePub, cb)
 }

@@ -40,6 +40,8 @@ import (
 	"github.com/lightningnetwork/lnd/feature"
 	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/funding"
+	"github.com/lightningnetwork/lnd/graphdb"
+	models2 "github.com/lightningnetwork/lnd/graphdb/models"
 	"github.com/lightningnetwork/lnd/healthcheck"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
@@ -238,7 +240,7 @@ type server struct {
 
 	fundingMgr *funding.Manager
 
-	graphDB *channeldb.ChannelGraph
+	graphDB *graphdb.ChannelGraph
 
 	chanStateDB *channeldb.ChannelStateDB
 
@@ -824,7 +826,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	if err != nil {
 		return nil, err
 	}
-	selfNode := &channeldb.LightningNode{
+	selfNode := &graphdb.LightningNode{
 		HaveNodeAnnouncement: true,
 		LastUpdate:           time.Now(),
 		Addresses:            selfAddrs,
@@ -1280,12 +1282,12 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	// Wrap the DeleteChannelEdges method so that the funding manager can
 	// use it without depending on several layers of indirection.
 	deleteAliasEdge := func(scid lnwire.ShortChannelID) (
-		*models.ChannelEdgePolicy, error) {
+		*models2.ChannelEdgePolicy, error) {
 
 		info, e1, e2, err := s.graphDB.FetchChannelEdgesByID(
 			scid.ToUint64(),
 		)
-		if errors.Is(err, channeldb.ErrEdgeNotFound) {
+		if errors.Is(err, graphdb.ErrEdgeNotFound) {
 			// This is unlikely but there is a slim chance of this
 			// being hit if lnd was killed via SIGKILL and the
 			// funding manager was stepping through the delete
@@ -1299,7 +1301,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		var ourKey [33]byte
 		copy(ourKey[:], nodeKeyDesc.PubKey.SerializeCompressed())
 
-		var ourPolicy *models.ChannelEdgePolicy
+		var ourPolicy *models2.ChannelEdgePolicy
 		if info != nil && info.NodeKey1Bytes == ourKey {
 			ourPolicy = e1
 		} else {
@@ -2949,7 +2951,7 @@ func (s *server) createNewHiddenService() error {
 
 	// Finally, we'll update the on-disk version of our announcement so it
 	// will eventually propagate to nodes in the network.
-	selfNode := &channeldb.LightningNode{
+	selfNode := &graphdb.LightningNode{
 		HaveNodeAnnouncement: true,
 		LastUpdate:           time.Unix(int64(newNodeAnn.Timestamp), 0),
 		Addresses:            newNodeAnn.Addresses,
@@ -3134,8 +3136,8 @@ func (s *server) establishPersistentConnections() error {
 	selfPub := s.identityECDH.PubKey().SerializeCompressed()
 	err = s.graphDB.ForEachNodeChannel(sourceNode.PubKeyBytes, func(
 		tx kvdb.RTx,
-		chanInfo *models.ChannelEdgeInfo,
-		policy, _ *models.ChannelEdgePolicy) error {
+		chanInfo *models2.ChannelEdgeInfo,
+		policy, _ *models2.ChannelEdgePolicy) error {
 
 		// If the remote party has announced the channel to us, but we
 		// haven't yet, then we won't have a policy. However, we don't
@@ -3212,7 +3214,7 @@ func (s *server) establishPersistentConnections() error {
 		nodeAddrsMap[pubStr] = n
 		return nil
 	})
-	if err != nil && err != channeldb.ErrGraphNoEdgesFound {
+	if err != nil && err != graphdb.ErrGraphNoEdgesFound {
 		return err
 	}
 

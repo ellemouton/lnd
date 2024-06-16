@@ -4,8 +4,9 @@ import (
 	"math"
 
 	"github.com/btcsuite/btcd/btcutil"
-	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channeldb/models"
+	"github.com/lightningnetwork/lnd/graphdb"
+	models2 "github.com/lightningnetwork/lnd/graphdb/models"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -50,7 +51,7 @@ func newNodeEdgeUnifier(sourceNode, toNode route.Vertex, useInboundFees bool,
 // graceful shutdown if it is not provided as this indicates that edges are
 // incorrectly specified.
 func (u *nodeEdgeUnifier) addPolicy(fromNode route.Vertex,
-	edge *models.CachedEdgePolicy, inboundFee models.InboundFee,
+	edge *models2.CachedEdgePolicy, inboundFee models.InboundFee,
 	capacity btcutil.Amount, hopPayloadSizeFn PayloadSizeFunc) {
 
 	localChan := fromNode == u.sourceNode
@@ -97,7 +98,7 @@ func (u *nodeEdgeUnifier) addPolicy(fromNode route.Vertex,
 // addGraphPolicies adds all policies that are known for the toNode in the
 // graph.
 func (u *nodeEdgeUnifier) addGraphPolicies(g Graph) error {
-	cb := func(channel *channeldb.DirectedChannel) error {
+	cb := func(channel *graphdb.DirectedChannel) error {
 		// If there is no edge policy for this candidate node, skip.
 		// Note that we are searching backwards so this node would have
 		// come prior to the pivot node in the route.
@@ -128,7 +129,7 @@ func (u *nodeEdgeUnifier) addGraphPolicies(g Graph) error {
 // unifiedEdge is the individual channel data that is kept inside an edgeUnifier
 // object.
 type unifiedEdge struct {
-	policy      *models.CachedEdgePolicy
+	policy      *models2.CachedEdgePolicy
 	capacity    btcutil.Amount
 	inboundFees models.InboundFee
 

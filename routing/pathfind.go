@@ -10,9 +10,9 @@ import (
 
 	"github.com/btcsuite/btcd/btcutil"
 	sphinx "github.com/lightningnetwork/lightning-onion"
-	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/feature"
+	"github.com/lightningnetwork/lnd/graphdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/record"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -462,7 +462,7 @@ func getOutgoingBalance(node route.Vertex, outgoingChans map[uint64]struct{},
 	g Graph) (lnwire.MilliSatoshi, lnwire.MilliSatoshi, error) {
 
 	var max, total lnwire.MilliSatoshi
-	cb := func(channel *channeldb.DirectedChannel) error {
+	cb := func(channel *graphdb.DirectedChannel) error {
 		if !channel.OutPolicySet {
 			return nil
 		}

@@ -19,8 +19,9 @@ import (
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
-	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/clock"
+	"github.com/lightningnetwork/lnd/graphdb"
+	models2 "github.com/lightningnetwork/lnd/graphdb/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	lnmock "github.com/lightningnetwork/lnd/lntest/mock"
 	"github.com/lightningnetwork/lnd/lntest/wait"
@@ -38,7 +39,7 @@ var uniquePaymentID uint64 = 1 // to be used atomically
 type testCtx struct {
 	router *ChannelRouter
 
-	graph *channeldb.ChannelGraph
+	graph *graphdb.ChannelGraph
 
 	aliases map[string]route.Vertex
 
@@ -1230,7 +1231,7 @@ func TestAddProof(t *testing.T) {
 	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
 	// After utxo was recreated adding the edge without the proof.
-	edge := &models.ChannelEdgeInfo{
+	edge := &models2.ChannelEdgeInfo{
 		ChannelID:     chanID.ToUint64(),
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
@@ -1266,7 +1267,7 @@ func TestIgnoreNodeAnnouncement(t *testing.T) {
 	ctx := createTestCtxFromFile(t, startingBlockHeight, basicGraphFilePath)
 
 	pub := priv1.PubKey()
-	node := &channeldb.LightningNode{
+	node := &graphdb.LightningNode{
 		HaveNodeAnnouncement: true,
 		LastUpdate:           time.Unix(123, 0),
 		Addresses:            testAddrs,
@@ -1319,7 +1320,7 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 	}
 	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
-	edge := &models.ChannelEdgeInfo{
+	edge := &models2.ChannelEdgeInfo{
 		ChannelID:        chanID.ToUint64(),
 		NodeKey1Bytes:    pub1,
 		NodeKey2Bytes:    pub2,
@@ -1327,7 +1328,7 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 		BitcoinKey2Bytes: pub2,
 		AuthProof:        nil,
 	}
-	edgePolicy := &models.ChannelEdgePolicy{
+	edgePolicy := &models2.ChannelEdgePolicy{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 edge.ChannelID,
 		LastUpdate:                testTime,
@@ -1397,7 +1398,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 	}
 	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
-	edge := &models.ChannelEdgeInfo{
+	edge := &models2.ChannelEdgeInfo{
 		ChannelID:        chanID.ToUint64(),
 		NodeKey1Bytes:    pub1,
 		NodeKey2Bytes:    pub2,
@@ -1412,7 +1413,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 
 	// We must add the edge policy to be able to use the edge for route
 	// finding.
-	edgePolicy := &models.ChannelEdgePolicy{
+	edgePolicy := &models2.ChannelEdgePolicy{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 edge.ChannelID,
 		LastUpdate:                testTime,
@@ -1429,7 +1430,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 	}
 
 	// Create edge in the other direction as well.
-	edgePolicy = &models.ChannelEdgePolicy{
+	edgePolicy = &models2.ChannelEdgePolicy{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 edge.ChannelID,
 		LastUpdate:                testTime,
@@ -1492,7 +1493,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 	}
 	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
-	edge = &models.ChannelEdgeInfo{
+	edge = &models2.ChannelEdgeInfo{
 		ChannelID: chanID.ToUint64(),
 		AuthProof: nil,
 	}
@@ -1505,7 +1506,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 		t.Fatalf("unable to add edge to the channel graph: %v.", err)
 	}
 
-	edgePolicy = &models.ChannelEdgePolicy{
+	edgePolicy = &models2.ChannelEdgePolicy{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 edge.ChannelID,
 		LastUpdate:                testTime,
@@ -1521,7 +1522,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 		t.Fatalf("unable to update edge policy: %v", err)
 	}
 
-	edgePolicy = &models.ChannelEdgePolicy{
+	edgePolicy = &models2.ChannelEdgePolicy{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 edge.ChannelID,
 		LastUpdate:                testTime,
@@ -1553,7 +1554,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 
 	// Now check that we can update the node info for the partial node
 	// without messing up the channel graph.
-	n1 := &channeldb.LightningNode{
+	n1 := &graphdb.LightningNode{
 		HaveNodeAnnouncement: true,
 		LastUpdate:           time.Unix(123, 0),
 		Addresses:            testAddrs,
@@ -1568,7 +1569,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 		t.Fatalf("could not add node: %v", err)
 	}
 
-	n2 := &channeldb.LightningNode{
+	n2 := &graphdb.LightningNode{
 		HaveNodeAnnouncement: true,
 		LastUpdate:           time.Unix(123, 0),
 		Addresses:            testAddrs,
@@ -1691,11 +1692,11 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 	node2, err := createTestNode()
 	require.NoError(t, err, "unable to create test node")
 
-	edge1 := &models.ChannelEdgeInfo{
+	edge1 := &models2.ChannelEdgeInfo{
 		ChannelID:     chanID1,
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
-		AuthProof: &models.ChannelAuthProof{
+		AuthProof: &models2.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
@@ -1709,11 +1710,11 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
-	edge2 := &models.ChannelEdgeInfo{
+	edge2 := &models2.ChannelEdgeInfo{
 		ChannelID:     chanID2,
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
-		AuthProof: &models.ChannelAuthProof{
+		AuthProof: &models2.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
@@ -1900,13 +1901,13 @@ func TestDisconnectedBlocks(t *testing.T) {
 	node2, err := createTestNode()
 	require.NoError(t, err, "unable to create test node")
 
-	edge1 := &models.ChannelEdgeInfo{
+	edge1 := &models2.ChannelEdgeInfo{
 		ChannelID:        chanID1,
 		NodeKey1Bytes:    node1.PubKeyBytes,
 		NodeKey2Bytes:    node2.PubKeyBytes,
 		BitcoinKey1Bytes: node1.PubKeyBytes,
 		BitcoinKey2Bytes: node2.PubKeyBytes,
-		AuthProof: &models.ChannelAuthProof{
+		AuthProof: &models2.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
@@ -1920,13 +1921,13 @@ func TestDisconnectedBlocks(t *testing.T) {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
-	edge2 := &models.ChannelEdgeInfo{
+	edge2 := &models2.ChannelEdgeInfo{
 		ChannelID:        chanID2,
 		NodeKey1Bytes:    node1.PubKeyBytes,
 		NodeKey2Bytes:    node2.PubKeyBytes,
 		BitcoinKey1Bytes: node1.PubKeyBytes,
 		BitcoinKey2Bytes: node2.PubKeyBytes,
-		AuthProof: &models.ChannelAuthProof{
+		AuthProof: &models2.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
@@ -2051,11 +2052,11 @@ func TestRouterChansClosedOfflinePruneGraph(t *testing.T) {
 	require.NoError(t, err, "unable to create test node")
 	node2, err := createTestNode()
 	require.NoError(t, err, "unable to create test node")
-	edge1 := &models.ChannelEdgeInfo{
+	edge1 := &models2.ChannelEdgeInfo{
 		ChannelID:     chanID1.ToUint64(),
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
-		AuthProof: &models.ChannelAuthProof{
+		AuthProof: &models2.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
@@ -2490,7 +2491,7 @@ func TestIsStaleNode(t *testing.T) {
 	}
 	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
-	edge := &models.ChannelEdgeInfo{
+	edge := &models2.ChannelEdgeInfo{
 		ChannelID:        chanID.ToUint64(),
 		NodeKey1Bytes:    pub1,
 		NodeKey2Bytes:    pub2,
@@ -2511,7 +2512,7 @@ func TestIsStaleNode(t *testing.T) {
 
 	// With the node stub in the database, we'll add the fully node
 	// announcement to the database.
-	n1 := &channeldb.LightningNode{
+	n1 := &graphdb.LightningNode{
 		HaveNodeAnnouncement: true,
 		LastUpdate:           updateTimeStamp,
 		Addresses:            testAddrs,
@@ -2566,7 +2567,7 @@ func TestIsKnownEdge(t *testing.T) {
 	}
 	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
-	edge := &models.ChannelEdgeInfo{
+	edge := &models2.ChannelEdgeInfo{
 		ChannelID:        chanID.ToUint64(),
 		NodeKey1Bytes:    pub1,
 		NodeKey2Bytes:    pub2,
@@ -2622,7 +2623,7 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 		t.Fatalf("router failed to detect fresh edge policy")
 	}
 
-	edge := &models.ChannelEdgeInfo{
+	edge := &models2.ChannelEdgeInfo{
 		ChannelID:        chanID.ToUint64(),
 		NodeKey1Bytes:    pub1,
 		NodeKey2Bytes:    pub2,
@@ -2635,7 +2636,7 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 	}
 
 	// We'll also add two edge policies, one for each direction.
-	edgePolicy := &models.ChannelEdgePolicy{
+	edgePolicy := &models2.ChannelEdgePolicy{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 edge.ChannelID,
 		LastUpdate:                updateTimeStamp,
@@ -2649,7 +2650,7 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 		t.Fatalf("unable to update edge policy: %v", err)
 	}
 
-	edgePolicy = &models.ChannelEdgePolicy{
+	edgePolicy = &models2.ChannelEdgePolicy{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 edge.ChannelID,
 		LastUpdate:                updateTimeStamp,
@@ -2799,7 +2800,7 @@ func TestUnknownErrorSource(t *testing.T) {
 
 // assertChannelsPruned ensures that only the given channels are pruned from the
 // graph out of the set of all channels.
-func assertChannelsPruned(t *testing.T, graph *channeldb.ChannelGraph,
+func assertChannelsPruned(t *testing.T, graph *graphdb.ChannelGraph,
 	channels []*testChannel, prunedChanIDs ...uint64) {
 
 	t.Helper()
@@ -3188,7 +3189,7 @@ func TestGetPathEdges(t *testing.T) {
 		bandwidthHints *bandwidthManager
 		hops           []route.Vertex
 
-		expectedEdges []*models.CachedEdgePolicy
+		expectedEdges []*models2.CachedEdgePolicy
 		expectedAmt   lnwire.MilliSatoshi
 		expectedErr   string
 	}{{
@@ -3243,7 +3244,7 @@ const (
 // newChannelEdgeInfo is a helper function used to create a new channel edge,
 // possibly skipping adding it to parts of the chain/state as well.
 func newChannelEdgeInfo(ctx *testCtx, fundingHeight uint32,
-	ecm edgeCreationModifier) (*models.ChannelEdgeInfo, error) {
+	ecm edgeCreationModifier) (*models2.ChannelEdgeInfo, error) {
 
 	node1, err := createTestNode()
 	if err != nil {
@@ -3262,7 +3263,7 @@ func newChannelEdgeInfo(ctx *testCtx, fundingHeight uint32,
 		return nil, fmt.Errorf("unable to create edge: %w", err)
 	}
 
-	edge := &models.ChannelEdgeInfo{
+	edge := &models2.ChannelEdgeInfo{
 		ChannelID:     chanID.ToUint64(),
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
@@ -3293,7 +3294,7 @@ func newChannelEdgeInfo(ctx *testCtx, fundingHeight uint32,
 }
 
 func assertChanChainRejection(t *testing.T, ctx *testCtx,
-	edge *models.ChannelEdgeInfo, failCode errorCode) {
+	edge *models2.ChannelEdgeInfo, failCode errorCode) {
 
 	t.Helper()
 

@@ -9,6 +9,7 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/discovery"
+	models2 "github.com/lightningnetwork/lnd/graphdb/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -22,7 +23,7 @@ func TestManager(t *testing.T) {
 	t.Parallel()
 
 	type channel struct {
-		edgeInfo *models.ChannelEdgeInfo
+		edgeInfo *models2.ChannelEdgeInfo
 	}
 
 	var (
@@ -44,7 +45,7 @@ func TestManager(t *testing.T) {
 		MaxHTLC:       5000,
 	}
 
-	currentPolicy := models.ChannelEdgePolicy{
+	currentPolicy := models2.ChannelEdgePolicy{
 		MinHTLC:      minHTLC,
 		MessageFlags: lnwire.ChanUpdateRequiredMaxHtlc,
 	}
@@ -107,8 +108,8 @@ func TestManager(t *testing.T) {
 	}
 
 	forAllOutgoingChannels := func(cb func(kvdb.RTx,
-		*models.ChannelEdgeInfo,
-		*models.ChannelEdgePolicy) error) error {
+		*models2.ChannelEdgeInfo,
+		*models2.ChannelEdgePolicy) error) error {
 
 		for _, c := range channelSet {
 			if err := cb(nil, c.edgeInfo, &currentPolicy); err != nil {
@@ -152,7 +153,7 @@ func TestManager(t *testing.T) {
 
 	tests := []struct {
 		name                   string
-		currentPolicy          models.ChannelEdgePolicy
+		currentPolicy          models2.ChannelEdgePolicy
 		newPolicy              routing.ChannelPolicy
 		channelSet             []channel
 		specifiedChanPoints    []wire.OutPoint
@@ -166,7 +167,7 @@ func TestManager(t *testing.T) {
 			newPolicy:     newPolicy,
 			channelSet: []channel{
 				{
-					edgeInfo: &models.ChannelEdgeInfo{
+					edgeInfo: &models2.ChannelEdgeInfo{
 						Capacity:     chanCap,
 						ChannelPoint: chanPointValid,
 					},
@@ -183,7 +184,7 @@ func TestManager(t *testing.T) {
 			newPolicy:     newPolicy,
 			channelSet: []channel{
 				{
-					edgeInfo: &models.ChannelEdgeInfo{
+					edgeInfo: &models2.ChannelEdgeInfo{
 						Capacity:     chanCap,
 						ChannelPoint: chanPointValid,
 					},
@@ -200,7 +201,7 @@ func TestManager(t *testing.T) {
 			newPolicy:     newPolicy,
 			channelSet: []channel{
 				{
-					edgeInfo: &models.ChannelEdgeInfo{
+					edgeInfo: &models2.ChannelEdgeInfo{
 						Capacity:     chanCap,
 						ChannelPoint: chanPointValid,
 					},
@@ -221,7 +222,7 @@ func TestManager(t *testing.T) {
 			newPolicy:     noMaxHtlcPolicy,
 			channelSet: []channel{
 				{
-					edgeInfo: &models.ChannelEdgeInfo{
+					edgeInfo: &models2.ChannelEdgeInfo{
 						Capacity:     chanCap,
 						ChannelPoint: chanPointValid,
 					},

@@ -1,8 +1,13 @@
 package models
 
-import "github.com/lightningnetwork/lnd/lnwire"
+import (
+	"github.com/lightningnetwork/lnd/lnwire"
+)
 
 const (
+	// feeRateParts is the total number of parts used to express fee rates.
+	feeRateParts = 1e6
+
 	// maxFeeRate is the maximum fee rate that we allow. It is set to allow
 	// a variable fee component of up to 10x the payment amount.
 	maxFeeRate = 10 * feeRateParts

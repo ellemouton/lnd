@@ -19,8 +19,9 @@ import (
 	"github.com/lightningnetwork/lnd/batch"
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
-	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/graph"
+	"github.com/lightningnetwork/lnd/graphdb"
+	models2 "github.com/lightningnetwork/lnd/graphdb/models"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnpeer"
@@ -541,10 +542,10 @@ func New(cfg Config, selfKeyDesc *keychain.KeyDescriptor) *AuthenticatedGossiper
 // EdgeWithInfo contains the information that is required to update an edge.
 type EdgeWithInfo struct {
 	// Info describes the channel.
-	Info *models.ChannelEdgeInfo
+	Info *models2.ChannelEdgeInfo
 
 	// Edge describes the policy in one direction of the channel.
-	Edge *models.ChannelEdgePolicy
+	Edge *models2.ChannelEdgePolicy
 }
 
 // PropagateChanPolicyUpdate signals the AuthenticatedGossiper to perform the
@@ -1588,8 +1589,8 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 	// Iterate over all of our channels and check if any of them fall
 	// within the prune interval or re-broadcast interval.
 	type updateTuple struct {
-		info *models.ChannelEdgeInfo
-		edge *models.ChannelEdgePolicy
+		info *models2.ChannelEdgeInfo
+		edge *models2.ChannelEdgePolicy
 	}
 
 	var (
@@ -1598,8 +1599,8 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 	)
 	err := d.cfg.Router.ForAllOutgoingChannels(func(
 		_ kvdb.RTx,
-		info *models.ChannelEdgeInfo,
-		edge *models.ChannelEdgePolicy) error {
+		info *models2.ChannelEdgeInfo,
+		edge *models2.ChannelEdgePolicy) error {
 
 		// If there's no auth proof attached to this edge, it means
 		// that it is a private channel not meant to be announced to
@@ -1647,7 +1648,7 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 
 		return nil
 	})
-	if err != nil && err != channeldb.ErrGraphNoEdgesFound {
+	if err != nil && err != graphdb.ErrGraphNoEdgesFound {
 		return fmt.Errorf("unable to retrieve outgoing channels: %w",
 			err)
 	}
@@ -1805,7 +1806,7 @@ func (d *AuthenticatedGossiper) processChanPolicyUpdate(
 
 // remotePubFromChanInfo returns the public key of the remote peer given a
 // ChannelEdgeInfo that describe a channel we have with them.
-func remotePubFromChanInfo(chanInfo *models.ChannelEdgeInfo,
+func remotePubFromChanInfo(chanInfo *models2.ChannelEdgeInfo,
 	chanFlags lnwire.ChanUpdateChanFlags) [33]byte {
 
 	var remotePubKey [33]byte
@@ -1828,7 +1829,7 @@ func remotePubFromChanInfo(chanInfo *models.ChannelEdgeInfo,
 // assemble the proof and craft the ChannelAnnouncement.
 func (d *AuthenticatedGossiper) processRejectedEdge(
 	chanAnnMsg *lnwire.ChannelAnnouncement,
-	proof *models.ChannelAuthProof) ([]networkMsg, error) {
+	proof *models2.ChannelAuthProof) ([]networkMsg, error) {
 
 	// First, we'll fetch the state of the channel as we know if from the
 	// database.
@@ -1917,7 +1918,7 @@ func (d *AuthenticatedGossiper) addNode(msg *lnwire.NodeAnnouncement,
 
 	timestamp := time.Unix(int64(msg.Timestamp), 0)
 	features := lnwire.NewFeatureVector(msg.Features, lnwire.Features)
-	node := &channeldb.LightningNode{
+	node := &graphdb.LightningNode{
 		HaveNodeAnnouncement: true,
 		LastUpdate:           timestamp,
 		Addresses:            msg.Addresses,
@@ -2040,7 +2041,7 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(
 // NOTE: only the NodeKey1Bytes and NodeKey2Bytes members of the ChannelEdgeInfo
 // should be inspected.
 func (d *AuthenticatedGossiper) processZombieUpdate(
-	chanInfo *models.ChannelEdgeInfo, scid lnwire.ShortChannelID,
+	chanInfo *models2.ChannelEdgeInfo, scid lnwire.ShortChannelID,
 	msg *lnwire.ChannelUpdate) error {
 
 	// The least-significant bit in the flag on the channel update tells us
@@ -2075,7 +2076,7 @@ func (d *AuthenticatedGossiper) processZombieUpdate(
 	// come through again.
 	err = d.cfg.Router.MarkEdgeLive(scid)
 	switch {
-	case errors.Is(err, channeldb.ErrZombieEdgeNotFound):
+	case errors.Is(err, graphdb.ErrZombieEdgeNotFound):
 		log.Errorf("edge with chan_id=%v was not found in the "+
 			"zombie index: %v", err)
 
@@ -2120,7 +2121,7 @@ func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
 		// If the channel cannot be found, it is most likely a leftover
 		// message for a channel that was closed, so we can consider it
 		// stale.
-		if errors.Is(err, channeldb.ErrEdgeNotFound) {
+		if errors.Is(err, graphdb.ErrEdgeNotFound) {
 			return true
 		}
 		if err != nil {
@@ -2140,7 +2141,7 @@ func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
 		// If the channel cannot be found, it is most likely a leftover
 		// message for a channel that was closed, so we can consider it
 		// stale.
-		if errors.Is(err, channeldb.ErrEdgeNotFound) {
+		if errors.Is(err, graphdb.ErrEdgeNotFound) {
 			return true
 		}
 		if err != nil {
@@ -2152,7 +2153,7 @@ func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
 		// Otherwise, we'll retrieve the correct policy that we
 		// currently have stored within our graph to check if this
 		// message is stale by comparing its timestamp.
-		var p *models.ChannelEdgePolicy
+		var p *models2.ChannelEdgePolicy
 		if msg.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
 			p = p1
 		} else {
@@ -2177,8 +2178,8 @@ func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
 
 // updateChannel creates a new fully signed update for the channel, and updates
 // the underlying graph with the new state.
-func (d *AuthenticatedGossiper) updateChannel(info *models.ChannelEdgeInfo,
-	edge *models.ChannelEdgePolicy) (*lnwire.ChannelAnnouncement,
+func (d *AuthenticatedGossiper) updateChannel(info *models2.ChannelEdgeInfo,
+	edge *models2.ChannelEdgePolicy) (*lnwire.ChannelAnnouncement,
 	*lnwire.ChannelUpdate, error) {
 
 	// Parse the unsigned edge into a channel update.
@@ -2266,7 +2267,7 @@ func (d *AuthenticatedGossiper) SyncManager() *SyncManager {
 // keep-alive update based on the previous channel update processed for the same
 // direction.
 func IsKeepAliveUpdate(update *lnwire.ChannelUpdate,
-	prev *models.ChannelEdgePolicy) bool {
+	prev *models2.ChannelEdgePolicy) bool {
 
 	// Both updates should be from the same direction.
 	if update.ChannelFlags&lnwire.ChanUpdateDirection !=
@@ -2455,7 +2456,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 
 	// If this is a remote channel announcement, then we'll validate all
 	// the signatures within the proof as it should be well formed.
-	var proof *models.ChannelAuthProof
+	var proof *models2.ChannelAuthProof
 	if nMsg.isRemote {
 		if err := routing.ValidateChannelAnn(ann); err != nil {
 			err := fmt.Errorf("unable to validate announcement: "+
@@ -2475,7 +2476,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 		// If the proof checks out, then we'll save the proof itself to
 		// the database so we can fetch it later when gossiping with
 		// other nodes.
-		proof = &models.ChannelAuthProof{
+		proof = &models2.ChannelAuthProof{
 			NodeSig1Bytes:    ann.NodeSig1.ToSignatureBytes(),
 			NodeSig2Bytes:    ann.NodeSig2.ToSignatureBytes(),
 			BitcoinSig1Bytes: ann.BitcoinSig1.ToSignatureBytes(),
@@ -2492,7 +2493,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 		return nil, false
 	}
 
-	edge := &models.ChannelEdgeInfo{
+	edge := &models2.ChannelEdgeInfo{
 		ChannelID:        ann.ShortChannelID.ToUint64(),
 		ChainHash:        ann.ChainHash,
 		NodeKey1Bytes:    ann.NodeID1,
@@ -2756,7 +2757,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 	case err == nil:
 		break
 
-	case errors.Is(err, channeldb.ErrZombieEdge):
+	case errors.Is(err, graphdb.ErrZombieEdge):
 		err = d.processZombieUpdate(chanInfo, graphScid, upd)
 		if err != nil {
 			log.Debug(err)
@@ -2769,11 +2770,11 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 		// needed to ensure the edge exists in the graph before
 		// applying the update.
 		fallthrough
-	case errors.Is(err, channeldb.ErrGraphNotFound):
+	case errors.Is(err, graphdb.ErrGraphNotFound):
 		fallthrough
-	case errors.Is(err, channeldb.ErrGraphNoEdgesFound):
+	case errors.Is(err, graphdb.ErrGraphNoEdgesFound):
 		fallthrough
-	case errors.Is(err, channeldb.ErrEdgeNotFound):
+	case errors.Is(err, graphdb.ErrEdgeNotFound):
 		// If the edge corresponding to this ChannelUpdate was not
 		// found in the graph, this might be a channel in the process
 		// of being opened, and we haven't processed our own
@@ -2843,7 +2844,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 	// being updated.
 	var (
 		pubKey       *btcec.PublicKey
-		edgeToUpdate *models.ChannelEdgePolicy
+		edgeToUpdate *models2.ChannelEdgePolicy
 	)
 	direction := upd.ChannelFlags & lnwire.ChanUpdateDirection
 	switch direction {
@@ -2932,7 +2933,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 	// different alias. This might mean that SigBytes is incorrect as it
 	// signs a different SCID than the database SCID, but since there will
 	// only be a difference if AuthProof == nil, this is fine.
-	update := &models.ChannelEdgePolicy{
+	update := &models2.ChannelEdgePolicy{
 		SigBytes:                  upd.Signature.ToSignatureBytes(),
 		ChannelID:                 chanInfo.ChannelID,
 		LastUpdate:                timestamp,
@@ -3244,7 +3245,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 	// We now have both halves of the channel announcement proof, then
 	// we'll reconstruct the initial announcement so we can validate it
 	// shortly below.
-	var dbProof models.ChannelAuthProof
+	var dbProof models2.ChannelAuthProof
 	if isFirstNode {
 		dbProof.NodeSig1Bytes = ann.NodeSignature.ToSignatureBytes()
 		dbProof.NodeSig2Bytes = oppProof.NodeSignature.ToSignatureBytes()

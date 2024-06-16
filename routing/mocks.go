@@ -1,7 +1,7 @@
 package routing
 
 import (
-	"github.com/lightningnetwork/lnd/channeldb/models"
+	"github.com/lightningnetwork/lnd/graphdb/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/stretchr/testify/mock"
 )

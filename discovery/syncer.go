@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/graphdb"
 	"github.com/lightningnetwork/lnd/lnpeer"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"golang.org/x/time/rate"
@@ -375,7 +375,7 @@ type GossipSyncer struct {
 
 	// bufferedChanRangeReplies is used in the waitingQueryChanReply to
 	// buffer all the chunked response to our query.
-	bufferedChanRangeReplies []channeldb.ChannelUpdateInfo
+	bufferedChanRangeReplies []graphdb.ChannelUpdateInfo
 
 	// numChanRangeRepliesRcvd is used to track the number of replies
 	// received as part of a QueryChannelRange. This field is primarily used
@@ -838,7 +838,7 @@ func (g *GossipSyncer) processChanRangeReply(msg *lnwire.ReplyChannelRange) erro
 	}
 
 	for i, scid := range msg.ShortChanIDs {
-		info := channeldb.ChannelUpdateInfo{
+		info := graphdb.ChannelUpdateInfo{
 			ShortChannelID: scid,
 		}
 
@@ -1090,7 +1090,7 @@ func (g *GossipSyncer) replyChanRangeQuery(query *lnwire.QueryChannelRange) erro
 	// this as there's a transport message size limit which we'll need to
 	// adhere to. We also need to make sure all of our replies cover the
 	// expected range of the query.
-	sendReplyForChunk := func(channelChunk []channeldb.ChannelUpdateInfo,
+	sendReplyForChunk := func(channelChunk []graphdb.ChannelUpdateInfo,
 		firstHeight, lastHeight uint32, finalChunk bool) error {
 
 		// The number of blocks contained in the current chunk (the
@@ -1139,7 +1139,7 @@ func (g *GossipSyncer) replyChanRangeQuery(query *lnwire.QueryChannelRange) erro
 	var (
 		firstHeight  = query.FirstBlockHeight
 		lastHeight   uint32
-		channelChunk []channeldb.ChannelUpdateInfo
+		channelChunk []graphdb.ChannelUpdateInfo
 	)
 
 	// chunkSize is the maximum number of SCIDs that we can safely put in a

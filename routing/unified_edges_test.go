@@ -5,6 +5,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/lightningnetwork/lnd/channeldb/models"
+	models2 "github.com/lightningnetwork/lnd/graphdb/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/stretchr/testify/require"
@@ -25,7 +26,7 @@ func TestNodeEdgeUnifier(t *testing.T) {
 	}
 
 	// Add two channels between the pair of nodes.
-	p1 := models.CachedEdgePolicy{
+	p1 := models2.CachedEdgePolicy{
 		ChannelID:                 100,
 		FeeProportionalMillionths: 100000,
 		FeeBaseMSat:               30,
@@ -34,7 +35,7 @@ func TestNodeEdgeUnifier(t *testing.T) {
 		MaxHTLC:                   5000,
 		MinHTLC:                   100,
 	}
-	p2 := models.CachedEdgePolicy{
+	p2 := models2.CachedEdgePolicy{
 		ChannelID:                 101,
 		FeeProportionalMillionths: 190000,
 		FeeBaseMSat:               10,
@@ -75,7 +76,7 @@ func TestNodeEdgeUnifier(t *testing.T) {
 
 	unifierNoInfo := newNodeEdgeUnifier(source, toNode, false, nil)
 	unifierNoInfo.addPolicy(
-		fromNode, &models.CachedEdgePolicy{}, models.InboundFee{},
+		fromNode, &models2.CachedEdgePolicy{}, models.InboundFee{},
 		0, defaultHopPayloadSize,
 	)
 

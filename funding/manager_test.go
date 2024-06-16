@@ -28,6 +28,7 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/channelnotifier"
 	"github.com/lightningnetwork/lnd/discovery"
+	models2 "github.com/lightningnetwork/lnd/graphdb/models"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/lncfg"
@@ -551,7 +552,7 @@ func createTestFundingManager(t *testing.T, privKey *btcec.PrivateKey,
 		OpenChannelPredicate:          chainedAcceptor,
 		NotifyPendingOpenChannelEvent: evt.NotifyPendingOpenChannelEvent,
 		DeleteAliasEdge: func(scid lnwire.ShortChannelID) (
-			*models.ChannelEdgePolicy, error) {
+			*models2.ChannelEdgePolicy, error) {
 
 			return nil, nil
 		},

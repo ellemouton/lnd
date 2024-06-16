@@ -48,6 +48,8 @@ import (
 	"github.com/lightningnetwork/lnd/feature"
 	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/funding"
+	"github.com/lightningnetwork/lnd/graphdb"
+	models2 "github.com/lightningnetwork/lnd/graphdb/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
 	"github.com/lightningnetwork/lnd/input"
@@ -2883,7 +2885,7 @@ func createRPCCloseUpdate(update interface{}) (
 // abandonChanFromGraph attempts to remove a channel from the channel graph. If
 // we can't find the chanID in the graph, then we assume it has already been
 // removed, and will return a nop.
-func abandonChanFromGraph(chanGraph *channeldb.ChannelGraph,
+func abandonChanFromGraph(chanGraph *graphdb.ChannelGraph,
 	chanPoint *wire.OutPoint) error {
 
 	// First, we'll obtain the channel ID. If we can't locate this, then
@@ -2891,7 +2893,7 @@ func abandonChanFromGraph(chanGraph *channeldb.ChannelGraph,
 	// the graph, so we'll return a nil error.
 	chanID, err := chanGraph.ChannelID(chanPoint)
 	switch {
-	case errors.Is(err, channeldb.ErrEdgeNotFound):
+	case errors.Is(err, graphdb.ErrEdgeNotFound):
 		return nil
 	case err != nil:
 		return err
@@ -6084,7 +6086,7 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// First iterate through all the known nodes (connected or unconnected
 	// within the graph), collating their current state into the RPC
 	// response.
-	err := graph.ForEachNode(func(_ kvdb.RTx, node *channeldb.LightningNode) error {
+	err := graph.ForEachNode(func(_ kvdb.RTx, node *graphdb.LightningNode) error {
 		lnNode := marshalNode(node)
 
 		resp.Nodes = append(resp.Nodes, lnNode)
@@ -6098,8 +6100,8 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// Next, for each active channel we know of within the graph, create a
 	// similar response which details both the edge information as well as
 	// the routing policies of th nodes connecting the two edges.
-	err = graph.ForEachChannel(func(edgeInfo *models.ChannelEdgeInfo,
-		c1, c2 *models.ChannelEdgePolicy) error {
+	err = graph.ForEachChannel(func(edgeInfo *models2.ChannelEdgeInfo,
+		c1, c2 *models2.ChannelEdgePolicy) error {
 
 		// Do not include unannounced channels unless specifically
 		// requested. Unannounced channels include both private channels as
@@ -6114,7 +6116,7 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 
 		return nil
 	})
-	if err != nil && err != channeldb.ErrGraphNoEdgesFound {
+	if errors.Is(err, graphdb.ErrGraphNodeNotFound) {
 		return nil, err
 	}
 
@@ -6171,8 +6173,8 @@ func extractInboundFeeSafe(data lnwire.ExtraOpaqueData) lnwire.Fee {
 	return inboundFee
 }
 
-func marshalDBEdge(edgeInfo *models.ChannelEdgeInfo,
-	c1, c2 *models.ChannelEdgePolicy) *lnrpc.ChannelEdge {
+func marshalDBEdge(edgeInfo *models2.ChannelEdgeInfo,
+	c1, c2 *models2.ChannelEdgePolicy) *lnrpc.ChannelEdge {
 
 	// Make sure the policies match the node they belong to. c1 should point
 	// to the policy for NodeKey1, and c2 for NodeKey2.
@@ -6215,7 +6217,7 @@ func marshalDBEdge(edgeInfo *models.ChannelEdgeInfo,
 }
 
 func marshalDBRoutingPolicy(
-	policy *models.ChannelEdgePolicy) *lnrpc.RoutingPolicy {
+	policy *models2.ChannelEdgePolicy) *lnrpc.RoutingPolicy {
 
 	disabled := policy.ChannelFlags&lnwire.ChanUpdateDisabled != 0
 
@@ -6305,8 +6307,8 @@ func (r *rpcServer) GetChanInfo(_ context.Context,
 	graph := r.server.graphDB
 
 	var (
-		edgeInfo     *models.ChannelEdgeInfo
-		edge1, edge2 *models.ChannelEdgePolicy
+		edgeInfo     *models2.ChannelEdgeInfo
+		edge1, edge2 *models2.ChannelEdgePolicy
 		err          error
 	)
 
@@ -6360,7 +6362,7 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 	// be returned.
 	node, err := graph.FetchLightningNode(pubKey)
 	switch {
-	case err == channeldb.ErrGraphNodeNotFound:
+	case err == graphdb.ErrGraphNodeNotFound:
 		return nil, status.Error(codes.NotFound, err.Error())
 	case err != nil:
 		return nil, err
@@ -6375,8 +6377,8 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 	)
 
 	err = graph.ForEachNodeChannel(node.PubKeyBytes,
-		func(_ kvdb.RTx, edge *models.ChannelEdgeInfo,
-			c1, c2 *models.ChannelEdgePolicy) error {
+		func(_ kvdb.RTx, edge *models2.ChannelEdgeInfo,
+			c1, c2 *models2.ChannelEdgePolicy) error {
 
 			numChannels++
 			totalCapacity += edge.Capacity
@@ -6412,7 +6414,7 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 	}, nil
 }
 
-func marshalNode(node *channeldb.LightningNode) *lnrpc.LightningNode {
+func marshalNode(node *graphdb.LightningNode) *lnrpc.LightningNode {
 	nodeAddrs := make([]*lnrpc.NodeAddress, len(node.Addresses))
 	for i, addr := range node.Addresses {
 		nodeAddr := &lnrpc.NodeAddress{
@@ -6483,7 +6485,7 @@ func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 	// each node so we can measure the graph diameter and degree stats
 	// below.
 	err := graph.ForEachNodeCached(func(node route.Vertex,
-		edges map[uint64]*channeldb.DirectedChannel) error {
+		edges map[uint64]*graphdb.DirectedChannel) error {
 
 		// Increment the total number of nodes with each iteration.
 		numNodes++
@@ -7020,8 +7022,8 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 
 	var feeReports []*lnrpc.ChannelFeeReport
 	err = channelGraph.ForEachNodeChannel(selfNode.PubKeyBytes,
-		func(_ kvdb.RTx, chanInfo *models.ChannelEdgeInfo,
-			edgePolicy, _ *models.ChannelEdgePolicy) error {
+		func(_ kvdb.RTx, chanInfo *models2.ChannelEdgeInfo,
+			edgePolicy, _ *models2.ChannelEdgePolicy) error {
 
 			// Self node should always have policies for its
 			// channels.

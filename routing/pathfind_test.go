@@ -23,7 +23,8 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/channeldb"
-	"github.com/lightningnetwork/lnd/channeldb/models"
+	"github.com/lightningnetwork/lnd/graphdb"
+	models2 "github.com/lightningnetwork/lnd/graphdb/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -97,7 +98,7 @@ var (
 	_             = testSScalar.SetByteSlice(testSBytes)
 	testSig       = ecdsa.NewSignature(testRScalar, testSScalar)
 
-	testAuthProof = models.ChannelAuthProof{
+	testAuthProof = models2.ChannelAuthProof{
 		NodeSig1Bytes:    testSig.Serialize(),
 		NodeSig2Bytes:    testSig.Serialize(),
 		BitcoinSig1Bytes: testSig.Serialize(),
@@ -154,7 +155,7 @@ type testChan struct {
 
 // makeTestGraph creates a new instance of a channeldb.ChannelGraph for testing
 // purposes.
-func makeTestGraph(t *testing.T, useCache bool) (*channeldb.ChannelGraph,
+func makeTestGraph(t *testing.T, useCache bool) (*graphdb.ChannelGraph,
 	kvdb.Backend, error) {
 
 	// Create channelgraph for the first time.
@@ -166,7 +167,7 @@ func makeTestGraph(t *testing.T, useCache bool) (*channeldb.ChannelGraph,
 	t.Cleanup(backendCleanup)
 
 	opts := channeldb.DefaultOptions()
-	graph, err := channeldb.NewChannelGraph(
+	graph, err := graphdb.NewChannelGraph(
 		backend, opts.RejectCacheSize, opts.ChannelCacheSize,
 		opts.BatchCommitInterval, opts.PreAllocCacheNumNodes,
 		useCache, false,
@@ -216,7 +217,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 	privKeyMap := make(map[string]*btcec.PrivateKey)
 	channelIDs := make(map[route.Vertex]map[route.Vertex]uint64)
 	links := make(map[lnwire.ShortChannelID]htlcswitch.ChannelLink)
-	var source *channeldb.LightningNode
+	var source *graphdb.LightningNode
 
 	// First we insert all the nodes within the graph as vertexes.
 	for _, node := range g.Nodes {
@@ -225,7 +226,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 			return nil, err
 		}
 
-		dbNode := &channeldb.LightningNode{
+		dbNode := &graphdb.LightningNode{
 			HaveNodeAnnouncement: true,
 			AuthSigBytes:         testSig.Serialize(),
 			LastUpdate:           testTime,
@@ -336,7 +337,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 
 		// We first insert the existence of the edge between the two
 		// nodes.
-		edgeInfo := models.ChannelEdgeInfo{
+		edgeInfo := models2.ChannelEdgeInfo{
 			ChannelID:    edge.ChannelID,
 			AuthProof:    &testAuthProof,
 			ChannelPoint: fundingPoint,
@@ -356,7 +357,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 		}
 
 		err = graph.AddChannelEdge(&edgeInfo)
-		if err != nil && err != channeldb.ErrEdgeAlreadyExist {
+		if err != nil && err != graphdb.ErrEdgeAlreadyExist {
 			return nil, err
 		}
 
@@ -367,7 +368,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 			targetNode = edgeInfo.NodeKey2Bytes
 		}
 
-		edgePolicy := &models.ChannelEdgePolicy{
+		edgePolicy := &models2.ChannelEdgePolicy{
 			SigBytes:                  testSig.Serialize(),
 			MessageFlags:              lnwire.ChanUpdateMsgFlags(edge.MessageFlags),
 			ChannelFlags:              channelFlags,
@@ -476,7 +477,7 @@ type testChannel struct {
 }
 
 type testGraphInstance struct {
-	graph        *channeldb.ChannelGraph
+	graph        *graphdb.ChannelGraph
 	graphBackend kvdb.Backend
 
 	// aliasMap is a map from a node's alias to its public key. This type is
@@ -537,7 +538,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 
 	nodeIndex := byte(0)
 	addNodeWithAlias := func(alias string, features *lnwire.FeatureVector) (
-		*channeldb.LightningNode, error) {
+		*graphdb.LightningNode, error) {
 
 		keyBytes := []byte{
 			0, 0, 0, 0, 0, 0, 0, 0,
@@ -552,7 +553,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 			features = lnwire.EmptyFeatureVector()
 		}
 
-		dbNode := &channeldb.LightningNode{
+		dbNode := &graphdb.LightningNode{
 			HaveNodeAnnouncement: true,
 			AuthSigBytes:         testSig.Serialize(),
 			LastUpdate:           testTime,
@@ -647,7 +648,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 
 		// We first insert the existence of the edge between the two
 		// nodes.
-		edgeInfo := models.ChannelEdgeInfo{
+		edgeInfo := models2.ChannelEdgeInfo{
 			ChannelID:    channelID,
 			AuthProof:    &testAuthProof,
 			ChannelPoint: *fundingPoint,
@@ -660,7 +661,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 		}
 
 		err = graph.AddChannelEdge(&edgeInfo)
-		if err != nil && err != channeldb.ErrEdgeAlreadyExist {
+		if err != nil && err != graphdb.ErrEdgeAlreadyExist {
 			return nil, err
 		}
 
@@ -687,7 +688,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 				channelFlags |= lnwire.ChanUpdateDisabled
 			}
 
-			edgePolicy := &models.ChannelEdgePolicy{
+			edgePolicy := &models2.ChannelEdgePolicy{
 				SigBytes:                  testSig.Serialize(),
 				MessageFlags:              msgFlags,
 				ChannelFlags:              channelFlags,
@@ -717,7 +718,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 			}
 			channelFlags |= lnwire.ChanUpdateDirection
 
-			edgePolicy := &models.ChannelEdgePolicy{
+			edgePolicy := &models2.ChannelEdgePolicy{
 				SigBytes:                  testSig.Serialize(),
 				MessageFlags:              msgFlags,
 				ChannelFlags:              channelFlags,
@@ -1219,7 +1220,7 @@ func runPathFindingWithAdditionalEdges(t *testing.T, useCache bool) {
 	dogePubKey, err := btcec.ParsePubKey(dogePubKeyBytes)
 	require.NoError(t, err, "unable to parse public key from bytes")
 
-	doge := &channeldb.LightningNode{}
+	doge := &graphdb.LightningNode{}
 	doge.AddPubKey(dogePubKey)
 	doge.Alias = "doge"
 	copy(doge.PubKeyBytes[:], dogePubKeyBytes)
@@ -1227,7 +1228,7 @@ func runPathFindingWithAdditionalEdges(t *testing.T, useCache bool) {
 
 	// Create the channel edge going from songoku to doge and include it in
 	// our map of additional edges.
-	songokuToDogePolicy := &models.CachedEdgePolicy{
+	songokuToDogePolicy := &models2.CachedEdgePolicy{
 		ToNodePubKey: func() route.Vertex {
 			return doge.PubKeyBytes
 		},
@@ -1312,7 +1313,7 @@ func runPathFindingMaxPayloadRestriction(t *testing.T, useCache bool) {
 	dogePubKey, err := btcec.ParsePubKey(dogePubKeyBytes)
 	require.NoError(t, err, "unable to parse public key from bytes")
 
-	doge := &channeldb.LightningNode{}
+	doge := &graphdb.LightningNode{}
 	doge.AddPubKey(dogePubKey)
 	doge.Alias = "doge"
 	copy(doge.PubKeyBytes[:], dogePubKeyBytes)
@@ -1325,7 +1326,7 @@ func runPathFindingMaxPayloadRestriction(t *testing.T, useCache bool) {
 
 	// Create the channel edge going from songoku to doge and later add it
 	// with the mocked size function to the graph data.
-	songokuToDogePolicy := &models.CachedEdgePolicy{
+	songokuToDogePolicy := &models2.CachedEdgePolicy{
 		ToNodePubKey: func() route.Vertex {
 			return doge.PubKeyBytes
 		},
@@ -1431,7 +1432,7 @@ func runPathFindingWithRedundantAdditionalEdges(t *testing.T, useCache bool) {
 
 	// Create the channel edge going from alice to bob and include it in
 	// our map of additional edges.
-	aliceToBobPolicy := &models.CachedEdgePolicy{
+	aliceToBobPolicy := &models2.CachedEdgePolicy{
 		ToNodePubKey: func() route.Vertex {
 			return target
 		},
@@ -1478,9 +1479,9 @@ func TestNewRoute(t *testing.T) {
 	createHop := func(baseFee lnwire.MilliSatoshi,
 		feeRate lnwire.MilliSatoshi,
 		bandwidth lnwire.MilliSatoshi,
-		timeLockDelta uint16) *models.CachedEdgePolicy {
+		timeLockDelta uint16) *models2.CachedEdgePolicy {
 
-		return &models.CachedEdgePolicy{
+		return &models2.CachedEdgePolicy{
 			ToNodePubKey: func() route.Vertex {
 				return route.Vertex{}
 			},
@@ -1497,7 +1498,7 @@ func TestNewRoute(t *testing.T) {
 
 		// hops is the list of hops (the route) that gets passed into
 		// the call to newRoute.
-		hops []*models.CachedEdgePolicy
+		hops []*models2.CachedEdgePolicy
 
 		// paymentAmount is the amount that is send into the route
 		// indicated by hops.
@@ -1549,7 +1550,7 @@ func TestNewRoute(t *testing.T) {
 			// For a single hop payment, no fees are expected to be paid.
 			name:          "single hop",
 			paymentAmount: 100000,
-			hops: []*models.CachedEdgePolicy{
+			hops: []*models2.CachedEdgePolicy{
 				createHop(100, 1000, 1000000, 10),
 			},
 			metadata:              []byte{1, 2, 3},
@@ -1563,7 +1564,7 @@ func TestNewRoute(t *testing.T) {
 			// a fee to receive the payment.
 			name:          "two hop",
 			paymentAmount: 100000,
-			hops: []*models.CachedEdgePolicy{
+			hops: []*models2.CachedEdgePolicy{
 				createHop(0, 1000, 1000000, 10),
 				createHop(30, 1000, 1000000, 5),
 			},
@@ -1578,7 +1579,7 @@ func TestNewRoute(t *testing.T) {
 			name:          "two hop tlv onion feature",
 			destFeatures:  tlvFeatures,
 			paymentAmount: 100000,
-			hops: []*models.CachedEdgePolicy{
+			hops: []*models2.CachedEdgePolicy{
 				createHop(0, 1000, 1000000, 10),
 				createHop(30, 1000, 1000000, 5),
 			},
@@ -1595,7 +1596,7 @@ func TestNewRoute(t *testing.T) {
 			destFeatures:  tlvPayAddrFeatures,
 			paymentAddr:   &testPaymentAddr,
 			paymentAmount: 100000,
-			hops: []*models.CachedEdgePolicy{
+			hops: []*models2.CachedEdgePolicy{
 				createHop(0, 1000, 1000000, 10),
 				createHop(30, 1000, 1000000, 5),
 			},
@@ -1615,7 +1616,7 @@ func TestNewRoute(t *testing.T) {
 			// gets rounded down to 1.
 			name:          "three hop",
 			paymentAmount: 100000,
-			hops: []*models.CachedEdgePolicy{
+			hops: []*models2.CachedEdgePolicy{
 				createHop(0, 10, 1000000, 10),
 				createHop(0, 10, 1000000, 5),
 				createHop(0, 10, 1000000, 3),
@@ -1630,7 +1631,7 @@ func TestNewRoute(t *testing.T) {
 			// because of the increase amount to forward.
 			name:          "three hop with fee carry over",
 			paymentAmount: 100000,
-			hops: []*models.CachedEdgePolicy{
+			hops: []*models2.CachedEdgePolicy{
 				createHop(0, 10000, 1000000, 10),
 				createHop(0, 10000, 1000000, 5),
 				createHop(0, 10000, 1000000, 3),
@@ -1645,7 +1646,7 @@ func TestNewRoute(t *testing.T) {
 			// effect.
 			name:          "three hop with minimal fees for carry over",
 			paymentAmount: 100000,
-			hops: []*models.CachedEdgePolicy{
+			hops: []*models2.CachedEdgePolicy{
 				createHop(0, 10000, 1000000, 10),
 
 				// First hop charges 0.1% so the second hop fee
@@ -3292,7 +3293,7 @@ func runInboundFees(t *testing.T, useCache bool) {
 
 type pathFindingTestContext struct {
 	t                 *testing.T
-	graph             *channeldb.ChannelGraph
+	graph             *graphdb.ChannelGraph
 	restrictParams    RestrictParams
 	bandwidthHints    bandwidthHints
 	pathFindingConfig PathFindingConfig
@@ -3367,7 +3368,7 @@ func (c *pathFindingTestContext) assertPath(path []*unifiedEdge,
 
 // dbFindPath calls findPath after getting a db transaction from the database
 // graph.
-func dbFindPath(graph *channeldb.ChannelGraph,
+func dbFindPath(graph *graphdb.ChannelGraph,
 	additionalEdges map[route.Vertex][]AdditionalEdge,
 	bandwidthHints bandwidthHints,
 	r *RestrictParams, cfg *PathFindingConfig,
@@ -3477,7 +3478,7 @@ func TestBlindedRouteConstruction(t *testing.T) {
 		// route. Proportional fees are omitted for easy test
 		// calculations, but non-zero base fees ensure our fee is
 		// still accounted for.
-		aliceBobEdge = &models.CachedEdgePolicy{
+		aliceBobEdge = &models2.CachedEdgePolicy{
 			ChannelID: 1,
 			// We won't actually use this timelock / fee (since
 			// it's the sender's outbound channel), but we include
@@ -3491,7 +3492,7 @@ func TestBlindedRouteConstruction(t *testing.T) {
 			ToNodeFeatures: tlvFeatures,
 		}
 
-		bobCarolEdge = &models.CachedEdgePolicy{
+		bobCarolEdge = &models2.CachedEdgePolicy{
 			ChannelID:     2,
 			TimeLockDelta: 15,
 			FeeBaseMSat:   20,
