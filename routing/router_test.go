@@ -58,8 +58,6 @@ var (
 
 	priv2, _    = btcec.NewPrivateKey()
 	bitcoinKey2 = priv2.PubKey()
-
-	timeout = time.Second * 5
 )
 
 type testCtx struct {
@@ -191,7 +189,7 @@ func createTestNode() (*channeldb.LightningNode, error) {
 		LastUpdate:           time.Unix(updateTime, 0),
 		Addresses:            testAddrs,
 		Color:                color.RGBA{1, 2, 3, 0},
-		Alias:                "kek" + string(pub[:]),
+		Alias:                "kek" + string(pub),
 		AuthSigBytes:         testSig.Serialize(),
 		Features:             testFeatures,
 	}
@@ -2350,7 +2348,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 	)
 	node1Bytes := priv1.PubKey().SerializeCompressed()
 	node2Bytes := connectNode
-	if bytes.Compare(node1Bytes[:], node2Bytes[:]) == -1 {
+	if bytes.Compare(node1Bytes, node2Bytes[:]) == -1 {
 		pubKey1 = priv1.PubKey()
 		pubKey2 = connectNodeKey
 	} else {
@@ -2553,25 +2551,6 @@ func (m *mockChain) GetBestBlock() (*chainhash.Hash, int32, error) {
 	blockHash := m.blockIndex[uint32(m.bestHeight)]
 
 	return &blockHash, m.bestHeight, nil
-}
-
-func (m *mockChain) setBestBlock(height int32) {
-	m.Lock()
-	defer m.Unlock()
-
-	m.bestHeight = height
-}
-
-func (m *mockChain) addUtxo(op wire.OutPoint, out *wire.TxOut) {
-	m.Lock()
-	m.utxos[op] = *out
-	m.Unlock()
-}
-
-func (m *mockChain) delUtxo(op wire.OutPoint) {
-	m.Lock()
-	delete(m.utxos, op)
-	m.Unlock()
 }
 
 func (m *mockChain) addBlock(block *wire.MsgBlock, height uint32, nonce uint32) {
