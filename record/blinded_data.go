@@ -41,6 +41,10 @@ type BlindedRouteData struct {
 
 	// Features is the set of features the payment requires.
 	Features tlv.OptionalRecordT[tlv.TlvType14, lnwire.FeatureVector]
+
+	// NextDummyPrivKey holds the encoded private key to use for the next
+	// hop on path if the next hop is a dummy hop.
+	NextDummyPrivKey tlv.OptionalRecordT[tlv.TlvType65536, []byte]
 }
 
 // NewNonFinalBlindedRouteData creates the data that's provided for hops within
@@ -98,6 +102,25 @@ func NewFinalHopBlindedRouteData(constraints *PaymentConstraints,
 	return &data
 }
 
+// NewDummyHopRouteData creates the data that's provided for any hop preceding
+// a dummy hop. This will provide the reader with the information they need to
+// be able to validate the payload from the sender as well as to decrypt the
+// next hop payload.
+func NewDummyHopRouteData(privKey *btcec.PrivateKey,
+	relayInfo PaymentRelayInfo) *BlindedRouteData {
+
+	privKeyBytes := privKey.Serialize()
+
+	return &BlindedRouteData{
+		NextDummyPrivKey: tlv.SomeRecordT(
+			tlv.NewPrimitiveRecord[tlv.TlvType65536](privKeyBytes),
+		),
+		RelayInfo: tlv.SomeRecordT(
+			tlv.NewRecordT[tlv.TlvType10](relayInfo),
+		),
+	}
+}
+
 // DecodeBlindedRouteData decodes the data provided within a blinded route.
 func DecodeBlindedRouteData(r io.Reader) (*BlindedRouteData, error) {
 	var (
@@ -110,6 +133,7 @@ func DecodeBlindedRouteData(r io.Reader) (*BlindedRouteData, error) {
 		relayInfo        = d.RelayInfo.Zero()
 		constraints      = d.Constraints.Zero()
 		features         = d.Features.Zero()
+		nextDummyPriv    = d.NextDummyPrivKey.Zero()
 	)
 
 	var tlvRecords lnwire.ExtraOpaqueData
@@ -119,7 +143,7 @@ func DecodeBlindedRouteData(r io.Reader) (*BlindedRouteData, error) {
 
 	typeMap, err := tlvRecords.ExtractRecords(
 		&padding, &scid, &pathID, &blindingOverride, &relayInfo,
-		&constraints, &features,
+		&constraints, &features, &nextDummyPriv,
 	)
 	if err != nil {
 		return nil, err
@@ -153,6 +177,10 @@ func DecodeBlindedRouteData(r io.Reader) (*BlindedRouteData, error) {
 
 	if val, ok := typeMap[d.Features.TlvType()]; ok && val == nil {
 		d.Features = tlv.SomeRecordT(features)
+	}
+
+	if val, ok := typeMap[d.NextDummyPrivKey.TlvType()]; ok && val == nil {
+		d.NextDummyPrivKey = tlv.SomeRecordT(nextDummyPriv)
 	}
 
 	return &d, nil
@@ -199,6 +227,12 @@ func EncodeBlindedRouteData(data *BlindedRouteData) ([]byte, error) {
 
 	data.Features.WhenSome(func(f tlv.RecordT[tlv.TlvType14,
 		lnwire.FeatureVector]) {
+
+		recordProducers = append(recordProducers, &f)
+	})
+
+	data.NextDummyPrivKey.WhenSome(func(f tlv.RecordT[tlv.TlvType65536,
+		[]byte]) {
 
 		recordProducers = append(recordProducers, &f)
 	})
