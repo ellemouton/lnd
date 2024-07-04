@@ -25,6 +25,7 @@ import (
 	"github.com/lightningnetwork/lnd/netann"
 	"github.com/lightningnetwork/lnd/record"
 	"github.com/lightningnetwork/lnd/routing"
+	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/tlv"
 	"github.com/lightningnetwork/lnd/zpay32"
 )
@@ -845,6 +846,514 @@ func PopulateHopHints(cfg *SelectHopHintsCfg, amtMSat lnwire.MilliSatoshi,
 
 	hopHints = append(hopHints, selectedHints...)
 	return hopHints, nil
+}
+
+// buildBlindedPathCfg defines the various resources and configuration values
+// required to build a blinded payment path to this node.
+type buildBlindedPathCfg struct {
+	// findRoutes returns a set of routes to us that can be used for the
+	// construction of blinded paths. These routes will consist of real
+	// nodes advertising the route blinding feature bit.
+	findRoutes func(value lnwire.MilliSatoshi) ([]*route.Route, error)
+
+	// fetchChannelEdgesByID attempts to look up the two directed edges for
+	// the channel identified by the channel ID.
+	fetchChannelEdgesByID func(chanID uint64) (*models.ChannelEdgeInfo,
+		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error)
+
+	// bestHeight can be used to fetch the best block height that this node
+	// is aware of.
+	bestHeight func() (uint32, error)
+
+	// addPolicyBuffer is a function that can be used to alter the policy
+	// values of the given channel edge. The main reason for doing this is
+	// to add a safety buffer so that if the node makes small policy changes
+	// during the lifetime of the blinded path, then the path remains valid
+	// and so probing is more difficult. Note that this will only be called
+	// for the policies of real nodes and won't be applied to
+	// dummyHopPolicy.
+	addPolicyBuffer func(policy *blindedHopPolicy) (*blindedHopPolicy,
+		error)
+
+	// pathID is the secret data to embed in the blinded path data that we
+	// will receive back as the recipient.
+	pathID []byte
+
+	// valueMsat is the payment amount in milli-satoshis that must be
+	// routed. This will be used for selecting appropriate routes to use for
+	// the blinded path.
+	valueMsat lnwire.MilliSatoshi
+
+	// minFinalCLTVExpiryDelta is the minimum CLTV delta that the recipient
+	// requires for the final hop of the payment.
+	//
+	// NOTE that the caller is responsible for adding additional block
+	// padding to this value to account for blocks being mined while the
+	// payment is in-flight.
+	minFinalCLTVExpiryDelta uint32
+
+	// blocksUntilExpiry is the number of blocks that this blinded path
+	// should remain valid for.
+	blocksUntilExpiry uint32
+
+	// minNumHops is the minimum number of hops that each blinded path
+	// should be. If the number of hops in a path returned by findRoutes is
+	// less than this number, then dummy hops will be post-fixed to the
+	// route.
+	minNumHops uint8
+
+	// dummyHopPolicy holds the policy values that should be used for dummy
+	// hops. Note that these will _not_ be buffered via addPolicyBuffer.
+	dummyHopPolicy *blindedHopPolicy
+}
+
+// buildBlindedPaymentPaths uses the passed config to construct a set of blinded
+// payment paths that can be added to the invoice.
+func buildBlindedPaymentPaths(cfg *buildBlindedPathCfg) (
+	[]*zpay32.BlindedPaymentPath, error) {
+
+	// Find some appropriate routes for the value to be routed. This will
+	// return a set of routes made up of real nodes.
+	routes, err := cfg.findRoutes(cfg.valueMsat)
+	if err != nil {
+		return nil, err
+	}
+
+	paths := make([]*zpay32.BlindedPaymentPath, len(routes))
+
+	// For each route returned, we will construct the associated blinded
+	// payment path.
+	for i, route := range routes {
+		path, err := buildBlindedPaymentPath(
+			cfg, extractCandidatePath(route),
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		paths[i] = path
+	}
+
+	return paths, nil
+}
+
+// buildBlindedPaymentPath takes a route from an introduction node to this node
+// and uses the give config to convert it into a blinded payment path.
+func buildBlindedPaymentPath(cfg *buildBlindedPathCfg, path *candidatePath) (
+	*zpay32.BlindedPaymentPath, error) {
+
+	// Pad the given route with dummy hops until the minimum number of hops
+	// is met.
+	err := path.padWithDummyHops(cfg.minNumHops)
+	if err != nil {
+		return nil, err
+	}
+
+	hops, minHTLC, maxHTLC, err := collectRelayInfo(cfg, path)
+	if err != nil {
+		return nil, fmt.Errorf("could not collect blinded path relay "+
+			"info: %w", err)
+	}
+
+	relayInfo := make([]*record.PaymentRelayInfo, len(hops))
+	for i, hop := range hops {
+		relayInfo[i] = hop.relayInfo
+	}
+
+	// Using the collected relay info, we can calculate the aggregated
+	// policy values for the route.
+	baseFee, feeRate, cltvDelta := calcBlindedPathPolicies(
+		relayInfo, uint16(cfg.minFinalCLTVExpiryDelta),
+	)
+
+	currentHeight, err := cfg.bestHeight()
+	if err != nil {
+		return nil, err
+	}
+
+	// The next step is to calculate the payment constraints to communicate
+	// to each hop and to package up the hop info for each hop. We will
+	// handle the final hop first since its payload looks a bit different,
+	// and then we will iterate backwards through the remaining hops.
+	//
+	// Note that the +1 here is required because the route won't have the
+	// introduction node included in the "Hops". But since we want to create
+	// payloads for all the hops as well as the introduction node, we add 1
+	// here to get the full hop length along with the introduction node.
+	hopDataSet := make([]*hopData, 0, len(path.hops)+1)
+
+	// Determine the maximum CLTV expiry for the destination node.
+	cltvExpiry := currentHeight + cfg.blocksUntilExpiry +
+		cfg.minFinalCLTVExpiryDelta
+
+	constraints := &record.PaymentConstraints{
+		MaxCltvExpiry:   cltvExpiry,
+		HtlcMinimumMsat: minHTLC,
+	}
+
+	// If the blinded route has only a source node (introduction node) and
+	// no hops, then the destination node is also the source node.
+	finalHopPubKey := path.introNode
+	if len(path.hops) > 0 {
+		finalHopPubKey = path.hops[len(path.hops)-1].pubKey
+	}
+
+	// For the final hop, we only send it the path ID and payment
+	// constraints.
+	info, err := buildFinalHopRouteData(
+		finalHopPubKey, cfg.pathID, constraints,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	hopDataSet = append(hopDataSet, info)
+
+	// Iterate through the hops, back to front.
+	for i := len(hops) - 1; i >= 0; i-- {
+		hop := hops[i]
+
+		cltvExpiry += uint32(hop.relayInfo.CltvExpiryDelta)
+
+		constraints = &record.PaymentConstraints{
+			MaxCltvExpiry:   cltvExpiry,
+			HtlcMinimumMsat: minHTLC,
+		}
+
+		var info *hopData
+		if hop.nextDummyPriv != nil {
+			info, err = buildDummyRouteData(
+				hop.hopPubKey, hop.nextDummyPriv, hop.relayInfo,
+			)
+		} else {
+			info, err = buildHopRouteData(
+				hop.hopPubKey, hop.nextSCID, hop.relayInfo,
+				constraints,
+			)
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		hopDataSet = append(hopDataSet, info)
+	}
+
+	// Sort the hop info list in reverse order so that the data for the
+	// introduction node is first.
+	sort.Slice(hopDataSet, func(i, j int) bool {
+		return i > j
+	})
+
+	// Add padding to each route data instance until the encrypted data
+	// blobs are all the same size.
+	paymentPath, _, err := padHopInfo(hopDataSet)
+	if err != nil {
+		return nil, err
+	}
+
+	// Derive an ephemeral session key.
+	sessionKey, err := btcec.NewPrivateKey()
+	if err != nil {
+		return nil, err
+	}
+
+	// Encrypt the hop info.
+	blindedPath, err := sphinx.BuildBlindedPath(sessionKey, paymentPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(blindedPath.BlindedHops) < 1 {
+		return nil, fmt.Errorf("blinded path must have at least one " +
+			"hop")
+	}
+
+	// Overwrite the introduction point's blinded pub key with the real
+	// pub key since then we can use this more compact format in the
+	// invoice without needing to encode the un-used blinded node pub key of
+	// the intro node.
+	blindedPath.BlindedHops[0].BlindedNodePub =
+		blindedPath.IntroductionPoint
+
+	// Now construct a z32 blinded path.
+	return &zpay32.BlindedPaymentPath{
+		FeeBaseMsat:                 uint32(baseFee),
+		FeeRate:                     feeRate,
+		CltvExpiryDelta:             cltvDelta,
+		HTLCMinMsat:                 uint64(minHTLC),
+		HTLCMaxMsat:                 uint64(maxHTLC),
+		Features:                    lnwire.EmptyFeatureVector(),
+		FirstEphemeralBlindingPoint: blindedPath.BlindingPoint,
+		Hops:                        blindedPath.BlindedHops,
+	}, nil
+}
+
+// hopRelayInfo packages together the relay info to send to hop on a blinded
+// path along with the pub key of that hop and the SCID that the hop should
+// forward the payment on to.
+type hopRelayInfo struct {
+	hopPubKey     route.Vertex
+	nextSCID      lnwire.ShortChannelID
+	relayInfo     *record.PaymentRelayInfo
+	nextDummyPriv *btcec.PrivateKey
+}
+
+// collectRelayInfo collects the relay policy rules for each relay hop on the
+// route and applies any policy buffers.
+//
+// For the blinded route:
+//
+//	C --chan(CB)--> B --chan(BA)--> A
+//
+// where C is the introduction node, the route.Route struct we are given will
+// have SourcePubKey set to C's pub key, and then it will have the following
+// route.Hops:
+//
+//   - PubKeyBytes: B, ChannelID: chan(CB)
+//   - PubKeyBytes: A, ChannelID: chan(BA)
+//
+// We, however, want to collect the channel policies for the following PubKey
+// and ChannelID pairs:
+//
+//   - PubKey: C, ChannelID: chan(CB)
+//   - PubKey: B, ChannelID: chan(BA)
+//
+// Therefore, when we go through the route and its hops to collect policies, our
+// index for collecting public keys will be trailing that of the channel IDs by
+// 1.
+func collectRelayInfo(cfg *buildBlindedPathCfg, path *candidatePath) (
+	[]*hopRelayInfo, lnwire.MilliSatoshi, lnwire.MilliSatoshi, error) {
+
+	var (
+		hops    = make([]*hopRelayInfo, 0, len(path.hops))
+		minHTLC lnwire.MilliSatoshi
+		maxHTLC lnwire.MilliSatoshi
+	)
+
+	var (
+		// The first pub key is that of the introduction node.
+		hopSource = path.introNode
+	)
+	for _, hop := range path.hops {
+		var (
+			// For dummy hops, we use pre-configured policy values.
+			policy = cfg.dummyHopPolicy
+			err    error
+		)
+		if hop.dummyPriv == nil {
+			// For real hops, retrieve the channel policy for this
+			// hop's channel ID in the direction pointing away from
+			// the hopSource node.
+			policy, err = getNodeChannelPolicy(
+				cfg, hop.channelID, hopSource,
+			)
+			if err != nil {
+				return nil, 0, 0, err
+			}
+
+			// Apply any policy changes now before caching the
+			// policy.
+			policy, err = cfg.addPolicyBuffer(policy)
+			if err != nil {
+				return nil, 0, 0, err
+			}
+		}
+
+		// If this is the first policy we are collecting, then use this
+		// policy to set the base values for min/max htlc.
+		if len(hops) == 0 {
+			minHTLC = policy.minHTLCMsat
+			maxHTLC = policy.maxHTLCMsat
+		} else {
+			if policy.minHTLCMsat > minHTLC {
+				minHTLC = policy.minHTLCMsat
+			}
+
+			if policy.maxHTLCMsat < maxHTLC {
+				maxHTLC = policy.maxHTLCMsat
+			}
+		}
+
+		// From the policy values for this hop, we can collect the
+		// payment relay info that we will send to this hop.
+		hops = append(hops, &hopRelayInfo{
+			hopPubKey: hopSource,
+			nextSCID:  lnwire.NewShortChanIDFromInt(hop.channelID),
+			relayInfo: &record.PaymentRelayInfo{
+				FeeRate:         policy.feeRate,
+				BaseFee:         policy.baseFee,
+				CltvExpiryDelta: policy.cltvExpiryDelta,
+			},
+			nextDummyPriv: hop.dummyPriv,
+		})
+
+		// This hop's pub key will be the policy creator for the next
+		// hop.
+		hopSource = hop.pubKey
+	}
+
+	if minHTLC > maxHTLC {
+		// TODO(elle): dont error here - this can happen. These
+		// routes should just be skipped instead.
+		return nil, 0, 0, fmt.Errorf("calculated min htlc value is " +
+			"larger than the calculated max htlc value for the " +
+			"blinded route")
+	}
+
+	return hops, minHTLC, maxHTLC, nil
+}
+
+// buildDummyRouteData constructs the record.BlindedRouteData struct for the
+// given a hop in a blinded route where the following hop is a dummy hop.
+func buildDummyRouteData(node route.Vertex, nextDummyPriv *btcec.PrivateKey,
+	relayInfo *record.PaymentRelayInfo) (*hopData, error) {
+
+	blindedRouteHopData := record.NewDummyHopRouteData(
+		nextDummyPriv, *relayInfo,
+	)
+
+	nodeID, err := btcec.ParsePubKey(node[:])
+	if err != nil {
+		return nil, err
+	}
+
+	return &hopData{
+		data:   blindedRouteHopData,
+		nodeID: nodeID,
+	}, nil
+}
+
+// buildHopRouteData constructs the record.BlindedRouteData struct for the given
+// non-final hop on a blinded path and packages it with the node's ID.
+func buildHopRouteData(node route.Vertex, scid lnwire.ShortChannelID,
+	relayInfo *record.PaymentRelayInfo,
+	constraints *record.PaymentConstraints) (*hopData, error) {
+
+	// Wrap up the data we want to send to this hop.
+	blindedRouteHopData := record.NewNonFinalBlindedRouteData(
+		scid, nil, *relayInfo, constraints, nil,
+	)
+
+	nodeID, err := btcec.ParsePubKey(node[:])
+	if err != nil {
+		return nil, err
+	}
+
+	return &hopData{
+		data:   blindedRouteHopData,
+		nodeID: nodeID,
+	}, nil
+}
+
+// buildFinalHopRouteData constructs the record.BlindedRouteData struct for the
+// final hop and packages it with the real node ID of the node it is intended
+// for.
+func buildFinalHopRouteData(node route.Vertex, pathID []byte,
+	constraints *record.PaymentConstraints) (*hopData, error) {
+
+	blindedRouteHopData := record.NewFinalHopBlindedRouteData(
+		constraints, pathID,
+	)
+	nodeID, err := btcec.ParsePubKey(node[:])
+	if err != nil {
+		return nil, err
+	}
+
+	return &hopData{
+		data:   blindedRouteHopData,
+		nodeID: nodeID,
+	}, nil
+}
+
+// getNodeChanPolicy fetches the routing policy info for the given channel and
+// node pair.
+func getNodeChannelPolicy(cfg *buildBlindedPathCfg, chanID uint64,
+	nodeID route.Vertex) (*blindedHopPolicy, error) {
+
+	// Attempt to fetch channel updates for the given channel. We will have
+	// at most two updates for a given channel.
+	_, update1, update2, err := cfg.fetchChannelEdgesByID(chanID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Now we need to determine which of the updates was created by the
+	// node in question. We know the update is the correct one if the
+	// "ToNode" for the fetched policy is _not_ equal to the node ID in
+	// question.
+	var policy *models.ChannelEdgePolicy
+	switch {
+	case update1 != nil && !bytes.Equal(update1.ToNode[:], nodeID[:]):
+		policy = update1
+
+	case update2 != nil && !bytes.Equal(update2.ToNode[:], nodeID[:]):
+		policy = update2
+
+	default:
+		return nil, fmt.Errorf("no channel updates found from node "+
+			"%s for channel %d", nodeID, chanID)
+	}
+
+	return &blindedHopPolicy{
+		cltvExpiryDelta: policy.TimeLockDelta,
+		feeRate:         uint32(policy.FeeProportionalMillionths),
+		baseFee:         policy.FeeBaseMSat,
+		minHTLCMsat:     policy.MinHTLC,
+		maxHTLCMsat:     policy.MaxHTLC,
+	}, nil
+}
+
+// candidatePath holds all the information about a route to this node that we
+// need in order to build a blinded route.
+type candidatePath struct {
+	introNode route.Vertex
+	hops      []*blindedPathHop
+}
+
+// padWithDummyHops will append n dummy hops to the candidatePath hop set.
+func (c *candidatePath) padWithDummyHops(n uint8) error {
+	for len(c.hops) < int(n) {
+		privKey, err := btcec.NewPrivateKey()
+		if err != nil {
+			return err
+		}
+
+		c.hops = append(c.hops, &blindedPathHop{
+			pubKey:    route.NewVertex(privKey.PubKey()),
+			dummyPriv: privKey,
+		})
+	}
+
+	return nil
+}
+
+// blindedPathHop holds the information we need to know about a hop in a route
+// in order to use it in the construction of a blinded path.
+type blindedPathHop struct {
+	pubKey    route.Vertex
+	channelID uint64
+
+	// dummyPriv is an optional field. If it is set, then this is a dummy
+	// hop in the blinded path and this key will be required to peel the
+	// dummy layer.
+	dummyPriv *btcec.PrivateKey
+}
+
+// extractCandidatePath extracts the data it needs from the give route.Route in
+// order to construct a candidatePath.
+func extractCandidatePath(path *route.Route) *candidatePath {
+	hops := make([]*blindedPathHop, len(path.Hops))
+	for i, hop := range path.Hops {
+		hops[i] = &blindedPathHop{
+			pubKey:    hop.PubKeyBytes,
+			channelID: hop.ChannelID,
+		}
+	}
+
+	return &candidatePath{
+		introNode: path.SourcePubKey,
+		hops:      hops,
+	}
 }
 
 // blindedHopPolicy holds the set of relay policy values to use for a channel
