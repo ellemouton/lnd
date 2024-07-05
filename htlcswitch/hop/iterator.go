@@ -109,7 +109,7 @@ type Iterator interface {
 
 // sphinxHopIterator is the Sphinx implementation of hop iterator which uses
 // onion routing to encode the payment route  in such a way so that node might
-// see only the next hop in the route..
+// see only the next hop in the route.
 type sphinxHopIterator struct {
 	// ogPacket is the original packet from which the processed packet is
 	// derived.
@@ -123,6 +123,10 @@ type sphinxHopIterator struct {
 	// blindingKit contains the elements required to process hops that are
 	// part of a blinded route.
 	blindingKit BlindingKit
+
+	// rHash holds the payment hash for this payment. This is needed for
+	// when a new hop iterator is constructed.
+	rHash []byte
 }
 
 // makeSphinxHopIterator converts a processed packet returned from a sphinx
@@ -130,13 +134,14 @@ type sphinxHopIterator struct {
 // blinding kit is passed through for the link to obtain forwarding information
 // for blinded routes.
 func makeSphinxHopIterator(ogPacket *sphinx.OnionPacket,
-	packet *sphinx.ProcessedPacket,
-	blindingKit BlindingKit) *sphinxHopIterator {
+	packet *sphinx.ProcessedPacket, blindingKit BlindingKit,
+	rHash []byte) *sphinxHopIterator {
 
 	return &sphinxHopIterator{
 		ogPacket:        ogPacket,
 		processedPacket: packet,
 		blindingKit:     blindingKit,
+		rHash:           rHash,
 	}
 }
 
@@ -144,7 +149,7 @@ func makeSphinxHopIterator(ogPacket *sphinx.OnionPacket,
 // interface.
 var _ Iterator = (*sphinxHopIterator)(nil)
 
-// Encode encodes iterator and writes it to the writer.
+// EncodeNextHop encodes iterator and writes it to the writer.
 //
 // NOTE: Part of the HopIterator interface.
 func (r *sphinxHopIterator) EncodeNextHop(w io.Writer) error {
@@ -597,7 +602,7 @@ func (p *OnionProcessor) ReconstructHopIterator(r io.Reader, rHash []byte,
 		UpdateAddBlinding: blindingInfo.BlindingKey,
 		IncomingAmount:    blindingInfo.IncomingAmt,
 		IncomingCltv:      blindingInfo.IncomingExpiry,
-	}), nil
+	}, rHash), nil
 }
 
 // DecodeHopIteratorRequest encapsulates all date necessary to process an onion
@@ -780,7 +785,7 @@ func (p *OnionProcessor) DecodeHopIterators(id []byte,
 				UpdateAddBlinding: reqs[i].BlindingPoint,
 				IncomingAmount:    reqs[i].IncomingAmount,
 				IncomingCltv:      reqs[i].IncomingCltv,
-			},
+			}, reqs[i].RHash,
 		)
 	}
 
