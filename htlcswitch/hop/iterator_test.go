@@ -282,12 +282,15 @@ func TestDecryptAndValidateFwdInfo(t *testing.T) {
 					tlv.NewPrimitiveRecord[lnwire.BlindingPointTlvType](testCase.updateAddBlinding),
 				)
 			}
-			_, err := kit.DecryptAndValidateFwdInfo(
-				&Payload{
-					encryptedData: testCase.data,
-					blindingPoint: testCase.payloadBlinding,
-				}, false,
-			)
+
+			iterator := &sphinxHopIterator{
+				blindingKit: kit,
+			}
+
+			_, _, err = handleRecipientData(iterator, &Payload{
+				encryptedData: testCase.data,
+				blindingPoint: testCase.payloadBlinding,
+			}, false, RouteRoleCleartext)
 			require.ErrorIs(t, err, testCase.expectedErr)
 		})
 	}
