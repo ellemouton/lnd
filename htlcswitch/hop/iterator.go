@@ -182,56 +182,77 @@ func (r *sphinxHopIterator) HopPayload() (*Payload, RouteRole, error) {
 	}
 }
 
-// extractTLVPayload parses the hop payload and assumes that it uses the TLV
-// format. It returns the parsed payload along with the RouteRole that this hop
-// plays given the contents of the payload.
-func extractTLVPayload(r *sphinxHopIterator) (*Payload, RouteRole, error) {
-	isFinal := r.processedPacket.Action == sphinx.ExitNode
+// parseAndValidateSenderPayload parses the payload bytes received from the
+// onion constructor (the sender) and validates that various fields have been
+// set. It also uses the presence of a blinding key in either the
+// update_add_htlc message or in the payload to determine the RouteRole.
+// The RouteRole is returned even if an error is returned. The boolean return
+// value indicates that the sender payload includes encrypted data from the
+// recipient that should be parsed.
+func parseAndValidateSenderPayload(payloadBytes []byte, isFinalHop,
+	updateAddBlindingSet bool) (*Payload, RouteRole, bool, error) {
 
 	// Extract TLVs from the packet constructor (the sender).
-	payload, parsed, err := ParseTLVPayload(
-		bytes.NewReader(r.processedPacket.Payload.Payload),
-	)
+	payload, parsed, err := ParseTLVPayload(bytes.NewReader(payloadBytes))
 	if err != nil {
 		// If we couldn't even parse our payload then we do a
 		// best-effort of determining our role in a blinded route,
 		// accepting that we can't know whether we were the introduction
 		// node (as the payload is not parseable).
 		routeRole := RouteRoleCleartext
-		if r.blindingKit.UpdateAddBlinding.IsSome() {
+		if updateAddBlindingSet {
 			routeRole = RouteRoleRelaying
 		}
 
-		return nil, routeRole, err
+		return nil, routeRole, false, err
 	}
 
 	// Now that we've parsed our payload we can determine which role we're
 	// playing in the route.
 	_, payloadBlinding := parsed[record.BlindingPointOnionType]
-	routeRole := NewRouteRole(
-		r.blindingKit.UpdateAddBlinding.IsSome(), payloadBlinding,
-	)
+	routeRole := NewRouteRole(updateAddBlindingSet, payloadBlinding)
 
 	// Validate the presence of the various payload fields we received from
 	// the sender.
-	if err := ValidateTLVPayload(
-		parsed, isFinal, r.blindingKit.UpdateAddBlinding.IsSome(),
-	); err != nil {
-		return nil, routeRole, err
+	err = ValidateTLVPayload(parsed, isFinalHop, updateAddBlindingSet)
+	if err != nil {
+		return nil, routeRole, false, err
 	}
 
 	// If there is no encrypted data from the receiver then return the
 	// payload as is since the forwarding info would have been received
 	// from the sender.
-	if payload.encryptedData != nil {
-		return payload, routeRole, nil
+	if payload.encryptedData == nil {
+		return payload, routeRole, false, nil
 	}
 
 	// Validate the presence of various fields in the sender payload given
 	// that we now know that this is a hop with instructions from the
 	// recipient.
-	err = ValidatePayloadWithBlinded(isFinal, parsed)
+	err = ValidatePayloadWithBlinded(isFinalHop, parsed)
 	if err != nil {
+		return payload, routeRole, true, nil
+	}
+
+	return payload, routeRole, true, nil
+}
+
+// extractTLVPayload parses the hop payload and assumes that it uses the TLV
+// format. It returns the parsed payload along with the RouteRole that this hop
+// plays given the contents of the payload.
+func extractTLVPayload(r *sphinxHopIterator) (*Payload, RouteRole, error) {
+	isFinal := r.processedPacket.Action == sphinx.ExitNode
+
+	payload, routeRole, recipientData, err := parseAndValidateSenderPayload(
+		r.processedPacket.Payload.Payload, isFinal,
+		r.blindingKit.UpdateAddBlinding.IsSome(),
+	)
+	if err != nil {
+		return nil, routeRole, nil
+	}
+
+	// If the payload contained no recipient data, then we can exit now.
+	if !recipientData {
 		return payload, routeRole, nil
 	}
 
