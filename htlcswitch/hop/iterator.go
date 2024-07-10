@@ -10,7 +10,6 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	sphinx "github.com/lightningnetwork/lightning-onion"
-	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/record"
 	"github.com/lightningnetwork/lnd/tlv"
@@ -129,21 +128,26 @@ type sphinxHopIterator struct {
 	// rHash holds the payment hash for this payment. This is needed for
 	// when a new hop iterator is constructed.
 	rHash []byte
+
+	router     *sphinx.Router
+	nodePubKey *btcec.PublicKey
 }
 
 // makeSphinxHopIterator converts a processed packet returned from a sphinx
 // router and converts it into an hop iterator for usage in the link. A
 // blinding kit is passed through for the link to obtain forwarding information
 // for blinded routes.
-func makeSphinxHopIterator(ogPacket *sphinx.OnionPacket,
+func makeSphinxHopIterator(router *sphinx.Router, ogPacket *sphinx.OnionPacket,
 	packet *sphinx.ProcessedPacket, blindingKit BlindingKit,
-	rHash []byte) *sphinxHopIterator {
+	rHash []byte, nodePubKey *btcec.PublicKey) *sphinxHopIterator {
 
 	return &sphinxHopIterator{
+		router:          router,
 		ogPacket:        ogPacket,
 		processedPacket: packet,
 		blindingKit:     blindingKit,
 		rHash:           rHash,
+		nodePubKey:      nodePubKey,
 	}
 }
 
@@ -346,46 +350,43 @@ func handleFinalNode(routeData *record.BlindedRouteData, payload *Payload,
 	return payload, routeRole, nil
 }
 
-func checkForDummyHop(routeData *record.BlindedRouteData) (*btcec.PrivateKey,
-	error) {
+func checkForDummyHop(routeData *record.BlindedRouteData,
+	ourPubKey *btcec.PublicKey) bool {
 
-	var nextDummyPriv *btcec.PrivateKey
-	routeData.NextDummyPrivKey.WhenSome(
-		func(r tlv.RecordT[tlv.TlvType65536, []byte]) {
-			nextDummyPriv, _ = btcec.PrivKeyFromBytes(r.Val)
+	var isDummy bool
+	routeData.NextNodeID.WhenSome(
+		func(r tlv.RecordT[tlv.TlvType4, *btcec.PublicKey]) {
+			isDummy = r.Val.IsEqual(ourPubKey)
 		},
 	)
 
-	return nextDummyPriv, nil
+	return isDummy
 }
 
 func handleRecursiveCall(r *sphinxHopIterator, cltvExpiryDelta uint32,
 	fwdAmt lnwire.MilliSatoshi, routeRole RouteRole,
-	nextEph tlv.RecordT[tlv.TlvType8, *btcec.PublicKey],
-	nextDummyPriv *btcec.PrivateKey) (*Payload, RouteRole, error) {
-
-	dummyRouter := sphinx.NewRouter(
-		&keychain.PrivKeyECDH{PrivKey: nextDummyPriv}, nil,
-	)
+	nextEph tlv.RecordT[tlv.TlvType8, *btcec.PublicKey]) (*Payload,
+	RouteRole, error) {
 
 	onionPkt := r.processedPacket.NextPacket
-	sphinxPacket, err := dummyRouter.ReconstructOnionPacket(
+	sphinxPacket, err := r.router.ReconstructOnionPacket(
 		onionPkt, r.rHash, sphinx.WithBlindingPoint(nextEph.Val),
 	)
 	if err != nil {
 		return nil, routeRole, err
 	}
 
-	iterator := makeSphinxHopIterator(onionPkt, sphinxPacket, BlindingKit{
-		Processor: dummyRouter,
-		UpdateAddBlinding: tlv.SomeRecordT(
-			tlv.NewPrimitiveRecord[lnwire.BlindingPointTlvType](
-				nextEph.Val,
+	iterator := makeSphinxHopIterator(
+		r.router, onionPkt, sphinxPacket, BlindingKit{
+			Processor: r.router,
+			UpdateAddBlinding: tlv.SomeRecordT(
+				tlv.NewPrimitiveRecord[lnwire.BlindingPointTlvType](
+					nextEph.Val,
+				),
 			),
-		),
-		IncomingAmount: fwdAmt,
-		IncomingCltv:   r.blindingKit.IncomingCltv - cltvExpiryDelta,
-	}, r.rHash)
+			IncomingAmount: fwdAmt,
+			IncomingCltv:   r.blindingKit.IncomingCltv - cltvExpiryDelta,
+		}, r.rHash, r.nodePubKey)
 
 	return extractTLVPayload(iterator)
 }
@@ -426,15 +427,15 @@ func handleForwardingNode(r *sphinxHopIterator,
 		return nil, routeRole, err
 	}
 
-	nextDummyPriv, err := checkForDummyHop(routeData)
+	nextHopIsDummy := checkForDummyHop(routeData, r.nodePubKey)
 	if err != nil {
 		return nil, routeRole, err
 	}
 
-	if nextDummyPriv != nil {
+	if nextHopIsDummy {
 		return handleRecursiveCall(
 			r, uint32(relayInfo.Val.CltvExpiryDelta), fwdAmt,
-			routeRole, nextEph, nextDummyPriv,
+			routeRole, nextEph,
 		)
 	}
 
@@ -613,12 +614,18 @@ func calculateForwardingAmount(incomingAmount, baseFee lnwire.MilliSatoshi,
 // the hop iterator should contain sphinx router which makes their creations in
 // tests dependent from the sphinx internal parts.
 type OnionProcessor struct {
-	router *sphinx.Router
+	router     *sphinx.Router
+	nodePubKey *btcec.PublicKey
 }
 
 // NewOnionProcessor creates new instance of decoder.
-func NewOnionProcessor(router *sphinx.Router) *OnionProcessor {
-	return &OnionProcessor{router}
+func NewOnionProcessor(router *sphinx.Router,
+	pubKey *btcec.PublicKey) *OnionProcessor {
+
+	return &OnionProcessor{
+		router:     router,
+		nodePubKey: pubKey,
+	}
 }
 
 // Start spins up the onion processor's sphinx router.
@@ -680,12 +687,14 @@ func (p *OnionProcessor) ReconstructHopIterator(r io.Reader, rHash []byte,
 		return nil, err
 	}
 
-	return makeSphinxHopIterator(onionPkt, sphinxPacket, BlindingKit{
-		Processor:         p.router,
-		UpdateAddBlinding: blindingInfo.BlindingKey,
-		IncomingAmount:    blindingInfo.IncomingAmt,
-		IncomingCltv:      blindingInfo.IncomingExpiry,
-	}, rHash), nil
+	return makeSphinxHopIterator(
+		p.router, onionPkt, sphinxPacket, BlindingKit{
+			Processor:         p.router,
+			UpdateAddBlinding: blindingInfo.BlindingKey,
+			IncomingAmount:    blindingInfo.IncomingAmt,
+			IncomingCltv:      blindingInfo.IncomingExpiry,
+		}, rHash, p.nodePubKey,
+	), nil
 }
 
 // DecodeHopIteratorRequest encapsulates all date necessary to process an onion
@@ -863,12 +872,12 @@ func (p *OnionProcessor) DecodeHopIterators(id []byte,
 		// Finally, construct a hop iterator from our processed sphinx
 		// packet, simultaneously caching the original onion packet.
 		resp.HopIterator = makeSphinxHopIterator(
-			&onionPkts[i], &packets[i], BlindingKit{
+			p.router, &onionPkts[i], &packets[i], BlindingKit{
 				Processor:         p.router,
 				UpdateAddBlinding: reqs[i].BlindingPoint,
 				IncomingAmount:    reqs[i].IncomingAmount,
 				IncomingCltv:      reqs[i].IncomingCltv,
-			}, reqs[i].RHash,
+			}, reqs[i].RHash, p.nodePubKey,
 		)
 	}
 

@@ -187,7 +187,7 @@ func TestDummyHopBlindedDataEncoding(t *testing.T) {
 		BaseFee:         30,
 	}
 
-	routeData := NewDummyHopRouteData(priv, info)
+	routeData := NewDummyHopRouteData(priv.PubKey(), info)
 
 	encoded, err := EncodeBlindedRouteData(routeData)
 	require.NoError(t, err)

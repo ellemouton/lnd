@@ -5790,6 +5790,7 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 	}
 
 	addInvoiceCfg := &invoicesrpc.AddInvoiceConfig{
+		NodePubKey:        r.selfNode,
 		AddInvoice:        r.server.invoices.AddInvoice,
 		IsChannelActive:   r.server.htlcSwitch.HasActiveLink,
 		ChainParams:       r.cfg.ActiveNetParams.Params,

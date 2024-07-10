@@ -589,7 +589,9 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 		// TODO(roasbeef): derive proper onion key based on rotation
 		// schedule
-		sphinx: hop.NewOnionProcessor(sphinxRouter),
+		sphinx: hop.NewOnionProcessor(
+			sphinxRouter, nodeKeyECDH.PubKey(),
+		),
 
 		torController: torController,
 
@@ -953,6 +955,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	if err != nil {
 		return nil, fmt.Errorf("error getting source node: %w", err)
 	}
+
 	paymentSessionSource := &routing.SessionSource{
 		Graph:             chanGraph,
 		SourceNode:        sourceNode,

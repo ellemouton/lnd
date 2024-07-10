@@ -56,6 +56,8 @@ const (
 
 // AddInvoiceConfig contains dependencies for invoice creation.
 type AddInvoiceConfig struct {
+	NodePubKey route.Vertex
+
 	// AddInvoice is called to add the invoice to the registry.
 	AddInvoice func(ctx context.Context, invoice *invoices.Invoice,
 		paymentHash lntypes.Hash) (uint64, error)
@@ -497,6 +499,7 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 
 		//nolint:lll
 		paths, err := buildBlindedPaymentPaths(&buildBlindedPathCfg{
+			nodePubKey:              cfg.NodePubKey,
 			findRoutes:              cfg.QueryBlindedRoutes,
 			fetchChannelEdgesByID:   cfg.Graph.FetchChannelEdgesByID,
 			pathID:                  paymentAddr[:],
@@ -959,6 +962,8 @@ func PopulateHopHints(cfg *SelectHopHintsCfg, amtMSat lnwire.MilliSatoshi,
 // buildBlindedPathCfg defines the various resources and configuration values
 // required to build a blinded payment path to this node.
 type buildBlindedPathCfg struct {
+	nodePubKey route.Vertex
+
 	// findRoutes returns a set of routes to us that can be used for the
 	// construction of blinded paths. These routes will consist of real
 	// nodes advertising the route blinding feature bit.
@@ -1052,7 +1057,7 @@ func buildBlindedPaymentPath(cfg *buildBlindedPathCfg, path *candidatePath) (
 
 	// Pad the given route with dummy hops until the minimum number of hops
 	// is met.
-	err := path.padWithDummyHops(cfg.minNumHops)
+	err := path.padWithDummyHops(cfg.nodePubKey, cfg.minNumHops)
 	if err != nil {
 		return nil, err
 	}
@@ -1129,9 +1134,9 @@ func buildBlindedPaymentPath(cfg *buildBlindedPathCfg, path *candidatePath) (
 		}
 
 		var info *hopData
-		if hop.nextDummyPriv != nil {
+		if hop.nextHopIsDummy {
 			info, err = buildDummyRouteData(
-				hop.hopPubKey, hop.nextDummyPriv, hop.relayInfo,
+				hop.hopPubKey, hop.relayInfo,
 			)
 		} else {
 			info, err = buildHopRouteData(
@@ -1200,10 +1205,10 @@ func buildBlindedPaymentPath(cfg *buildBlindedPathCfg, path *candidatePath) (
 // path along with the pub key of that hop and the SCID that the hop should
 // forward the payment on to.
 type hopRelayInfo struct {
-	hopPubKey     route.Vertex
-	nextSCID      lnwire.ShortChannelID
-	relayInfo     *record.PaymentRelayInfo
-	nextDummyPriv *btcec.PrivateKey
+	hopPubKey      route.Vertex
+	nextSCID       lnwire.ShortChannelID
+	relayInfo      *record.PaymentRelayInfo
+	nextHopIsDummy bool
 }
 
 // collectRelayInfo collects the relay policy rules for each relay hop on the
@@ -1248,7 +1253,7 @@ func collectRelayInfo(cfg *buildBlindedPathCfg, path *candidatePath) (
 			policy = cfg.dummyHopPolicy
 			err    error
 		)
-		if hop.dummyPriv == nil {
+		if !hop.isDummy {
 			// For real hops, retrieve the channel policy for this
 			// hop's channel ID in the direction pointing away from
 			// the hopSource node.
@@ -1292,7 +1297,7 @@ func collectRelayInfo(cfg *buildBlindedPathCfg, path *candidatePath) (
 				BaseFee:         policy.baseFee,
 				CltvExpiryDelta: policy.cltvExpiryDelta,
 			},
-			nextDummyPriv: hop.dummyPriv,
+			nextHopIsDummy: hop.isDummy,
 		})
 
 		// This hop's pub key will be the policy creator for the next
@@ -1313,17 +1318,15 @@ func collectRelayInfo(cfg *buildBlindedPathCfg, path *candidatePath) (
 
 // buildDummyRouteData constructs the record.BlindedRouteData struct for the
 // given a hop in a blinded route where the following hop is a dummy hop.
-func buildDummyRouteData(node route.Vertex, nextDummyPriv *btcec.PrivateKey,
+func buildDummyRouteData(node route.Vertex,
 	relayInfo *record.PaymentRelayInfo) (*hopData, error) {
-
-	blindedRouteHopData := record.NewDummyHopRouteData(
-		nextDummyPriv, *relayInfo,
-	)
 
 	nodeID, err := btcec.ParsePubKey(node[:])
 	if err != nil {
 		return nil, err
 	}
+
+	blindedRouteHopData := record.NewDummyHopRouteData(nodeID, *relayInfo)
 
 	return &hopData{
 		data:   blindedRouteHopData,
@@ -1419,16 +1422,11 @@ type candidatePath struct {
 }
 
 // padWithDummyHops will append n dummy hops to the candidatePath hop set.
-func (c *candidatePath) padWithDummyHops(n uint8) error {
+func (c *candidatePath) padWithDummyHops(nodeKey route.Vertex, n uint8) error {
 	for len(c.hops) < int(n) {
-		privKey, err := btcec.NewPrivateKey()
-		if err != nil {
-			return err
-		}
-
 		c.hops = append(c.hops, &blindedPathHop{
-			pubKey:    route.NewVertex(privKey.PubKey()),
-			dummyPriv: privKey,
+			pubKey:  nodeKey,
+			isDummy: true,
 		})
 	}
 
@@ -1441,10 +1439,7 @@ type blindedPathHop struct {
 	pubKey    route.Vertex
 	channelID uint64
 
-	// dummyPriv is an optional field. If it is set, then this is a dummy
-	// hop in the blinded path and this key will be required to peel the
-	// dummy layer.
-	dummyPriv *btcec.PrivateKey
+	isDummy bool
 }
 
 // extractCandidatePath extracts the data it needs from the give route.Route in
