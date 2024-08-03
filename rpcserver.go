@@ -5803,10 +5803,6 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 		},
 		GetAlias:   r.server.aliasMgr.GetPeerAlias,
 		BestHeight: r.server.cc.BestBlockTracker.BestHeight,
-		BlindedRoutePolicyIncrMultiplier: r.server.cfg.Routing.
-			BlindedPaths.PolicyIncreaseMultiplier,
-		BlindedRoutePolicyDecrMultiplier: r.server.cfg.Routing.
-			BlindedPaths.PolicyDecreaseMultiplier,
 		QueryBlindedRoutes: func(amt lnwire.MilliSatoshi) (
 			[]*route.Route, error) {
 
@@ -5815,18 +5811,6 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 				r.server.missionControl.GetProbability,
 				blindingRestrictions,
 			)
-		},
-		MinNumBlindedPathHops: r.server.cfg.Routing.BlindedPaths.
-			NumHops,
-		DefaultDummyHopPolicy: &blindedpath.BlindedHopPolicy{
-			CLTVExpiryDelta: uint16(defaultDelta),
-			FeeRate:         uint32(r.server.cfg.Bitcoin.FeeRate),
-			BaseFee:         r.server.cfg.Bitcoin.BaseFee,
-			MinHTLCMsat:     r.server.cfg.Bitcoin.MinHTLCIn,
-
-			// MaxHTLCMsat will be calculated on the fly by using
-			// the introduction node's channel's capacities.
-			MaxHTLCMsat: 0,
 		},
 	}
 
@@ -5840,6 +5824,34 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
+
+	var blindedPathCfg *invoicesrpc.BlindedPathConfig
+	if invoice.Blind {
+		bpConfig := r.server.cfg.Routing.BlindedPaths
+
+		blindedPathCfg = &invoicesrpc.BlindedPathConfig{
+			RoutePolicyIncrMultiplier: bpConfig.
+				PolicyIncreaseMultiplier,
+			RoutePolicyDecrMultiplier: bpConfig.
+				PolicyDecreaseMultiplier,
+			DefaultDummyHopPolicy: &blindedpath.BlindedHopPolicy{
+				CLTVExpiryDelta: uint16(defaultDelta),
+				FeeRate: uint32(
+					r.server.cfg.Bitcoin.FeeRate,
+				),
+				BaseFee:     r.server.cfg.Bitcoin.BaseFee,
+				MinHTLCMsat: r.server.cfg.Bitcoin.MinHTLCIn,
+
+				// MaxHTLCMsat will be calculated on the fly by
+				// using the introduction node's channel's
+				// capacities.
+				MaxHTLCMsat: 0,
+			},
+			MinNumPathHops: r.server.cfg.Routing.BlindedPaths.
+				NumHops,
+		}
+	}
+
 	addInvoiceData := &invoicesrpc.AddInvoiceData{
 		Memo:            invoice.Memo,
 		Value:           value,
@@ -5850,7 +5862,7 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 		Private:         invoice.Private,
 		RouteHints:      routeHints,
 		Amp:             invoice.IsAmp,
-		Blind:           invoice.Blind,
+		BlindedPathCfg:  blindedPathCfg,
 	}
 
 	if invoice.RPreimage != nil {
