@@ -2819,4 +2819,21 @@ func TestFindBlindedPathsWithMC(t *testing.T) {
 		"alice,bob,dave",
 		"alice,frank,dave",
 	})
+
+	// Test that if the user explicitly indicates that we should ignore
+	// the Frank node during path selection, then this is done.
+	routes, err = ctx.router.FindBlindedPaths(
+		dave, 1000, probabilitySrc, &BlindedPathRestrictions{
+			MinDistanceFromIntroNode: 2,
+			NumHops:                  2,
+			MaxNumPaths:              3,
+			NodeOmissionSet: map[route.Vertex]bool{
+				frank: true,
+			},
+		},
+	)
+	require.NoError(t, err)
+	assertPaths(routes, []string{
+		"alice,frank,dave",
+	})
 }

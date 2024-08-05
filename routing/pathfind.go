@@ -1150,6 +1150,10 @@ type blindedPathRestrictions struct {
 	// path. This doesn't include our node, so if the maximum is 1, then
 	// the path will contain our node along with an introduction node hop.
 	maxNumHops uint8
+
+	// nodeOmissionSet holds a set of node IDs of nodes that we should
+	// ignore during blinded path selection.
+	nodeOmissionSet map[route.Vertex]bool
 }
 
 // blindedHop holds the information about a hop we have selected for a blinded
@@ -1250,6 +1254,12 @@ func processNodeForBlindedPath(g Graph, node route.Vertex,
 	// If we have already visited this peer on this path, then we skip
 	// processing it again.
 	if alreadyVisited[node] {
+		return nil, false, nil
+	}
+
+	// If we have explicitly been told to ignore this node for blinded paths
+	// then we skip it too.
+	if restrictions.nodeOmissionSet[node] {
 		return nil, false, nil
 	}
 

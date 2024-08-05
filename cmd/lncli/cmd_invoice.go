@@ -110,6 +110,12 @@ var addInvoiceCommand = cli.Command{
 				"to an invoice. This option will only be " +
 				"used if `--blind` has also been set.",
 		},
+		cli.StringSliceFlag{
+			Name: "blinded_path_omit_node",
+			Usage: "The pub key (in hex) of a node not to " +
+				"use on a blinded path. The flag may be " +
+				"specified multiple times. ",
+		},
 	},
 	Action: actionDecorator(addInvoice),
 }
@@ -160,6 +166,12 @@ func addInvoice(ctx *cli.Context) error {
 			"blinded paths in the same invoice")
 	}
 
+	blindedPathCfg, err := parseBlindedPathCfg(ctx)
+	if err != nil {
+		return fmt.Errorf("could not parse blinded path config: %v",
+			err)
+	}
+
 	invoice := &lnrpc.Invoice{
 		Memo:              ctx.String("memo"),
 		RPreimage:         preimage,
@@ -171,7 +183,7 @@ func addInvoice(ctx *cli.Context) error {
 		CltvExpiry:        ctx.Uint64("cltv_expiry_delta"),
 		Private:           ctx.Bool("private"),
 		IsAmp:             ctx.Bool("amp"),
-		BlindedPathConfig: parseBlindedPathCfg(ctx),
+		BlindedPathConfig: blindedPathCfg,
 	}
 
 	resp, err := client.AddInvoice(ctxc, invoice)
@@ -184,9 +196,9 @@ func addInvoice(ctx *cli.Context) error {
 	return nil
 }
 
-func parseBlindedPathCfg(ctx *cli.Context) *lnrpc.BlindedPathConfig {
+func parseBlindedPathCfg(ctx *cli.Context) (*lnrpc.BlindedPathConfig, error) {
 	if !ctx.Bool("blind") {
-		return nil
+		return nil, nil
 	}
 
 	var blindCfg lnrpc.BlindedPathConfig
@@ -206,7 +218,18 @@ func parseBlindedPathCfg(ctx *cli.Context) *lnrpc.BlindedPathConfig {
 		blindCfg.MaxNumPaths = &maxPaths
 	}
 
-	return &blindCfg
+	for _, pubKey := range ctx.StringSlice("blinded_path_omit_node") {
+		pubKeyBytes, err := hex.DecodeString(pubKey)
+		if err != nil {
+			return nil, err
+		}
+
+		blindCfg.NodeOmissionList = append(
+			blindCfg.NodeOmissionList, pubKeyBytes,
+		)
+	}
+
+	return &blindCfg, nil
 }
 
 var lookupInvoiceCommand = cli.Command{
