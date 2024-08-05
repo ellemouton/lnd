@@ -2228,25 +2228,25 @@ func TestNewRouteRequest(t *testing.T) {
 	for _, testCase := range testCases {
 		testCase := testCase
 
+		var (
+			blindedPathInfo *BlindedPaymentPathSet
+			expectedTarget  = testCase.expectedTarget
+		)
+		if testCase.blindedPayment != nil {
+			blindedPathInfo, err = NewBlindedPaymentPathSet(
+				[]*BlindedPayment{
+					testCase.blindedPayment,
+				},
+			)
+			require.NoError(t, err)
+
+			expectedTarget = route.NewVertex(
+				blindedPathInfo.TargetPubKey(),
+			)
+		}
+
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-
-			var (
-				blindedPathInfo *BlindedPaymentPathSet
-				expectedTarget  = testCase.expectedTarget
-			)
-			if testCase.blindedPayment != nil {
-				blindedPathInfo, err = NewBlindedPaymentPathSet(
-					[]*BlindedPayment{
-						testCase.blindedPayment,
-					},
-				)
-				require.NoError(t, err)
-
-				expectedTarget = route.NewVertex(
-					blindedPathInfo.TargetPubKey(),
-				)
-			}
 
 			req, err := NewRouteRequest(
 				source, testCase.target, 1000, 0, nil, nil,
