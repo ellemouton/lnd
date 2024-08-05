@@ -90,6 +90,26 @@ var addInvoiceCommand = cli.Command{
 				"ephemeral key so as not to reveal the real " +
 				"node ID of this node.",
 		},
+		cli.UintFlag{
+			Name: "min_real_blinded_hops",
+			Usage: "The minimum number of real hops to use in a " +
+				"blinded path. This option will only be used " +
+				"if `--blind` has also been set.",
+		},
+		cli.UintFlag{
+			Name: "num_blinded_hops",
+			Usage: "The number of hops to use for each " +
+				"blinded path included in the invoice. This " +
+				"option will only be used if `--blind` has " +
+				"also been set. Dummy hops will be use to " +
+				"pad paths shorter than this.",
+		},
+		cli.UintFlag{
+			Name: "max_blinded_paths",
+			Usage: "The maximum number of blinded paths to add " +
+				"to an invoice. This option will only be " +
+				"used if `--blind` has also been set.",
+		},
 	},
 	Action: actionDecorator(addInvoice),
 }
@@ -141,17 +161,17 @@ func addInvoice(ctx *cli.Context) error {
 	}
 
 	invoice := &lnrpc.Invoice{
-		Memo:            ctx.String("memo"),
-		RPreimage:       preimage,
-		Value:           amt,
-		ValueMsat:       amtMsat,
-		DescriptionHash: descHash,
-		FallbackAddr:    ctx.String("fallback_addr"),
-		Expiry:          ctx.Int64("expiry"),
-		CltvExpiry:      ctx.Uint64("cltv_expiry_delta"),
-		Private:         ctx.Bool("private"),
-		IsAmp:           ctx.Bool("amp"),
-		Blind:           ctx.Bool("blind"),
+		Memo:              ctx.String("memo"),
+		RPreimage:         preimage,
+		Value:             amt,
+		ValueMsat:         amtMsat,
+		DescriptionHash:   descHash,
+		FallbackAddr:      ctx.String("fallback_addr"),
+		Expiry:            ctx.Int64("expiry"),
+		CltvExpiry:        ctx.Uint64("cltv_expiry_delta"),
+		Private:           ctx.Bool("private"),
+		IsAmp:             ctx.Bool("amp"),
+		BlindedPathConfig: parseBlindedPathCfg(ctx),
 	}
 
 	resp, err := client.AddInvoice(ctxc, invoice)
@@ -162,6 +182,31 @@ func addInvoice(ctx *cli.Context) error {
 	printRespJSON(resp)
 
 	return nil
+}
+
+func parseBlindedPathCfg(ctx *cli.Context) *lnrpc.BlindedPathConfig {
+	if !ctx.Bool("blind") {
+		return nil
+	}
+
+	var blindCfg lnrpc.BlindedPathConfig
+
+	if ctx.IsSet("min_real_blinded_hops") {
+		minNumRealHops := uint32(ctx.Uint("min_real_blinded_hops"))
+		blindCfg.MinNumRealHops = &minNumRealHops
+	}
+
+	if ctx.IsSet("num_blinded_hops") {
+		numHops := uint32(ctx.Uint("num_blinded_hops"))
+		blindCfg.NumHops = &numHops
+	}
+
+	if ctx.IsSet("max_blinded_paths") {
+		maxPaths := uint32(ctx.Uint("max_blinded_paths"))
+		blindCfg.MaxNumPaths = &maxPaths
+	}
+
+	return &blindCfg
 }
 
 var lookupInvoiceCommand = cli.Command{

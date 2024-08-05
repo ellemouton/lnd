@@ -700,9 +700,6 @@ func DefaultConfig() Config {
 		},
 		Routing: &lncfg.Routing{
 			BlindedPaths: lncfg.BlindedPaths{
-				MinNumRealHops:           lncfg.DefaultMinNumRealBlindedPathHops,
-				NumHops:                  lncfg.DefaultNumBlindedPathHops,
-				MaxNumPaths:              lncfg.DefaultMaxNumBlindedPaths,
 				PolicyIncreaseMultiplier: lncfg.DefaultBlindedPathPolicyIncreaseMultiplier,
 				PolicyDecreaseMultiplier: lncfg.DefaultBlindedPathPolicyDecreaseMultiplier,
 			},
