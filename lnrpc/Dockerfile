@@ -12,7 +12,7 @@ ARG PROTOBUF_VERSION
 ARG GRPC_GATEWAY_VERSION
 
 ENV PROTOC_GEN_GO_GRPC_VERSION="v1.1.0"
-ENV FALAFEL_VERSION="v0.9.1"
+ENV FALAFEL_VERSION="v0.9.2"
 ENV GOCACHE=/tmp/build/.cache
 ENV GOMODCACHE=/tmp/build/.modcache
 
@@ -23,7 +23,7 @@ RUN cd /tmp \
   && go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@${PROTOC_GEN_GO_GRPC_VERSION} \
   && go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway@${GRPC_GATEWAY_VERSION} \
   && go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2@${GRPC_GATEWAY_VERSION} \
-  && go install github.com/lightninglabs/falafel@${FALAFEL_VERSION} \
+  && go install github.com/ellemouton/falafel@optionalUpdatesTest4 \
   && go install golang.org/x/tools/cmd/goimports@v0.1.7 \
   && chmod -R 777 /tmp/build/
 
