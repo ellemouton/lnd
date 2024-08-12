@@ -117,6 +117,10 @@ type PathInfo struct {
 	// This can be used to uniquely identify a path when an incoming payment
 	// is received.
 	LastEphemeralKey *btcec.PublicKey
+
+	// Route is the real un-blinded route that was used to construct the
+	// Path.
+	Route *models.MCRoute
 }
 
 // BuildBlindedPaymentPaths uses the passed config to construct a set of blinded
@@ -148,9 +152,9 @@ func BuildBlindedPaymentPaths(cfg *BuildBlindedPathCfg) ([]*PathInfo, error) {
 
 	// For each route returned, we will construct the associated blinded
 	// payment path.
-	for _, route := range routes {
+	for _, r := range routes {
 		// Extract the information we need from the route.
-		candidatePath := extractCandidatePath(route)
+		candidatePath := extractCandidatePath(r)
 
 		// Pad the given route with dummy hops until the minimum number
 		// of hops is met.
@@ -160,7 +164,7 @@ func BuildBlindedPaymentPaths(cfg *BuildBlindedPathCfg) ([]*PathInfo, error) {
 		if errors.Is(err, errInvalidBlindedPath) {
 			log.Debugf("Not using route (%s) as a blinded path "+
 				"since it resulted in an invalid blinded path",
-				route)
+				r)
 
 			continue
 		} else if err != nil {
@@ -169,6 +173,8 @@ func BuildBlindedPaymentPaths(cfg *BuildBlindedPathCfg) ([]*PathInfo, error) {
 
 			continue
 		}
+
+		path.Route = models.ToMCRoute(r)
 
 		log.Debugf("Route selected for blinded path: %s", candidatePath)
 
