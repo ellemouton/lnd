@@ -68,6 +68,11 @@ const (
 	// FeeEstimationTimeout. It defines the maximum duration that the
 	// probing fee estimation is allowed to take.
 	DefaultFeeEstimationTimeout = time.Minute
+
+	// DefaultMissionControlNamespace is the name of the default mission
+	// control name space. This is used as the sub-bucket key within the
+	// top level DB bucket to store mission control results.
+	DefaultMissionControlNamespace = "default"
 )
 
 var (
@@ -218,7 +223,7 @@ func NewMissionControl(db kvdb.Backend, self route.Vertex,
 	}
 
 	store, err := newMissionControlStore(
-		newNamespacedDB(db), cfg.MaxMcHistory,
+		newDefaultNamespacedStore(db), cfg.MaxMcHistory,
 		cfg.McFlushInterval,
 	)
 	if err != nil {
@@ -532,22 +537,30 @@ func (m *MissionControl) applyPaymentResult(
 }
 
 // namespacedDB is an implementation of the missionControlDB that gives a user
-// of the interface access to the top level mission control bucket. In a
-// follow-up commit (accompanied by a migration), this will change to giving
-// the user of the interface access to a namespaced sub-bucket instead.
+// of the interface access to a namespaced bucket within the top level mission
+// control bucket.
 type namespacedDB struct {
 	topLevelBucketKey []byte
+	namespace         []byte
 	db                kvdb.Backend
 }
 
 // A compile-time check to ensure that namespacedDB implements missionControlDB.
 var _ missionControlDB = (*namespacedDB)(nil)
 
+// newDefaultNamespacedStore creates an instance of namespaceDB that uses the
+// default namespace.
+func newDefaultNamespacedStore(db kvdb.Backend) missionControlDB {
+	return newNamespacedDB(db, DefaultMissionControlNamespace)
+}
+
 // newNamespacedDB creates a new instance of missionControlDB where the DB will
-// have access to the top level bucket.
-func newNamespacedDB(db kvdb.Backend) missionControlDB {
+// have access to a namespaced bucket within the top level mission control
+// bucket.
+func newNamespacedDB(db kvdb.Backend, namespace string) missionControlDB {
 	return &namespacedDB{
 		db:                db,
+		namespace:         []byte(namespace),
 		topLevelBucketKey: resultsKey,
 	}
 }
@@ -565,7 +578,16 @@ func (n *namespacedDB) update(f func(bkt walletdb.ReadWriteBucket) error,
 				"control bucket: %w", err)
 		}
 
-		return f(mcStoreBkt)
+		namespacedBkt, err := mcStoreBkt.CreateBucketIfNotExists(
+			n.namespace,
+		)
+		if err != nil {
+			return fmt.Errorf("cannot create namespaced bucket "+
+				"(%s) in mission control store: %w",
+				n.namespace, err)
+		}
+
+		return f(namespacedBkt)
 	}, reset)
 }
 
@@ -582,7 +604,13 @@ func (n *namespacedDB) view(f func(bkt walletdb.ReadBucket) error,
 				"not found")
 		}
 
-		return f(mcStoreBkt)
+		namespacedBkt := mcStoreBkt.NestedReadBucket(n.namespace)
+		if namespacedBkt == nil {
+			return fmt.Errorf("namespaced bucket (%s) not found "+
+				"in mission control store", n.namespace)
+		}
+
+		return f(namespacedBkt)
 	}, reset)
 }
 
@@ -591,12 +619,17 @@ func (n *namespacedDB) view(f func(bkt walletdb.ReadBucket) error,
 // NOTE: this is part of the missionControlDB interface.
 func (n *namespacedDB) clear() error {
 	return n.db.Update(func(tx kvdb.RwTx) error {
-		err := tx.DeleteTopLevelBucket(n.topLevelBucketKey)
+		mcStoreBkt := tx.ReadWriteBucket(n.topLevelBucketKey)
+		if mcStoreBkt == nil {
+			return nil
+		}
+
+		err := mcStoreBkt.DeleteNestedBucket(n.namespace)
 		if err != nil {
 			return err
 		}
 
-		_, err = tx.CreateTopLevelBucket(n.topLevelBucketKey)
+		_, err = mcStoreBkt.CreateBucket(n.namespace)
 
 		return err
 	}, func() {})

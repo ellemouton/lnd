@@ -58,7 +58,7 @@ func newMCStoreTestHarness(t testing.TB, maxRecords int,
 	})
 
 	store, err := newMissionControlStore(
-		newNamespacedDB(db), maxRecords, flushInterval,
+		newDefaultNamespacedStore(db), maxRecords, flushInterval,
 	)
 	require.NoError(t, err)
 
@@ -113,7 +113,7 @@ func TestMissionControlStore(t *testing.T) {
 
 	// Recreate store to test pruning.
 	store, err = newMissionControlStore(
-		newNamespacedDB(db), testMaxRecords, time.Second,
+		newDefaultNamespacedStore(db), testMaxRecords, time.Second,
 	)
 	require.NoError(t, err)
 
@@ -213,7 +213,7 @@ func TestMissionControlStoreFlushing(t *testing.T) {
 
 	// Recreate store.
 	store, err := newMissionControlStore(
-		newNamespacedDB(db), testMaxRecords, flushInterval,
+		newDefaultNamespacedStore(db), testMaxRecords, flushInterval,
 	)
 	require.NoError(t, err)
 	store.run()
