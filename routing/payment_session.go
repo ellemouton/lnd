@@ -157,7 +157,7 @@ type PaymentSession interface {
 
 // paymentSession is used during an HTLC routings session to prune the local
 // chain view in response to failures, and also report those failures back to
-// MissionControl. The snapshot copied for this session will only ever grow,
+// MissionController. The snapshot copied for this session will only ever grow,
 // and will now be pruned after a decay like the main view within mission
 // control. We do this as we want to avoid the case where we continually try a
 // bad edge or route multiple times in a session. This can lead to an infinite
@@ -182,7 +182,7 @@ type paymentSession struct {
 	// trade-off in path finding between fees and probability.
 	pathFindingConfig PathFindingConfig
 
-	missionControl MissionController
+	missionControl MissionControlQuerier
 
 	// minShardAmt is the amount beyond which we won't try to further split
 	// the payment if no route is found. If the maximum number of htlcs
@@ -197,7 +197,8 @@ type paymentSession struct {
 // newPaymentSession instantiates a new payment session.
 func newPaymentSession(p *LightningPayment, selfNode route.Vertex,
 	getBandwidthHints func(Graph) (bandwidthHints, error),
-	graphSessFactory GraphSessionFactory, missionControl MissionController,
+	graphSessFactory GraphSessionFactory,
+	missionControl MissionControlQuerier,
 	pathFindingConfig PathFindingConfig) (*paymentSession, error) {
 
 	edges, err := RouteHintsToEdges(p.RouteHints, p.Target)
@@ -263,7 +264,7 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 
 	// Taking into account this prune view, we'll attempt to locate a path
 	// to our destination, respecting the recommendations from
-	// MissionControl.
+	// MissionController.
 	restrictions := &RestrictParams{
 		ProbabilitySource:  p.missionControl.GetProbability,
 		FeeLimit:           feeLimit,

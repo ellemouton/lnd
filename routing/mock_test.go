@@ -122,10 +122,10 @@ func (m *mockPaymentSessionSourceOld) NewPaymentSessionEmpty() PaymentSession {
 }
 
 type mockMissionControlOld struct {
-	MissionControl
+	MissionController
 }
 
-var _ MissionController = (*mockMissionControlOld)(nil)
+var _ MissionControlQuerier = (*mockMissionControlOld)(nil)
 
 func (m *mockMissionControlOld) ReportPaymentFail(
 	paymentID uint64, rt *route.Route,
@@ -652,7 +652,7 @@ type mockMissionControl struct {
 	mock.Mock
 }
 
-var _ MissionController = (*mockMissionControl)(nil)
+var _ MissionControlQuerier = (*mockMissionControl)(nil)
 
 func (m *mockMissionControl) ReportPaymentFail(
 	paymentID uint64, rt *route.Route,

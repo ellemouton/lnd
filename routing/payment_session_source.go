@@ -9,7 +9,7 @@ import (
 	"github.com/lightningnetwork/lnd/zpay32"
 )
 
-// A compile time assertion to ensure MissionControl meets the
+// A compile time assertion to ensure MissionController meets the
 // PaymentSessionSource interface.
 var _ PaymentSessionSource = (*SessionSource)(nil)
 
@@ -38,7 +38,7 @@ type SessionSource struct {
 	// then take into account this set of pruned vertexes/edges to reduce
 	// route failure and pass on graph information gained to the next
 	// execution.
-	MissionControl MissionController
+	MissionControl MissionControlQuerier
 
 	// PathFindingConfig defines global parameters that control the
 	// trade-off in path finding between fees and probability.

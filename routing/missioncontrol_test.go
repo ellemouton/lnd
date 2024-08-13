@@ -85,7 +85,7 @@ func createMcTestContext(t *testing.T) *mcTestContext {
 // restartMc creates a new instances of mission control on the same database.
 func (ctx *mcTestContext) restartMc() {
 	// Since we don't run a timer to store results in unit tests, we store
-	// them here before fetching back everything in NewMissionControl.
+	// them here before fetching back everything in NewMissionController.
 	if ctx.mc != nil {
 		require.NoError(ctx.t, ctx.mc.store.storeResults())
 	}
@@ -99,7 +99,7 @@ func (ctx *mcTestContext) restartMc() {
 	estimator, err := NewAprioriEstimator(aCfg)
 	require.NoError(ctx.t, err)
 
-	mc, err := NewMissionControl(
+	mc, err := NewMissionController(
 		ctx.db, mcTestSelf,
 		&MissionControlConfig{Estimator: estimator},
 	)
@@ -108,7 +108,7 @@ func (ctx *mcTestContext) restartMc() {
 	}
 
 	mc.now = func() time.Time { return ctx.now }
-	ctx.mc = mc
+	ctx.mc = mc.GetDefaultStore()
 }
 
 // Assert that mission control returns a probability for an edge.
