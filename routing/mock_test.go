@@ -122,7 +122,7 @@ func (m *mockPaymentSessionSourceOld) NewPaymentSessionEmpty() PaymentSession {
 }
 
 type mockMissionControlOld struct {
-	MissionControl
+	MissionControlManager
 }
 
 var _ MissionController = (*mockMissionControlOld)(nil)

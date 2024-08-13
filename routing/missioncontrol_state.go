@@ -45,7 +45,7 @@ func (m *missionControlState) getLastPairResult(node route.Vertex) (NodeResults,
 	return result, ok
 }
 
-// ResetHistory resets the history of MissionControl returning it to a state as
+// ResetHistory resets the history of MissionControlManager returning it to a state as
 // if no payment attempts have been made.
 func (m *missionControlState) resetHistory() {
 	m.lastPairResult = make(map[route.Vertex]NodeResults)

@@ -157,7 +157,7 @@ type PaymentSession interface {
 
 // paymentSession is used during an HTLC routings session to prune the local
 // chain view in response to failures, and also report those failures back to
-// MissionControl. The snapshot copied for this session will only ever grow,
+// MissionControlManager. The snapshot copied for this session will only ever grow,
 // and will now be pruned after a decay like the main view within mission
 // control. We do this as we want to avoid the case where we continually try a
 // bad edge or route multiple times in a session. This can lead to an infinite
@@ -263,7 +263,7 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 
 	// Taking into account this prune view, we'll attempt to locate a path
 	// to our destination, respecting the recommendations from
-	// MissionControl.
+	// MissionControlManager.
 	restrictions := &RestrictParams{
 		ProbabilitySource:  p.missionControl.GetProbability,
 		FeeLimit:           feeLimit,

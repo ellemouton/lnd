@@ -9,7 +9,7 @@ import (
 	"github.com/lightningnetwork/lnd/zpay32"
 )
 
-// A compile time assertion to ensure MissionControl meets the
+// A compile time assertion to ensure MissionControlManager meets the
 // PaymentSessionSource interface.
 var _ PaymentSessionSource = (*SessionSource)(nil)
 

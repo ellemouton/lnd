@@ -128,10 +128,11 @@ func createTestCtxFromGraphInstanceAssumeValid(t *testing.T,
 
 	mcConfig := &MissionControlConfig{Estimator: estimator}
 
-	mc, err := NewMissionControl(
+	mcMgr, err := NewMissionControlMgr(
 		graphInstance.graphBackend, route.Vertex{}, mcConfig,
 	)
 	require.NoError(t, err, "failed to create missioncontrol")
+	mc := mcMgr.GetDefaultStore()
 
 	sourceNode, err := graphInstance.graph.SourceNode()
 	require.NoError(t, err)
@@ -1078,11 +1079,12 @@ func TestSendPaymentErrorPathPruning(t *testing.T) {
 			return preImage, nil
 		})
 
-	ctx.router.cfg.MissionControl.(*MissionControl).ResetHistory()
+	err := ctx.router.cfg.MissionControl.(*MissionControl).ResetHistory()
+	require.NoError(t, err)
 
 	// When we try to dispatch that payment, we should receive an error as
 	// both attempts should fail and cause both routes to be pruned.
-	_, _, err := ctx.router.SendPayment(payment)
+	_, _, err = ctx.router.SendPayment(payment)
 	require.Error(t, err, "payment didn't return error")
 
 	// The final error returned should also indicate that the peer wasn't
@@ -1141,7 +1143,8 @@ func TestSendPaymentErrorPathPruning(t *testing.T) {
 		getAliasFromPubKey(rt.Hops[0].PubKeyBytes, ctx.aliases),
 	)
 
-	ctx.router.cfg.MissionControl.(*MissionControl).ResetHistory()
+	err = ctx.router.cfg.MissionControl.(*MissionControl).ResetHistory()
+	require.NoError(t, err)
 
 	// Finally, we'll modify the SendToSwitch function to indicate that the
 	// roasbeef -> luoji channel has insufficient capacity. This should
