@@ -108,7 +108,8 @@ func (ctx *mcTestContext) restartMc() {
 	}
 
 	mc.now = func() time.Time { return ctx.now }
-	ctx.mc = mc.GetDefaultStore()
+	ctx.mc, err = mc.GetNamespacedStore(DefaultMissionControlNamespace)
+	require.NoError(ctx.t, err)
 }
 
 // Assert that mission control returns a probability for an edge.

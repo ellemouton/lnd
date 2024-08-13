@@ -133,9 +133,13 @@ type MissionControl struct {
 //
 // NOTE: currently it only has a MissionControl in the default namespace.
 type MissionControlManager struct {
+	db kvdb.Backend
+
+	defaultMCCfg *MissionControlConfig
+
 	*mcConfig
 
-	mc *MissionControl
+	mc map[string]*MissionControl
 	mu sync.Mutex
 
 	// TODO(roasbeef): further counters, if vertex continually unavailable,
@@ -144,12 +148,19 @@ type MissionControlManager struct {
 	// TODO(roasbeef): also add favorable metrics for nodes
 }
 
-// GetDefaultStore returns the MissionControl in the default namespace.
-func (m *MissionControlManager) GetDefaultStore() *MissionControl {
+// GetNamespacedStore returns the MissionControl in the given namespace. If one
+// does not yet exist, then it is initialised.
+func (m *MissionControlManager) GetNamespacedStore(ns string) (*MissionControl,
+	error) {
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return m.mc
+	if mc, ok := m.mc[ns]; ok {
+		return mc, nil
+	}
+
+	return m.initMissionControl(ns)
 }
 
 // MissionControlConfig defines parameters that control mission control
@@ -250,64 +261,122 @@ func NewMissionControlMgr(db kvdb.Backend, self route.Vertex,
 		return nil, err
 	}
 
+	mcCfg := &mcConfig{
+		now:      time.Now,
+		selfNode: self,
+	}
+
+	mgr := &MissionControlManager{
+		db:           db,
+		defaultMCCfg: cfg,
+		mcConfig:     mcCfg,
+		mc:           make(map[string]*MissionControl),
+	}
+
+	if err := mgr.loadMissionControls(); err != nil {
+		return nil, err
+	}
+
+	for _, mc := range mgr.mc {
+		if err := mc.init(); err != nil {
+			return nil, err
+		}
+	}
+
+	return mgr, nil
+}
+
+// loadMissionControls initialises a MissionControl in the default namespace if
+// one does not yet exist. It then initialises a MissionControl for all other
+// namespaces found in the DB.
+func (m *MissionControlManager) loadMissionControls() error {
+	// Always initialise the default namespace.
+	_, err := m.initMissionControl(DefaultMissionControlNamespace)
+	if err != nil {
+		return err
+	}
+
+	return m.db.View(func(tx walletdb.ReadTx) error {
+		mcStoreBkt := tx.ReadBucket(resultsKey)
+		if mcStoreBkt == nil {
+			return fmt.Errorf("top level mission control bucket " +
+				"not found")
+		}
+
+		// Iterate through all the keys in bucket and initialise an
+		// in-memory mission control for each namespace.
+		return mcStoreBkt.ForEach(func(k, _ []byte) error {
+			_, err := m.initMissionControl(string(k))
+
+			return err
+		})
+	}, func() {})
+}
+
+// initMissionControl creates a new MissionControl instance with the given
+// namespace if one does not yet exist.
+func (m *MissionControlManager) initMissionControl(namespace string) (
+	*MissionControl, error) {
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// If a mission control with this namespace has already been initialised
+	// then there is nothing left to do.
+	if mc, ok := m.mc[namespace]; ok {
+		return mc, nil
+	}
+
+	cfg := m.defaultMCCfg
+
 	store, err := newMissionControlStore(
-		newDefaultNamespacedStore(db), cfg.MaxMcHistory,
+		newNamespacedDB(m.db, namespace), cfg.MaxMcHistory,
 		cfg.McFlushInterval,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	mcCfg := &mcConfig{
-		now:      time.Now,
-		selfNode: self,
-	}
-
-	// Create a mission control in the default namespace.
-	defaultMC := &MissionControl{
-		mcConfig:  mcCfg,
+	mc := &MissionControl{
+		mcConfig:  m.mcConfig,
 		state:     newMissionControlState(cfg.MinFailureRelaxInterval),
 		store:     store,
 		estimator: cfg.Estimator,
 		log: build.NewPrefixLog(
-			fmt.Sprintf("[%s]:", DefaultMissionControlNamespace),
-			log,
+			fmt.Sprintf("[%s]:", namespace), log,
 		),
 	}
 
-	mc := &MissionControlManager{
-		mcConfig: mcCfg,
-		mc:       defaultMC,
-	}
-
-	if err := mc.init(); err != nil {
-		return nil, err
-	}
+	m.mc[namespace] = mc
 
 	return mc, nil
 }
 
-// RunStoreTicker runs the mission control store's ticker.
-func (m *MissionControlManager) RunStoreTicker() {
+// RunStoreTickers runs the mission control store's tickers.
+func (m *MissionControlManager) RunStoreTickers() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.mc.store.run()
+	for _, mc := range m.mc {
+		mc.store.run()
+	}
 }
 
-// StopStoreTicker stops the mission control store's ticker.
-func (m *MissionControlManager) StopStoreTicker() {
+// StopStoreTickers stops the mission control store's tickers.
+func (m *MissionControlManager) StopStoreTickers() {
 	log.Debug("Stopping mission control store ticker")
 	defer log.Debug("Mission control store ticker stopped")
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.mc.store.stop()
+	for _, mc := range m.mc {
+		mc.store.stop()
+	}
 }
 
 // init initializes mission control with historical data.
-func (m *MissionControlManager) init() error {
+func (m *MissionControl) init() error {
 	log.Debugf("Mission control state reconstruction started")
 
 	m.mu.Lock()
@@ -315,13 +384,13 @@ func (m *MissionControlManager) init() error {
 
 	start := time.Now()
 
-	results, err := m.mc.store.fetchAll()
+	results, err := m.store.fetchAll()
 	if err != nil {
 		return err
 	}
 
 	for _, result := range results {
-		_ = m.mc.applyPaymentResult(result)
+		_ = m.applyPaymentResult(result)
 	}
 
 	log.Debugf("Mission control state reconstruction finished: "+

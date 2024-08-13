@@ -162,7 +162,8 @@ func (c *integratedRoutingContext) testPayment(maxParts uint32,
 	mcMgr, err := NewMissionControlMgr(db, c.source.pubkey, &c.mcCfg)
 	require.NoError(c.t, err)
 
-	mc := mcMgr.GetDefaultStore()
+	mc, err := mcMgr.GetNamespacedStore(DefaultMissionControlNamespace)
+	require.NoError(c.t, err)
 
 	getBandwidthHints := func(_ Graph) (bandwidthHints, error) {
 		// Create bandwidth hints based on local channel balances.
