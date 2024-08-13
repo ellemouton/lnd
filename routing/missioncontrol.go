@@ -116,7 +116,7 @@ type MissionControl struct {
 	// results that mission control collects.
 	estimator Estimator
 
-	sync.Mutex
+	mu sync.Mutex
 
 	// TODO(roasbeef): further counters, if vertex continually unavailable,
 	// add to another generation
@@ -283,8 +283,8 @@ func (m *MissionControl) init() error {
 // with. All fields are copied by value, so we do not need to worry about
 // mutation.
 func (m *MissionControl) GetConfig() *MissionControlConfig {
-	m.Lock()
-	defer m.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	return &MissionControlConfig{
 		Estimator:               m.estimator,
@@ -305,8 +305,8 @@ func (m *MissionControl) SetConfig(cfg *MissionControlConfig) error {
 		return err
 	}
 
-	m.Lock()
-	defer m.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	log.Infof("Active mission control cfg: %v, estimator: %v", cfg,
 		cfg.Estimator)
@@ -321,8 +321,8 @@ func (m *MissionControl) SetConfig(cfg *MissionControlConfig) error {
 // ResetHistory resets the history of MissionControl returning it to a state as
 // if no payment attempts have been made.
 func (m *MissionControl) ResetHistory() error {
-	m.Lock()
-	defer m.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if err := m.store.clear(); err != nil {
 		return err
@@ -340,8 +340,8 @@ func (m *MissionControl) ResetHistory() error {
 func (m *MissionControl) GetProbability(fromNode, toNode route.Vertex,
 	amt lnwire.MilliSatoshi, capacity btcutil.Amount) float64 {
 
-	m.Lock()
-	defer m.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	now := m.now()
 	results, _ := m.state.getLastPairResult(fromNode)
@@ -359,8 +359,8 @@ func (m *MissionControl) GetProbability(fromNode, toNode route.Vertex,
 // GetHistorySnapshot takes a snapshot from the current mission control state
 // and actual probability estimates.
 func (m *MissionControl) GetHistorySnapshot() *MissionControlSnapshot {
-	m.Lock()
-	defer m.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	log.Debugf("Requesting history snapshot from mission control")
 
@@ -377,8 +377,8 @@ func (m *MissionControl) ImportHistory(history *MissionControlSnapshot,
 		return errors.New("cannot import nil history")
 	}
 
-	m.Lock()
-	defer m.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	log.Infof("Importing history snapshot with %v pairs to mission control",
 		len(history.Pairs))
@@ -394,8 +394,8 @@ func (m *MissionControl) ImportHistory(history *MissionControlSnapshot,
 func (m *MissionControl) GetPairHistorySnapshot(
 	fromNode, toNode route.Vertex) TimedPairResult {
 
-	m.Lock()
-	defer m.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	results, ok := m.state.getLastPairResult(fromNode)
 	if !ok {
@@ -461,8 +461,8 @@ func (m *MissionControl) processPaymentResult(result *paymentResult) (
 	// Store complete result in database.
 	m.store.AddResult(result)
 
-	m.Lock()
-	defer m.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	// Apply result to update mission control state.
 	reason := m.applyPaymentResult(result)
