@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btclog"
 	"github.com/btcsuite/btcwallet/walletdb"
+	"github.com/lightningnetwork/lnd/build"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -121,6 +123,8 @@ type MissionControl struct {
 	// estimator is the probability estimator that is used with the payment
 	// results that mission control collects.
 	estimator Estimator
+
+	log btclog.Logger
 
 	mu sync.Mutex
 }
@@ -265,6 +269,10 @@ func NewMissionController(db kvdb.Backend, self route.Vertex,
 		state:     newMissionControlState(cfg.MinFailureRelaxInterval),
 		store:     store,
 		estimator: cfg.Estimator,
+		log: build.NewPrefixLog(
+			fmt.Sprintf("[%s]:", DefaultMissionControlNamespace),
+			log,
+		),
 	}
 
 	mc := &MissionController{
@@ -300,7 +308,7 @@ func (m *MissionController) StopStoreTicker() {
 
 // init initializes mission control with historical data.
 func (m *MissionControl) init() error {
-	log.Debugf("Mission control state reconstruction started")
+	m.log.Debugf("Mission control state reconstruction started")
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -316,7 +324,7 @@ func (m *MissionControl) init() error {
 		_ = m.applyPaymentResult(result)
 	}
 
-	log.Debugf("Mission control state reconstruction finished: "+
+	m.log.Debugf("Mission control state reconstruction finished: "+
 		"n=%v, time=%v", len(results), time.Since(start))
 
 	return nil
@@ -351,7 +359,7 @@ func (m *MissionControl) SetConfig(cfg *MissionControlConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	log.Infof("Active mission control cfg: %v, estimator: %v", cfg,
+	m.log.Infof("Active mission control cfg: %v, estimator: %v", cfg,
 		cfg.Estimator)
 
 	m.store.maxRecords = cfg.MaxMcHistory
@@ -373,7 +381,7 @@ func (m *MissionControl) ResetHistory() error {
 
 	m.state.resetHistory()
 
-	log.Debugf("Mission control history cleared")
+	m.log.Debugf("Mission control history cleared")
 
 	return nil
 }
@@ -405,7 +413,7 @@ func (m *MissionControl) GetHistorySnapshot() *MissionControlSnapshot {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	log.Debugf("Requesting history snapshot from mission control")
+	m.log.Debugf("Requesting history snapshot from mission control")
 
 	return m.state.getSnapshot()
 }
@@ -423,12 +431,12 @@ func (m *MissionControl) ImportHistory(history *MissionControlSnapshot,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	log.Infof("Importing history snapshot with %v pairs to mission control",
-		len(history.Pairs))
+	m.log.Infof("Importing history snapshot with %v pairs to mission "+
+		"control", len(history.Pairs))
 
 	imported := m.state.importSnapshot(history, force)
 
-	log.Infof("Imported %v results to mission control", imported)
+	m.log.Infof("Imported %v results to mission control", imported)
 
 	return nil
 }
@@ -552,7 +560,7 @@ func (m *MissionControl) applyPaymentResult(
 	// that case, a node-level failure would not be applied to untried
 	// channels.
 	if i.nodeFailure != nil {
-		log.Debugf("Reporting node failure to Mission Control: "+
+		m.log.Debugf("Reporting node failure to Mission Control: "+
 			"node=%v", *i.nodeFailure)
 
 		m.state.setAllFail(*i.nodeFailure, result.timeReply)
@@ -562,11 +570,11 @@ func (m *MissionControl) applyPaymentResult(
 		pairResult := pairResult
 
 		if pairResult.success {
-			log.Debugf("Reporting pair success to Mission "+
+			m.log.Debugf("Reporting pair success to Mission "+
 				"Control: pair=%v, amt=%v",
 				pair, pairResult.amt)
 		} else {
-			log.Debugf("Reporting pair failure to Mission "+
+			m.log.Debugf("Reporting pair failure to Mission "+
 				"Control: pair=%v, amt=%v",
 				pair, pairResult.amt)
 		}
