@@ -32,6 +32,8 @@
 # Improvements
 ## Functional Updates
 
+* Start reporting successful recieves from blinded paths to mission control.
+
 ## RPC Updates
 
 ## lncli Updates
