@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -258,7 +259,9 @@ func (c *integratedRoutingContext) testPayment(maxParts uint32,
 		if success {
 			inFlightHtlcs++
 
-			err := mc.ReportPaymentSuccess(pid, route)
+			err := mc.ReportPaymentSuccess(
+				pid, models.ToMCRoute(route),
+			)
 			if err != nil {
 				c.t.Fatal(err)
 			}
@@ -277,7 +280,7 @@ func (c *integratedRoutingContext) testPayment(maxParts uint32,
 
 		// Failure, update mission control and retry.
 		finalResult, err := mc.ReportPaymentFail(
-			pid, route,
+			pid, models.ToMCRoute(route),
 			getNodeIndex(route, htlcResult.failureSource),
 			htlcResult.failure,
 		)

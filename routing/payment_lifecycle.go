@@ -551,7 +551,7 @@ func (p *paymentLifecycle) collectResult(attempt *channeldb.HTLCAttempt) (
 
 	// Report success to mission control.
 	err = p.router.cfg.MissionControl.ReportPaymentSuccess(
-		attempt.AttemptID, &attempt.Route,
+		attempt.AttemptID, models.ToMCRoute(&attempt.Route),
 	)
 	if err != nil {
 		log.Errorf("Error reporting payment success to mc: %v", err)
@@ -765,7 +765,8 @@ func (p *paymentLifecycle) handleSwitchErr(attempt *channeldb.HTLCAttempt,
 
 		// Report outcome to mission control.
 		reason, err := p.router.cfg.MissionControl.ReportPaymentFail(
-			attemptID, &attempt.Route, srcIdx, msg,
+			attemptID, models.ToMCRoute(&attempt.Route), srcIdx,
+			msg,
 		)
 		if err != nil {
 			log.Errorf("Error reporting payment result to mc: %v",
