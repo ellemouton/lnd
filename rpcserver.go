@@ -5829,6 +5829,14 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 			"be included in each path")
 	}
 
+	blindedPathMC, err := r.server.missionController.GetNamespacedStore(
+		routing.BlindedPathMissionControlNamespace,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("could not initialise mission control "+
+			"in the blinded paths namespace: %w", err)
+	}
+
 	addInvoiceCfg := &invoicesrpc.AddInvoiceConfig{
 		AddInvoice:        r.server.invoices.AddInvoice,
 		IsChannelActive:   r.server.htlcSwitch.HasActiveLink,
@@ -5867,8 +5875,7 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 			[]*route.Route, error) {
 
 			return r.server.chanRouter.FindBlindedPaths(
-				r.selfNode, amt,
-				r.server.defaultMC.GetProbability,
+				r.selfNode, amt, blindedPathMC.GetProbability,
 				blindingRestrictions,
 			)
 		},
