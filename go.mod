@@ -206,6 +206,8 @@ replace google.golang.org/protobuf => github.com/lightninglabs/protobuf-go-hex-d
 
 replace github.com/lightningnetwork/lightning-onion => github.com/ellemouton/lightning-onion v1.2.1-0.20240814083821-8826a6b7cf2f
 
+replace github.com/lightningnetwork/lnd/sqldb => github.com/ellemouton/lnd/sqldb v0.0.0-20240814143155-40c067be62c8
+
 // If you change this please also update .github/pull_request_template.md,
 // docs/INSTALL.md and GO_IMAGE in lnrpc/gen_protos_docker.sh.
 go 1.21.4

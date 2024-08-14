@@ -10,11 +10,13 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/record"
+	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/sqldb"
 	"github.com/lightningnetwork/lnd/sqldb/sqlc"
 )
@@ -70,6 +72,19 @@ type SQLInvoiceQueries interface { //nolint:interfacebloat
 		sql.Result, error)
 
 	DeleteCanceledInvoices(ctx context.Context) (sql.Result, error)
+
+	// Blinded path specific methods.
+	FetchBlindedPathHops(ctx context.Context, blindedPathID int64) (
+		[]sqlc.BlindedPathHop, error)
+
+	FetchBlindedPaths(ctx context.Context, invoiceID int64) (
+		[]sqlc.BlindedPath, error)
+
+	InsertBlindedPath(ctx context.Context,
+		arg sqlc.InsertBlindedPathParams) (int64, error)
+
+	InsertBlindedPathHop(ctx context.Context,
+		arg sqlc.InsertBlindedPathHopParams) error
 
 	// AMP sub invoice specific methods.
 	UpsertAMPSubInvoice(ctx context.Context,
@@ -285,6 +300,32 @@ func (i *SQLStore) AddInvoice(ctx context.Context,
 			}
 		}
 
+		for lastEphem, path := range newInvoice.BlindedPaths {
+			pathID, err := db.InsertBlindedPath(ctx, sqlc.InsertBlindedPathParams{
+				InvoiceID:        invoiceID,
+				LastEphemeralPub: lastEphem[:],
+				SessionKey:       path.SessionKey.Serialize(),
+				IntroductionNode: path.Route.SourcePubKey[:],
+				AmountMsat:       int64(path.Route.TotalAmount),
+			})
+			if err != nil {
+				return err
+			}
+
+			for hopIndex, hop := range path.Route.Hops {
+				err = db.InsertBlindedPathHop(ctx, sqlc.InsertBlindedPathHopParams{
+					BlindedPathID: pathID,
+					HopIndex:      int64(hopIndex),
+					ChannelID:     int64(hop.ChannelID),
+					NodePubKey:    hop.PubKeyBytes[:],
+					AmountToFwd:   int64(hop.AmtToFwd),
+				})
+				if err != nil {
+					return err
+				}
+			}
+		}
+
 		// Finally add a new event for this invoice.
 		return db.OnInvoiceCreated(ctx, sqlc.OnInvoiceCreatedParams{
 			AddedAt:   newInvoice.CreationDate.UTC(),
@@ -401,6 +442,72 @@ func (i *SQLStore) fetchInvoice(ctx context.Context,
 	}
 
 	return invoice, nil
+}
+
+func fetchBlindedPaths(ctx context.Context, db SQLInvoiceQueries,
+	invoiceID int64) (models.BlindedPathsInfo, error) {
+
+	blindedPathRows, err := db.FetchBlindedPaths(ctx, invoiceID)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(blindedPathRows) == 0 {
+		return nil, err
+	}
+
+	info := make(models.BlindedPathsInfo, len(blindedPathRows))
+
+	for _, sqlPath := range blindedPathRows {
+		lastEphem, err := btcec.ParsePubKey(sqlPath.LastEphemeralPub)
+		if err != nil {
+			return nil, err
+		}
+
+		sessKey, _ := btcec.PrivKeyFromBytes(sqlPath.SessionKey)
+		if err != nil {
+			return nil, err
+		}
+
+		introNode, err := btcec.ParsePubKey(sqlPath.IntroductionNode)
+		if err != nil {
+			return nil, err
+		}
+
+		sqlHops, err := db.FetchBlindedPathHops(ctx, sqlPath.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		hops := make([]*models.MCHop, len(sqlHops))
+		for i, sqlHop := range sqlHops {
+			hopKey, err := btcec.ParsePubKey(sqlHop.NodePubKey)
+			if err != nil {
+				return nil, err
+			}
+			hops[i] = &models.MCHop{
+				ChannelID:   uint64(sqlHop.ChannelID),
+				PubKeyBytes: route.NewVertex(hopKey),
+				AmtToFwd: lnwire.MilliSatoshi(
+					sqlHop.AmountToFwd,
+				),
+				HasBlindingPoint: true,
+			}
+		}
+
+		info[route.NewVertex(lastEphem)] = &models.BlindedPathInfo{
+			Route: &models.MCRoute{
+				SourcePubKey: route.NewVertex(introNode),
+				TotalAmount: lnwire.MilliSatoshi(
+					sqlPath.AmountMsat,
+				),
+				Hops: hops,
+			},
+			SessionKey: sessKey,
+		}
+	}
+
+	return info, err
 }
 
 // fetchAmpState fetches the AMP state for the invoice with the given ID.
@@ -1456,6 +1563,18 @@ func fetchInvoiceData(ctx context.Context, db SQLInvoiceQueries,
 		return hash, invoice, nil
 	}
 
+	// If this is a blinded invoice, we'll fetch the blinded path info if it
+	// exists.
+	if invoice.IsBlinded() {
+		invoiceID := int64(invoice.AddIndex)
+		blindedPathInfo, err := fetchBlindedPaths(ctx, db, invoiceID)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		invoice.BlindedPaths = blindedPathInfo
+	}
+
 	// Otherwise simply fetch the invoice HTLCs.
 	htlcs, err := getInvoiceHtlcs(ctx, db, row.ID)
 	if err != nil {
@@ -1613,12 +1732,13 @@ func unmarshalInvoice(row sqlc.Invoice) (*lntypes.Hash, *Invoice,
 			Value:           lnwire.MilliSatoshi(row.AmountMsat),
 			PaymentAddr:     paymentAddr,
 		},
-		AddIndex:    uint64(row.ID),
-		State:       ContractState(row.State),
-		AmtPaid:     lnwire.MilliSatoshi(row.AmountPaidMsat),
-		Htlcs:       make(map[models.CircuitKey]*InvoiceHTLC),
-		AMPState:    AMPInvoiceState{},
-		HodlInvoice: row.IsHodl,
+		AddIndex:     uint64(row.ID),
+		State:        ContractState(row.State),
+		AmtPaid:      lnwire.MilliSatoshi(row.AmountPaidMsat),
+		Htlcs:        make(map[models.CircuitKey]*InvoiceHTLC),
+		AMPState:     AMPInvoiceState{},
+		HodlInvoice:  row.IsHodl,
+		BlindedPaths: models.BlindedPathsInfo{},
 	}
 
 	return &hash, invoice, nil
