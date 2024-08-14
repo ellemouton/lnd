@@ -47,10 +47,13 @@
 ## Testing
 ## Database
 
+* Add new SQL tables for blinded paths. 
+
 ## Code Health
 
 ## Tooling and Documentation
 
 # Contributors (Alphabetical Order)
 
+* Elle Mouton
 * Ziggie
