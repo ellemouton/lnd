@@ -63,6 +63,41 @@ func TestMigrations(t *testing.T) {
 	}
 }
 
+const insertInvoice = `-- name: InsertInvoice :one
+INSERT INTO invoices (
+    hash, preimage, memo, amount_msat, cltv_delta, expiry, payment_addr, 
+    payment_request, payment_request_hash, state, amount_paid_msat, is_amp,
+    is_hodl, is_keysend, created_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+) RETURNING id
+`
+
+func insertInvoiceV3(ctx context.Context, db *BaseDB,
+	arg sqlc.InsertInvoiceParams) (int64, error) {
+
+	row := db.QueryRowContext(ctx, insertInvoice,
+		arg.Hash,
+		arg.Preimage,
+		arg.Memo,
+		arg.AmountMsat,
+		arg.CltvDelta,
+		arg.Expiry,
+		arg.PaymentAddr,
+		arg.PaymentRequest,
+		arg.PaymentRequestHash,
+		arg.State,
+		arg.AmountPaidMsat,
+		arg.IsAmp,
+		arg.IsHodl,
+		arg.IsKeysend,
+		arg.CreatedAt,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 // TestInvoiceExpiryMigration tests that the migration from version 3 to 4
 // correctly sets the expiry value of normal invoices to 86400 seconds and
 // 2592000 seconds for AMP invoices.
@@ -82,7 +117,7 @@ func testInvoiceExpiryMigration(t *testing.T, makeDB makeMigrationTestDB) {
 
 	// Add an invoice where is_amp will be set to false.
 	hash1 := []byte{1, 2, 3}
-	_, err := db.InsertInvoice(ctxb, sqlc.InsertInvoiceParams{
+	_, err := insertInvoiceV3(ctxb, db, sqlc.InsertInvoiceParams{
 		Hash:               hash1,
 		PaymentAddr:        hash1,
 		PaymentRequestHash: hash1,
@@ -93,7 +128,7 @@ func testInvoiceExpiryMigration(t *testing.T, makeDB makeMigrationTestDB) {
 
 	// Add an invoice where is_amp will be set to false.
 	hash2 := []byte{4, 5, 6}
-	_, err = db.InsertInvoice(ctxb, sqlc.InsertInvoiceParams{
+	_, err = insertInvoiceV3(ctxb, db, sqlc.InsertInvoiceParams{
 		Hash:               hash2,
 		PaymentAddr:        hash2,
 		PaymentRequestHash: hash2,
@@ -105,7 +140,7 @@ func testInvoiceExpiryMigration(t *testing.T, makeDB makeMigrationTestDB) {
 	// Now, we'll attempt to execute the migration that will fix the expiry
 	// values by inserting 86400 seconds for non AMP and 2592000 seconds for
 	// AMP invoices.
-	err = migrate(TargetVersion(4))
+	err = migrate(TargetVersion(5))
 
 	invoices, err := db.FilterInvoices(ctxb, sqlc.FilterInvoicesParams{
 		AddIndexGet: SQLInt64(1),
