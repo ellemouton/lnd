@@ -11,6 +11,7 @@ import (
 	"github.com/btcsuite/btcwallet/walletdb"
 	"github.com/lightningnetwork/lnd/build"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -256,7 +257,7 @@ type MissionControlPairSnapshot struct {
 type paymentResult struct {
 	id                 uint64
 	timeFwd, timeReply time.Time
-	route              *mcRoute
+	route              *models.MCRoute
 	success            bool
 	failureSourceIdx   *int
 	failure            lnwire.FailureMessage
@@ -559,7 +560,7 @@ func (m *MissionControl) ReportPaymentFail(paymentID uint64, rt *route.Route,
 		id:               paymentID,
 		failureSourceIdx: failureSourceIdx,
 		failure:          failure,
-		route:            extractMCRoute(rt),
+		route:            models.ToMCRoute(rt),
 	}
 
 	return m.processPaymentResult(result)
@@ -577,7 +578,7 @@ func (m *MissionControl) ReportPaymentSuccess(paymentID uint64,
 		timeReply: timestamp,
 		id:        paymentID,
 		success:   true,
-		route:     extractMCRoute(rt),
+		route:     models.ToMCRoute(rt),
 	}
 
 	_, err := m.processPaymentResult(result)

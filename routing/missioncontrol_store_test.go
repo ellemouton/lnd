@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcwallet/walletdb"
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lntest/wait"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -18,11 +19,11 @@ const testMaxRecords = 2
 
 var (
 	// mcStoreTestRoute is a test route for the mission control store tests.
-	mcStoreTestRoute = mcRoute{
-		sourcePubKey: route.Vertex{1},
-		hops: []*mcHop{
+	mcStoreTestRoute = models.MCRoute{
+		SourcePubKey: route.Vertex{1},
+		Hops: []*models.MCHop{
 			{
-				pubKeyBytes: route.Vertex{2},
+				PubKeyBytes: route.Vertex{2},
 			},
 		},
 	}
