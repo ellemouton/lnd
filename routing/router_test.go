@@ -2764,7 +2764,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 	)
 	require.NoError(t, err, "unable to create channel edge")
 
-	edge := &models.ChannelEdgeInfo{
+	edge := &models.ChannelEdgeInfo1{
 		ChannelID:        chanID.ToUint64(),
 		NodeKey1Bytes:    pub1,
 		NodeKey2Bytes:    pub2,
@@ -2843,7 +2843,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 		10000, 510)
 	require.NoError(t, err, "unable to create channel edge")
 
-	edge = &models.ChannelEdgeInfo{
+	edge = &models.ChannelEdgeInfo1{
 		ChannelID: chanID.ToUint64(),
 		AuthProof: nil,
 	}
