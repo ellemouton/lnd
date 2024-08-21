@@ -137,7 +137,7 @@ func TestEdgeInfoSerialisation(t *testing.T) {
 					ExtraOpaqueData: make([]byte, 0),
 				}
 
-				features := randFeatureVector(r)
+				features := randRawFeatureVector(r)
 				ann.Features.Val = *features
 
 				scid := lnwire.NewShortChanIDFromInt(r.Uint64())
@@ -252,7 +252,7 @@ func randRawKey(t *testing.T) [33]byte {
 	return n
 }
 
-func randFeatureVector(r *rand.Rand) *lnwire.FeatureVector {
+func randRawFeatureVector(r *rand.Rand) *lnwire.RawFeatureVector {
 	featureVec := lnwire.NewRawFeatureVector()
 	for i := 0; i < 10000; i++ {
 		if r.Int31n(2) == 0 {
@@ -260,5 +260,5 @@ func randFeatureVector(r *rand.Rand) *lnwire.FeatureVector {
 		}
 	}
 
-	return lnwire.NewFeatureVector(featureVec, lnwire.Features)
+	return featureVec
 }
