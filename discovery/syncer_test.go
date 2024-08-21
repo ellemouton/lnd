@@ -302,7 +302,7 @@ func TestGossipSyncerFilterGossipMsgsAllInMemory(t *testing.T) {
 		},
 		{
 			// Ann tuple below horizon.
-			msg: &lnwire.ChannelAnnouncement{
+			msg: &lnwire.ChannelAnnouncement1{
 				ShortChannelID: lnwire.NewShortChanIDFromInt(10),
 			},
 		},
@@ -314,7 +314,7 @@ func TestGossipSyncerFilterGossipMsgsAllInMemory(t *testing.T) {
 		},
 		{
 			// Ann tuple above horizon.
-			msg: &lnwire.ChannelAnnouncement{
+			msg: &lnwire.ChannelAnnouncement1{
 				ShortChannelID: lnwire.NewShortChanIDFromInt(15),
 			},
 		},
@@ -326,7 +326,7 @@ func TestGossipSyncerFilterGossipMsgsAllInMemory(t *testing.T) {
 		},
 		{
 			// Ann tuple beyond horizon.
-			msg: &lnwire.ChannelAnnouncement{
+			msg: &lnwire.ChannelAnnouncement1{
 				ShortChannelID: lnwire.NewShortChanIDFromInt(20),
 			},
 		},
@@ -339,7 +339,7 @@ func TestGossipSyncerFilterGossipMsgsAllInMemory(t *testing.T) {
 		{
 			// Ann w/o an update at all, the update in the DB will
 			// be below the horizon.
-			msg: &lnwire.ChannelAnnouncement{
+			msg: &lnwire.ChannelAnnouncement1{
 				ShortChannelID: lnwire.NewShortChanIDFromInt(25),
 			},
 		},
@@ -702,7 +702,7 @@ func TestGossipSyncerReplyShortChanIDs(t *testing.T) {
 	}
 
 	queryReply := []lnwire.Message{
-		&lnwire.ChannelAnnouncement{
+		&lnwire.ChannelAnnouncement1{
 			ShortChannelID: lnwire.NewShortChanIDFromInt(20),
 		},
 		&lnwire.ChannelUpdate{
