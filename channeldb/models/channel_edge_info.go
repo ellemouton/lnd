@@ -346,7 +346,7 @@ func (c *ChannelEdgeInfo1) FundingScript() ([]byte, error) {
 		}
 
 		fundingScript, _, err := input.GenTaprootFundingScript(
-			pubKey1, pubKey2, 0, fn.None[chainhash.Hash](),
+			pubKey1, pubKey2, 0, c.TapscriptRoot,
 		)
 		if err != nil {
 			return nil, err
