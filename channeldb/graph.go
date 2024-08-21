@@ -444,16 +444,23 @@ func (c *ChannelGraph) ForEachChannel(cb func(*models.ChannelEdgeInfo1,
 			}
 
 			policy1 := channelMap[channelMapKey{
-				nodeKey: info.NodeKey1Bytes,
+				nodeKey: info.Node1Bytes(),
 				chanID:  chanID,
 			}]
 
 			policy2 := channelMap[channelMapKey{
-				nodeKey: info.NodeKey2Bytes,
+				nodeKey: info.Node2Bytes(),
 				chanID:  chanID,
 			}]
 
-			return cb(&info, policy1, policy2)
+			edgeInfo, ok := info.(*models.ChannelEdgeInfo1)
+			if !ok {
+				return fmt.Errorf("expected "+
+					"*models.ChannelEdgeInfo1, got %T",
+					edgeInfo)
+			}
+
+			return cb(edgeInfo, policy1, policy2)
 		})
 	}, func() {})
 }
@@ -1095,7 +1102,7 @@ func (c *ChannelGraph) addChannelEdge(tx kvdb.RwTx,
 	// If the edge hasn't been created yet, then we'll first add it to the
 	// edge index in order to associate the edge between two nodes and also
 	// store the static components of the channel.
-	if err := putChanEdgeInfo(edgeIndex, edge, chanKey); err != nil {
+	if err := putChanEdgeInfo(edgeIndex, edge); err != nil {
 		return err
 	}
 
@@ -1259,7 +1266,7 @@ func (c *ChannelGraph) UpdateChannelEdge(edge *models.ChannelEdgeInfo1) error {
 			c.graphCache.UpdateChannel(edge)
 		}
 
-		return putChanEdgeInfo(edgeIndex, edge, chanKey)
+		return putChanEdgeInfo(edgeIndex, edge)
 	}, func() {})
 }
 
@@ -1353,7 +1360,14 @@ func (c *ChannelGraph) PruneGraph(spentOutputs []*wire.OutPoint,
 				return err
 			}
 
-			chansClosed = append(chansClosed, &edgeInfo)
+			info, ok := edgeInfo.(*models.ChannelEdgeInfo1)
+			if !ok {
+				return fmt.Errorf("expected "+
+					"*models.ChannelEdgeInfo1, got %T",
+					edgeInfo)
+			}
+
+			chansClosed = append(chansClosed, info)
 		}
 
 		metaBucket, err := tx.CreateTopLevelBucket(graphMetaBucket)
@@ -1472,17 +1486,17 @@ func (c *ChannelGraph) pruneGraphNodes(nodes kvdb.RwBucket,
 	// edge info. We'll use this scan to populate our reference count map
 	// above.
 	err = edgeIndex.ForEach(func(chanID, edgeInfoBytes []byte) error {
-		// The first 66 bytes of the edge info contain the pubkeys of
-		// the nodes that this edge attaches. We'll extract them, and
-		// add them to the ref count map.
-		var node1, node2 [33]byte
-		copy(node1[:], edgeInfoBytes[:33])
-		copy(node2[:], edgeInfoBytes[33:])
+		edge, err := deserializeChanEdgeInfo(
+			bytes.NewReader(edgeInfoBytes),
+		)
+		if err != nil {
+			return err
+		}
 
 		// With the nodes extracted, we'll increase the ref count of
 		// each of the nodes.
-		nodeRefCounts[node1]++
-		nodeRefCounts[node2]++
+		nodeRefCounts[edge.Node1Bytes()]++
+		nodeRefCounts[edge.Node2Bytes()]++
 
 		return nil
 	})
@@ -1602,7 +1616,15 @@ func (c *ChannelGraph) DisconnectBlockAtHeight(height uint32) (
 			}
 
 			keys = append(keys, k)
-			removedChans = append(removedChans, &edgeInfo)
+			info, ok := edgeInfo.(*models.ChannelEdgeInfo1)
+			if !ok {
+				return fmt.Errorf("expected "+
+					"*models.ChannelEdgeInfo1, got %T",
+					edgeInfo)
+			}
+
+			keys = append(keys, k)
+			removedChans = append(removedChans, info)
 		}
 
 		for _, k := range keys {
@@ -1958,11 +1980,18 @@ func (c *ChannelGraph) ChanUpdatesInHorizon(startTime,
 			}
 
 			// First, we'll fetch the static edge information.
-			edgeInfo, err := fetchChanEdgeInfo(edgeIndex, chanID)
+			info, err := fetchChanEdgeInfo(edgeIndex, chanID)
 			if err != nil {
 				chanID := byteOrder.Uint64(chanID)
 				return fmt.Errorf("unable to fetch info for "+
 					"edge with chan_id=%v: %v", chanID, err)
+			}
+
+			edgeInfo, ok := info.(*models.ChannelEdgeInfo1)
+			if !ok {
+				return fmt.Errorf("expected "+
+					"*models.ChannelEdgeInfo1, got %T",
+					edgeInfo)
 			}
 
 			// With the static information obtained, we'll now
@@ -1995,7 +2024,7 @@ func (c *ChannelGraph) ChanUpdatesInHorizon(startTime,
 			// edges to be returned.
 			edgesSeen[chanIDInt] = struct{}{}
 			channel := ChannelEdge{
-				Info:    &edgeInfo,
+				Info:    edgeInfo,
 				Policy1: edge1,
 				Policy2: edge2,
 				Node1:   &node1,
@@ -2313,7 +2342,7 @@ func (c *ChannelGraph) FilterChannelRange(startHeight,
 				return err
 			}
 
-			if edgeInfo.AuthProof == nil {
+			if edgeInfo.GetAuthProof() == nil {
 				continue
 			}
 
@@ -2335,7 +2364,7 @@ func (c *ChannelGraph) FilterChannelRange(startHeight,
 				continue
 			}
 
-			node1Key, node2Key := computeEdgePolicyKeys(&edgeInfo)
+			node1Key, node2Key := computeEdgePolicyKeys(edgeInfo)
 
 			rawPolicy := edges.Get(node1Key)
 			if len(rawPolicy) != 0 {
@@ -2453,7 +2482,7 @@ func (c *ChannelGraph) fetchChanInfos(tx kvdb.RTx, chanIDs []uint64) (
 			// First, we'll fetch the static edge information. If
 			// the edge is unknown, we will skip the edge and
 			// continue gathering all known edges.
-			edgeInfo, err := fetchChanEdgeInfo(
+			info, err := fetchChanEdgeInfo(
 				edgeIndex, cidBytes[:],
 			)
 			switch {
@@ -2472,6 +2501,13 @@ func (c *ChannelGraph) fetchChanInfos(tx kvdb.RTx, chanIDs []uint64) (
 				return err
 			}
 
+			edgeInfo, ok := info.(*models.ChannelEdgeInfo1)
+			if !ok {
+				return fmt.Errorf("expected "+
+					"*models.ChannelEdgeInfo1, got %T",
+					info)
+			}
+
 			node1, err := fetchLightningNode(
 				nodes, edgeInfo.NodeKey1Bytes[:],
 			)
@@ -2487,7 +2523,7 @@ func (c *ChannelGraph) fetchChanInfos(tx kvdb.RTx, chanIDs []uint64) (
 			}
 
 			chanEdges = append(chanEdges, ChannelEdge{
-				Info:    &edgeInfo,
+				Info:    edgeInfo,
 				Policy1: edge1,
 				Policy2: edge2,
 				Node1:   &node1,
@@ -2565,9 +2601,15 @@ func (c *ChannelGraph) delChannelEdgeUnsafe(edges, edgeIndex, chanIndex,
 	zombieIndex kvdb.RwBucket, chanID []byte, isZombie,
 	strictZombie bool) error {
 
-	edgeInfo, err := fetchChanEdgeInfo(edgeIndex, chanID)
+	info, err := fetchChanEdgeInfo(edgeIndex, chanID)
 	if err != nil {
 		return err
+	}
+
+	edgeInfo, ok := info.(*models.ChannelEdgeInfo1)
+	if !ok {
+		return fmt.Errorf("expected *models.ChannelEdgeInfo1, got %T",
+			info)
 	}
 
 	if c.graphCache != nil {
@@ -2638,7 +2680,7 @@ func (c *ChannelGraph) delChannelEdgeUnsafe(edges, edgeIndex, chanIndex,
 
 	nodeKey1, nodeKey2 := edgeInfo.NodeKey1Bytes, edgeInfo.NodeKey2Bytes
 	if strictZombie {
-		nodeKey1, nodeKey2 = makeZombiePubkeys(&edgeInfo, edge1, edge2)
+		nodeKey1, nodeKey2 = makeZombiePubkeys(edgeInfo, edge1, edge2)
 	}
 
 	return markEdgeZombie(
@@ -2799,23 +2841,32 @@ func updateEdgePolicy(tx kvdb.RwTx, edge *models.ChannelEdgePolicy1,
 		return false, ErrEdgeNotFound
 	}
 
+	edgeInfo, err := deserializeChanEdgeInfo(bytes.NewReader(nodeInfo))
+	if err != nil {
+		return false, err
+	}
+
 	// Depending on the flags value passed above, either the first
 	// or second edge policy is being updated.
-	var fromNode, toNode []byte
-	var isUpdate1 bool
-	if edge.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
-		fromNode = nodeInfo[:33]
-		toNode = nodeInfo[33:66]
+	var (
+		fromNode, toNode []byte
+		isUpdate1        bool
+		node1Bytes       = edgeInfo.Node1Bytes()
+		node2Bytes       = edgeInfo.Node2Bytes()
+	)
+	if edge.IsNode1() {
+		fromNode = node1Bytes[:]
+		toNode = node2Bytes[:]
 		isUpdate1 = true
 	} else {
-		fromNode = nodeInfo[33:66]
-		toNode = nodeInfo[:33]
+		fromNode = node2Bytes[:]
+		toNode = node1Bytes[:]
 		isUpdate1 = false
 	}
 
 	// Finally, with the direction of the edge being updated
 	// identified, we update the on-disk edge representation.
-	err := putChanEdgePolicy(edges, edge, fromNode, toNode)
+	err = putChanEdgePolicy(edges, edge, fromNode, toNode)
 	if err != nil {
 		return false, err
 	}
@@ -3209,9 +3260,16 @@ func nodeTraversal(tx kvdb.RTx, nodePub []byte, db kvdb.Backend,
 			// the node at the other end of the channel and both
 			// edge policies.
 			chanID := nodeEdge[33:]
-			edgeInfo, err := fetchChanEdgeInfo(edgeIndex, chanID)
+			info, err := fetchChanEdgeInfo(edgeIndex, chanID)
 			if err != nil {
 				return err
+			}
+
+			edgeInfo, ok := info.(*models.ChannelEdgeInfo1)
+			if !ok {
+				return fmt.Errorf("expected "+
+					"*models.ChannelEdgeInfo1, got %T",
+					edgeInfo)
 			}
 
 			outgoingPolicy, err := fetchChanEdgePolicy(
@@ -3234,7 +3292,7 @@ func nodeTraversal(tx kvdb.RTx, nodePub []byte, db kvdb.Backend,
 			}
 
 			// Finally, we execute the callback.
-			err = cb(tx, &edgeInfo, outgoingPolicy, incomingPolicy)
+			err = cb(tx, edgeInfo, outgoingPolicy, incomingPolicy)
 			if err != nil {
 				return err
 			}
@@ -3343,17 +3401,20 @@ func (c *ChannelGraph) FetchOtherNode(tx kvdb.RTx,
 // computeEdgePolicyKeys is a helper function that can be used to compute the
 // keys used to index the channel edge policy info for the two nodes of the
 // edge. The keys for node 1 and node 2 are returned respectively.
-func computeEdgePolicyKeys(info *models.ChannelEdgeInfo1) ([]byte, []byte) {
+func computeEdgePolicyKeys(info models.ChannelEdgeInfo) ([]byte, []byte) {
 	var (
 		node1Key [33 + 8]byte
 		node2Key [33 + 8]byte
+
+		node1Bytes = info.Node1Bytes()
+		node2Bytes = info.Node2Bytes()
 	)
 
-	copy(node1Key[:], info.NodeKey1Bytes[:])
-	copy(node2Key[:], info.NodeKey2Bytes[:])
+	copy(node1Key[:], node1Bytes[:])
+	copy(node2Key[:], node2Bytes[:])
 
-	byteOrder.PutUint64(node1Key[33:], info.ChannelID)
-	byteOrder.PutUint64(node2Key[33:], info.ChannelID)
+	byteOrder.PutUint64(node1Key[33:], info.GetChanID())
+	byteOrder.PutUint64(node2Key[33:], info.GetChanID())
 
 	return node1Key[:], node2Key[:]
 }
@@ -3414,7 +3475,15 @@ func (c *ChannelGraph) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 		if err != nil {
 			return fmt.Errorf("%w: chanID=%x", err, chanID)
 		}
-		edgeInfo = &edge
+
+		info, ok := edge.(*models.ChannelEdgeInfo1)
+		if !ok {
+			return fmt.Errorf("expected "+
+				"*models.ChannelEdgeInfo1, got %T",
+				edge)
+		}
+
+		edgeInfo = info
 
 		// Once we have the information about the channels' parameters,
 		// we'll fetch the routing policies for each for the directed
@@ -3518,7 +3587,13 @@ func (c *ChannelGraph) FetchChannelEdgesByID(chanID uint64) (
 			return err
 		}
 
-		edgeInfo = &edge
+		info, ok := edge.(*models.ChannelEdgeInfo1)
+		if !ok {
+			return fmt.Errorf("expected "+
+				"*models.ChannelEdgeInfo1, got %T", edge)
+		}
+
+		edgeInfo = info
 
 		// Then we'll attempt to fetch the accompanying policies of this
 		// edge.
@@ -3658,10 +3733,7 @@ func (c *ChannelGraph) ChannelView() ([]EdgePoint, error) {
 				return err
 			}
 
-			pkScript, err := genMultiSigP2WSH(
-				edgeInfo.BitcoinKey1Bytes[:],
-				edgeInfo.BitcoinKey2Bytes[:],
-			)
+			pkScript, err := edgeInfo.FundingScript()
 			if err != nil {
 				return err
 			}
