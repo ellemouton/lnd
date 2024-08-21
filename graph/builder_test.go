@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
@@ -23,10 +25,12 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
+	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lntest/wait"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
+	"github.com/lightningnetwork/lnd/tlv"
 	"github.com/stretchr/testify/require"
 )
 
@@ -81,7 +85,7 @@ func TestAddProof(t *testing.T) {
 
 	info, _, _, err := ctx.builder.GetChannelByID(*chanID)
 	require.NoError(t, err, "unable to get channel")
-	require.NotNil(t, info.AuthProof)
+	require.NotNil(t, info.GetAuthProof())
 }
 
 // TestIgnoreNodeAnnouncement tests that adding a node to the router that is
@@ -2074,6 +2078,247 @@ func (m *mockLink) MayAddOutgoingHtlc(_ lnwire.MilliSatoshi) error {
 	return m.mayAddOutgoingErr
 }
 
+// TestChanAnn2Validation tests that the router can validate the various forms
+// of ChannelEdgeInfo2.
+func TestChanAnn2Validation(t *testing.T) {
+	t.Parallel()
+
+	var rootHash [32]byte
+	_, err := rand.Read(rootHash[:])
+	require.NoError(t, err)
+
+	tests := []struct {
+		name          string
+		makeFundingTx func(t *testing.T, ctx *testCtx) (*wire.MsgTx,
+			*lnwire.ShortChannelID, []byte)
+		buildEdgeInfo func(node1 *channeldb.LightningNode,
+			node2 *channeldb.LightningNode,
+			chanID *lnwire.ShortChannelID,
+			pkScript []byte) models.ChannelEdgeInfo
+	}{
+		{
+			// This test covers the case where two bitcoin keys
+			// are provided in the channel announcement but no
+			// merkle root hash is provided. In this case, the
+			// on-chain funding script is expected to be equal to
+			// the MuSig2 combination of the two bitcoin keys along
+			// with a BIP86 tweak.
+			name: "bitcoin keys with bip 86 tweak",
+			makeFundingTx: func(t *testing.T, ctx *testCtx) (
+				*wire.MsgTx, *lnwire.ShortChannelID, []byte) {
+
+				pkScript, tx, err := input.GenTaprootFundingScript( //nolint:lll
+					bitcoinKey1, bitcoinKey2, int64(100),
+				)
+				require.NoError(t, err)
+
+				fundingTx := wire.NewMsgTx(2)
+
+				_, chanID := addFundingTxToChain(
+					ctx, fundingTx, tx, 0,
+				)
+
+				return fundingTx, chanID, pkScript
+			},
+			buildEdgeInfo: func(node1 *channeldb.LightningNode,
+				node2 *channeldb.LightningNode,
+				chanID *lnwire.ShortChannelID,
+				_ []byte) models.ChannelEdgeInfo {
+
+				ann := lnwire.ChannelAnnouncement2{}
+				ann.ShortChannelID.Val = *chanID
+				ann.NodeID1.Val = node1.PubKeyBytes
+				ann.NodeID2.Val = node2.PubKeyBytes
+
+				btc1 := tlv.ZeroRecordT[
+					tlv.TlvType12, [33]byte,
+				]()
+				copy(
+					btc1.Val[:],
+					bitcoinKey1.SerializeCompressed(),
+				)
+				ann.BitcoinKey1 = tlv.SomeRecordT(btc1)
+
+				btc2 := tlv.ZeroRecordT[
+					tlv.TlvType14, [33]byte,
+				]()
+				copy(
+					btc2.Val[:],
+					bitcoinKey2.SerializeCompressed(),
+				)
+				ann.BitcoinKey2 = tlv.SomeRecordT(btc2)
+
+				return &models.ChannelEdgeInfo2{
+					ChannelAnnouncement2: ann,
+				}
+			},
+		},
+		{
+			// In this case, no bitcoin keys and no merkle root hash
+			// is included in the channel announcement. In this
+			// case, it is not necessary to validate that the
+			// on-chain pk script is equal to anything particular
+			// since the signature check in discovery would have
+			// checked that the announcement signature is also
+			// signed by the output key found on-chain.
+			name: "no bitcoin keys",
+			makeFundingTx: func(t *testing.T, ctx *testCtx) (
+				*wire.MsgTx, *lnwire.ShortChannelID, []byte) {
+
+				pkScript, tx, err := input.GenTaprootFundingScript( //nolint:lll
+					bitcoinKey1, bitcoinKey2, int64(100),
+				)
+				require.NoError(t, err)
+
+				fundingTx := wire.NewMsgTx(2)
+
+				_, chanID := addFundingTxToChain(
+					ctx, fundingTx, tx, 0,
+				)
+
+				return fundingTx, chanID, pkScript
+			},
+			buildEdgeInfo: func(node1 *channeldb.LightningNode,
+				node2 *channeldb.LightningNode,
+				chanID *lnwire.ShortChannelID,
+				pkScript []byte) models.ChannelEdgeInfo {
+
+				ann := lnwire.ChannelAnnouncement2{}
+				ann.ShortChannelID.Val = *chanID
+				ann.NodeID1.Val = node1.PubKeyBytes
+				ann.NodeID2.Val = node2.PubKeyBytes
+
+				return &models.ChannelEdgeInfo2{
+					ChannelAnnouncement2: ann,
+					FundingPkScript:      pkScript,
+				}
+			},
+		},
+		{
+			// This test covers the case where bitcoin keys are
+			// included in the channel announcement along with a
+			// merkle root hash.
+			name: "bitcoin keys with non-bip86 tweak",
+			makeFundingTx: func(t *testing.T, ctx *testCtx) (
+				*wire.MsgTx, *lnwire.ShortChannelID, []byte) {
+
+				fundingTx := wire.NewMsgTx(2)
+				keys := []*btcec.PublicKey{
+					bitcoinKey1, bitcoinKey2,
+				}
+
+				internalKey, _, _, err := musig2.AggregateKeys(
+					keys, true,
+				)
+				require.NoError(t, err)
+
+				tapTweakHash := chainhash.TaggedHash(
+					chainhash.TagTapTweak,
+					schnorr.SerializePubKey(
+						internalKey.FinalKey,
+					), rootHash[:],
+				)
+
+				combinedKey, _, _, err := musig2.AggregateKeys(
+					keys, true,
+					musig2.WithKeyTweaks(
+						musig2.KeyTweakDesc{
+							Tweak:   *tapTweakHash,
+							IsXOnly: true,
+						},
+					),
+				)
+				require.NoError(t, err)
+
+				pkScript, err := input.PayToTaprootScript(
+					combinedKey.FinalKey,
+				)
+				require.NoError(t, err)
+
+				tx := wire.NewTxOut(int64(100), pkScript)
+
+				_, chanID := addFundingTxToChain(
+					ctx, fundingTx, tx, 0,
+				)
+
+				return fundingTx, chanID, pkScript
+			},
+			buildEdgeInfo: func(node1 *channeldb.LightningNode,
+				node2 *channeldb.LightningNode,
+				chanID *lnwire.ShortChannelID,
+				pkScript []byte) models.ChannelEdgeInfo {
+
+				ann := lnwire.ChannelAnnouncement2{}
+				ann.ShortChannelID.Val = *chanID
+				ann.NodeID1.Val = node1.PubKeyBytes
+				ann.NodeID2.Val = node2.PubKeyBytes
+
+				btc1 := tlv.ZeroRecordT[
+					tlv.TlvType12, [33]byte,
+				]()
+				copy(
+					btc1.Val[:],
+					bitcoinKey1.SerializeCompressed(),
+				)
+				ann.BitcoinKey1 = tlv.SomeRecordT(btc1)
+
+				btc2 := tlv.ZeroRecordT[
+					tlv.TlvType14, [33]byte,
+				]()
+				copy(
+					btc2.Val[:],
+					bitcoinKey2.SerializeCompressed(),
+				)
+				ann.BitcoinKey2 = tlv.SomeRecordT(btc2)
+
+				merkleRootHash := tlv.ZeroRecordT[
+					tlv.TlvType16, [32]byte,
+				]()
+				merkleRootHash.Val = rootHash
+				ann.MerkleRootHash = tlv.SomeRecordT(
+					merkleRootHash,
+				)
+
+				return &models.ChannelEdgeInfo2{
+					ChannelAnnouncement2: ann,
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := createTestCtxSingleNode(t, 0)
+
+			// Create two new nodes within the network that the
+			// channel will connect.
+			node1 := createTestNode(t)
+			node2 := createTestNode(t)
+
+			fundingTx, chanID, pkScript := test.makeFundingTx(
+				t, ctx,
+			)
+
+			fundingBlock := &wire.MsgBlock{
+				Transactions: []*wire.MsgTx{fundingTx},
+			}
+			ctx.chain.addBlock(
+				fundingBlock, chanID.BlockHeight,
+				chanID.BlockHeight,
+			)
+
+			edge := test.buildEdgeInfo(
+				node1, node2, chanID, pkScript,
+			)
+
+			require.NoError(t, ctx.builder.AddEdge(edge))
+		})
+	}
+}
+
 func newTxFetcher(chain lnwallet.BlockChainIO) func(
 	chanID *lnwire.ShortChannelID, quit chan struct{}) (*wire.MsgTx,
 	error) {
@@ -2093,4 +2338,27 @@ func newTxFetcher(chain lnwallet.BlockChainIO) func(
 
 		return fundingBlock.Transactions[chanID.TxIndex], nil
 	}
+}
+
+func addFundingTxToChain(ctx *testCtx, fundingTx *wire.MsgTx,
+	fundingOutput *wire.TxOut, fundingHeight uint32) (*wire.OutPoint,
+	*lnwire.ShortChannelID) {
+
+	fundingTx.TxOut = append(fundingTx.TxOut, fundingOutput)
+	chanUtxo := wire.OutPoint{
+		Hash:  fundingTx.TxHash(),
+		Index: 0,
+	}
+
+	// With the utxo constructed, we'll mark it as closed.
+	ctx.chain.addUtxo(chanUtxo, fundingOutput)
+
+	// Our fake channel will be "confirmed" at height 101.
+	chanID := &lnwire.ShortChannelID{
+		BlockHeight: fundingHeight,
+		TxIndex:     0,
+		TxPosition:  0,
+	}
+
+	return &chanUtxo, chanID
 }
