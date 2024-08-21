@@ -1064,6 +1064,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		GetAlias:                s.aliasMgr.GetPeerAlias,
 		FindChannel:             s.findChannel,
 		IsStillZombieChannel:    s.graphBuilder.IsZombieChannel,
+		FetchTxBySCID:           s.fetchTxBySCID,
 	}, nodeKeyDesc)
 
 	//nolint:lll
