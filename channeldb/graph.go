@@ -303,7 +303,13 @@ func (c *ChannelGraph) getChannelMap(edges kvdb.RBucket) (
 			return err
 		}
 
-		channelMap[key] = edge
+		e, ok := edge.(*models.ChannelEdgePolicy1)
+		if !ok {
+			return fmt.Errorf("expected "+
+				"*models.ChannelEdgePolicy1, got: %T", edge)
+		}
+
+		channelMap[key] = e
 
 		return nil
 	})
@@ -2378,7 +2384,14 @@ func (c *ChannelGraph) FilterChannelRange(startHeight,
 					return err
 				}
 
-				chanInfo.Node1UpdateTimestamp = edge.LastUpdate
+				e, ok := edge.(*models.ChannelEdgePolicy1)
+				if !ok {
+					return fmt.Errorf("expected "+
+						"*models.ChannelEdgePolicy1, "+
+						"got %T", edge)
+				}
+
+				chanInfo.Node1UpdateTimestamp = e.LastUpdate
 			}
 
 			rawPolicy = edges.Get(node2Key)
@@ -2393,7 +2406,14 @@ func (c *ChannelGraph) FilterChannelRange(startHeight,
 					return err
 				}
 
-				chanInfo.Node2UpdateTimestamp = edge.LastUpdate
+				e, ok := edge.(*models.ChannelEdgePolicy1)
+				if !ok {
+					return fmt.Errorf("expected "+
+						"*models.ChannelEdgePolicy1, "+
+						"got %T", edge)
+				}
+
+				chanInfo.Node2UpdateTimestamp = e.LastUpdate
 			}
 
 			channelsPerBlock[cid.BlockHeight] = append(
