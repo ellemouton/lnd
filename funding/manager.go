@@ -4126,7 +4126,7 @@ func (f *Manager) ensureInitialForwardingPolicy(chanID lnwire.ChannelID,
 type chanAnnouncement struct {
 	chanAnn       *lnwire.ChannelAnnouncement
 	chanUpdateAnn *lnwire.ChannelUpdate
-	chanProof     *lnwire.AnnounceSignatures
+	chanProof     *lnwire.AnnounceSignatures1
 }
 
 // newChanAnnouncement creates the authenticated channel announcement messages
@@ -4318,7 +4318,7 @@ func (f *Manager) newChanAnnouncement(localPubKey,
 	// Finally, we'll generate the announcement proof which we'll use to
 	// provide the other side with the necessary signatures required to
 	// allow them to reconstruct the full channel announcement.
-	proof := &lnwire.AnnounceSignatures{
+	proof := &lnwire.AnnounceSignatures1{
 		ChannelID:      chanID,
 		ShortChannelID: shortChanID,
 	}
