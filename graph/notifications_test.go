@@ -1077,6 +1077,7 @@ func (c *testCtx) RestartBuilder(t *testing.T) {
 		IsAlias: func(scid lnwire.ShortChannelID) bool {
 			return false
 		},
+		FetchTxBySCID: newTxFetcher(c.chain),
 	})
 	require.NoError(t, err)
 	require.NoError(t, builder.Start())
@@ -1175,6 +1176,7 @@ func createTestCtxFromGraphInstanceAssumeValid(t *testing.T,
 		IsAlias: func(scid lnwire.ShortChannelID) bool {
 			return false
 		},
+		FetchTxBySCID: newTxFetcher(chain),
 	})
 	require.NoError(t, err)
 	require.NoError(t, graphBuilder.Start())
