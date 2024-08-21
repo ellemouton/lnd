@@ -24,6 +24,7 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/lntest/wait"
+	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/stretchr/testify/require"
@@ -353,6 +354,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		IsAlias: func(scid lnwire.ShortChannelID) bool {
 			return false
 		},
+		FetchTxBySCID: newTxFetcher(ctx.chain),
 	})
 	require.NoError(t, err)
 
@@ -2070,4 +2072,25 @@ func (m *mockLink) EligibleToForward() bool {
 // MayAddOutgoingHtlc returns the error configured in our mock.
 func (m *mockLink) MayAddOutgoingHtlc(_ lnwire.MilliSatoshi) error {
 	return m.mayAddOutgoingErr
+}
+
+func newTxFetcher(chain lnwallet.BlockChainIO) func(
+	chanID *lnwire.ShortChannelID, quit chan struct{}) (*wire.MsgTx,
+	error) {
+
+	return func(chanID *lnwire.ShortChannelID, quit chan struct{}) (
+		*wire.MsgTx, error) {
+
+		blockNum := int64(chanID.BlockHeight)
+		blockHash, err := chain.GetBlockHash(blockNum)
+		if err != nil {
+			return nil, err
+		}
+		fundingBlock, err := chain.GetBlock(blockHash)
+		if err != nil {
+			return nil, err
+		}
+
+		return fundingBlock.Transactions[chanID.TxIndex], nil
+	}
 }
