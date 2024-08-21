@@ -26,6 +26,7 @@ import (
 	"github.com/lightningnetwork/lnd/lnpeer"
 	"github.com/lightningnetwork/lnd/lnutils"
 	"github.com/lightningnetwork/lnd/lnwallet"
+	"github.com/lightningnetwork/lnd/lnwallet/chanvalidate"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/multimutex"
 	"github.com/lightningnetwork/lnd/netann"
@@ -340,6 +341,11 @@ type Config struct {
 	// updates for a channel and returns true if the channel should be
 	// considered a zombie based on these timestamps.
 	IsStillZombieChannel func(time.Time, time.Time) bool
+
+	// FetchTxBySCID queries the chain for the transaction with the given
+	// SCID. A quit channel can be passed in to cancel the query.
+	FetchTxBySCID func(chanID *lnwire.ShortChannelID, quit chan struct{}) (
+		*wire.MsgTx, error)
 }
 
 // processedNetworkMsg is a wrapper around networkMsg and a boolean. It is
@@ -1915,6 +1921,27 @@ func (d *AuthenticatedGossiper) processRejectedEdge(
 	}
 
 	return announcements, nil
+}
+
+// fetchPKScript fetches the output script for the given SCID.
+func (d *AuthenticatedGossiper) fetchPKScript(chanID *lnwire.ShortChannelID) (
+	[]byte, error) {
+
+	tx, err := d.cfg.FetchTxBySCID(chanID, d.quit)
+	if err != nil {
+		return nil, err
+	}
+
+	outputLocator := chanvalidate.ShortChanIDChanLocator{
+		ID: *chanID,
+	}
+
+	output, _, err := outputLocator.Locate(tx)
+	if err != nil {
+		return nil, err
+	}
+
+	return output.PkScript, nil
 }
 
 // addNode processes the given node announcement, and adds it to our channel
