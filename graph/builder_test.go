@@ -301,7 +301,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 	}
 
 	// Check that the fundingTxs are in the graph db.
-	_, _, has, isZombie, err := ctx.graph.HasChannelEdge(chanID1)
+	has, isZombie, err := ctx.graph.HasChannelEdge(chanID1)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID1)
 	}
@@ -312,7 +312,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		t.Fatal("edge was marked as zombie")
 	}
 
-	_, _, has, isZombie, err = ctx.graph.HasChannelEdge(chanID2)
+	has, isZombie, err = ctx.graph.HasChannelEdge(chanID2)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID2)
 	}
@@ -370,7 +370,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 	// The channel with chanID2 should not be in the database anymore,
 	// since it is not confirmed on the longest chain. chanID1 should
 	// still be.
-	_, _, has, isZombie, err = ctx.graph.HasChannelEdge(chanID1)
+	has, isZombie, err = ctx.graph.HasChannelEdge(chanID1)
 	require.NoError(t, err)
 
 	if !has {
@@ -380,7 +380,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		t.Fatal("edge was marked as zombie")
 	}
 
-	_, _, has, isZombie, err = ctx.graph.HasChannelEdge(chanID2)
+	has, isZombie, err = ctx.graph.HasChannelEdge(chanID2)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID2)
 	}
@@ -509,7 +509,7 @@ func TestDisconnectedBlocks(t *testing.T) {
 	}
 
 	// Check that the fundingTxs are in the graph db.
-	_, _, has, isZombie, err := ctx.graph.HasChannelEdge(chanID1)
+	has, isZombie, err := ctx.graph.HasChannelEdge(chanID1)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID1)
 	}
@@ -520,7 +520,7 @@ func TestDisconnectedBlocks(t *testing.T) {
 		t.Fatal("edge was marked as zombie")
 	}
 
-	_, _, has, isZombie, err = ctx.graph.HasChannelEdge(chanID2)
+	has, isZombie, err = ctx.graph.HasChannelEdge(chanID2)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID2)
 	}
@@ -562,7 +562,7 @@ func TestDisconnectedBlocks(t *testing.T) {
 
 	// chanID2 should not be in the database anymore, since it is not
 	// confirmed on the longest chain. chanID1 should still be.
-	_, _, has, isZombie, err = ctx.graph.HasChannelEdge(chanID1)
+	has, isZombie, err = ctx.graph.HasChannelEdge(chanID1)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID1)
 	}
@@ -573,7 +573,7 @@ func TestDisconnectedBlocks(t *testing.T) {
 		t.Fatal("edge was marked as zombie")
 	}
 
-	_, _, has, isZombie, err = ctx.graph.HasChannelEdge(chanID2)
+	has, isZombie, err = ctx.graph.HasChannelEdge(chanID2)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID2)
 	}
@@ -636,7 +636,7 @@ func TestRouterChansClosedOfflinePruneGraph(t *testing.T) {
 	}
 
 	// The router should now be aware of the channel we created above.
-	_, _, hasChan, isZombie, err := ctx.graph.HasChannelEdge(
+	hasChan, isZombie, err := ctx.graph.HasChannelEdge(
 		chanID1.ToUint64(),
 	)
 	if err != nil {
@@ -718,9 +718,7 @@ func TestRouterChansClosedOfflinePruneGraph(t *testing.T) {
 
 	// At this point, the channel that was pruned should no longer be known
 	// by the router.
-	_, _, hasChan, isZombie, err = ctx.graph.HasChannelEdge(
-		chanID1.ToUint64(),
-	)
+	hasChan, isZombie, err = ctx.graph.HasChannelEdge(chanID1.ToUint64())
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID1)
 	}
@@ -1291,9 +1289,7 @@ func assertChanChainRejection(t *testing.T, ctx *testCtx,
 	}
 
 	// This channel should now be present in the zombie channel index.
-	_, _, _, isZombie, err := ctx.graph.HasChannelEdge(
-		edge.ChannelID,
-	)
+	_, isZombie, err := ctx.graph.HasChannelEdge(edge.ChannelID)
 	require.Nil(t, err)
 	require.True(t, isZombie, "edge should be marked as zombie")
 }
@@ -1771,9 +1767,7 @@ func assertChannelsPruned(t *testing.T, graph *channeldb.ChannelGraph,
 
 	for _, channel := range channels {
 		_, shouldPrune := pruned[channel.ChannelID]
-		_, _, exists, isZombie, err := graph.HasChannelEdge(
-			channel.ChannelID,
-		)
+		exists, isZombie, err := graph.HasChannelEdge(channel.ChannelID)
 		if err != nil {
 			t.Fatalf("unable to determine existence of "+
 				"channel=%v in the graph: %v",
