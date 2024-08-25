@@ -741,6 +741,12 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 		return parseAddr(addr, r.cfg.net)
 	}
 
+	bestHeight := func() (uint32, error) {
+		_, bestHeight, err := r.server.cc.ChainIO.GetBestBlock()
+
+		return uint32(bestHeight), err
+	}
+
 	var (
 		subServers     []lnrpc.SubServer
 		subServerPerms []lnrpc.MacaroonPerms
@@ -758,7 +764,8 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 		s.sweeper, tower, s.towerClientMgr, r.cfg.net.ResolveTCPAddr,
 		r.genInvoiceFeatures, genAmpInvoiceFeatures,
 		s.getNodeAnnouncement, s.updateAndBrodcastSelfNode, parseAddr,
-		rpcsLog, s.aliasMgr.GetPeerAlias,
+		rpcsLog, s.aliasMgr.GetPeerAlias, bestHeight, r.blindedPathCfg,
+		r.queryBlindedRoutes,
 	)
 	if err != nil {
 		return err

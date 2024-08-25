@@ -7,9 +7,12 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/invoices"
+	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/macaroons"
 	"github.com/lightningnetwork/lnd/netann"
+	"github.com/lightningnetwork/lnd/routing"
+	"github.com/lightningnetwork/lnd/routing/route"
 )
 
 // Config is the primary configuration struct for the invoices RPC server. It
@@ -64,4 +67,19 @@ type Config struct {
 	// GetAlias returns the peer's alias SCID if it exists given the
 	// 32-byte ChannelID.
 	GetAlias func(lnwire.ChannelID) (lnwire.ShortChannelID, error)
+
+	// BlindedPathCfg takes the global routing blinded path policies and the
+	// given per-payment blinded path config values and uses these to
+	// construct the config values passed to the invoice server.
+	BlindedPathCfg func(bool, *lnrpc.BlindedPathConfig) (
+		*BlindedPathConfig, error)
+
+	// BestHeight can be used to get the current best block height known to
+	// LND.
+	BestHeight func() (uint32, error)
+
+	// QueryBlindedRoutes can be used to generate a few routes to this node
+	// that can then be used in the construction of a blinded payment path.
+	QueryBlindedRoutes func(*routing.BlindedPathRestrictions,
+		lnwire.MilliSatoshi) ([]*route.Route, error)
 }

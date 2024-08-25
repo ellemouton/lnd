@@ -13,6 +13,7 @@ import (
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/lncfg"
+	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/autopilotrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/chainrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/devrpc"
@@ -28,6 +29,7 @@ import (
 	"github.com/lightningnetwork/lnd/macaroons"
 	"github.com/lightningnetwork/lnd/netann"
 	"github.com/lightningnetwork/lnd/routing"
+	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/sweep"
 	"github.com/lightningnetwork/lnd/watchtower"
 	"github.com/lightningnetwork/lnd/watchtower/wtclient"
@@ -122,7 +124,12 @@ func (s *subRPCServerConfigs) PopulateDependencies(cfg *Config,
 		modifiers ...netann.NodeAnnModifier) error,
 	parseAddr func(addr string) (net.Addr, error),
 	rpcLogger btclog.Logger,
-	getAlias func(lnwire.ChannelID) (lnwire.ShortChannelID, error)) error {
+	getAlias func(lnwire.ChannelID) (lnwire.ShortChannelID, error),
+	bestHeight func() (uint32, error),
+	blindedPathCfg func(blind bool, cfg *lnrpc.BlindedPathConfig) (
+		*invoicesrpc.BlindedPathConfig, error),
+	queryBlindedRoutes func(*routing.BlindedPathRestrictions,
+		lnwire.MilliSatoshi) ([]*route.Route, error)) error {
 
 	// First, we'll use reflect to obtain a version of the config struct
 	// that allows us to programmatically inspect its fields.
@@ -268,6 +275,15 @@ func (s *subRPCServerConfigs) PopulateDependencies(cfg *Config,
 			)
 			subCfgValue.FieldByName("GetAlias").Set(
 				reflect.ValueOf(getAlias),
+			)
+			subCfgValue.FieldByName("BlindedPathCfg").Set(
+				reflect.ValueOf(blindedPathCfg),
+			)
+			subCfgValue.FieldByName("BestHeight").Set(
+				reflect.ValueOf(bestHeight),
+			)
+			subCfgValue.FieldByName("QueryBlindedRoutes").Set(
+				reflect.ValueOf(queryBlindedRoutes),
 			)
 
 		case *neutrinorpc.Config:
