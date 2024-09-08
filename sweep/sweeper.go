@@ -362,9 +362,9 @@ type UtxoSweeperConfig struct {
 	// non-time-sensitive outputs.
 	NoDeadlineConfTarget uint32
 
-	// AuxSweeper is an optional interface that can be used to modify the
-	// way sweep transaction are generated.
-	AuxSweeper fn.Option[AuxSweeper]
+	// AuxSweeperProvider is an optional interface that can be used to
+	// modify the way sweep transaction are generated.
+	AuxSweeperProvider func() (fn.Option[AuxSweeper], error)
 }
 
 // Result is the struct that is pushed through the result channel. Callers can

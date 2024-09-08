@@ -2867,8 +2867,15 @@ out:
 				return err
 			}
 
+			auxDataParser, err := AuxDataParserProvider(
+				r.server.implCfg.AuxComponentsProvider,
+			)()
+			if err != nil {
+				return err
+			}
+
 			err = fn.MapOptionZ(
-				r.server.implCfg.AuxDataParser,
+				auxDataParser,
 				func(parser AuxDataParser) error {
 					return parser.InlineParseCustomData(
 						rpcClosingUpdate,
@@ -3751,12 +3758,16 @@ func (r *rpcServer) ChannelBalance(ctx context.Context,
 		PendingOpenBalance: int64(pendingOpenLocalBalance.ToSatoshis()),
 	}
 
-	err = fn.MapOptionZ(
-		r.server.implCfg.AuxDataParser,
-		func(parser AuxDataParser) error {
-			return parser.InlineParseCustomData(resp)
-		},
-	)
+	auxDataParser, err := AuxDataParserProvider(
+		r.server.implCfg.AuxComponentsProvider,
+	)()
+	if err != nil {
+		return nil, err
+	}
+
+	err = fn.MapOptionZ(auxDataParser, func(parser AuxDataParser) error {
+		return parser.InlineParseCustomData(resp)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("error parsing custom data: %w", err)
 	}
@@ -4203,12 +4214,16 @@ func (r *rpcServer) PendingChannels(ctx context.Context,
 	resp.WaitingCloseChannels = waitingCloseChannels
 	resp.TotalLimboBalance += limbo
 
-	err = fn.MapOptionZ(
-		r.server.implCfg.AuxDataParser,
-		func(parser AuxDataParser) error {
-			return parser.InlineParseCustomData(resp)
-		},
-	)
+	auxDataParser, err := AuxDataParserProvider(
+		r.server.implCfg.AuxComponentsProvider,
+	)()
+	if err != nil {
+		return nil, err
+	}
+
+	err = fn.MapOptionZ(auxDataParser, func(parser AuxDataParser) error {
+		return parser.InlineParseCustomData(resp)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("error parsing custom data: %w", err)
 	}
@@ -4527,9 +4542,15 @@ func (r *rpcServer) ListChannels(ctx context.Context,
 		resp.Channels = append(resp.Channels, channel)
 	}
 
+	auxDataParser, err := AuxDataParserProvider(
+		r.server.implCfg.AuxComponentsProvider,
+	)()
+	if err != nil {
+		return nil, err
+	}
+
 	err = fn.MapOptionZ(
-		r.server.implCfg.AuxDataParser,
-		func(parser AuxDataParser) error {
+		auxDataParser, func(parser AuxDataParser) error {
 			return parser.InlineParseCustomData(resp)
 		},
 	)

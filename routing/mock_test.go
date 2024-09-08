@@ -100,7 +100,7 @@ var _ PaymentSessionSource = (*mockPaymentSessionSourceOld)(nil)
 
 func (m *mockPaymentSessionSourceOld) NewPaymentSession(
 	_ *LightningPayment,
-	_ fn.Option[TlvTrafficShaper]) (PaymentSession, error) {
+	_ func() (fn.Option[TlvTrafficShaper], error)) (PaymentSession, error) {
 
 	return &mockPaymentSessionOld{
 		routes:  m.routes,
@@ -616,7 +616,8 @@ var _ PaymentSessionSource = (*mockPaymentSessionSource)(nil)
 
 func (m *mockPaymentSessionSource) NewPaymentSession(
 	payment *LightningPayment,
-	tlvShaper fn.Option[TlvTrafficShaper]) (PaymentSession, error) {
+	tlvShaper func() (fn.Option[TlvTrafficShaper], error)) (PaymentSession,
+	error) {
 
 	args := m.Called(payment)
 	return args.Get(0).(PaymentSession), args.Error(1)

@@ -1733,19 +1733,21 @@ func (c *Config) ImplementationConfig(
 			DatabaseBuilder: NewDefaultDatabaseBuilder(
 				c, ltndLog,
 			),
-			WalletConfigBuilder: rpcImpl,
-			ChainControlBuilder: rpcImpl,
+			WalletConfigBuilder:   rpcImpl,
+			ChainControlBuilder:   rpcImpl,
+			AuxComponentsProvider: NewDefaultAuxProvider(nil),
 		}
 	}
 
 	defaultImpl := NewDefaultWalletImpl(c, ltndLog, interceptor, false)
 	return &ImplementationCfg{
-		GrpcRegistrar:       defaultImpl,
-		RestRegistrar:       defaultImpl,
-		ExternalValidator:   defaultImpl,
-		DatabaseBuilder:     NewDefaultDatabaseBuilder(c, ltndLog),
-		WalletConfigBuilder: defaultImpl,
-		ChainControlBuilder: defaultImpl,
+		GrpcRegistrar:         defaultImpl,
+		RestRegistrar:         defaultImpl,
+		ExternalValidator:     defaultImpl,
+		DatabaseBuilder:       NewDefaultDatabaseBuilder(c, ltndLog),
+		WalletConfigBuilder:   defaultImpl,
+		ChainControlBuilder:   defaultImpl,
+		AuxComponentsProvider: NewDefaultAuxProvider(nil),
 	}
 }
 

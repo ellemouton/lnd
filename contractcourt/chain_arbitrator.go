@@ -220,15 +220,15 @@ type ChainArbitratorConfig struct {
 
 	// AuxLeafStore is an optional store that can be used to store auxiliary
 	// leaves for certain custom channel types.
-	AuxLeafStore fn.Option[lnwallet.AuxLeafStore]
+	AuxLeafStoreProvider func() (fn.Option[lnwallet.AuxLeafStore], error)
 
 	// AuxSigner is an optional signer that can be used to sign auxiliary
 	// leaves for certain custom channel types.
-	AuxSigner fn.Option[lnwallet.AuxSigner]
+	AuxSignerProvider func() (fn.Option[lnwallet.AuxSigner], error)
 
 	// AuxResolver is an optional interface that can be used to modify the
 	// way contracts are resolved.
-	AuxResolver fn.Option[lnwallet.AuxContractResolver]
+	AuxResolverProvider func() (fn.Option[lnwallet.AuxContractResolver], error)
 }
 
 // ChainArbitrator is a sub-system that oversees the on-chain resolution of all
@@ -311,14 +311,27 @@ func (a *arbChannel) NewAnchorResolutions() (*lnwallet.AnchorResolutions,
 		return nil, err
 	}
 
+	auxLeafStore, err := a.c.cfg.AuxLeafStoreProvider()
+	if err != nil {
+		return nil, err
+	}
+	auxResolver, err := a.c.cfg.AuxResolverProvider()
+	if err != nil {
+		return nil, err
+	}
+	auxSigner, err := a.c.cfg.AuxSignerProvider()
+	if err != nil {
+		return nil, err
+	}
+
 	var chanOpts []lnwallet.ChannelOpt
-	a.c.cfg.AuxLeafStore.WhenSome(func(s lnwallet.AuxLeafStore) {
+	auxLeafStore.WhenSome(func(s lnwallet.AuxLeafStore) {
 		chanOpts = append(chanOpts, lnwallet.WithLeafStore(s))
 	})
-	a.c.cfg.AuxSigner.WhenSome(func(s lnwallet.AuxSigner) {
+	auxSigner.WhenSome(func(s lnwallet.AuxSigner) {
 		chanOpts = append(chanOpts, lnwallet.WithAuxSigner(s))
 	})
-	a.c.cfg.AuxResolver.WhenSome(func(s lnwallet.AuxContractResolver) {
+	auxResolver.WhenSome(func(s lnwallet.AuxContractResolver) {
 		chanOpts = append(chanOpts, lnwallet.WithAuxResolver(s))
 	})
 
@@ -367,14 +380,27 @@ func (a *arbChannel) ForceCloseChan() (*lnwallet.LocalForceCloseSummary, error) 
 		return nil, err
 	}
 
+	auxLeafStore, err := a.c.cfg.AuxLeafStoreProvider()
+	if err != nil {
+		return nil, err
+	}
+	auxResolver, err := a.c.cfg.AuxResolverProvider()
+	if err != nil {
+		return nil, err
+	}
+	auxSigner, err := a.c.cfg.AuxSignerProvider()
+	if err != nil {
+		return nil, err
+	}
+
 	var chanOpts []lnwallet.ChannelOpt
-	a.c.cfg.AuxLeafStore.WhenSome(func(s lnwallet.AuxLeafStore) {
+	auxLeafStore.WhenSome(func(s lnwallet.AuxLeafStore) {
 		chanOpts = append(chanOpts, lnwallet.WithLeafStore(s))
 	})
-	a.c.cfg.AuxSigner.WhenSome(func(s lnwallet.AuxSigner) {
+	auxSigner.WhenSome(func(s lnwallet.AuxSigner) {
 		chanOpts = append(chanOpts, lnwallet.WithAuxSigner(s))
 	})
-	a.c.cfg.AuxResolver.WhenSome(func(s lnwallet.AuxContractResolver) {
+	auxResolver.WhenSome(func(s lnwallet.AuxContractResolver) {
 		chanOpts = append(chanOpts, lnwallet.WithAuxResolver(s))
 	})
 
@@ -585,14 +611,14 @@ func (c *ChainArbitrator) Start() error {
 
 		chainWatcher, err := newChainWatcher(
 			chainWatcherConfig{
-				chanState:           channel,
-				notifier:            c.cfg.Notifier,
-				signer:              c.cfg.Signer,
-				isOurAddr:           c.cfg.IsOurAddress,
-				contractBreach:      breachClosure,
-				extractStateNumHint: lnwallet.GetStateNumHint,
-				auxLeafStore:        c.cfg.AuxLeafStore,
-				auxResolver:         c.cfg.AuxResolver,
+				chanState:            channel,
+				notifier:             c.cfg.Notifier,
+				signer:               c.cfg.Signer,
+				isOurAddr:            c.cfg.IsOurAddress,
+				contractBreach:       breachClosure,
+				extractStateNumHint:  lnwallet.GetStateNumHint,
+				auxLeafStoreProvider: c.cfg.AuxLeafStoreProvider,
+				auxResolverProvider:  c.cfg.AuxResolverProvider,
 			},
 		)
 		if err != nil {
@@ -1221,9 +1247,9 @@ func (c *ChainArbitrator) WatchNewChannel(newChan *channeldb.OpenChannel) error 
 					chanPoint, retInfo,
 				)
 			},
-			extractStateNumHint: lnwallet.GetStateNumHint,
-			auxLeafStore:        c.cfg.AuxLeafStore,
-			auxResolver:         c.cfg.AuxResolver,
+			extractStateNumHint:  lnwallet.GetStateNumHint,
+			auxLeafStoreProvider: c.cfg.AuxLeafStoreProvider,
+			auxResolverProvider:  c.cfg.AuxResolverProvider,
 		},
 	)
 	if err != nil {

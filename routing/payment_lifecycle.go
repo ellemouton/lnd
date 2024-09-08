@@ -679,11 +679,15 @@ func (p *paymentLifecycle) sendAttempt(
 		CustomRecords: lnwire.CustomRecords(p.firstHopTLVs),
 	}
 
+	trafficShaper, err := p.router.cfg.TrafficShaperProvider()
+	if err != nil {
+		return nil, fmt.Errorf("could not get traffic shaper: %w", err)
+	}
+
 	// If a hook exists that may affect our outgoing message, we call it now
 	// and apply its side effects to the UpdateAddHTLC message.
-	err := fn.MapOptionZ(
-		p.router.cfg.TrafficShaper,
-		func(ts TlvTrafficShaper) error {
+	err = fn.MapOptionZ(
+		trafficShaper, func(ts TlvTrafficShaper) error {
 			newAmt, newData, err := ts.ProduceHtlcExtraData(
 				rt.TotalAmount, htlcAdd.CustomRecords,
 			)

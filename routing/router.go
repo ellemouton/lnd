@@ -246,8 +246,8 @@ type PaymentSessionSource interface {
 	// provided in order to populate additional edges to explore when
 	// finding a path to the payment's destination.
 	NewPaymentSession(p *LightningPayment,
-		trafficShaper fn.Option[TlvTrafficShaper]) (PaymentSession,
-		error)
+		trafficShaper func() (fn.Option[TlvTrafficShaper], error)) (
+		PaymentSession, error)
 
 	// NewPaymentSessionEmpty creates a new paymentSession instance that is
 	// empty, and will be exhausted immediately. Used for failure reporting
@@ -416,7 +416,7 @@ type Config struct {
 
 	// TrafficShaper is an optional traffic shaper that can be used to
 	// control the outgoing channel of a payment.
-	TrafficShaper fn.Option[TlvTrafficShaper]
+	TrafficShaperProvider func() (fn.Option[TlvTrafficShaper], error)
 }
 
 // EdgeLocator is a struct used to identify a specific edge.
@@ -2110,7 +2110,7 @@ func (r *ChannelRouter) FindRoute(req *RouteRequest) (*route.Route, float64,
 	// eliminate certain routes early on in the path finding process.
 	bandwidthHints, err := newBandwidthManager(
 		r.cachedGraph, r.selfNode.PubKeyBytes, r.cfg.GetLink,
-		r.cfg.TrafficShaper,
+		r.cfg.TrafficShaperProvider,
 	)
 	if err != nil {
 		return nil, 0, err
@@ -2474,7 +2474,7 @@ func (r *ChannelRouter) PreparePayment(payment *LightningPayment) (
 	// payment session which will report our errors back to mission
 	// control.
 	paySession, err := r.cfg.SessionSource.NewPaymentSession(
-		payment, r.cfg.TrafficShaper,
+		payment, r.cfg.TrafficShaperProvider,
 	)
 	if err != nil {
 		return nil, nil, err
@@ -3124,7 +3124,7 @@ func (r *ChannelRouter) BuildRoute(amt *lnwire.MilliSatoshi,
 	// the best outgoing channel to use in case no outgoing channel is set.
 	bandwidthHints, err := newBandwidthManager(
 		r.cachedGraph, r.selfNode.PubKeyBytes, r.cfg.GetLink,
-		r.cfg.TrafficShaper,
+		r.cfg.TrafficShaperProvider,
 	)
 	if err != nil {
 		return nil, err

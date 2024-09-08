@@ -178,7 +178,7 @@ type BreachConfig struct {
 
 	// AuxSweeper is an optional interface that can be used to modify the
 	// way sweep transaction are generated.
-	AuxSweeper fn.Option[sweep.AuxSweeper]
+	AuxSweeperProvider func() (fn.Option[sweep.AuxSweeper], error)
 }
 
 // BreachArbitrator is a special subsystem which is responsible for watching and
@@ -743,9 +743,17 @@ justiceTxBroadcast:
 		return spew.Sdump(finalTx)
 	}))
 
+	aux, err := b.cfg.AuxSweeperProvider()
+	if err != nil {
+		brarLog.Errorf("Unable to get the aux sweeper provider: %v",
+			err)
+
+		return
+	}
+
 	// As we're about to broadcast our breach transaction, we'll notify the
 	// aux sweeper of our broadcast attempt first.
-	err = fn.MapOptionZ(b.cfg.AuxSweeper, func(aux sweep.AuxSweeper) error {
+	err = fn.MapOptionZ(aux, func(aux sweep.AuxSweeper) error {
 		bumpReq := sweep.BumpRequest{
 			Inputs:          finalTx.inputs,
 			DeliveryAddress: finalTx.sweepAddr,
@@ -1599,11 +1607,15 @@ func (b *BreachArbitrator) sweepSpendableOutputsTxn(txWeight lntypes.WeightUnit,
 	}
 	txFee := feePerKw.FeeForWeight(txWeight)
 
+	aux, err := b.cfg.AuxSweeperProvider()
+	if err != nil {
+		return nil, err
+	}
+
 	// At this point, we'll check to see if we have any extra outputs to
 	// add from the aux sweeper.
 	extraChangeOut := fn.MapOptionZ(
-		b.cfg.AuxSweeper,
-		func(aux sweep.AuxSweeper) fn.Result[sweep.SweepOutput] {
+		aux, func(aux sweep.AuxSweeper) fn.Result[sweep.SweepOutput] {
 			return aux.DeriveSweepAddr(inputs, pkScript)
 		},
 	)

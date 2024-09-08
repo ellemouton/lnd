@@ -436,7 +436,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, implCfg *ImplementationCfg,
 	defer cleanUp()
 
 	partialChainControl, walletConfig, cleanUp, err := implCfg.BuildWalletConfig(
-		ctx, dbs, &implCfg.AuxComponents, interceptorChain,
+		ctx, dbs, implCfg.AuxComponentsProvider, interceptorChain,
 		grpcListeners,
 	)
 	if err != nil {

@@ -260,7 +260,7 @@ type TxPublisherConfig struct {
 
 	// AuxSweeper is an optional interface that can be used to modify the
 	// way sweep transaction are generated.
-	AuxSweeper fn.Option[AuxSweeper]
+	AuxSweeperProvider func() (fn.Option[AuxSweeper], error)
 }
 
 // TxPublisher is an implementation of the Bumper interface. It utilizes the
@@ -565,9 +565,14 @@ func (t *TxPublisher) broadcast(requestID uint64) (*BumpResult, error) {
 	log.Debugf("Publishing sweep tx %v, num_inputs=%v, height=%v",
 		txid, len(tx.TxIn), t.currentHeight.Load())
 
+	aux, err := t.cfg.AuxSweeperProvider()
+	if err != nil {
+		return nil, err
+	}
+
 	// Before we go to broadcast, we'll notify the aux sweeper, if it's
 	// present of this new broadcast attempt.
-	err := fn.MapOptionZ(t.cfg.AuxSweeper, func(aux AuxSweeper) error {
+	err = fn.MapOptionZ(aux, func(aux AuxSweeper) error {
 		return aux.NotifyBroadcast(
 			record.req, tx, record.fee,
 		)
@@ -1163,10 +1168,14 @@ func (t *TxPublisher) createSweepTx(inputs []input.Input,
 	changePkScript lnwallet.AddrWithKey,
 	feeRate chainfee.SatPerKWeight) (*sweepTxCtx, error) {
 
+	aux, err := t.cfg.AuxSweeperProvider()
+	if err != nil {
+		return nil, err
+	}
+
 	// Validate and calculate the fee and change amount.
 	txFee, changeOutputsOpt, locktimeOpt, err := prepareSweepTx(
-		inputs, changePkScript, feeRate, t.currentHeight.Load(),
-		t.cfg.AuxSweeper,
+		inputs, changePkScript, feeRate, t.currentHeight.Load(), aux,
 	)
 	if err != nil {
 		return nil, err

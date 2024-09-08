@@ -389,15 +389,15 @@ type Config struct {
 
 	// AuxLeafStore is an optional store that can be used to store auxiliary
 	// leaves for certain custom channel types.
-	AuxLeafStore fn.Option[lnwallet.AuxLeafStore]
+	AuxLeafStoreProvider func() (fn.Option[lnwallet.AuxLeafStore], error)
 
 	// AuxSigner is an optional signer that can be used to sign auxiliary
 	// leaves for certain custom channel types.
-	AuxSigner fn.Option[lnwallet.AuxSigner]
+	AuxSignerProvider func() (fn.Option[lnwallet.AuxSigner], error)
 
 	// AuxResolver is an optional interface that can be used to modify the
 	// way contracts are resolved.
-	AuxResolver fn.Option[lnwallet.AuxContractResolver]
+	AuxResolverProvider func() (fn.Option[lnwallet.AuxContractResolver], error)
 
 	// PongBuf is a slice we'll reuse instead of allocating memory on the
 	// heap. Since only reads will occur and no writes, there is no need
@@ -417,7 +417,7 @@ type Config struct {
 
 	// AuxChanCloser is an optional instance of an abstraction that can be
 	// used to modify the way the co-op close transaction is constructed.
-	AuxChanCloser fn.Option[chancloser.AuxChanCloser]
+	AuxChanCloserProvider func() (fn.Option[chancloser.AuxChanCloser], error)
 
 	// Quit is the server's quit channel. If this is closed, we halt operation.
 	Quit chan struct{}
@@ -997,14 +997,27 @@ func (p *Brontide) loadActiveChannels(chans []*channeldb.OpenChannel) (
 			}
 		}
 
+		auxLeafStore, err := p.cfg.AuxLeafStoreProvider()
+		if err != nil {
+			return nil, err
+		}
+		auxSigner, err := p.cfg.AuxSignerProvider()
+		if err != nil {
+			return nil, err
+		}
+		auxResolver, err := p.cfg.AuxResolverProvider()
+		if err != nil {
+			return nil, err
+		}
+
 		var chanOpts []lnwallet.ChannelOpt
-		p.cfg.AuxLeafStore.WhenSome(func(s lnwallet.AuxLeafStore) {
+		auxLeafStore.WhenSome(func(s lnwallet.AuxLeafStore) {
 			chanOpts = append(chanOpts, lnwallet.WithLeafStore(s))
 		})
-		p.cfg.AuxSigner.WhenSome(func(s lnwallet.AuxSigner) {
+		auxSigner.WhenSome(func(s lnwallet.AuxSigner) {
 			chanOpts = append(chanOpts, lnwallet.WithAuxSigner(s))
 		})
-		p.cfg.AuxResolver.WhenSome(func(s lnwallet.AuxContractResolver) { //nolint:lll
+		auxResolver.WhenSome(func(s lnwallet.AuxContractResolver) { //nolint:lll
 			chanOpts = append(chanOpts, lnwallet.WithAuxResolver(s))
 		})
 
@@ -3166,11 +3179,11 @@ func (p *Brontide) createChanCloser(channel *lnwallet.LightningChannel,
 
 	chanCloser := chancloser.NewChanCloser(
 		chancloser.ChanCloseCfg{
-			Channel:      channel,
-			MusigSession: NewMusigChanCloser(channel),
-			FeeEstimator: &chancloser.SimpleCoopFeeEstimator{},
-			BroadcastTx:  p.cfg.Wallet.PublishTransaction,
-			AuxCloser:    p.cfg.AuxChanCloser,
+			Channel:           channel,
+			MusigSession:      NewMusigChanCloser(channel),
+			FeeEstimator:      &chancloser.SimpleCoopFeeEstimator{},
+			BroadcastTx:       p.cfg.Wallet.PublishTransaction,
+			AuxCloserProvider: p.cfg.AuxChanCloserProvider,
 			DisableChannel: func(op wire.OutPoint) error {
 				return p.cfg.ChanStatusMgr.RequestDisable(
 					op, false,
@@ -4178,13 +4191,26 @@ func (p *Brontide) addActiveChannel(c *lnpeer.NewChannel) error {
 		chanOpts = append(chanOpts, lnwallet.WithSkipNonceInit())
 	}
 
-	p.cfg.AuxLeafStore.WhenSome(func(s lnwallet.AuxLeafStore) {
+	auxLeafStore, err := p.cfg.AuxLeafStoreProvider()
+	if err != nil {
+		return err
+	}
+	auxSigner, err := p.cfg.AuxSignerProvider()
+	if err != nil {
+		return err
+	}
+	auxResolver, err := p.cfg.AuxResolverProvider()
+	if err != nil {
+		return err
+	}
+
+	auxLeafStore.WhenSome(func(s lnwallet.AuxLeafStore) {
 		chanOpts = append(chanOpts, lnwallet.WithLeafStore(s))
 	})
-	p.cfg.AuxSigner.WhenSome(func(s lnwallet.AuxSigner) {
+	auxSigner.WhenSome(func(s lnwallet.AuxSigner) {
 		chanOpts = append(chanOpts, lnwallet.WithAuxSigner(s))
 	})
-	p.cfg.AuxResolver.WhenSome(func(s lnwallet.AuxContractResolver) {
+	auxResolver.WhenSome(func(s lnwallet.AuxContractResolver) {
 		chanOpts = append(chanOpts, lnwallet.WithAuxResolver(s))
 	})
 

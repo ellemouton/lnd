@@ -191,10 +191,10 @@ type chainWatcherConfig struct {
 	extractStateNumHint func(*wire.MsgTx, [lnwallet.StateHintSize]byte) uint64
 
 	// auxLeafStore can be used to fetch information for custom channels.
-	auxLeafStore fn.Option[lnwallet.AuxLeafStore]
+	auxLeafStoreProvider func() (fn.Option[lnwallet.AuxLeafStore], error)
 
 	// auxResolver is used to supplement contract resolution.
-	auxResolver fn.Option[lnwallet.AuxContractResolver]
+	auxResolverProvider func() (fn.Option[lnwallet.AuxContractResolver], error)
 }
 
 // chainWatcher is a system that's assigned to every active channel. The duty
@@ -428,9 +428,15 @@ func (c *chainWatcher) handleUnknownLocalState(
 		&c.cfg.chanState.LocalChanCfg, &c.cfg.chanState.RemoteChanCfg,
 	)
 
+	auxLeaf, err := c.cfg.auxLeafStoreProvider()
+	if err != nil {
+		return false, fmt.Errorf("unable to get aux leaf provider: %w",
+			err)
+	}
+
 	auxLeaves, err := lnwallet.AuxLeavesFromCommit(
-		c.cfg.chanState, c.cfg.chanState.LocalCommitment,
-		c.cfg.auxLeafStore, *commitKeyRing,
+		c.cfg.chanState, c.cfg.chanState.LocalCommitment, auxLeaf,
+		*commitKeyRing,
 	)
 	if err != nil {
 		return false, fmt.Errorf("unable to fetch aux leaves: %w", err)
@@ -887,12 +893,24 @@ func (c *chainWatcher) handleKnownRemoteState(
 func (c *chainWatcher) handlePossibleBreach(commitSpend *chainntnfs.SpendDetail,
 	broadcastStateNum uint64, chainSet *chainSet) (bool, error) {
 
+	auxLeaf, err := c.cfg.auxLeafStoreProvider()
+	if err != nil {
+		return false, fmt.Errorf("unable to get aux leaf store "+
+			"provider: %w", err)
+	}
+
+	auxResolver, err := c.cfg.auxResolverProvider()
+	if err != nil {
+		return false, fmt.Errorf("unable to get aux resolver provider "+
+			"provider: %w", err)
+	}
+
 	// We check if we have a revoked state at this state num that matches
 	// the spend transaction.
 	spendHeight := uint32(commitSpend.SpendingHeight)
 	retribution, err := lnwallet.NewBreachRetribution(
 		c.cfg.chanState, broadcastStateNum, spendHeight,
-		commitSpend.SpendingTx, c.cfg.auxLeafStore, c.cfg.auxResolver,
+		commitSpend.SpendingTx, auxLeaf, auxResolver,
 	)
 
 	switch {
@@ -1102,9 +1120,21 @@ func (c *chainWatcher) dispatchLocalForceClose(
 	log.Infof("Local unilateral close of ChannelPoint(%v) "+
 		"detected", c.cfg.chanState.FundingOutpoint)
 
+	auxLeaf, err := c.cfg.auxLeafStoreProvider()
+	if err != nil {
+		return fmt.Errorf("unable to get aux leaf store provider: %w",
+			err)
+	}
+
+	auxResolver, err := c.cfg.auxResolverProvider()
+	if err != nil {
+		return fmt.Errorf("unable to get aux resolver provider "+
+			"provider: %w", err)
+	}
+
 	forceClose, err := lnwallet.NewLocalForceCloseSummary(
 		c.cfg.chanState, c.cfg.signer, commitSpend.SpendingTx, stateNum,
-		c.cfg.auxLeafStore, c.cfg.auxResolver,
+		auxLeaf, auxResolver,
 	)
 	if err != nil {
 		return err
@@ -1192,12 +1222,24 @@ func (c *chainWatcher) dispatchRemoteForceClose(
 	log.Infof("Unilateral close of ChannelPoint(%v) "+
 		"detected", c.cfg.chanState.FundingOutpoint)
 
+	auxLeaf, err := c.cfg.auxLeafStoreProvider()
+	if err != nil {
+		return fmt.Errorf("unable to get aux leaf store provider: %w",
+			err)
+	}
+
+	auxResolver, err := c.cfg.auxResolverProvider()
+	if err != nil {
+		return fmt.Errorf("unable to get aux resolver provider "+
+			"provider: %w", err)
+	}
+
 	// First, we'll create a closure summary that contains all the
 	// materials required to let each subscriber sweep the funds in the
 	// channel on-chain.
 	uniClose, err := lnwallet.NewUnilateralCloseSummary(
 		c.cfg.chanState, c.cfg.signer, commitSpend, remoteCommit,
-		commitPoint, c.cfg.auxLeafStore, c.cfg.auxResolver,
+		commitPoint, auxLeaf, auxResolver,
 	)
 	if err != nil {
 		return err

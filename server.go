@@ -546,7 +546,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	// If the taproot overlay flag is set, but we don't have an aux funding
 	// controller, then we'll exit as this is incompatible.
 	if cfg.ProtocolOptions.TaprootOverlayChans &&
-		implCfg.AuxFundingController.IsNone() {
+		!implCfg.AuxComponentsProvider.FundingControllerProvided() {
 
 		return nil, fmt.Errorf("taproot overlay flag set, but not " +
 			"aux controllers")
@@ -1021,7 +1021,9 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		Clock:               clock.NewDefaultClock(),
 		StrictZombiePruning: strictPruning,
 		IsAlias:             aliasmgr.IsAlias,
-		TrafficShaper:       implCfg.TrafficShaper,
+		TrafficShaperProvider: TrafficShaperProvider(
+			s.implCfg.AuxComponentsProvider,
+		),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("can't create router: %w", err)
@@ -1104,11 +1106,13 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	)
 
 	s.txPublisher = sweep.NewTxPublisher(sweep.TxPublisherConfig{
-		Signer:     cc.Wallet.Cfg.Signer,
-		Wallet:     cc.Wallet,
-		Estimator:  cc.FeeEstimator,
-		Notifier:   cc.ChainNotifier,
-		AuxSweeper: s.implCfg.AuxSweeper,
+		Signer:    cc.Wallet.Cfg.Signer,
+		Wallet:    cc.Wallet,
+		Estimator: cc.FeeEstimator,
+		Notifier:  cc.ChainNotifier,
+		AuxSweeperProvider: AuxSweeperProvider(
+			s.implCfg.AuxComponentsProvider,
+		),
 	})
 
 	s.sweeper = sweep.New(&sweep.UtxoSweeperConfig{
@@ -1126,7 +1130,9 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		Aggregator:           aggregator,
 		Publisher:            s.txPublisher,
 		NoDeadlineConfTarget: cfg.Sweeper.NoDeadlineConfTarget,
-		AuxSweeper:           s.implCfg.AuxSweeper,
+		AuxSweeperProvider: AuxSweeperProvider(
+			s.implCfg.AuxComponentsProvider,
+		),
 	})
 
 	s.utxoNursery = contractcourt.NewUtxoNursery(&contractcourt.NurseryConfig{
@@ -1172,7 +1178,9 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			Store: contractcourt.NewRetributionStore(
 				dbs.ChanStateDB,
 			),
-			AuxSweeper: s.implCfg.AuxSweeper,
+			AuxSweeperProvider: AuxSweeperProvider(
+				s.implCfg.AuxComponentsProvider,
+			),
 		},
 	)
 
@@ -1296,9 +1304,9 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 			return &pc.Incoming
 		},
-		AuxLeafStore: implCfg.AuxLeafStore,
-		AuxSigner:    implCfg.AuxSigner,
-		AuxResolver:  implCfg.AuxContractResolver,
+		AuxLeafStoreProvider: AuxLeafStoreProvider(implCfg.AuxComponentsProvider),
+		AuxSignerProvider:    AuxSignerProvider(implCfg.AuxComponentsProvider),
+		AuxResolverProvider:  AuxContractResolverProvider(implCfg.AuxComponentsProvider),
 	}, dbs.ChanStateDB)
 
 	// Select the configuration and funding parameters for Bitcoin.
@@ -1543,12 +1551,12 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		EnableUpfrontShutdown:         cfg.EnableUpfrontShutdown,
 		MaxAnchorsCommitFeeRate: chainfee.SatPerKVByte(
 			s.cfg.MaxCommitFeeRateAnchors * 1000).FeePerKWeight(),
-		DeleteAliasEdge:      deleteAliasEdge,
-		AliasManager:         s.aliasMgr,
-		IsSweeperOutpoint:    s.sweeper.IsSweeperOutpoint,
-		AuxFundingController: implCfg.AuxFundingController,
-		AuxSigner:            implCfg.AuxSigner,
-		AuxResolver:          implCfg.AuxContractResolver,
+		DeleteAliasEdge:              deleteAliasEdge,
+		AliasManager:                 s.aliasMgr,
+		IsSweeperOutpoint:            s.sweeper.IsSweeperOutpoint,
+		AuxFundingControllerProvider: AuxFundingControllerProvider(implCfg.AuxComponentsProvider),
+		AuxSignerProvider:            AuxSignerProvider(implCfg.AuxComponentsProvider),
+		AuxResolverProvider:          AuxContractResolverProvider(implCfg.AuxComponentsProvider),
 	})
 	if err != nil {
 		return nil, err
@@ -1634,10 +1642,15 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 				return nil, 0, err
 			}
 
+			aux, err := implCfg.GetAuxComponents()
+			if err != nil {
+				return nil, 0, err
+			}
+
 			br, err := lnwallet.NewBreachRetribution(
 				channel, commitHeight, 0, nil,
-				implCfg.AuxLeafStore,
-				implCfg.AuxContractResolver,
+				aux.AuxLeafStore,
+				aux.AuxContractResolver,
 			)
 			if err != nil {
 				return nil, 0, err
@@ -3911,6 +3924,12 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 		towerClient = s.towerClientMgr
 	}
 
+	msgRouter, err := MsgRouterProvider(s.implCfg.AuxComponentsProvider)()
+	if err != nil {
+		srvrLog.Errorf("unable to create peer %v", err)
+		return
+	}
+
 	// Now that we've established a connection, create a peer, and it to the
 	// set of currently active peers. Configure the peer with the incoming
 	// and outgoing broadcast deltas to prevent htlcs from being accepted or
@@ -3981,11 +4000,11 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 		AddLocalAlias:          s.aliasMgr.AddLocalAlias,
 		DisallowRouteBlinding:  s.cfg.ProtocolOptions.NoRouteBlinding(),
 		Quit:                   s.quit,
-		AuxLeafStore:           s.implCfg.AuxLeafStore,
-		AuxSigner:              s.implCfg.AuxSigner,
-		MsgRouter:              s.implCfg.MsgRouter,
-		AuxChanCloser:          s.implCfg.AuxChanCloser,
-		AuxResolver:            s.implCfg.AuxContractResolver,
+		AuxLeafStoreProvider:   AuxLeafStoreProvider(s.implCfg.AuxComponentsProvider),
+		AuxSignerProvider:      AuxSignerProvider(s.implCfg.AuxComponentsProvider),
+		MsgRouter:              msgRouter,
+		AuxChanCloserProvider:  AuxChanCloserProvider(s.implCfg.AuxComponentsProvider),
+		AuxResolverProvider:    AuxContractResolverProvider(s.implCfg.AuxComponentsProvider),
 	}
 
 	copy(pCfg.PubKeyBytes[:], peerAddr.IdentityKey.SerializeCompressed())

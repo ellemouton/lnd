@@ -154,7 +154,7 @@ type ChanCloseCfg struct {
 
 	// AuxCloser is an optional interface that can be used to modify the
 	// way the co-op close process proceeds.
-	AuxCloser fn.Option[AuxChanCloser]
+	AuxCloserProvider func() (fn.Option[AuxChanCloser], error)
 }
 
 // ChanCloser is a state machine that handles the cooperative channel closure
@@ -370,9 +370,14 @@ func (c *ChanCloser) initChanShutdown() (*lnwire.Shutdown, error) {
 	// desired closing script.
 	shutdown := lnwire.NewShutdown(c.cid, c.localDeliveryScript)
 
+	auxChanCloser, err := c.cfg.AuxCloserProvider()
+	if err != nil {
+		return nil, err
+	}
+
 	// At this point, we'll check to see if we have any custom records to
 	// add to the shutdown message.
-	err := fn.MapOptionZ(c.cfg.AuxCloser, func(a AuxChanCloser) error {
+	err = fn.MapOptionZ(auxChanCloser, func(a AuxChanCloser) error {
 		shutdownCustomRecords, err := a.ShutdownBlob(AuxShutdownReq{
 			ChanPoint:   c.chanPoint,
 			ShortChanID: c.cfg.Channel.ShortChanID(),
@@ -973,10 +978,15 @@ func (c *ChanCloser) ReceiveClosingSigned( //nolint:funlen
 		}
 		c.closingTx = closeTx
 
+		auxChanCloser, err := c.cfg.AuxCloserProvider()
+		if err != nil {
+			return noClosing, err
+		}
+
 		// If there's an aux chan closer, then we'll finalize with it
 		// before we write to disk.
 		err = fn.MapOptionZ(
-			c.cfg.AuxCloser, func(aux AuxChanCloser) error {
+			auxChanCloser, func(aux AuxChanCloser) error {
 				channel := c.cfg.Channel
 				req := AuxShutdownReq{
 					ChanPoint: c.chanPoint,
@@ -1059,7 +1069,13 @@ func (c *ChanCloser) auxCloseOutputs(
 	closeFee btcutil.Amount) (fn.Option[AuxCloseOutputs], error) {
 
 	var closeOuts fn.Option[AuxCloseOutputs]
-	err := fn.MapOptionZ(c.cfg.AuxCloser, func(aux AuxChanCloser) error {
+
+	auxChanCloser, err := c.cfg.AuxCloserProvider()
+	if err != nil {
+		return closeOuts, err
+	}
+
+	err = fn.MapOptionZ(auxChanCloser, func(aux AuxChanCloser) error {
 		req := AuxShutdownReq{
 			ChanPoint:   c.chanPoint,
 			ShortChanID: c.cfg.Channel.ShortChanID(),

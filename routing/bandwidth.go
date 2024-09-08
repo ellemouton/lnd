@@ -79,7 +79,13 @@ type bandwidthManager struct {
 // that are inactive, or just don't have enough bandwidth to carry the payment.
 func newBandwidthManager(graph routingGraph, sourceNode route.Vertex,
 	linkQuery getLinkQuery,
-	trafficShaper fn.Option[TlvTrafficShaper]) (*bandwidthManager, error) {
+	trafficShaperProvider func() (fn.Option[TlvTrafficShaper], error)) (
+	*bandwidthManager, error) {
+
+	trafficShaper, err := trafficShaperProvider()
+	if err != nil {
+		return nil, err
+	}
 
 	manager := &bandwidthManager{
 		getLink:       linkQuery,
@@ -89,7 +95,7 @@ func newBandwidthManager(graph routingGraph, sourceNode route.Vertex,
 
 	// First, we'll collect the set of outbound edges from the target
 	// source node and add them to our bandwidth manager's map of channels.
-	err := graph.forEachNodeChannel(sourceNode,
+	err = graph.forEachNodeChannel(sourceNode,
 		func(channel *channeldb.DirectedChannel) error {
 			shortID := lnwire.NewShortChanIDFromInt(
 				channel.ChannelID,

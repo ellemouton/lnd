@@ -2624,10 +2624,18 @@ func (l *LightningWallet) ValidateChannel(channelState *channeldb.OpenChannel,
 	fundingTx *wire.MsgTx) error {
 
 	var chanOpts []ChannelOpt
-	l.Cfg.AuxLeafStore.WhenSome(func(s AuxLeafStore) {
+	auxLeafStore, err := l.Cfg.AuxLeafStoreProvider()
+	if err != nil {
+		return err
+	}
+	auxLeafStore.WhenSome(func(s AuxLeafStore) {
 		chanOpts = append(chanOpts, WithLeafStore(s))
 	})
-	l.Cfg.AuxSigner.WhenSome(func(s AuxSigner) {
+	auxSigner, err := l.Cfg.AuxSignerProvider()
+	if err != nil {
+		return err
+	}
+	auxSigner.WhenSome(func(s AuxSigner) {
 		chanOpts = append(chanOpts, WithAuxSigner(s))
 	})
 

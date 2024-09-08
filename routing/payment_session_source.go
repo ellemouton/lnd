@@ -65,12 +65,13 @@ func (m *SessionSource) getRoutingGraph() (routingGraph, func(), error) {
 // in order to populate additional edges to explore when finding a path to the
 // payment's destination.
 func (m *SessionSource) NewPaymentSession(p *LightningPayment,
-	trafficShaper fn.Option[TlvTrafficShaper]) (PaymentSession, error) {
+	trafficShaperProvider func() (fn.Option[TlvTrafficShaper], error)) (
+	PaymentSession, error) {
 
 	getBandwidthHints := func(graph routingGraph) (bandwidthHints, error) {
 		return newBandwidthManager(
 			graph, m.SourceNode.PubKeyBytes, m.GetLink,
-			trafficShaper,
+			trafficShaperProvider,
 		)
 	}
 

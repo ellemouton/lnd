@@ -47,15 +47,19 @@ func TestAuxDataParser(t *testing.T) {
 		require.NoError(t, cdb.Close())
 	})
 
+	auxProvider := &defaultAuxComponentsProvider{
+		components: AuxComponents{
+			AuxDataParser: fn.Some[AuxDataParser](
+				&mockDataParser{},
+			),
+		},
+	}
+
 	r := &rpcServer{
 		server: &server{
 			chanStateDB: cdb.ChannelStateDB(),
 			implCfg: &ImplementationCfg{
-				AuxComponents: AuxComponents{
-					AuxDataParser: fn.Some[AuxDataParser](
-						&mockDataParser{},
-					),
-				},
+				AuxComponentsProvider: auxProvider,
 			},
 		},
 	}
@@ -70,7 +74,7 @@ func TestAuxDataParser(t *testing.T) {
 	// If we don't supply the aux data parser, we should get the raw binary
 	// data. Which in this case is just two VarInt fields (1 byte each) that
 	// represent the value of 0 (zero active and zero pending channels).
-	r.server.implCfg.AuxComponents.AuxDataParser = fn.None[AuxDataParser]()
+	auxProvider.components.AuxDataParser = fn.None[AuxDataParser]()
 
 	resp, err = r.ChannelBalance(nil, &lnrpc.ChannelBalanceRequest{})
 	require.NoError(t, err)

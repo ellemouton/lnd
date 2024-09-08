@@ -109,8 +109,8 @@ type DatabaseBuilder interface {
 type WalletConfigBuilder interface {
 	// BuildWalletConfig is responsible for creating or unlocking and then
 	// fully initializing a wallet.
-	BuildWalletConfig(context.Context, *DatabaseInstances, *AuxComponents,
-		*rpcperms.InterceptorChain,
+	BuildWalletConfig(context.Context, *DatabaseInstances,
+		AuxComponentsProvider, *rpcperms.InterceptorChain,
 		[]*ListenerWithSignal) (*chainreg.PartialChainControl,
 		*btcwallet.Config, func(), error)
 }
@@ -153,7 +153,152 @@ type ImplementationCfg struct {
 
 	// AuxComponents is a set of auxiliary components that can be used by
 	// lnd for certain custom channel types.
-	AuxComponents
+	AuxComponentsProvider
+}
+
+type AuxComponentsProvider interface {
+	FundingControllerProvided() bool
+	GetAuxComponents() (*AuxComponents, error)
+}
+
+type defaultAuxComponentsProvider struct {
+	components AuxComponents
+}
+
+func NewDefaultAuxProvider(components *AuxComponents) AuxComponentsProvider {
+	var provider defaultAuxComponentsProvider
+	if components != nil {
+		provider.components = *components
+	}
+
+	return &provider
+}
+
+func (p *defaultAuxComponentsProvider) FundingControllerProvided() bool {
+	return p.components.AuxFundingController.IsSome()
+}
+
+func (p *defaultAuxComponentsProvider) GetAuxComponents() (*AuxComponents,
+	error) {
+
+	return &p.components, nil
+}
+
+func AuxLeafStoreProvider(components AuxComponentsProvider) func() (
+	fn.Option[lnwallet.AuxLeafStore], error) {
+
+	return func() (fn.Option[lnwallet.AuxLeafStore], error) {
+		aux, err := components.GetAuxComponents()
+		if err != nil {
+			return fn.None[lnwallet.AuxLeafStore](), err
+		}
+
+		return aux.AuxLeafStore, nil
+	}
+}
+
+func TrafficShaperProvider(components AuxComponentsProvider) func() (
+	fn.Option[routing.TlvTrafficShaper], error) {
+
+	return func() (fn.Option[routing.TlvTrafficShaper], error) {
+		aux, err := components.GetAuxComponents()
+		if err != nil {
+			return fn.None[routing.TlvTrafficShaper](), err
+		}
+
+		return aux.TrafficShaper, nil
+	}
+}
+
+func MsgRouterProvider(components AuxComponentsProvider) func() (
+	fn.Option[protofsm.MsgRouter], error) {
+
+	return func() (fn.Option[protofsm.MsgRouter], error) {
+		aux, err := components.GetAuxComponents()
+		if err != nil {
+			return fn.None[protofsm.MsgRouter](), err
+		}
+
+		return aux.MsgRouter, nil
+	}
+}
+
+func AuxFundingControllerProvider(components AuxComponentsProvider) func() (
+	fn.Option[funding.AuxFundingController], error) {
+
+	return func() (fn.Option[funding.AuxFundingController], error) {
+		aux, err := components.GetAuxComponents()
+		if err != nil {
+			return fn.None[funding.AuxFundingController](), err
+		}
+
+		return aux.AuxFundingController, nil
+	}
+}
+
+func AuxSignerProvider(components AuxComponentsProvider) func() (
+	fn.Option[lnwallet.AuxSigner], error) {
+
+	return func() (fn.Option[lnwallet.AuxSigner], error) {
+		aux, err := components.GetAuxComponents()
+		if err != nil {
+			return fn.None[lnwallet.AuxSigner](), err
+		}
+
+		return aux.AuxSigner, nil
+	}
+}
+
+func AuxDataParserProvider(components AuxComponentsProvider) func() (
+	fn.Option[AuxDataParser], error) {
+
+	return func() (fn.Option[AuxDataParser], error) {
+		aux, err := components.GetAuxComponents()
+		if err != nil {
+			return fn.None[AuxDataParser](), err
+		}
+
+		return aux.AuxDataParser, nil
+	}
+}
+
+func AuxChanCloserProvider(components AuxComponentsProvider) func() (
+	fn.Option[chancloser.AuxChanCloser], error) {
+
+	return func() (fn.Option[chancloser.AuxChanCloser], error) {
+		aux, err := components.GetAuxComponents()
+		if err != nil {
+			return fn.None[chancloser.AuxChanCloser](), err
+		}
+
+		return aux.AuxChanCloser, nil
+	}
+}
+
+func AuxSweeperProvider(components AuxComponentsProvider) func() (
+	fn.Option[sweep.AuxSweeper], error) {
+
+	return func() (fn.Option[sweep.AuxSweeper], error) {
+		aux, err := components.GetAuxComponents()
+		if err != nil {
+			return fn.None[sweep.AuxSweeper](), err
+		}
+
+		return aux.AuxSweeper, nil
+	}
+}
+
+func AuxContractResolverProvider(components AuxComponentsProvider) func() (
+	fn.Option[lnwallet.AuxContractResolver], error) {
+
+	return func() (fn.Option[lnwallet.AuxContractResolver], error) {
+		aux, err := components.GetAuxComponents()
+		if err != nil {
+			return fn.None[lnwallet.AuxContractResolver](), err
+		}
+
+		return aux.AuxContractResolver, nil
+	}
 }
 
 // AuxComponents is a set of auxiliary components that can be used by lnd for
@@ -280,7 +425,7 @@ func (d *DefaultWalletImpl) Permissions() map[string][]bakery.Op {
 //
 // NOTE: This is part of the WalletConfigBuilder interface.
 func (d *DefaultWalletImpl) BuildWalletConfig(ctx context.Context,
-	dbs *DatabaseInstances, aux *AuxComponents,
+	dbs *DatabaseInstances, auxProvider AuxComponentsProvider,
 	interceptorChain *rpcperms.InterceptorChain,
 	grpcListeners []*ListenerWithSignal) (*chainreg.PartialChainControl,
 	*btcwallet.Config, func(), error) {
@@ -601,8 +746,8 @@ func (d *DefaultWalletImpl) BuildWalletConfig(ctx context.Context,
 		HeightHintDB:                dbs.HeightHintDB,
 		ChanStateDB:                 dbs.ChanStateDB.ChannelStateDB(),
 		NeutrinoCS:                  neutrinoCS,
-		AuxLeafStore:                aux.AuxLeafStore,
-		AuxSigner:                   aux.AuxSigner,
+		AuxLeafStoreProvider:        AuxLeafStoreProvider(auxProvider),
+		AuxSignerProvider:           AuxSignerProvider(auxProvider),
 		ActiveNetParams:             d.cfg.ActiveNetParams,
 		FeeURL:                      d.cfg.FeeURL,
 		Fee: &lncfg.Fee{
@@ -759,8 +904,8 @@ func (d *DefaultWalletImpl) BuildChainControl(
 		ChainIO:               walletController,
 		NetParams:             *walletConfig.NetParams,
 		CoinSelectionStrategy: walletConfig.CoinSelectionStrategy,
-		AuxLeafStore:          partialChainControl.Cfg.AuxLeafStore,
-		AuxSigner:             partialChainControl.Cfg.AuxSigner,
+		AuxLeafStoreProvider:  partialChainControl.Cfg.AuxLeafStoreProvider,
+		AuxSignerProvider:     partialChainControl.Cfg.AuxSignerProvider,
 	}
 
 	// The broadcast is already always active for neutrino nodes, so we
@@ -876,6 +1021,8 @@ func (d *RPCSignerWalletImpl) BuildChainControl(
 		ChainIO:               walletController,
 		NetParams:             *walletConfig.NetParams,
 		CoinSelectionStrategy: walletConfig.CoinSelectionStrategy,
+		AuxLeafStoreProvider:  partialChainControl.Cfg.AuxLeafStoreProvider,
+		AuxSignerProvider:     partialChainControl.Cfg.AuxSignerProvider,
 	}
 
 	// We've created the wallet configuration now, so we can finish

@@ -553,15 +553,15 @@ type Config struct {
 	// modify the way we handle certain custom channel types. It's also
 	// able to automatically handle new custom protocol messages related to
 	// the funding process.
-	AuxFundingController fn.Option[AuxFundingController]
+	AuxFundingControllerProvider func() (fn.Option[AuxFundingController], error)
 
 	// AuxSigner is an optional signer that can be used to sign auxiliary
 	// leaves for certain custom channel types.
-	AuxSigner fn.Option[lnwallet.AuxSigner]
+	AuxSignerProvider func() (fn.Option[lnwallet.AuxSigner], error)
 
 	// AuxResolver is an optional interface that can be used to modify the
 	// way contracts are resolved.
-	AuxResolver fn.Option[lnwallet.AuxContractResolver]
+	AuxResolverProvider func() (fn.Option[lnwallet.AuxContractResolver], error)
 }
 
 // Manager acts as an orchestrator/bridge between the wallet's
@@ -1091,10 +1091,22 @@ func (f *Manager) advanceFundingState(channel *channeldb.OpenChannel,
 	f.cfg.AuxLeafStore.WhenSome(func(s lnwallet.AuxLeafStore) {
 		chanOpts = append(chanOpts, lnwallet.WithLeafStore(s))
 	})
-	f.cfg.AuxSigner.WhenSome(func(s lnwallet.AuxSigner) {
+
+	auxSigner, err := f.cfg.AuxSignerProvider()
+	if err != nil {
+		log.Errorf("Unable to get the aux signer: %v", err)
+		return
+	}
+	auxResolver, err := f.cfg.AuxResolverProvider()
+	if err != nil {
+		log.Errorf("Unable to get the aux resolver: %v", err)
+		return
+	}
+
+	auxSigner.WhenSome(func(s lnwallet.AuxSigner) {
 		chanOpts = append(chanOpts, lnwallet.WithAuxSigner(s))
 	})
-	f.cfg.AuxResolver.WhenSome(func(s lnwallet.AuxContractResolver) {
+	auxResolver.WhenSome(func(s lnwallet.AuxContractResolver) {
 		chanOpts = append(chanOpts, lnwallet.WithAuxResolver(s))
 	})
 
@@ -1645,11 +1657,23 @@ func (f *Manager) fundeeProcessOpenChannel(peer lnpeer.Peer,
 		return
 	}
 
+	auxFundingController, err := f.cfg.AuxFundingControllerProvider()
+	if err != nil {
+		err = fmt.Errorf("unable to get the aux funding controller: %v",
+			err)
+
+		log.Errorf("Cancelling funding flow for public taproot "+
+			"channel %v: %v", cid, err)
+		f.failFundingFlow(peer, cid, err)
+
+		return
+	}
+
 	// At this point, if we have an AuxFundingController active, we'll
 	// check to see if we have a special tapscript root to use in our
 	// MuSig funding output.
 	tapscriptRoot, err := deriveTapscriptRoot(
-		f.cfg.AuxFundingController, msg.PendingChannelID,
+		auxFundingController, msg.PendingChannelID,
 	)
 	if err != nil {
 		err = fmt.Errorf("error deriving tapscript root: %w", err)
@@ -2270,13 +2294,19 @@ func (f *Manager) waitForPsbt(intent *chanfunding.PsbtIntent,
 			return
 		}
 
+		auxFundingController, err := f.cfg.AuxFundingControllerProvider()
+		if err != nil {
+			failFlow("could not get aux funding controller", err)
+			return
+		}
+
 		// At this point, we'll see if there's an AuxFundingDesc we
 		// need to deliver so the funding process can continue
 		// properly.
 		chanState := resCtx.reservation.ChanState()
 		localKeys, remoteKeys := resCtx.reservation.CommitmentKeyRings()
 		auxFundingDesc, err := descFromPendingChanID(
-			f.cfg.AuxFundingController, cid.tempChanID, chanState,
+			auxFundingController, cid.tempChanID, chanState,
 			*localKeys, *remoteKeys, true,
 		)
 		if err != nil {
@@ -2447,12 +2477,19 @@ func (f *Manager) fundeeProcessFundingCreated(peer lnpeer.Peer,
 		}
 	}
 
+	auxFundingController, err := f.cfg.AuxFundingControllerProvider()
+	if err != nil {
+		log.Errorf("could not get aux funding controller: %v", err)
+		f.failFundingFlow(peer, cid, err)
+		return
+	}
+
 	// At this point, we'll see if there's an AuxFundingDesc we need to
 	// deliver so the funding process can continue properly.
 	chanState := resCtx.reservation.ChanState()
 	localKeys, remoteKeys := resCtx.reservation.CommitmentKeyRings()
 	auxFundingDesc, err := descFromPendingChanID(
-		f.cfg.AuxFundingController, cid.tempChanID, chanState,
+		auxFundingController, cid.tempChanID, chanState,
 		*localKeys, *remoteKeys, true,
 	)
 	if err != nil {
@@ -2769,11 +2806,18 @@ func (f *Manager) funderProcessFundingSigned(peer lnpeer.Peer,
 		}
 	}
 
+	auxFundingController, err := f.cfg.AuxFundingControllerProvider()
+	if err != nil {
+		log.Errorf("Unable get aux funding controller: %v", err)
+		f.failFundingFlow(peer, cid, err)
+		return
+	}
+
 	// Before we proceed, if we have a funding hook that wants a
 	// notification that it's safe to broadcast the funding transaction,
 	// then we'll send that now.
 	err = fn.MapOptionZ(
-		f.cfg.AuxFundingController,
+		auxFundingController,
 		func(controller AuxFundingController) error {
 			return controller.ChannelFinalized(cid.tempChanID)
 		},
@@ -4039,8 +4083,14 @@ func (f *Manager) handleChannelReady(peer lnpeer.Peer, //nolint:funlen
 			}),
 		)
 
+		auxFundingController, err := f.cfg.AuxFundingControllerProvider()
+		if err != nil {
+			log.Errorf("Unable get aux funding controller: %v", err)
+			return
+		}
+
 		err = fn.MapOptionZ(
-			f.cfg.AuxFundingController,
+			auxFundingController,
 			func(controller AuxFundingController) error {
 				return controller.ChannelReady(channel)
 			},
@@ -4137,8 +4187,13 @@ func (f *Manager) handleChannelReadyReceived(channel *channeldb.OpenChannel,
 	log.Debugf("Channel(%v) with ShortChanID %v: successfully "+
 		"added to router graph", chanID, scid)
 
+	auxFundingController, err := f.cfg.AuxFundingControllerProvider()
+	if err != nil {
+		return fmt.Errorf("unable get aux funding controller: %v", err)
+	}
+
 	err = fn.MapOptionZ(
-		f.cfg.AuxFundingController,
+		auxFundingController,
 		func(controller AuxFundingController) error {
 			return controller.ChannelReady(channel)
 		},
@@ -4718,11 +4773,20 @@ func (f *Manager) handleInitFundingMsg(msg *InitFundingMsg) {
 		scidFeatureVal = true
 	}
 
+	auxFundingController, err := f.cfg.AuxFundingControllerProvider()
+	if err != nil {
+		err = fmt.Errorf("could not get aux funding controller: %w", err)
+		log.Error(err)
+		msg.Err <- err
+
+		return
+	}
+
 	// At this point, if we have an AuxFundingController active, we'll check
 	// to see if we have a special tapscript root to use in our MuSig2
 	// funding output.
 	tapscriptRoot, err := deriveTapscriptRoot(
-		f.cfg.AuxFundingController, chanID,
+		auxFundingController, chanID,
 	)
 	if err != nil {
 		err = fmt.Errorf("error deriving tapscript root: %w", err)
