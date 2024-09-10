@@ -1,7 +1,7 @@
 package build
 
 import (
-	"io"
+	"os"
 
 	"github.com/btcsuite/btclog"
 )
@@ -34,6 +34,7 @@ func (t LogType) String() string {
 	}
 }
 
+<<<<<<< HEAD
 // LogWriter is a stub type whose behavior can be changed using the build flags
 // "stdlog" and "nolog". The default behavior is to write to both stdout and the
 // RotatorPipe. Passing "stdlog" will cause it only to write to stdout, and
@@ -43,6 +44,32 @@ type LogWriter struct {
 	// is written to by the Write method of the LogWriter type. This only
 	// needs to be set if neither the stdlog or nolog builds are set.
 	RotatorPipe *io.PipeWriter
+=======
+// Declare the supported log file compressors as exported consts for easier use
+// from other projects.
+const (
+	// Gzip is the default compressor.
+	Gzip = "gzip"
+
+	// Zstd is a modern compressor that compresses better than Gzip, in less
+	// time.
+	Zstd = "zstd"
+)
+
+// logCompressors maps the identifier for each supported compression algorithm
+// to the extension used for the compressed log files.
+var logCompressors = map[string]string{
+	Gzip: "gz",
+	Zstd: "zst",
+}
+
+// SuportedLogCompressor returns whether or not logCompressor is a supported
+// compression algorithm for log files.
+func SuportedLogCompressor(logCompressor string) bool {
+	_, ok := logCompressors[logCompressor]
+
+	return ok
+>>>>>>> 33ccc9cf9 (build: switch to slog Handlers)
 }
 
 // NewSubLogger constructs a new subsystem log from the current LogWriter
@@ -78,7 +105,7 @@ func NewSubLogger(subsystem string,
 		// that they share the same backend, since all output is written
 		// to std out.
 		case LogTypeStdOut:
-			backend := btclog.NewBackend(&LogWriter{})
+			backend := btclog.NewBackend(os.Stdout)
 			logger := backend.Logger(subsystem)
 
 			// Set the logging level of the stdout logger to use the

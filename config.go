@@ -483,7 +483,6 @@ type Config struct {
 	// LogMgr is the root logger that all the daemon's subloggers are
 	// hooked up to.
 	LogMgr     *build.SubLoggerManager
-	LogWriter  *build.LogWriter
 	LogRotator *build.RotatingLogWriter
 
 	// networkDir is the path to the directory of the currently active
@@ -686,7 +685,7 @@ func DefaultConfig() Config {
 		MaxChannelFeeAllocation:   htlcswitch.DefaultMaxLinkFeeAllocation,
 		MaxCommitFeeRateAnchors:   lnwallet.DefaultAnchorsCommitMaxFeeRateSatPerVByte,
 		DustThreshold:             uint64(htlcswitch.DefaultDustThreshold.ToSatoshis()),
-		LogWriter:                 &build.LogWriter{},
+		LogRotator:                build.NewRotatingLogWriter(),
 		DB:                        lncfg.DefaultDB(),
 		Cluster:                   lncfg.DefaultCluster(),
 		RPCMiddleware:             lncfg.DefaultRPCMiddleware(),
@@ -1406,14 +1405,20 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 		lncfg.NormalizeNetwork(cfg.ActiveNetParams.Name),
 	)
 
-	// A log writer must be passed in, otherwise we can't function and would
-	// run into a panic later on.
-	if cfg.LogWriter == nil {
-		return nil, mkErr("log writer missing in config")
+	var (
+		consoleLogHander = build.NewConsoleHandler(os.Stdout)
+		logHandlers      []build.Handler
+	)
+	switch build.LoggingType {
+	case build.LogTypeStdOut:
+		logHandlers = []build.Handler{consoleLogHander}
+	case build.LogTypeDefault:
+		logHandlers = []build.Handler{
+			consoleLogHander,
+			build.NewLogFileHandler(cfg.LogRotator),
+		}
 	}
-
-	cfg.LogRotator = build.NewRotatingLogWriter(cfg.LogWriter)
-	cfg.LogMgr = build.NewSubLoggerManager(cfg.LogWriter)
+	cfg.LogMgr = build.NewSubLoggerManager(logHandlers...)
 
 	// Special show command to list supported subsystems and exit.
 	if cfg.DebugLevel == "show" {
