@@ -73,7 +73,7 @@ func defaultConsoleOptions() *handlerOptions {
 	return &handlerOptions{
 		reportTimestamp: true,
 		timeFormat:      defaultTimeFormat,
-		color:           ColorAuto,
+		color:           ColorOff,
 		style:           defaultConsoleStyle(),
 	}
 }
