@@ -9,7 +9,8 @@ require (
 	github.com/btcsuite/btcd/btcutil v1.1.5
 	github.com/btcsuite/btcd/btcutil/psbt v1.1.8
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0
-	github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f
+	github.com/btcsuite/btclog v0.0.0-20241003133417-09c4e92e319c
+	github.com/btcsuite/btclog/v2 v2.0.0
 	github.com/btcsuite/btcwallet v0.16.10-0.20240809133323-7d3434c65ae2
 	github.com/btcsuite/btcwallet/wallet/txauthor v1.3.4
 	github.com/btcsuite/btcwallet/wallet/txrules v1.2.1
@@ -210,3 +211,5 @@ replace google.golang.org/protobuf => github.com/lightninglabs/protobuf-go-hex-d
 go 1.22.6
 
 retract v0.0.2
+
+replace github.com/btcsuite/btclog/v2 => github.com/ellemouton/btclog/v2 v2.0.0-20241015115753-b5e8a302464b
