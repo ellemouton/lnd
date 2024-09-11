@@ -484,6 +484,7 @@ type Config struct {
 	// hooked up to.
 	LogMgr     *build.SubLoggerManager
 	LogRotator *build.RotatingLogWriter
+	LogConfig  *build.LogConfig `group:"logging" namespace:"logging"`
 
 	// networkDir is the path to the directory of the currently active
 	// network. This path will hold the files related to each different
@@ -707,6 +708,7 @@ func DefaultConfig() Config {
 			ServerPingTimeout: defaultGrpcServerPingTimeout,
 			ClientPingMinWait: defaultGrpcClientPingMinWait,
 		},
+		LogConfig:         build.DefaultLogConfig(),
 		WtClient:          lncfg.DefaultWtClientCfg(),
 		HTTPHeaderTimeout: DefaultHTTPHeaderTimeout,
 	}
@@ -1406,17 +1408,29 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 	)
 
 	var (
-		consoleLogHander = build.NewConsoleHandler(os.Stdout)
-		logHandlers      []build.Handler
+		logCfg            = cfg.LogConfig
+		logHandlers       []build.Handler
+		consoleLogHandler = build.NewConsoleHandler(
+			os.Stdout,
+			build.WithTimestamp(!logCfg.Console.NoTimestamps),
+			build.WithColor(logCfg.Console.Color),
+		)
+		logFileHandler = build.NewLogFileHandler(
+			cfg.LogRotator,
+			build.WithTimestamp(!logCfg.File.NoTimestamps),
+		)
 	)
+	maybeAddLogger := func(cmdOptionDisable bool, handler build.Handler) {
+		if !cmdOptionDisable {
+			logHandlers = append(logHandlers, handler)
+		}
+	}
 	switch build.LoggingType {
 	case build.LogTypeStdOut:
-		logHandlers = []build.Handler{consoleLogHander}
+		maybeAddLogger(logCfg.Console.Disable, consoleLogHandler)
 	case build.LogTypeDefault:
-		logHandlers = []build.Handler{
-			consoleLogHander,
-			build.NewLogFileHandler(cfg.LogRotator),
-		}
+		maybeAddLogger(logCfg.File.Disable, consoleLogHandler)
+		maybeAddLogger(logCfg.File.Disable, logFileHandler)
 	}
 	cfg.LogMgr = build.NewSubLoggerManager(logHandlers...)
 
