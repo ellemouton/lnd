@@ -532,6 +532,17 @@ func (s *Server) probePaymentRequest(ctx context.Context, paymentRequest string,
 		DestFeatures:     MarshalFeatures(payReq.Features),
 	}
 
+	if len(payReq.BlindedPaymentPaths) > 0 {
+		path, err := invoicesrpc.CreateRPCBlindedPayments(
+			payReq.BlindedPaymentPaths,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		probeRequest.BlindedPaths = path
+	}
+
 	// If the payment addresses is specified, then we'll also populate that
 	// now as well.
 	payReq.PaymentAddr.WhenSome(func(addr [32]byte) {
