@@ -4774,7 +4774,7 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 	// signature that signs a double-sha digest of the announcement.
 	// This'll serve to authenticate this announcement and any other future
 	// updates we may send.
-	chanUpdateMsg, err := chanUpdateAnn.DataToSign()
+	chanUpdateMsg, err := chanUpdateAnn.SerialiseFieldsToSign()
 	if err != nil {
 		return nil, err
 	}
@@ -4786,7 +4786,7 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 		return nil, errors.Errorf("unable to generate channel "+
 			"update announcement signature: %v", err)
 	}
-	chanUpdateAnn.Signature, err = lnwire.NewSigFromSignature(sig)
+	chanUpdateAnn.Signature.Val, err = lnwire.NewSigFromSignature(sig)
 	if err != nil {
 		return nil, errors.Errorf("unable to generate channel "+
 			"update announcement signature: %v", err)

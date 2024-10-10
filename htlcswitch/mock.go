@@ -176,7 +176,7 @@ func initSwitchWithDB(startingHeight uint32, db *channeldb.DB) (*Switch, error) 
 		case *lnwire.ChannelUpdate1:
 			u.Signature = s
 		case *lnwire.ChannelUpdate2:
-			u.Signature = s
+			u.Signature.Val = s
 		}
 
 		return nil

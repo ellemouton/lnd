@@ -112,7 +112,7 @@ func SignChannelUpdate(signer keychain.MessageSignerRing,
 		}
 
 	case *lnwire.ChannelUpdate2:
-		data, err := upd.DataToSign()
+		data, err := upd.SerialiseFieldsToSign()
 		if err != nil {
 			return err
 		}
@@ -124,7 +124,7 @@ func SignChannelUpdate(signer keychain.MessageSignerRing,
 			return err
 		}
 
-		upd.Signature, err = lnwire.NewSigFromSignature(sig)
+		upd.Signature.Val, err = lnwire.NewSigFromSignature(sig)
 		if err != nil {
 			return err
 		}
@@ -256,7 +256,7 @@ func signedChannelUpdateFromEdge(chainHash chainhash.Hash,
 		return update, nil
 
 	case *models.ChannelEdgePolicy2:
-		sig, err := p.Signature.ToSignature()
+		sig, err := p.Signature.Val.ToSignature()
 		if err != nil {
 			return nil, err
 		}
@@ -267,7 +267,7 @@ func signedChannelUpdateFromEdge(chainHash chainhash.Hash,
 		}
 
 		update := unsignedChanPolicy2ToUpdate(chainHash, p)
-		update.Signature = s
+		update.Signature.Val = s
 
 		return update, nil
 
@@ -341,7 +341,7 @@ func verifyChannelUpdate2Signature(c *lnwire.ChannelUpdate2,
 		return fmt.Errorf("unable to reconstruct message data: %w", err)
 	}
 
-	nodeSig, err := c.Signature.ToSignature()
+	nodeSig, err := c.Signature.Val.ToSignature()
 	if err != nil {
 		return err
 	}
@@ -429,7 +429,7 @@ func ChanUpdate2DigestTag() []byte {
 // chanUpdate2DigestToSign computes the digest of the ChannelUpdate2 message to
 // be signed.
 func chanUpdate2DigestToSign(c *lnwire.ChannelUpdate2) ([]byte, error) {
-	data, err := c.DataToSign()
+	data, err := c.SerialiseFieldsToSign()
 	if err != nil {
 		return nil, err
 	}

@@ -213,7 +213,7 @@ type ChannelEdgePolicy2 struct {
 //
 // NOTE: This is part of the ChannelEdgePolicy interface.
 func (c *ChannelEdgePolicy2) Sig() (input.Signature, error) {
-	return c.Signature.ToSignature()
+	return c.Signature.Val.ToSignature()
 }
 
 // AfterUpdateMsg compares this update against the passed lnwire.ChannelUpdate

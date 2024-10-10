@@ -104,12 +104,12 @@ func TestEdgePolicySerialisation(t *testing.T) {
 				policy := &models.ChannelEdgePolicy2{
 					//nolint:lll
 					ChannelUpdate2: lnwire.ChannelUpdate2{
-						Signature:       testSchnorrSig,
 						ExtraOpaqueData: make([]byte, 0),
 					},
 					ToNode: [33]byte{},
 				}
 
+				policy.Signature.Val = testSchnorrSig
 				policy.ShortChannelID.Val = lnwire.NewShortChanIDFromInt( //nolint:lll
 					uint64(r.Int63()),
 				)

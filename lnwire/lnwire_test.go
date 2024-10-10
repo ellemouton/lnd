@@ -1598,10 +1598,10 @@ func TestLightningWireProtocol(t *testing.T) {
 		},
 		MsgChannelUpdate2: func(v []reflect.Value, r *rand.Rand) {
 			req := ChannelUpdate2{
-				Signature:       testSchnorrSig,
 				ExtraOpaqueData: make([]byte, 0),
 			}
 
+			req.Signature.Val = testSchnorrSig
 			req.ShortChannelID.Val = NewShortChanIDFromInt(
 				uint64(r.Int63()),
 			)

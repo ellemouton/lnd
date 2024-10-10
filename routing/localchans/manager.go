@@ -335,7 +335,7 @@ func (r *Manager) updateEdge(tx kvdb.RTx, chanPoint wire.OutPoint,
 
 		// Clear signature to help prevent usage of the previous
 		// signature.
-		edge.Signature = lnwire.Sig{}
+		edge.Signature.Val = lnwire.Sig{}
 
 	default:
 		return fmt.Errorf("unhandled implementation of "+
