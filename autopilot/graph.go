@@ -90,8 +90,8 @@ func (d *dbNode) Addrs() []net.Addr {
 // NOTE: Part of the autopilot.Node interface.
 func (d *dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 	return d.db.ForEachNodeChannelTx(d.tx, d.node.PubKeyBytes,
-		func(tx kvdb.RTx, ei *models.ChannelEdgeInfo, ep,
-			_ *models.ChannelEdgePolicy) error {
+		func(tx kvdb.RTx, ei models.ChannelEdgeInfo, ep,
+			_ models.ChannelEdgePolicy) error {
 
 			// Skip channels for which no outgoing edge policy is
 			// available.
@@ -106,17 +106,15 @@ func (d *dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 			}
 
 			node, err := d.db.FetchLightningNodeTx(
-				tx, ep.ToNode,
+				tx, ep.GetToNode(),
 			)
 			if err != nil {
 				return err
 			}
 
 			edge := ChannelEdge{
-				ChanID: lnwire.NewShortChanIDFromInt(
-					ep.ChannelID,
-				),
-				Capacity: ei.Capacity,
+				ChanID:   ep.SCID(),
+				Capacity: ei.GetCapacity(),
 				Peer: &dbNode{
 					tx:   tx,
 					db:   d.db,
@@ -238,7 +236,7 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 	}
 
 	chanID := randChanID()
-	edge := &models.ChannelEdgeInfo{
+	edge := &models.ChannelEdgeInfo1{
 		ChannelID: chanID.ToUint64(),
 		Capacity:  capacity,
 	}
@@ -246,7 +244,7 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 	if err := d.db.AddChannelEdge(edge); err != nil {
 		return nil, nil, err
 	}
-	edgePolicy := &models.ChannelEdgePolicy{
+	edgePolicy := &models.ChannelEdgePolicy1{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 chanID.ToUint64(),
 		LastUpdate:                time.Now(),
@@ -262,7 +260,7 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 	if err := d.db.UpdateEdgePolicy(edgePolicy); err != nil {
 		return nil, nil, err
 	}
-	edgePolicy = &models.ChannelEdgePolicy{
+	edgePolicy = &models.ChannelEdgePolicy1{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 chanID.ToUint64(),
 		LastUpdate:                time.Now(),

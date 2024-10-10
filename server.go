@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -748,6 +747,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		ApplyChannelUpdate:       s.applyChannelUpdate,
 		DB:                       s.chanStateDB,
 		Graph:                    dbs.GraphDB.ChannelGraph(),
+		BestBlockView:            s.cc.BestBlockTracker,
 	}
 
 	chanStatusMgr, err := netann.NewChanStatusManager(chanStatusMgrCfg)
@@ -1349,7 +1349,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	// Wrap the DeleteChannelEdges method so that the funding manager can
 	// use it without depending on several layers of indirection.
 	deleteAliasEdge := func(scid lnwire.ShortChannelID) (
-		*models.ChannelEdgePolicy, error) {
+		models.ChannelEdgePolicy, error) {
 
 		info, e1, e2, err := s.graphDB.FetchChannelEdgesByID(
 			scid.ToUint64(),
@@ -1368,8 +1368,8 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		var ourKey [33]byte
 		copy(ourKey[:], nodeKeyDesc.PubKey.SerializeCompressed())
 
-		var ourPolicy *models.ChannelEdgePolicy
-		if info != nil && info.NodeKey1Bytes == ourKey {
+		var ourPolicy models.ChannelEdgePolicy
+		if info != nil && info.Node1Bytes() == ourKey {
 			ourPolicy = e1
 		} else {
 			ourPolicy = e2
@@ -1383,6 +1383,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		err = s.graphDB.DeleteChannelEdges(
 			false, false, scid.ToUint64(),
 		)
+
 		return ourPolicy, err
 	}
 
@@ -1419,10 +1420,11 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		UpdateLabel: func(hash chainhash.Hash, label string) error {
 			return cc.Wallet.LabelTransaction(hash, label, true)
 		},
-		Notifier:     cc.ChainNotifier,
-		ChannelDB:    s.chanStateDB,
-		FeeEstimator: cc.FeeEstimator,
-		SignMessage:  cc.MsgSigner.SignMessage,
+		Notifier:      cc.ChainNotifier,
+		ChannelDB:     s.chanStateDB,
+		FeeEstimator:  cc.FeeEstimator,
+		MessageSigner: cc.KeyRing,
+		MuSig2Signer:  cc.Signer,
 		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement,
 			error) {
 
@@ -1584,6 +1586,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		AuxFundingController: implCfg.AuxFundingController,
 		AuxSigner:            implCfg.AuxSigner,
 		AuxResolver:          implCfg.AuxContractResolver,
+		BestBlockView:        s.cc.BestBlockTracker,
 	})
 	if err != nil {
 		return nil, err
@@ -1811,18 +1814,11 @@ func (s *server) UpdateRoutingConfig(cfg *routing.MissionControlConfig) {
 	routerCfg.MaxMcHistory = cfg.MaxMcHistory
 }
 
-// signAliasUpdate takes a ChannelUpdate and returns the signature. This is
-// used for option_scid_alias channels where the ChannelUpdate to be sent back
-// may differ from what is on disk.
-func (s *server) signAliasUpdate(u *lnwire.ChannelUpdate1) (*ecdsa.Signature,
-	error) {
-
-	data, err := u.DataToSign()
-	if err != nil {
-		return nil, err
-	}
-
-	return s.cc.MsgSigner.SignMessage(s.identityKeyLoc, data, true)
+// signAliasUpdate takes a ChannelUpdate and re-signs it. The signature is set
+// the update accordingly. This is used for option_scid_alias channels where the
+// ChannelUpdate to be sent back may differ from what is on disk.
+func (s *server) signAliasUpdate(u lnwire.ChannelUpdate) error {
+	return netann.SignChannelUpdate(s.cc.KeyRing, s.identityKeyLoc, u)
 }
 
 // createLivenessMonitor creates a set of health checks using our configured
@@ -3315,15 +3311,17 @@ func (s *server) establishPersistentConnections() error {
 	selfPub := s.identityECDH.PubKey().SerializeCompressed()
 	err = s.graphDB.ForEachNodeChannel(sourceNode.PubKeyBytes, func(
 		tx kvdb.RTx,
-		chanInfo *models.ChannelEdgeInfo,
-		policy, _ *models.ChannelEdgePolicy) error {
+		chanInfo models.ChannelEdgeInfo,
+		policy, _ models.ChannelEdgePolicy) error {
+
+		chanPoint := chanInfo.GetChanPoint()
 
 		// If the remote party has announced the channel to us, but we
 		// haven't yet, then we won't have a policy. However, we don't
 		// need this to connect to the peer, so we'll log it and move on.
 		if policy == nil {
 			srvrLog.Warnf("No channel policy found for "+
-				"ChannelPoint(%v): ", chanInfo.ChannelPoint)
+				"ChannelPoint(%v): ", chanPoint)
 		}
 
 		// We'll now fetch the peer opposite from us within this
@@ -3333,8 +3331,7 @@ func (s *server) establishPersistentConnections() error {
 		)
 		if err != nil {
 			return fmt.Errorf("unable to fetch channel peer for "+
-				"ChannelPoint(%v): %v", chanInfo.ChannelPoint,
-				err)
+				"ChannelPoint(%v): %v", chanPoint, err)
 		}
 
 		pubStr := string(channelPeer.PubKeyBytes[:])
@@ -4803,6 +4800,28 @@ func (s *server) OpenChannel(
 	req.Peer = peer
 	s.mu.RUnlock()
 
+	// If the desired channel is for an advertised taproot channel, then
+	// it the peer must support taproot gossip.
+	if req.ChannelType != nil {
+		rfv := lnwire.RawFeatureVector(*req.ChannelType)
+		fv := lnwire.NewFeatureVector(&rfv, lnwire.Features)
+
+		if fv.HasFeature(lnwire.SimpleTaprootChannelsOptionalStaging) &&
+			!req.Private {
+
+			if !peer.RemoteFeatures().HasFeature(
+				lnwire.TaprootGossipOptionalStaging,
+			) {
+
+				req.Err <- fmt.Errorf("peer %x does not "+
+					"support announced taproot channels",
+					pubKeyBytes)
+
+				return req.Updates, req.Err
+			}
+		}
+	}
+
 	// We'll wait until the peer is active before beginning the channel
 	// opening process.
 	select {
@@ -4904,10 +4923,10 @@ func (s *server) fetchNodeAdvertisedAddrs(pub *btcec.PublicKey) ([]net.Addr, err
 // fetchLastChanUpdate returns a function which is able to retrieve our latest
 // channel update for a target channel.
 func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
-	*lnwire.ChannelUpdate1, error) {
+	lnwire.ChannelUpdate, error) {
 
 	ourPubKey := s.identityECDH.PubKey().SerializeCompressed()
-	return func(cid lnwire.ShortChannelID) (*lnwire.ChannelUpdate1, error) {
+	return func(cid lnwire.ShortChannelID) (lnwire.ChannelUpdate, error) {
 		info, edge1, edge2, err := s.graphBuilder.GetChannelByID(cid)
 		if err != nil {
 			return nil, err
@@ -4922,7 +4941,7 @@ func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
 // applyChannelUpdate applies the channel update to the different sub-systems of
 // the server. The useAlias boolean denotes whether or not to send an alias in
 // place of the real SCID.
-func (s *server) applyChannelUpdate(update *lnwire.ChannelUpdate1,
+func (s *server) applyChannelUpdate(update lnwire.ChannelUpdate,
 	op *wire.OutPoint, useAlias bool) error {
 
 	var (

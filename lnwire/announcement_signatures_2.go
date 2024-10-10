@@ -3,6 +3,8 @@ package lnwire
 import (
 	"bytes"
 	"io"
+
+	"github.com/lightningnetwork/lnd/tlv"
 )
 
 // AnnounceSignatures2 is a direct message between two endpoints of a
@@ -14,19 +16,19 @@ type AnnounceSignatures2 struct {
 	// Channel id is better for users and debugging and short channel id is
 	// used for quick test on existence of the particular utxo inside the
 	// blockchain, because it contains information about block.
-	ChannelID ChannelID
+	ChannelID tlv.RecordT[tlv.TlvType0, ChannelID]
 
 	// ShortChannelID is the unique description of the funding transaction.
 	// It is constructed with the most significant 3 bytes as the block
 	// height, the next 3 bytes indicating the transaction index within the
 	// block, and the least significant two bytes indicating the output
 	// index which pays to the channel.
-	ShortChannelID ShortChannelID
+	ShortChannelID tlv.RecordT[tlv.TlvType2, ShortChannelID]
 
 	// PartialSignature is the combination of the partial Schnorr signature
 	// created for the node's bitcoin key with the partial signature created
 	// for the node's node ID key.
-	PartialSignature PartialSig
+	PartialSignature tlv.RecordT[tlv.TlvType4, PartialSig]
 
 	// ExtraOpaqueData is the set of data that was appended to this
 	// message, some of which we may not actually know how to iterate or
@@ -35,6 +37,21 @@ type AnnounceSignatures2 struct {
 	// and ensure we're able to make upgrades to the network in a forwards
 	// compatible manner.
 	ExtraOpaqueData ExtraOpaqueData
+}
+
+func NewAnnSigs2(chanID ChannelID, scid ShortChannelID,
+	partialSig PartialSig) *AnnounceSignatures2 {
+
+	return &AnnounceSignatures2{
+		ChannelID: tlv.NewRecordT[tlv.TlvType0, ChannelID](chanID),
+		ShortChannelID: tlv.NewRecordT[tlv.TlvType2, ShortChannelID](
+			scid,
+		),
+		PartialSignature: tlv.NewRecordT[tlv.TlvType4, PartialSig](
+			partialSig,
+		),
+		ExtraOpaqueData: make([]byte, 0),
+	}
 }
 
 // A compile time check to ensure AnnounceSignatures2 implements the
@@ -46,12 +63,21 @@ var _ Message = (*AnnounceSignatures2)(nil)
 //
 // This is part of the lnwire.Message interface.
 func (a *AnnounceSignatures2) Decode(r io.Reader, _ uint32) error {
-	return ReadElements(r,
-		&a.ChannelID,
-		&a.ShortChannelID,
-		&a.PartialSignature,
-		&a.ExtraOpaqueData,
+	// First extract into extra opaque data.
+	var tlvRecords ExtraOpaqueData
+	if err := ReadElements(r, &tlvRecords); err != nil {
+		return err
+	}
+
+	_, err := tlvRecords.ExtractRecords(
+		&a.ChannelID, &a.ShortChannelID, &a.PartialSignature,
 	)
+
+	if len(tlvRecords) != 0 {
+		a.ExtraOpaqueData = tlvRecords
+	}
+
+	return err
 }
 
 // Encode serializes the target AnnounceSignatures2 into the passed io.Writer
@@ -59,15 +85,11 @@ func (a *AnnounceSignatures2) Decode(r io.Reader, _ uint32) error {
 //
 // This is part of the lnwire.Message interface.
 func (a *AnnounceSignatures2) Encode(w *bytes.Buffer, _ uint32) error {
-	if err := WriteChannelID(w, a.ChannelID); err != nil {
-		return err
-	}
-
-	if err := WriteShortChannelID(w, a.ShortChannelID); err != nil {
-		return err
-	}
-
-	if err := WriteElement(w, a.PartialSignature); err != nil {
+	err := EncodeMessageExtraData(
+		&a.ExtraOpaqueData, &a.ChannelID, &a.ShortChannelID,
+		&a.PartialSignature,
+	)
+	if err != nil {
 		return err
 	}
 
@@ -86,12 +108,12 @@ func (a *AnnounceSignatures2) MsgType() MessageType {
 //
 // NOTE: this is part of the AnnounceSignatures interface.
 func (a *AnnounceSignatures2) SCID() ShortChannelID {
-	return a.ShortChannelID
+	return a.ShortChannelID.Val
 }
 
 // ChanID returns the ChannelID identifying the channel.
 //
 // NOTE: this is part of the AnnounceSignatures interface.
 func (a *AnnounceSignatures2) ChanID() ChannelID {
-	return a.ChannelID
+	return a.ChannelID.Val
 }

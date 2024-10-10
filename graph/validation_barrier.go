@@ -102,7 +102,8 @@ func (v *ValidationBarrier) InitJobDependencies(job interface{}) {
 	// ChannelUpdates for the same channel, or NodeAnnouncements of nodes
 	// that are involved in this channel. This goes for both the wire
 	// type,s and also the types that we use within the database.
-	case *lnwire.ChannelAnnouncement1:
+	case lnwire.ChannelAnnouncement:
+		scid := msg.SCID()
 
 		// We ensure that we only create a new announcement signal iff,
 		// one doesn't already exist, as there may be duplicate
@@ -110,7 +111,7 @@ func (v *ValidationBarrier) InitJobDependencies(job interface{}) {
 		// ChannelAnnouncement has been validated. This will result in
 		// all the dependent jobs being unlocked so they can finish
 		// execution themselves.
-		if _, ok := v.chanAnnFinSignal[msg.ShortChannelID]; !ok {
+		if _, ok := v.chanAnnFinSignal[scid]; !ok {
 			// We'll create the channel that we close after we
 			// validate this announcement. All dependants will
 			// point to this same channel, so they'll be unblocked
@@ -120,15 +121,14 @@ func (v *ValidationBarrier) InitJobDependencies(job interface{}) {
 				deny:  make(chan struct{}),
 			}
 
-			v.chanAnnFinSignal[msg.ShortChannelID] = signals
-			v.chanEdgeDependencies[msg.ShortChannelID] = signals
+			v.chanAnnFinSignal[scid] = signals
+			v.chanEdgeDependencies[scid] = signals
 
-			v.nodeAnnDependencies[route.Vertex(msg.NodeID1)] = signals
-			v.nodeAnnDependencies[route.Vertex(msg.NodeID2)] = signals
+			v.nodeAnnDependencies[msg.Node1KeyBytes()] = signals
+			v.nodeAnnDependencies[msg.Node2KeyBytes()] = signals
 		}
-	case *models.ChannelEdgeInfo:
-
-		shortID := lnwire.NewShortChanIDFromInt(msg.ChannelID)
+	case models.ChannelEdgeInfo:
+		shortID := lnwire.NewShortChanIDFromInt(msg.GetChanID())
 		if _, ok := v.chanAnnFinSignal[shortID]; !ok {
 			signals := &validationSignals{
 				allow: make(chan struct{}),
@@ -138,22 +138,22 @@ func (v *ValidationBarrier) InitJobDependencies(job interface{}) {
 			v.chanAnnFinSignal[shortID] = signals
 			v.chanEdgeDependencies[shortID] = signals
 
-			v.nodeAnnDependencies[route.Vertex(msg.NodeKey1Bytes)] = signals
-			v.nodeAnnDependencies[route.Vertex(msg.NodeKey2Bytes)] = signals
+			v.nodeAnnDependencies[msg.Node1Bytes()] = signals
+			v.nodeAnnDependencies[msg.Node2Bytes()] = signals
 		}
 
 	// These other types don't have any dependants, so no further
 	// initialization needs to be done beyond just occupying a job slot.
-	case *models.ChannelEdgePolicy:
+	case models.ChannelEdgePolicy:
 		return
-	case *lnwire.ChannelUpdate1:
+	case lnwire.ChannelUpdate:
 		return
 	case *lnwire.NodeAnnouncement:
 		// TODO(roasbeef): node ann needs to wait on existing channel updates
 		return
 	case *channeldb.LightningNode:
 		return
-	case *lnwire.AnnounceSignatures1:
+	case lnwire.AnnounceSignatures:
 		// TODO(roasbeef): need to wait on chan ann?
 		return
 	}
@@ -186,14 +186,13 @@ func (v *ValidationBarrier) WaitForDependants(job interface{}) error {
 	v.Lock()
 
 	switch msg := job.(type) {
-	// Any ChannelUpdate or NodeAnnouncement jobs will need to wait on the
-	// completion of any active ChannelAnnouncement jobs related to them.
-	case *models.ChannelEdgePolicy:
-		shortID := lnwire.NewShortChanIDFromInt(msg.ChannelID)
-		signals, ok = v.chanEdgeDependencies[shortID]
+	// Any ChannelUpdate1 or NodeAnnouncement1 jobs will need to wait on the
+	// completion of any active ChannelAnnouncement1 jobs related to them.
+	case models.ChannelEdgePolicy:
+		signals, ok = v.chanEdgeDependencies[msg.SCID()]
 
 		jobDesc = fmt.Sprintf("job=lnwire.ChannelEdgePolicy, scid=%v",
-			msg.ChannelID)
+			msg.SCID().ToUint64())
 
 	case *channeldb.LightningNode:
 		vertex := route.Vertex(msg.PubKeyBytes)
@@ -202,11 +201,11 @@ func (v *ValidationBarrier) WaitForDependants(job interface{}) error {
 		jobDesc = fmt.Sprintf("job=channeldb.LightningNode, pub=%s",
 			vertex)
 
-	case *lnwire.ChannelUpdate1:
-		signals, ok = v.chanEdgeDependencies[msg.ShortChannelID]
+	case lnwire.ChannelUpdate:
+		signals, ok = v.chanEdgeDependencies[msg.SCID()]
 
 		jobDesc = fmt.Sprintf("job=lnwire.ChannelUpdate, scid=%v",
-			msg.ShortChannelID.ToUint64())
+			msg.SCID().ToUint64())
 
 	case *lnwire.NodeAnnouncement:
 		vertex := route.Vertex(msg.NodeID)
@@ -216,10 +215,10 @@ func (v *ValidationBarrier) WaitForDependants(job interface{}) error {
 
 	// Other types of jobs can be executed immediately, so we'll just
 	// return directly.
-	case *lnwire.AnnounceSignatures1:
+	case lnwire.AnnounceSignatures:
 		// TODO(roasbeef): need to wait on chan ann?
-	case *models.ChannelEdgeInfo:
-	case *lnwire.ChannelAnnouncement1:
+	case models.ChannelEdgeInfo:
+	case lnwire.ChannelAnnouncement:
 	}
 
 	// Release the lock once the above read is finished.
@@ -264,8 +263,8 @@ func (v *ValidationBarrier) SignalDependants(job interface{}, allow bool) {
 	// If we've just finished executing a ChannelAnnouncement, then we'll
 	// close out the signal, and remove the signal from the map of active
 	// ones. This will allow/deny any dependent jobs to continue execution.
-	case *models.ChannelEdgeInfo:
-		shortID := lnwire.NewShortChanIDFromInt(msg.ChannelID)
+	case models.ChannelEdgeInfo:
+		shortID := lnwire.NewShortChanIDFromInt(msg.GetChanID())
 		finSignals, ok := v.chanAnnFinSignal[shortID]
 		if ok {
 			if allow {
@@ -275,18 +274,20 @@ func (v *ValidationBarrier) SignalDependants(job interface{}, allow bool) {
 			}
 			delete(v.chanAnnFinSignal, shortID)
 		}
-	case *lnwire.ChannelAnnouncement1:
-		finSignals, ok := v.chanAnnFinSignal[msg.ShortChannelID]
+	case lnwire.ChannelAnnouncement:
+		scid := msg.SCID()
+
+		finSignals, ok := v.chanAnnFinSignal[scid]
 		if ok {
 			if allow {
 				close(finSignals.allow)
 			} else {
 				close(finSignals.deny)
 			}
-			delete(v.chanAnnFinSignal, msg.ShortChannelID)
+			delete(v.chanAnnFinSignal, scid)
 		}
 
-		delete(v.chanEdgeDependencies, msg.ShortChannelID)
+		delete(v.chanEdgeDependencies, scid)
 
 	// For all other job types, we'll delete the tracking entries from the
 	// map, as if we reach this point, then all dependants have already
@@ -295,13 +296,12 @@ func (v *ValidationBarrier) SignalDependants(job interface{}, allow bool) {
 		delete(v.nodeAnnDependencies, route.Vertex(msg.PubKeyBytes))
 	case *lnwire.NodeAnnouncement:
 		delete(v.nodeAnnDependencies, route.Vertex(msg.NodeID))
-	case *lnwire.ChannelUpdate1:
-		delete(v.chanEdgeDependencies, msg.ShortChannelID)
-	case *models.ChannelEdgePolicy:
-		shortID := lnwire.NewShortChanIDFromInt(msg.ChannelID)
-		delete(v.chanEdgeDependencies, shortID)
+	case lnwire.ChannelUpdate:
+		delete(v.chanEdgeDependencies, msg.SCID())
+	case models.ChannelEdgePolicy:
+		delete(v.chanEdgeDependencies, msg.SCID())
 
-	case *lnwire.AnnounceSignatures1:
+	case lnwire.AnnounceSignatures:
 		return
 	}
 }

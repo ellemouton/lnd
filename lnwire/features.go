@@ -273,13 +273,19 @@ const (
 	// a BOLT 11 invoice.
 	Bolt11BlindedPathsOptional = 263
 
-	// SimpleTaprootOverlayChansRequired is a required bit that indicates
+	// SimpleTaprootOverlayChansOptional is a optional bit that indicates
 	// support for the special custom taproot overlay channel.
 	SimpleTaprootOverlayChansOptional = 2025
 
 	// SimpleTaprootOverlayChansRequired is a required bit that indicates
 	// support for the special custom taproot overlay channel.
 	SimpleTaprootOverlayChansRequired = 2026
+
+	TaprootGossipRequiredFinal = 32
+	TaprootGossipOptionalFinal = 33
+
+	TaprootGossipRequiredStaging = 132
+	TaprootGossipOptionalStaging = 133
 
 	// MaxBolt11Feature is the maximum feature bit value allowed in bolt 11
 	// invoices.
@@ -351,6 +357,10 @@ var Features = map[FeatureBit]string{
 	SimpleTaprootOverlayChansRequired:    "taproot-overlay-chans",
 	Bolt11BlindedPathsOptional:           "bolt-11-blinded-paths",
 	Bolt11BlindedPathsRequired:           "bolt-11-blinded-paths",
+	TaprootGossipRequiredFinal:           "taproot-gossip",
+	TaprootGossipOptionalFinal:           "taproot-gossip",
+	TaprootGossipRequiredStaging:         "taproot-gossip-x",
+	TaprootGossipOptionalStaging:         "taproot-gossip-x",
 }
 
 // RawFeatureVector represents a set of feature bits as defined in BOLT-09.  A

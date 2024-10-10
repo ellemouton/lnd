@@ -28,6 +28,7 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb/migration31"
 	"github.com/lightningnetwork/lnd/channeldb/migration32"
 	"github.com/lightningnetwork/lnd/channeldb/migration33"
+	"github.com/lightningnetwork/lnd/channeldb/migration34"
 	"github.com/lightningnetwork/lnd/channeldb/migration_01_to_11"
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/invoices"
@@ -295,6 +296,10 @@ var (
 		{
 			number:    33,
 			migration: migration33.MigrateMCStoreNameSpacedResults,
+		},
+		{
+			number:    34,
+			migration: migration34.MigrateWaitingProofStore,
 		},
 	}
 

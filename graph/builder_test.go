@@ -22,10 +22,13 @@ import (
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channeldb/models"
+	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/htlcswitch"
+	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lntest/wait"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
+	"github.com/lightningnetwork/lnd/tlv"
 	"github.com/stretchr/testify/require"
 )
 
@@ -63,7 +66,7 @@ func TestAddProof(t *testing.T) {
 	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
 	// After utxo was recreated adding the edge without the proof.
-	edge := &models.ChannelEdgeInfo{
+	edge := &models.ChannelEdgeInfo1{
 		ChannelID:     chanID.ToUint64(),
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
@@ -80,7 +83,7 @@ func TestAddProof(t *testing.T) {
 
 	info, _, _, err := ctx.builder.GetChannelByID(*chanID)
 	require.NoError(t, err, "unable to get channel")
-	require.NotNil(t, info.AuthProof)
+	require.NotNil(t, info.GetAuthProof())
 }
 
 // TestIgnoreNodeAnnouncement tests that adding a node to the router that is
@@ -146,7 +149,7 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 	}
 	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
-	edge := &models.ChannelEdgeInfo{
+	edge := &models.ChannelEdgeInfo1{
 		ChannelID:        chanID.ToUint64(),
 		NodeKey1Bytes:    pub1,
 		NodeKey2Bytes:    pub2,
@@ -154,7 +157,7 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 		BitcoinKey2Bytes: pub2,
 		AuthProof:        nil,
 	}
-	edgePolicy := &models.ChannelEdgePolicy{
+	edgePolicy := &models.ChannelEdgePolicy1{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 edge.ChannelID,
 		LastUpdate:                testTime,
@@ -259,11 +262,11 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 	node1 := createTestNode(t)
 	node2 := createTestNode(t)
 
-	edge1 := &models.ChannelEdgeInfo{
+	edge1 := &models.ChannelEdgeInfo1{
 		ChannelID:     chanID1,
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
-		AuthProof: &models.ChannelAuthProof{
+		AuthProof: &models.ChannelAuthProof1{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
@@ -277,11 +280,11 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
-	edge2 := &models.ChannelEdgeInfo{
+	edge2 := &models.ChannelEdgeInfo1{
 		ChannelID:     chanID2,
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
-		AuthProof: &models.ChannelAuthProof{
+		AuthProof: &models.ChannelAuthProof1{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
@@ -296,7 +299,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 	}
 
 	// Check that the fundingTxs are in the graph db.
-	_, _, has, isZombie, err := ctx.graph.HasChannelEdge(chanID1)
+	has, isZombie, err := ctx.graph.HasChannelEdge(chanID1)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID1)
 	}
@@ -307,7 +310,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		t.Fatal("edge was marked as zombie")
 	}
 
-	_, _, has, isZombie, err = ctx.graph.HasChannelEdge(chanID2)
+	has, isZombie, err = ctx.graph.HasChannelEdge(chanID2)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID2)
 	}
@@ -364,7 +367,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 	// The channel with chanID2 should not be in the database anymore,
 	// since it is not confirmed on the longest chain. chanID1 should
 	// still be.
-	_, _, has, isZombie, err = ctx.graph.HasChannelEdge(chanID1)
+	has, isZombie, err = ctx.graph.HasChannelEdge(chanID1)
 	require.NoError(t, err)
 
 	if !has {
@@ -374,7 +377,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		t.Fatal("edge was marked as zombie")
 	}
 
-	_, _, has, isZombie, err = ctx.graph.HasChannelEdge(chanID2)
+	has, isZombie, err = ctx.graph.HasChannelEdge(chanID2)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID2)
 	}
@@ -462,13 +465,13 @@ func TestDisconnectedBlocks(t *testing.T) {
 	node1 := createTestNode(t)
 	node2 := createTestNode(t)
 
-	edge1 := &models.ChannelEdgeInfo{
+	edge1 := &models.ChannelEdgeInfo1{
 		ChannelID:        chanID1,
 		NodeKey1Bytes:    node1.PubKeyBytes,
 		NodeKey2Bytes:    node2.PubKeyBytes,
 		BitcoinKey1Bytes: node1.PubKeyBytes,
 		BitcoinKey2Bytes: node2.PubKeyBytes,
-		AuthProof: &models.ChannelAuthProof{
+		AuthProof: &models.ChannelAuthProof1{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
@@ -482,13 +485,13 @@ func TestDisconnectedBlocks(t *testing.T) {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
-	edge2 := &models.ChannelEdgeInfo{
+	edge2 := &models.ChannelEdgeInfo1{
 		ChannelID:        chanID2,
 		NodeKey1Bytes:    node1.PubKeyBytes,
 		NodeKey2Bytes:    node2.PubKeyBytes,
 		BitcoinKey1Bytes: node1.PubKeyBytes,
 		BitcoinKey2Bytes: node2.PubKeyBytes,
-		AuthProof: &models.ChannelAuthProof{
+		AuthProof: &models.ChannelAuthProof1{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
@@ -503,7 +506,7 @@ func TestDisconnectedBlocks(t *testing.T) {
 	}
 
 	// Check that the fundingTxs are in the graph db.
-	_, _, has, isZombie, err := ctx.graph.HasChannelEdge(chanID1)
+	has, isZombie, err := ctx.graph.HasChannelEdge(chanID1)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID1)
 	}
@@ -514,7 +517,7 @@ func TestDisconnectedBlocks(t *testing.T) {
 		t.Fatal("edge was marked as zombie")
 	}
 
-	_, _, has, isZombie, err = ctx.graph.HasChannelEdge(chanID2)
+	has, isZombie, err = ctx.graph.HasChannelEdge(chanID2)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID2)
 	}
@@ -556,7 +559,7 @@ func TestDisconnectedBlocks(t *testing.T) {
 
 	// chanID2 should not be in the database anymore, since it is not
 	// confirmed on the longest chain. chanID1 should still be.
-	_, _, has, isZombie, err = ctx.graph.HasChannelEdge(chanID1)
+	has, isZombie, err = ctx.graph.HasChannelEdge(chanID1)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID1)
 	}
@@ -567,7 +570,7 @@ func TestDisconnectedBlocks(t *testing.T) {
 		t.Fatal("edge was marked as zombie")
 	}
 
-	_, _, has, isZombie, err = ctx.graph.HasChannelEdge(chanID2)
+	has, isZombie, err = ctx.graph.HasChannelEdge(chanID2)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID2)
 	}
@@ -612,11 +615,11 @@ func TestRouterChansClosedOfflinePruneGraph(t *testing.T) {
 	node1 := createTestNode(t)
 	node2 := createTestNode(t)
 
-	edge1 := &models.ChannelEdgeInfo{
+	edge1 := &models.ChannelEdgeInfo1{
 		ChannelID:     chanID1.ToUint64(),
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
-		AuthProof: &models.ChannelAuthProof{
+		AuthProof: &models.ChannelAuthProof1{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
@@ -630,7 +633,7 @@ func TestRouterChansClosedOfflinePruneGraph(t *testing.T) {
 	}
 
 	// The router should now be aware of the channel we created above.
-	_, _, hasChan, isZombie, err := ctx.graph.HasChannelEdge(
+	hasChan, isZombie, err := ctx.graph.HasChannelEdge(
 		chanID1.ToUint64(),
 	)
 	if err != nil {
@@ -712,9 +715,7 @@ func TestRouterChansClosedOfflinePruneGraph(t *testing.T) {
 
 	// At this point, the channel that was pruned should no longer be known
 	// by the router.
-	_, _, hasChan, isZombie, err = ctx.graph.HasChannelEdge(
-		chanID1.ToUint64(),
-	)
+	hasChan, isZombie, err = ctx.graph.HasChannelEdge(chanID1.ToUint64())
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID1)
 	}
@@ -1017,7 +1018,7 @@ func TestIsStaleNode(t *testing.T) {
 	}
 	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
-	edge := &models.ChannelEdgeInfo{
+	edge := &models.ChannelEdgeInfo1{
 		ChannelID:        chanID.ToUint64(),
 		NodeKey1Bytes:    pub1,
 		NodeKey2Bytes:    pub2,
@@ -1093,7 +1094,7 @@ func TestIsKnownEdge(t *testing.T) {
 	}
 	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
-	edge := &models.ChannelEdgeInfo{
+	edge := &models.ChannelEdgeInfo1{
 		ChannelID:        chanID.ToUint64(),
 		NodeKey1Bytes:    pub1,
 		NodeKey2Bytes:    pub2,
@@ -1141,15 +1142,19 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 
 	// If we query for staleness before adding the edge, we should get
 	// false.
-	updateTimeStamp := time.Unix(123, 0)
-	if ctx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 0) {
-		t.Fatalf("router failed to detect fresh edge policy")
+	time1 := 123
+	updateTimeStamp := time.Unix(int64(time1), 0)
+	update1 := &lnwire.ChannelUpdate1{
+		Timestamp: uint32(time1),
 	}
-	if ctx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 1) {
-		t.Fatalf("router failed to detect fresh edge policy")
+	update2 := &lnwire.ChannelUpdate1{
+		Timestamp:    uint32(time1),
+		ChannelFlags: lnwire.ChanUpdateDirection,
 	}
+	require.False(t, ctx.builder.IsStaleEdgePolicy(*chanID, update1))
+	require.False(t, ctx.builder.IsStaleEdgePolicy(*chanID, update2))
 
-	edge := &models.ChannelEdgeInfo{
+	edge := &models.ChannelEdgeInfo1{
 		ChannelID:        chanID.ToUint64(),
 		NodeKey1Bytes:    pub1,
 		NodeKey2Bytes:    pub2,
@@ -1162,7 +1167,7 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 	}
 
 	// We'll also add two edge policies, one for each direction.
-	edgePolicy := &models.ChannelEdgePolicy{
+	edgePolicy := &models.ChannelEdgePolicy1{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 edge.ChannelID,
 		LastUpdate:                updateTimeStamp,
@@ -1176,7 +1181,7 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 		t.Fatalf("unable to update edge policy: %v", err)
 	}
 
-	edgePolicy = &models.ChannelEdgePolicy{
+	edgePolicy = &models.ChannelEdgePolicy1{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 edge.ChannelID,
 		LastUpdate:                updateTimeStamp,
@@ -1192,20 +1197,22 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 
 	// Now that the edges have been added, an identical (chanID, flag,
 	// timestamp) tuple for each edge should be detected as a stale edge.
-	if !ctx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 0) {
+	if !ctx.builder.IsStaleEdgePolicy(*chanID, update1) {
 		t.Fatalf("router failed to detect stale edge policy")
 	}
-	if !ctx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 1) {
+	if !ctx.builder.IsStaleEdgePolicy(*chanID, update2) {
 		t.Fatalf("router failed to detect stale edge policy")
 	}
 
 	// If we now update the timestamp for both edges, the router should
 	// detect that this tuple represents a fresh edge.
-	updateTimeStamp = time.Unix(9999, 0)
-	if ctx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 0) {
+	time2 := 9999
+	update1.Timestamp = uint32(time2)
+	update2.Timestamp = uint32(time2)
+	if ctx.builder.IsStaleEdgePolicy(*chanID, update1) {
 		t.Fatalf("router failed to detect fresh edge policy")
 	}
-	if ctx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 1) {
+	if ctx.builder.IsStaleEdgePolicy(*chanID, update2) {
 		t.Fatalf("router failed to detect fresh edge policy")
 	}
 }
@@ -1231,7 +1238,7 @@ const (
 // newChannelEdgeInfo is a helper function used to create a new channel edge,
 // possibly skipping adding it to parts of the chain/state as well.
 func newChannelEdgeInfo(t *testing.T, ctx *testCtx, fundingHeight uint32,
-	ecm edgeCreationModifier) (*models.ChannelEdgeInfo, error) {
+	ecm edgeCreationModifier) (*models.ChannelEdgeInfo1, error) {
 
 	node1 := createTestNode(t)
 	node2 := createTestNode(t)
@@ -1244,7 +1251,7 @@ func newChannelEdgeInfo(t *testing.T, ctx *testCtx, fundingHeight uint32,
 		return nil, fmt.Errorf("unable to create edge: %w", err)
 	}
 
-	edge := &models.ChannelEdgeInfo{
+	edge := &models.ChannelEdgeInfo1{
 		ChannelID:     chanID.ToUint64(),
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
@@ -1275,7 +1282,7 @@ func newChannelEdgeInfo(t *testing.T, ctx *testCtx, fundingHeight uint32,
 }
 
 func assertChanChainRejection(t *testing.T, ctx *testCtx,
-	edge *models.ChannelEdgeInfo, failCode ErrorCode) {
+	edge *models.ChannelEdgeInfo1, failCode ErrorCode) {
 
 	t.Helper()
 
@@ -1285,9 +1292,7 @@ func assertChanChainRejection(t *testing.T, ctx *testCtx,
 	}
 
 	// This channel should now be present in the zombie channel index.
-	_, _, _, isZombie, err := ctx.graph.HasChannelEdge(
-		edge.ChannelID,
-	)
+	_, isZombie, err := ctx.graph.HasChannelEdge(edge.ChannelID)
 	require.Nil(t, err)
 	require.True(t, isZombie, "edge should be marked as zombie")
 }
@@ -1573,7 +1578,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 
 		// We first insert the existence of the edge between the two
 		// nodes.
-		edgeInfo := models.ChannelEdgeInfo{
+		edgeInfo := models.ChannelEdgeInfo1{
 			ChannelID:    edge.ChannelID,
 			AuthProof:    &testAuthProof,
 			ChannelPoint: fundingPoint,
@@ -1607,7 +1612,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 			targetNode = edgeInfo.NodeKey2Bytes
 		}
 
-		edgePolicy := &models.ChannelEdgePolicy{
+		edgePolicy := &models.ChannelEdgePolicy1{
 			SigBytes: testSig.Serialize(),
 			MessageFlags: lnwire.ChanUpdateMsgFlags(
 				edge.MessageFlags,
@@ -1765,9 +1770,7 @@ func assertChannelsPruned(t *testing.T, graph *channeldb.ChannelGraph,
 
 	for _, channel := range channels {
 		_, shouldPrune := pruned[channel.ChannelID]
-		_, _, exists, isZombie, err := graph.HasChannelEdge(
-			channel.ChannelID,
-		)
+		exists, isZombie, err := graph.HasChannelEdge(channel.ChannelID)
 		if err != nil {
 			t.Fatalf("unable to determine existence of "+
 				"channel=%v in the graph: %v",
@@ -1945,7 +1948,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 
 		// We first insert the existence of the edge between the two
 		// nodes.
-		edgeInfo := models.ChannelEdgeInfo{
+		edgeInfo := models.ChannelEdgeInfo1{
 			ChannelID:    channelID,
 			AuthProof:    &testAuthProof,
 			ChannelPoint: *fundingPoint,
@@ -1987,7 +1990,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 				channelFlags |= lnwire.ChanUpdateDisabled
 			}
 
-			edgePolicy := &models.ChannelEdgePolicy{
+			edgePolicy := &models.ChannelEdgePolicy1{
 				SigBytes:                  testSig.Serialize(),
 				MessageFlags:              msgFlags,
 				ChannelFlags:              channelFlags,
@@ -2018,7 +2021,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 			}
 			channelFlags |= lnwire.ChanUpdateDirection
 
-			edgePolicy := &models.ChannelEdgePolicy{
+			edgePolicy := &models.ChannelEdgePolicy1{
 				SigBytes:                  testSig.Serialize(),
 				MessageFlags:              msgFlags,
 				ChannelFlags:              channelFlags,
@@ -2070,4 +2073,243 @@ func (m *mockLink) EligibleToForward() bool {
 // MayAddOutgoingHtlc returns the error configured in our mock.
 func (m *mockLink) MayAddOutgoingHtlc(_ lnwire.MilliSatoshi) error {
 	return m.mayAddOutgoingErr
+}
+
+// TestChanAnn2Validation tests that the router can validate the various forms
+// of ChannelEdgeInfo2.
+func TestChanAnn2Validation(t *testing.T) {
+	t.Parallel()
+
+	var rootHash [32]byte
+	_, err := rand.Read(rootHash[:])
+	require.NoError(t, err)
+
+	tests := []struct {
+		name          string
+		makeFundingTx func(t *testing.T, ctx *testCtx) (*wire.MsgTx,
+			*lnwire.ShortChannelID, []byte)
+		buildEdgeInfo func(node1 *channeldb.LightningNode,
+			node2 *channeldb.LightningNode,
+			chanID *lnwire.ShortChannelID,
+			pkScript []byte) models.ChannelEdgeInfo
+	}{
+		{
+			// This test covers the case where two bitcoin keys
+			// are provided in the channel announcement but no
+			// merkle root hash is provided. In this case, the
+			// on-chain funding script is expected to be equal to
+			// the MuSig2 combination of the two bitcoin keys along
+			// with a BIP86 tweak.
+			name: "bitcoin keys with bip 86 tweak",
+			makeFundingTx: func(t *testing.T, ctx *testCtx) (
+				*wire.MsgTx, *lnwire.ShortChannelID, []byte) {
+
+				pkScript, tx, err := input.GenTaprootFundingScript( //nolint:lll
+					bitcoinKey1, bitcoinKey2, int64(100),
+					fn.None[chainhash.Hash](),
+				)
+				require.NoError(t, err)
+
+				fundingTx := wire.NewMsgTx(2)
+
+				_, chanID := addFundingTxToChain(
+					ctx, fundingTx, tx, 0,
+				)
+
+				return fundingTx, chanID, pkScript
+			},
+			buildEdgeInfo: func(node1 *channeldb.LightningNode,
+				node2 *channeldb.LightningNode,
+				chanID *lnwire.ShortChannelID,
+				_ []byte) models.ChannelEdgeInfo {
+
+				ann := lnwire.ChannelAnnouncement2{}
+				ann.ShortChannelID.Val = *chanID
+				ann.NodeID1.Val = node1.PubKeyBytes
+				ann.NodeID2.Val = node2.PubKeyBytes
+
+				btc1 := tlv.ZeroRecordT[
+					tlv.TlvType12, [33]byte,
+				]()
+				copy(
+					btc1.Val[:],
+					bitcoinKey1.SerializeCompressed(),
+				)
+				ann.BitcoinKey1 = tlv.SomeRecordT(btc1)
+
+				btc2 := tlv.ZeroRecordT[
+					tlv.TlvType14, [33]byte,
+				]()
+				copy(
+					btc2.Val[:],
+					bitcoinKey2.SerializeCompressed(),
+				)
+				ann.BitcoinKey2 = tlv.SomeRecordT(btc2)
+
+				return &models.ChannelEdgeInfo2{
+					ChannelAnnouncement2: ann,
+				}
+			},
+		},
+		{
+			// In this case, no bitcoin keys and no merkle root hash
+			// is included in the channel announcement. In this
+			// case, it is not necessary to validate that the
+			// on-chain pk script is equal to anything particular
+			// since the signature check in discovery would have
+			// checked that the announcement signature is also
+			// signed by the output key found on-chain.
+			name: "no bitcoin keys",
+			makeFundingTx: func(t *testing.T, ctx *testCtx) (
+				*wire.MsgTx, *lnwire.ShortChannelID, []byte) {
+
+				pkScript, tx, err := input.GenTaprootFundingScript( //nolint:lll
+					bitcoinKey1, bitcoinKey2, int64(100),
+					fn.None[chainhash.Hash](),
+				)
+				require.NoError(t, err)
+
+				fundingTx := wire.NewMsgTx(2)
+
+				_, chanID := addFundingTxToChain(
+					ctx, fundingTx, tx, 0,
+				)
+
+				return fundingTx, chanID, pkScript
+			},
+			buildEdgeInfo: func(node1 *channeldb.LightningNode,
+				node2 *channeldb.LightningNode,
+				chanID *lnwire.ShortChannelID,
+				pkScript []byte) models.ChannelEdgeInfo {
+
+				ann := lnwire.ChannelAnnouncement2{}
+				ann.ShortChannelID.Val = *chanID
+				ann.NodeID1.Val = node1.PubKeyBytes
+				ann.NodeID2.Val = node2.PubKeyBytes
+
+				return &models.ChannelEdgeInfo2{
+					ChannelAnnouncement2: ann,
+					FundingPkScript:      pkScript,
+				}
+			},
+		},
+		{
+			// This test covers the case where bitcoin keys are
+			// included in the channel announcement along with a
+			// merkle root hash.
+			name: "bitcoin keys with non-bip86 tweak",
+			makeFundingTx: func(t *testing.T, ctx *testCtx) (
+				*wire.MsgTx, *lnwire.ShortChannelID, []byte) {
+
+				fundingTx := wire.NewMsgTx(2)
+
+				pkScript, tx, err := input.GenTaprootFundingScript( //nolint:lll
+					bitcoinKey1, bitcoinKey2, int64(100),
+					fn.Some[chainhash.Hash](rootHash),
+				)
+				require.NoError(t, err)
+
+				_, chanID := addFundingTxToChain(
+					ctx, fundingTx, tx, 0,
+				)
+
+				return fundingTx, chanID, pkScript
+			},
+			buildEdgeInfo: func(node1 *channeldb.LightningNode,
+				node2 *channeldb.LightningNode,
+				chanID *lnwire.ShortChannelID,
+				pkScript []byte) models.ChannelEdgeInfo {
+
+				ann := lnwire.ChannelAnnouncement2{}
+				ann.ShortChannelID.Val = *chanID
+				ann.NodeID1.Val = node1.PubKeyBytes
+				ann.NodeID2.Val = node2.PubKeyBytes
+
+				btc1 := tlv.ZeroRecordT[
+					tlv.TlvType12, [33]byte,
+				]()
+				copy(
+					btc1.Val[:],
+					bitcoinKey1.SerializeCompressed(),
+				)
+				ann.BitcoinKey1 = tlv.SomeRecordT(btc1)
+
+				btc2 := tlv.ZeroRecordT[
+					tlv.TlvType14, [33]byte,
+				]()
+				copy(
+					btc2.Val[:],
+					bitcoinKey2.SerializeCompressed(),
+				)
+				ann.BitcoinKey2 = tlv.SomeRecordT(btc2)
+
+				merkleRootHash := tlv.ZeroRecordT[
+					tlv.TlvType16, [32]byte,
+				]()
+				merkleRootHash.Val = rootHash
+				ann.MerkleRootHash = tlv.SomeRecordT(
+					merkleRootHash,
+				)
+
+				return &models.ChannelEdgeInfo2{
+					ChannelAnnouncement2: ann,
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := createTestCtxSingleNode(t, 0)
+
+			// Create two new nodes within the network that the
+			// channel will connect.
+			node1 := createTestNode(t)
+			node2 := createTestNode(t)
+
+			fundingTx, chanID, pkScript := test.makeFundingTx(
+				t, ctx,
+			)
+
+			fundingBlock := &wire.MsgBlock{
+				Transactions: []*wire.MsgTx{fundingTx},
+			}
+			ctx.chain.addBlock(
+				fundingBlock, chanID.BlockHeight,
+				chanID.BlockHeight,
+			)
+
+			edge := test.buildEdgeInfo(
+				node1, node2, chanID, pkScript,
+			)
+
+			require.NoError(t, ctx.builder.AddEdge(edge))
+		})
+	}
+}
+
+func addFundingTxToChain(ctx *testCtx, fundingTx *wire.MsgTx,
+	fundingOutput *wire.TxOut, fundingHeight uint32) (*wire.OutPoint,
+	*lnwire.ShortChannelID) {
+
+	fundingTx.TxOut = append(fundingTx.TxOut, fundingOutput)
+	chanUtxo := wire.OutPoint{
+		Hash:  fundingTx.TxHash(),
+		Index: 0,
+	}
+
+	// With the utxo constructed, we'll mark it as closed.
+	ctx.chain.addUtxo(chanUtxo, fundingOutput)
+
+	// Our fake channel will be "confirmed" at height 101.
+	chanID := &lnwire.ShortChannelID{
+		BlockHeight: fundingHeight,
+		TxIndex:     0,
+		TxPosition:  0,
+	}
+
+	return &chanUtxo, chanID
 }
