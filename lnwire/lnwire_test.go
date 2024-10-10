@@ -1533,17 +1533,15 @@ func TestLightningWireProtocol(t *testing.T) {
 		},
 		MsgChannelAnnouncement2: func(v []reflect.Value, r *rand.Rand) {
 			req := ChannelAnnouncement2{
-				Signature:       testSchnorrSig,
 				ExtraOpaqueData: make([]byte, 0),
 			}
 
+			req.Signature.Val = testSchnorrSig
 			req.ShortChannelID.Val = NewShortChanIDFromInt(
 				uint64(r.Int63()),
 			)
 			req.Capacity.Val = rand.Uint64()
-
 			req.Features.Val = *randRawFeatureVector(r)
-
 			req.NodeID1.Val = randRawKey(t)
 			req.NodeID2.Val = randRawKey(t)
 
