@@ -22,10 +22,6 @@ const (
 // HTLCs and other parameters. This message is also used to redeclare initially
 // set channel parameters.
 type ChannelUpdate2 struct {
-	// Signature is used to validate the announced data and prove the
-	// ownership of node id.
-	Signature Sig
-
 	// ChainHash denotes the target chain that this channel was opened
 	// within. This value should be the genesis hash of the target chain.
 	// Along with the short channel ID, this uniquely identifies the
@@ -74,6 +70,10 @@ type ChannelUpdate2 struct {
 	// millionth of a satoshi.
 	FeeProportionalMillionths tlv.RecordT[tlv.TlvType18, uint32]
 
+	// Signature is used to validate the announced data and prove the
+	// ownership of node id.
+	Signature tlv.RecordT[tlv.TlvType160, Sig]
+
 	// ExtraOpaqueData is the set of data that was appended to this message
 	// to fill out the full maximum transport message size. These fields can
 	// be used to specify optional data such as custom TLV fields.
@@ -85,17 +85,6 @@ type ChannelUpdate2 struct {
 //
 // This is part of the lnwire.Message interface.
 func (c *ChannelUpdate2) Decode(r io.Reader, _ uint32) error {
-	err := ReadElement(r, &c.Signature)
-	if err != nil {
-		return err
-	}
-	c.Signature.ForceSchnorr()
-
-	return c.DecodeTLVRecords(r)
-}
-
-// DecodeTLVRecords decodes only the TLV section of the message.
-func (c *ChannelUpdate2) DecodeTLVRecords(r io.Reader) error {
 	// First extract into extra opaque data.
 	var tlvRecords ExtraOpaqueData
 	if err := ReadElements(r, &tlvRecords); err != nil {
@@ -110,11 +99,12 @@ func (c *ChannelUpdate2) DecodeTLVRecords(r io.Reader) error {
 		&chainHash, &c.ShortChannelID, &c.BlockHeight, &c.DisabledFlags,
 		&secondPeer, &c.CLTVExpiryDelta, &c.HTLCMinimumMsat,
 		&c.HTLCMaximumMsat, &c.FeeBaseMsat,
-		&c.FeeProportionalMillionths,
+		&c.FeeProportionalMillionths, &c.Signature,
 	)
 	if err != nil {
 		return err
 	}
+	c.Signature.Val.ForceSchnorr()
 
 	// By default, the chain-hash is the bitcoin mainnet genesis block hash.
 	c.ChainHash.Val = *chaincfg.MainNetParams.GenesisHash
@@ -162,12 +152,10 @@ func (c *ChannelUpdate2) DecodeTLVRecords(r io.Reader) error {
 //
 // This is part of the lnwire.Message interface.
 func (c *ChannelUpdate2) Encode(w *bytes.Buffer, _ uint32) error {
-	_, err := w.Write(c.Signature.RawBytes())
-	if err != nil {
-		return err
-	}
+	recordProducers := append(c.nonSigRecordProducers(), &c.Signature)
+	SortProducers(recordProducers)
 
-	_, err = c.DataToSign()
+	err := EncodeMessageExtraData(&c.ExtraOpaqueData, recordProducers...)
 	if err != nil {
 		return err
 	}
@@ -175,13 +163,31 @@ func (c *ChannelUpdate2) Encode(w *bytes.Buffer, _ uint32) error {
 	return WriteBytes(w, c.ExtraOpaqueData)
 }
 
-// DataToSign is used to retrieve part of the announcement message which should
-// be signed. For the ChannelUpdate2 message, this includes the serialised TLV
-// records.
-func (c *ChannelUpdate2) DataToSign() ([]byte, error) {
+// SerialiseFieldsToSign is used to retrieve part of the announcement message
+// which should be signed. For the ChannelUpdate2 message, this includes all the
+// serialised TLV records excluding the signature record.
+func (c *ChannelUpdate2) SerialiseFieldsToSign() ([]byte, error) {
+	// Collect all the records that fall in the signed TLV range. Note that
+	// currently this set of records is the same as the set of
+	// non-signature fields since currently only the signature field falls
+	// in this range.
+	var data ExtraOpaqueData
+	err := EncodeMessageExtraData(&data, c.nonSigRecordProducers()...)
+	if err != nil {
+		return nil, err
+	}
+
+	return data, nil
+}
+
+// nonSigRecordProducers returns all the record producers for Records of the
+// announcement excluding the signature record. This includes any records that
+// fall in the un-signed range.
+func (c *ChannelUpdate2) nonSigRecordProducers() []tlv.RecordProducer {
+	var recordProducers []tlv.RecordProducer
+
 	// The chain-hash record is only included if it is _not_ equal to the
 	// bitcoin mainnet genisis block hash.
-	var recordProducers []tlv.RecordProducer
 	if !c.ChainHash.Val.IsEqual(chaincfg.MainNetParams.GenesisHash) {
 		hash := tlv.ZeroRecordT[tlv.TlvType0, [32]byte]()
 		hash.Val = c.ChainHash.Val
@@ -225,12 +231,7 @@ func (c *ChannelUpdate2) DataToSign() ([]byte, error) {
 		)
 	}
 
-	err := EncodeMessageExtraData(&c.ExtraOpaqueData, recordProducers...)
-	if err != nil {
-		return nil, err
-	}
-
-	return c.ExtraOpaqueData, nil
+	return recordProducers
 }
 
 // MsgType returns the integer uniquely identifying this message type on the
