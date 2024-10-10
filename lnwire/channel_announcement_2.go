@@ -12,9 +12,6 @@ import (
 // ChannelAnnouncement2 message is used to announce the existence of a taproot
 // channel between two peers in the network.
 type ChannelAnnouncement2 struct {
-	// Signature is a Schnorr signature over the TLV stream of the message.
-	Signature Sig
-
 	// ChainHash denotes the target chain that this channel was opened
 	// within. This value should be the genesis hash of the target chain.
 	ChainHash tlv.RecordT[tlv.TlvType0, chainhash.Hash]
@@ -59,6 +56,10 @@ type ChannelAnnouncement2 struct {
 	// the funding output is a pure 2-of-2 MuSig aggregate public key.
 	MerkleRootHash tlv.OptionalRecordT[tlv.TlvType16, [32]byte]
 
+	// Signature is a Schnorr signature over serialised signed-range TLV
+	// stream of the message.
+	Signature tlv.RecordT[tlv.TlvType160, Sig]
+
 	// ExtraOpaqueData is the set of data that was appended to this
 	// message, some of which we may not actually know how to iterate or
 	// parse. By holding onto this data, we ensure that we're able to
@@ -73,17 +74,56 @@ type ChannelAnnouncement2 struct {
 //
 // This is part of the lnwire.Message interface.
 func (c *ChannelAnnouncement2) Decode(r io.Reader, _ uint32) error {
-	err := ReadElement(r, &c.Signature)
+	// First extract into extra opaque data.
+	var tlvRecords ExtraOpaqueData
+	if err := ReadElements(r, &tlvRecords); err != nil {
+		return err
+	}
+
+	var (
+		chainHash      = tlv.ZeroRecordT[tlv.TlvType0, [32]byte]()
+		btcKey1        = tlv.ZeroRecordT[tlv.TlvType12, [33]byte]()
+		btcKey2        = tlv.ZeroRecordT[tlv.TlvType14, [33]byte]()
+		merkleRootHash = tlv.ZeroRecordT[tlv.TlvType16, [32]byte]()
+	)
+	typeMap, err := tlvRecords.ExtractRecords(
+		&chainHash, &c.Features, &c.ShortChannelID, &c.Capacity,
+		&c.NodeID1, &c.NodeID2, &btcKey1, &btcKey2, &merkleRootHash,
+		&c.Signature,
+	)
 	if err != nil {
 		return err
 	}
-	c.Signature.ForceSchnorr()
 
-	return c.DecodeTLVRecords(r)
+	c.Signature.Val.ForceSchnorr()
+
+	// By default, the chain-hash is the bitcoin mainnet genesis block hash.
+	c.ChainHash.Val = *chaincfg.MainNetParams.GenesisHash
+	if _, ok := typeMap[c.ChainHash.TlvType()]; ok {
+		c.ChainHash.Val = chainHash.Val
+	}
+
+	if _, ok := typeMap[c.BitcoinKey1.TlvType()]; ok {
+		c.BitcoinKey1 = tlv.SomeRecordT(btcKey1)
+	}
+
+	if _, ok := typeMap[c.BitcoinKey2.TlvType()]; ok {
+		c.BitcoinKey2 = tlv.SomeRecordT(btcKey2)
+	}
+
+	if _, ok := typeMap[c.MerkleRootHash.TlvType()]; ok {
+		c.MerkleRootHash = tlv.SomeRecordT(merkleRootHash)
+	}
+
+	if len(tlvRecords) != 0 {
+		c.ExtraOpaqueData = tlvRecords
+	}
+
+	return nil
 }
 
-// DecodeTLVRecords decodes only the TLV section of the message.
-func (c *ChannelAnnouncement2) DecodeTLVRecords(r io.Reader) error {
+// DecodeNonSigTLVRecords decodes only the TLV section of the message.
+func (c *ChannelAnnouncement2) DecodeNonSigTLVRecords(r io.Reader) error {
 	// First extract into extra opaque data.
 	var tlvRecords ExtraOpaqueData
 	if err := ReadElements(r, &tlvRecords); err != nil {
@@ -134,11 +174,10 @@ func (c *ChannelAnnouncement2) DecodeTLVRecords(r io.Reader) error {
 //
 // This is part of the lnwire.Message interface.
 func (c *ChannelAnnouncement2) Encode(w *bytes.Buffer, _ uint32) error {
-	_, err := w.Write(c.Signature.RawBytes())
-	if err != nil {
-		return err
-	}
-	_, err = c.DataToSign()
+	recordProducers := append(c.nonSigRecordProducers(), &c.Signature)
+	SortProducers(recordProducers)
+
+	err := EncodeMessageExtraData(&c.ExtraOpaqueData, recordProducers...)
 	if err != nil {
 		return err
 	}
@@ -146,9 +185,36 @@ func (c *ChannelAnnouncement2) Encode(w *bytes.Buffer, _ uint32) error {
 	return WriteBytes(w, c.ExtraOpaqueData)
 }
 
-// DataToSign encodes the data to be signed into the ExtraOpaqueData member and
-// returns it.
-func (c *ChannelAnnouncement2) DataToSign() ([]byte, error) {
+// SerialiseFieldsToSign serialises all the fields that the signature will
+// cover.
+func (c *ChannelAnnouncement2) SerialiseFieldsToSign() ([]byte, error) {
+	recordProducers := append(c.nonSigRecordProducers())
+
+	var data ExtraOpaqueData
+	err := EncodeMessageExtraData(&data, recordProducers...)
+	if err != nil {
+		return nil, err
+	}
+
+	return data, nil
+}
+
+// EncodeAllNonSigFields encodes the entire message to the given writer but
+// excludes the signature field.
+func (c *ChannelAnnouncement2) EncodeAllNonSigFields(w io.Writer) error {
+	recordProducers := append(c.nonSigRecordProducers())
+
+	err := EncodeMessageExtraData(&c.ExtraOpaqueData, recordProducers...)
+	if err != nil {
+		return err
+	}
+
+	_, err = w.Write(c.ExtraOpaqueData)
+
+	return err
+}
+
+func (c *ChannelAnnouncement2) nonSigRecordProducers() []tlv.RecordProducer {
 	// The chain-hash record is only included if it is _not_ equal to the
 	// bitcoin mainnet genisis block hash.
 	var recordProducers []tlv.RecordProducer
@@ -178,12 +244,7 @@ func (c *ChannelAnnouncement2) DataToSign() ([]byte, error) {
 		},
 	)
 
-	err := EncodeMessageExtraData(&c.ExtraOpaqueData, recordProducers...)
-	if err != nil {
-		return nil, err
-	}
-
-	return c.ExtraOpaqueData, nil
+	return recordProducers
 }
 
 // MsgType returns the integer uniquely identifying this message type on the

@@ -201,7 +201,7 @@ func createChanAnnouncement2(chanProof *models.ChannelAuthProof2,
 	}
 
 	var err error
-	chanAnn.Signature, err = lnwire.NewSigFromSchnorrRawSignature(
+	chanAnn.Signature.Val, err = lnwire.NewSigFromSchnorrRawSignature(
 		chanProof.SchnorrSigBytes,
 	)
 	if err != nil {
@@ -333,7 +333,7 @@ func validateChannelAnn2(a *lnwire.ChannelAnnouncement2,
 		return err
 	}
 
-	sig, err := a.Signature.ToSignature()
+	sig, err := a.Signature.Val.ToSignature()
 	if err != nil {
 		return err
 	}
@@ -408,7 +408,7 @@ func validateChannelAnn2(a *lnwire.ChannelAnnouncement2,
 func ChanAnn2DigestToSign(a *lnwire.ChannelAnnouncement2) (*chainhash.Hash,
 	error) {
 
-	data, err := a.DataToSign()
+	data, err := a.SerialiseFieldsToSign()
 	if err != nil {
 		return nil, err
 	}

@@ -3933,7 +3933,7 @@ func buildChanProof(ann lnwire.ChannelAnnouncement) (
 
 	case *lnwire.ChannelAnnouncement2:
 		return &models.ChannelAuthProof2{
-			SchnorrSigBytes: a.Signature.ToSignatureBytes(),
+			SchnorrSigBytes: a.Signature.Val.ToSignatureBytes(),
 		}, nil
 
 	default:
