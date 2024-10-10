@@ -4799,11 +4799,14 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 		}, nil
 	}
 
+	// Get the message that we will sign.
 	chanAnnMsg, err := netann.ChanAnn2DigestToSign(&chanAnn)
 	if err != nil {
 		return nil, err
 	}
 
+	// Collect the 4 keys that will make up the aggregate public key that
+	// a signature will be created for.
 	pubKeys := []*btcec.PublicKey{
 		localPubKey,
 		remotePubKey,
@@ -4811,6 +4814,8 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 		remoteFundingKey,
 	}
 
+	// Get the received public nonces that the peer has sent us via
+	// channel_ready.
 	rBtc, rNode, haveReceivedNonces := f.nonceMgr.getReceivedNonces(chanID)
 	if err != nil {
 		return nil, err
@@ -4821,6 +4826,7 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 			"nonces yet")
 	}
 
+	// Get the nonces that we have previously sent to the peer.
 	sBtc, sNode, err := f.nonceMgr.getNoncesToSend(
 		chanID, channel.RevocationProducer,
 		channel.LocalChanCfg.MultiSigKey.PubKey,
@@ -4829,6 +4835,15 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 		return nil, err
 	}
 
+	// Construct the musig2 session that will be used to represent our
+	// public BTC key. The parameters are:
+	// - the key locator for deriving our btc key.
+	// - all the public keys that make up the aggregate key we are signing.
+	// - no tweaks.
+	// - The "otherSignerNonces". In other words, all the nonces other than
+	//   our btc key's nonce. So: Our node nonce along with our peer's
+	//   btc nonce and node nonce.
+	// - Our btc nonce.
 	musigBtcSess, err := f.cfg.MuSig2Signer.MuSig2CreateSession(
 		input.MuSig2Version100RC2, localFundingKey.KeyLocator,
 		pubKeys, &input.MuSig2Tweaks{},
@@ -4845,6 +4860,15 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 		return nil, err
 	}
 
+	// Construct the musig2 session that will be used to represent our
+	// public node key. The parameters are:
+	// - the key locator for deriving our node key.
+	// - all the public keys that make up the aggregate key we are signing.
+	// - no tweaks.
+	// - The "otherSignerNonces". In other words, all the nonces other than
+	//   our node key's nonce. So: Our btc nonce along with our peer's
+	//   btc nonce and node nonce.
+	// - Our node nonce.
 	musigNodeSess, err := f.cfg.MuSig2Signer.MuSig2CreateSession(
 		input.MuSig2Version100RC2, f.cfg.IDKeyLoc, pubKeys,
 		&input.MuSig2Tweaks{},
