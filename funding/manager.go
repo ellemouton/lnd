@@ -4894,11 +4894,9 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 	// Finally, we'll generate the announcement proof which we'll use to
 	// provide the other side with the necessary signatures required to
 	// allow them to reconstruct the full channel announcement.
-	proof := &lnwire.AnnounceSignatures2{
-		ChannelID:        chanID,
-		ShortChannelID:   shortChanID,
-		PartialSignature: lnwire.NewPartialSig(*ps.S),
-	}
+	proof := lnwire.NewAnnSigs2(
+		chanID, shortChanID, lnwire.NewPartialSig(*ps.S),
+	)
 
 	return &chanAnnouncement{
 		chanAnn:       &chanAnn,

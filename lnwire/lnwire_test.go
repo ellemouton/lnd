@@ -1506,19 +1506,16 @@ func TestLightningWireProtocol(t *testing.T) {
 			r *rand.Rand) {
 
 			req := AnnounceSignatures2{
-				ShortChannelID: NewShortChanIDFromInt(
-					uint64(r.Int63()),
-				),
 				ExtraOpaqueData: make([]byte, 0),
 			}
 
-			_, err := r.Read(req.ChannelID[:])
+			_, err := r.Read(req.ChannelID.Val[:])
 			require.NoError(t, err)
 
 			partialSig, err := randPartialSig(r)
 			require.NoError(t, err)
 
-			req.PartialSignature = *partialSig
+			req.PartialSignature.Val = *partialSig
 
 			numExtraBytes := r.Int31n(1000)
 			if numExtraBytes > 0 {

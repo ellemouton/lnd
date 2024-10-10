@@ -3723,11 +3723,11 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 		}
 
 		ps1 := musig2.NewPartialSignature(
-			&a.PartialSignature.Sig, aggNonce,
+			&a.PartialSignature.Val.Sig, aggNonce,
 		)
 
 		ps2 := musig2.NewPartialSignature(
-			&oppProof.PartialSignature.Sig, aggNonce,
+			&oppProof.PartialSignature.Val.Sig, aggNonce,
 		)
 
 		// Now aggregate the partial sigs.

@@ -265,7 +265,7 @@ type TaprootWaitingProof struct {
 //
 // NOTE: this is part of the WaitingProofInterface.
 func (t *TaprootWaitingProof) SCID() lnwire.ShortChannelID {
-	return t.ShortChannelID
+	return t.ShortChannelID.Val
 }
 
 // Decode parses the bytes from the given reader to reconstruct the
