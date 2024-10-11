@@ -15,6 +15,7 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/tlv"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,10 +29,12 @@ var (
 )
 
 type horizonQuery struct {
-	chain chainhash.Hash
-	start time.Time
-	end   time.Time
+	start      time.Time
+	end        time.Time
+	startBlock uint32
+	endBlock   uint32
 }
+
 type filterRangeReq struct {
 	startHeight, endHeight uint32
 }
@@ -52,7 +55,7 @@ type mockChannelGraphTimeSeries struct {
 	annResp chan []lnwire.Message
 
 	updateReq  chan lnwire.ShortChannelID
-	updateResp chan []*lnwire.ChannelUpdate1
+	updateResp chan []lnwire.ChannelUpdate
 }
 
 func newMockChannelGraphTimeSeries(
@@ -74,18 +77,19 @@ func newMockChannelGraphTimeSeries(
 		annResp: make(chan []lnwire.Message, 1),
 
 		updateReq:  make(chan lnwire.ShortChannelID, 1),
-		updateResp: make(chan []*lnwire.ChannelUpdate1, 1),
+		updateResp: make(chan []lnwire.ChannelUpdate, 1),
 	}
 }
 
 func (m *mockChannelGraphTimeSeries) HighestChanID(chain chainhash.Hash) (*lnwire.ShortChannelID, error) {
 	return &m.highestID, nil
 }
-func (m *mockChannelGraphTimeSeries) UpdatesInHorizon(chain chainhash.Hash,
-	startTime time.Time, endTime time.Time) ([]lnwire.Message, error) {
+func (m *mockChannelGraphTimeSeries) UpdatesInHorizon(startTime time.Time,
+	endTime time.Time, startBlock, endBlock uint32) ([]lnwire.Message,
+	error) {
 
 	m.horizonReq <- horizonQuery{
-		chain, startTime, endTime,
+		startTime, endTime, startBlock, endBlock,
 	}
 
 	return <-m.horizonResp, nil
@@ -149,7 +153,7 @@ func (m *mockChannelGraphTimeSeries) FetchChanAnns(chain chainhash.Hash,
 	return <-m.annResp, nil
 }
 func (m *mockChannelGraphTimeSeries) FetchChanUpdates(chain chainhash.Hash,
-	shortChanID lnwire.ShortChannelID) ([]*lnwire.ChannelUpdate1, error) {
+	shortChanID lnwire.ShortChannelID) ([]lnwire.ChannelUpdate, error) {
 
 	m.updateReq <- shortChanID
 
@@ -369,8 +373,8 @@ func TestGossipSyncerFilterGossipMsgsAllInMemory(t *testing.T) {
 			}
 
 			// If so, then we'll send back the missing update.
-			chanSeries.updateResp <- []*lnwire.ChannelUpdate1{
-				{
+			chanSeries.updateResp <- []lnwire.ChannelUpdate{
+				&lnwire.ChannelUpdate1{
 					ShortChannelID: lnwire.NewShortChanIDFromInt(25),
 					Timestamp:      unixStamp(5),
 				},
@@ -2255,12 +2259,26 @@ func TestGossipSyncerSyncTransitions(t *testing.T) {
 				// send out a message that indicates we want
 				// all the updates from here on.
 				firstTimestamp := uint32(time.Now().Unix())
-				assertMsgSent(
-					t, mChan, &lnwire.GossipTimestampRange{
-						FirstTimestamp: firstTimestamp,
-						TimestampRange: math.MaxUint32,
-					},
-				)
+				firstBlock := tlv.ZeroRecordT[
+					tlv.TlvType2, uint32,
+				]()
+				firstBlock.Val = uint32(latestKnownHeight)
+
+				blockRange := tlv.ZeroRecordT[
+					tlv.TlvType4, uint32,
+				]()
+				blockRange.Val = uint32(math.MaxUint32)
+
+				assertMsgSent(t, mChan, &lnwire.GossipTimestampRange{ //nolint:lll
+					FirstTimestamp: firstTimestamp,
+					TimestampRange: math.MaxUint32,
+					FirstBlockHeight: tlv.SomeRecordT(
+						firstBlock,
+					),
+					BlockRange: tlv.SomeRecordT(
+						blockRange,
+					),
+				})
 
 				// When transitioning from active to passive, we
 				// should expect to see a new local update
@@ -2295,10 +2313,26 @@ func TestGossipSyncerSyncTransitions(t *testing.T) {
 				// horizon sent to the remote peer indicating
 				// that it would like to receive any future
 				// updates.
+				firstBlock := tlv.ZeroRecordT[
+					tlv.TlvType2, uint32,
+				]()
+				firstBlock.Val = uint32(latestKnownHeight)
+
+				blockRange := tlv.ZeroRecordT[
+					tlv.TlvType4, uint32,
+				]()
+				blockRange.Val = uint32(math.MaxUint32)
+
 				firstTimestamp := uint32(time.Now().Unix())
 				assertMsgSent(t, msgChan, &lnwire.GossipTimestampRange{
 					FirstTimestamp: firstTimestamp,
 					TimestampRange: math.MaxUint32,
+					FirstBlockHeight: tlv.SomeRecordT(
+						firstBlock,
+					),
+					BlockRange: tlv.SomeRecordT(
+						blockRange,
+					),
 				})
 
 				syncState := g.syncState()

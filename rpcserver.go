@@ -703,7 +703,7 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 			if err != nil {
 				return 0, err
 			}
-			return info.Capacity, nil
+			return info.GetCapacity(), nil
 		},
 		FetchAmountPairCapacity: func(nodeFrom, nodeTo route.Vertex,
 			amount lnwire.MilliSatoshi) (btcutil.Amount, error) {
@@ -726,7 +726,7 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 						chanID, err)
 			}
 
-			return info.NodeKey1Bytes, info.NodeKey2Bytes, nil
+			return info.Node1Bytes(), info.Node1Bytes(), nil
 		},
 		FindRoute:              s.chanRouter.FindRoute,
 		MissionControl:         s.defaultMC,
@@ -1699,7 +1699,7 @@ func (r *rpcServer) SignMessage(_ context.Context,
 	}
 
 	in.Msg = append(signedMsgPrefix, in.Msg...)
-	sigBytes, err := r.server.nodeSigner.SignMessageCompact(
+	sigBytes, err := r.server.nodeSigner.SignMessageCompactNoKeyLoc(
 		in.Msg, !in.SingleHash,
 	)
 	if err != nil {
@@ -2284,13 +2284,6 @@ func (r *rpcServer) parseOpenChannelReq(in *lnrpc.OpenChannelRequest,
 		*channelType = lnwire.ChannelType(*fv)
 
 	case lnrpc.CommitmentType_SIMPLE_TAPROOT:
-		// If the taproot channel type is being set, then the channel
-		// MUST be private (unadvertised) for now.
-		if !in.Private {
-			return nil, fmt.Errorf("taproot channels must be " +
-				"private")
-		}
-
 		channelType = new(lnwire.ChannelType)
 		fv := lnwire.NewRawFeatureVector(
 			lnwire.SimpleTaprootChannelsRequiredStaging,
@@ -6516,18 +6509,22 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// Next, for each active channel we know of within the graph, create a
 	// similar response which details both the edge information as well as
 	// the routing policies of th nodes connecting the two edges.
-	err = graph.ForEachChannel(func(edgeInfo *models.ChannelEdgeInfo,
-		c1, c2 *models.ChannelEdgePolicy) error {
+	err = graph.ForEachChannel(func(edgeInfo models.ChannelEdgeInfo,
+		c1, c2 models.ChannelEdgePolicy) error {
 
 		// Do not include unannounced channels unless specifically
 		// requested. Unannounced channels include both private channels as
 		// well as public channels whose authentication proof were not
 		// confirmed yet, hence were not announced.
-		if !includeUnannounced && edgeInfo.AuthProof == nil {
+		if !includeUnannounced && edgeInfo.GetAuthProof() == nil {
 			return nil
 		}
 
-		edge := marshalDBEdge(edgeInfo, c1, c2)
+		edge, err := marshalDBEdge(edgeInfo, c1, c2)
+		if err != nil {
+			return err
+		}
+
 		resp.Edges = append(resp.Edges, edge)
 
 		return nil
@@ -6589,70 +6586,93 @@ func extractInboundFeeSafe(data lnwire.ExtraOpaqueData) lnwire.Fee {
 	return inboundFee
 }
 
-func marshalDBEdge(edgeInfo *models.ChannelEdgeInfo,
-	c1, c2 *models.ChannelEdgePolicy) *lnrpc.ChannelEdge {
+func marshalDBEdge(edgeInfo models.ChannelEdgeInfo,
+	c1, c2 models.ChannelEdgePolicy) (*lnrpc.ChannelEdge, error) {
 
 	// Make sure the policies match the node they belong to. c1 should point
 	// to the policy for NodeKey1, and c2 for NodeKey2.
-	if c1 != nil && c1.ChannelFlags&lnwire.ChanUpdateDirection == 1 ||
-		c2 != nil && c2.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
-
+	if c1 != nil && !c1.IsNode1() || c2 != nil && c2.IsNode1() {
 		c2, c1 = c1, c2
 	}
 
-	var lastUpdate int64
-	if c1 != nil {
-		lastUpdate = c1.LastUpdate.Unix()
-	}
-	if c2 != nil && c2.LastUpdate.Unix() > lastUpdate {
-		lastUpdate = c2.LastUpdate.Unix()
-	}
-
-	customRecords := marshalExtraOpaqueData(edgeInfo.ExtraOpaqueData)
+	var (
+		node1 = edgeInfo.Node1Bytes()
+		node2 = edgeInfo.Node2Bytes()
+	)
 
 	edge := &lnrpc.ChannelEdge{
-		ChannelId: edgeInfo.ChannelID,
-		ChanPoint: edgeInfo.ChannelPoint.String(),
-		// TODO(roasbeef): update should be on edge info itself
-		LastUpdate:    uint32(lastUpdate),
-		Node1Pub:      hex.EncodeToString(edgeInfo.NodeKey1Bytes[:]),
-		Node2Pub:      hex.EncodeToString(edgeInfo.NodeKey2Bytes[:]),
-		Capacity:      int64(edgeInfo.Capacity),
-		CustomRecords: customRecords,
+		ChannelId: edgeInfo.GetChanID(),
+		ChanPoint: edgeInfo.GetChanPoint().String(),
+		Node1Pub:  hex.EncodeToString(node1[:]),
+		Node2Pub:  hex.EncodeToString(node2[:]),
+		Capacity:  int64(edgeInfo.GetCapacity()),
 	}
 
+	var err error
 	if c1 != nil {
-		edge.Node1Policy = marshalDBRoutingPolicy(c1)
+		edge.Node1Policy, err = marshalDBRoutingPolicy(c1)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if c2 != nil {
-		edge.Node2Policy = marshalDBRoutingPolicy(c2)
+		edge.Node2Policy, err = marshalDBRoutingPolicy(c2)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	return edge
+	switch info := edgeInfo.(type) {
+	case *models.ChannelEdgeInfo1:
+		customRecords := marshalExtraOpaqueData(info.ExtraOpaqueData)
+		edge.CustomRecords = customRecords
+	case *models.ChannelEdgeInfo2:
+		customRecords := info.ExtraFieldsInSignedRange
+		edge.CustomRecords = customRecords
+	default:
+		return nil, fmt.Errorf("unhandled implementation of "+
+			"models.ChannelEdgeInfo: %T", edgeInfo)
+	}
+
+	return edge, nil
 }
 
-func marshalDBRoutingPolicy(
-	policy *models.ChannelEdgePolicy) *lnrpc.RoutingPolicy {
+func marshalDBRoutingPolicy(policy models.ChannelEdgePolicy) (
+	*lnrpc.RoutingPolicy, error) {
 
-	disabled := policy.ChannelFlags&lnwire.ChanUpdateDisabled != 0
+	fwd := policy.ForwardingPolicy()
 
-	customRecords := marshalExtraOpaqueData(policy.ExtraOpaqueData)
-	inboundFee := extractInboundFeeSafe(policy.ExtraOpaqueData)
-
-	return &lnrpc.RoutingPolicy{
-		TimeLockDelta:    uint32(policy.TimeLockDelta),
-		MinHtlc:          int64(policy.MinHTLC),
-		MaxHtlcMsat:      uint64(policy.MaxHTLC),
-		FeeBaseMsat:      int64(policy.FeeBaseMSat),
-		FeeRateMilliMsat: int64(policy.FeeProportionalMillionths),
-		Disabled:         disabled,
-		LastUpdate:       uint32(policy.LastUpdate.Unix()),
-		CustomRecords:    customRecords,
-
-		InboundFeeBaseMsat:      inboundFee.BaseFee,
-		InboundFeeRateMilliMsat: inboundFee.FeeRate,
+	routingPolicy := &lnrpc.RoutingPolicy{
+		TimeLockDelta:    uint32(fwd.TimeLockDelta),
+		MinHtlc:          int64(fwd.MinHTLC),
+		MaxHtlcMsat:      uint64(fwd.MaxHTLC),
+		FeeBaseMsat:      int64(fwd.BaseFee),
+		FeeRateMilliMsat: int64(fwd.FeeRate),
+		Disabled:         policy.IsDisabled(),
 	}
+
+	switch p := policy.(type) {
+	case *models.ChannelEdgePolicy1:
+		customRecords := marshalExtraOpaqueData(p.ExtraOpaqueData)
+		inboundFee := extractInboundFeeSafe(p.ExtraOpaqueData)
+
+		routingPolicy.CustomRecords = customRecords
+		routingPolicy.LastUpdate = uint32(p.LastUpdate.Unix())
+		routingPolicy.InboundFeeBaseMsat = inboundFee.BaseFee
+		routingPolicy.InboundFeeRateMilliMsat = inboundFee.FeeRate
+
+	case *models.ChannelEdgePolicy2:
+		customRecords := p.ExtraFieldsInSignedRange
+		routingPolicy.CustomRecords = customRecords
+		routingPolicy.BlockHeight = p.BlockHeight.Val
+
+	default:
+		return nil, fmt.Errorf("unhandled implementation of "+
+			"models.ChannelEdgePolicy: %T", policy)
+	}
+
+	return routingPolicy, nil
 }
 
 // GetNodeMetrics returns all available node metrics calculated from the
@@ -6723,8 +6743,8 @@ func (r *rpcServer) GetChanInfo(_ context.Context,
 	graph := r.server.graphDB
 
 	var (
-		edgeInfo     *models.ChannelEdgeInfo
-		edge1, edge2 *models.ChannelEdgePolicy
+		edgeInfo     models.ChannelEdgeInfo
+		edge1, edge2 models.ChannelEdgePolicy
 		err          error
 	)
 
@@ -6754,7 +6774,10 @@ func (r *rpcServer) GetChanInfo(_ context.Context,
 	// Convert the database's edge format into the network/RPC edge format
 	// which couples the edge itself along with the directional node
 	// routing policies of each node involved within the channel.
-	channelEdge := marshalDBEdge(edgeInfo, edge1, edge2)
+	channelEdge, err := marshalDBEdge(edgeInfo, edge1, edge2)
+	if err != nil {
+		return nil, err
+	}
 
 	return channelEdge, nil
 }
@@ -6793,11 +6816,11 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 	)
 
 	err = graph.ForEachNodeChannel(node.PubKeyBytes,
-		func(_ kvdb.RTx, edge *models.ChannelEdgeInfo,
-			c1, c2 *models.ChannelEdgePolicy) error {
+		func(_ kvdb.RTx, edge models.ChannelEdgeInfo,
+			c1, c2 models.ChannelEdgePolicy) error {
 
 			numChannels++
-			totalCapacity += edge.Capacity
+			totalCapacity += edge.GetCapacity()
 
 			// Only populate the node's channels if the user
 			// requested them.
@@ -6805,13 +6828,17 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 				// Do not include unannounced channels - private
 				// channels or public channels whose
 				// authentication proof were not confirmed yet.
-				if edge.AuthProof == nil {
+				if edge.GetAuthProof() == nil {
 					return nil
 				}
 
 				// Convert the database's edge format into the
 				// network/RPC edge format.
-				channelEdge := marshalDBEdge(edge, c1, c2)
+				channelEdge, err := marshalDBEdge(edge, c1, c2)
+				if err != nil {
+					return nil
+				}
+
 				channels = append(channels, channelEdge)
 			}
 
@@ -7449,14 +7476,14 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 
 	var feeReports []*lnrpc.ChannelFeeReport
 	err = channelGraph.ForEachNodeChannel(selfNode.PubKeyBytes,
-		func(_ kvdb.RTx, chanInfo *models.ChannelEdgeInfo,
-			edgePolicy, _ *models.ChannelEdgePolicy) error {
+		func(_ kvdb.RTx, chanInfo models.ChannelEdgeInfo,
+			edgePolicy, _ models.ChannelEdgePolicy) error {
 
 			// Self node should always have policies for its
 			// channels.
 			if edgePolicy == nil {
 				return fmt.Errorf("no policy for outgoing "+
-					"channel %v ", chanInfo.ChannelID)
+					"channel %v ", chanInfo.GetChanID())
 			}
 
 			// We'll compute the effective fee rate by converting
@@ -7464,25 +7491,26 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 			// rate. The fee rate field in the database the amount
 			// of mSAT charged per 1mil mSAT sent, so will divide by
 			// this to get the proper fee rate.
-			feeRateFixedPoint :=
-				edgePolicy.FeeProportionalMillionths
+			fwdPol := edgePolicy.ForwardingPolicy()
+			feeRateFixedPoint := fwdPol.FeeRate
 			feeRate := float64(feeRateFixedPoint) / feeBase
 
 			// Decode inbound fee from extra data.
 			var inboundFee lnwire.Fee
-			_, err := edgePolicy.ExtraOpaqueData.ExtractRecords(
-				&inboundFee,
-			)
-			if err != nil {
-				return err
+
+			if pol, ok := edgePolicy.(*models.ChannelEdgePolicy1); ok {
+				_, err := pol.ExtraOpaqueData.ExtractRecords(&inboundFee)
+				if err != nil {
+					return err
+				}
 			}
 
 			// TODO(roasbeef): also add stats for revenue for each
 			// channel
 			feeReports = append(feeReports, &lnrpc.ChannelFeeReport{
-				ChanId:       chanInfo.ChannelID,
-				ChannelPoint: chanInfo.ChannelPoint.String(),
-				BaseFeeMsat:  int64(edgePolicy.FeeBaseMSat),
+				ChanId:       chanInfo.GetChanID(),
+				ChannelPoint: chanInfo.GetChanPoint().String(),
+				BaseFeeMsat:  int64(fwdPol.BaseFee),
 				FeePerMil:    int64(feeRateFixedPoint),
 				FeeRate:      feeRate,
 

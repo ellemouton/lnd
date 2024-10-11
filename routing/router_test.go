@@ -15,8 +15,10 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/go-errors/errors"
@@ -28,9 +30,11 @@ import (
 	"github.com/lightningnetwork/lnd/graph"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/input"
+	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/netann"
 	"github.com/lightningnetwork/lnd/record"
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/zpay32"
@@ -150,7 +154,7 @@ func createTestCtxFromGraphInstanceAssumeValid(t *testing.T,
 		MissionControl:    mc,
 	}
 
-	graphBuilder := newMockGraphBuilder(graphInstance.graph)
+	graphBuilder := newMockGraphBuilder(t, graphInstance.graph)
 
 	router, err := New(Config{
 		SelfNode:       sourceNode.PubKeyBytes,
@@ -228,16 +232,50 @@ func createTestCtxFromFile(t *testing.T,
 // Add valid signature to channel update simulated as error received from the
 // network.
 func signErrChanUpdate(t *testing.T, key *btcec.PrivateKey,
-	errChanUpdate *lnwire.ChannelUpdate1) {
+	errChanUpdate lnwire.ChannelUpdate) {
 
-	chanUpdateMsg, err := errChanUpdate.DataToSign()
-	require.NoError(t, err, "failed to retrieve data to sign")
+	signer := &mockSigner{key: key}
+	err := netann.SignChannelUpdate(
+		signer, keychain.KeyLocator{}, errChanUpdate,
+	)
+	require.NoError(t, err)
+}
 
-	digest := chainhash.DoubleHashB(chanUpdateMsg)
-	sig := ecdsa.Sign(key, digest)
+type mockSigner struct {
+	key *btcec.PrivateKey
+	keychain.MessageSignerRing
+}
 
-	errChanUpdate.Signature, err = lnwire.NewSigFromSignature(sig)
-	require.NoError(t, err, "failed to create new signature")
+func (s *mockSigner) SignMessage(keyLoc keychain.KeyLocator, msg []byte,
+	doubleHash bool) (*ecdsa.Signature, error) {
+
+	digest := chainhash.DoubleHashB(msg)
+	sig := ecdsa.Sign(s.key, digest)
+
+	return sig, nil
+}
+
+func (s *mockSigner) SignMessageSchnorr(keyLoc keychain.KeyLocator, msg []byte,
+	doubleHash bool, taprootTweak, tag []byte) (*schnorr.Signature,
+	error) {
+
+	var digest []byte
+	switch {
+	case len(tag) > 0:
+		taggedHash := chainhash.TaggedHash(tag, msg)
+		digest = taggedHash[:]
+	case doubleHash:
+		digest = chainhash.DoubleHashB(msg)
+	default:
+		digest = chainhash.HashB(msg)
+	}
+
+	privKey := s.key
+	if len(taprootTweak) > 0 {
+		privKey = txscript.TweakTaprootPrivKey(*privKey, taprootTweak)
+	}
+
+	return schnorr.Sign(privKey, digest)
 }
 
 // TestFindRoutesWithFeeLimit asserts that routes found by the FindRoutes method
@@ -458,13 +496,17 @@ func TestChannelUpdateValidation(t *testing.T) {
 	ctx := createTestCtxFromGraphInstance(t, startingBlockHeight, testGraph)
 
 	// Assert that the initially configured fee is retrieved correctly.
-	_, e1, e2, err := ctx.graph.FetchChannelEdgesByID(
+	_, edge1, edge2, err := ctx.graph.FetchChannelEdgesByID(
 		lnwire.NewShortChanIDFromInt(1).ToUint64(),
 	)
 	require.NoError(t, err, "cannot retrieve channel")
 
-	require.Equal(t, feeRate, e1.FeeProportionalMillionths, "invalid fee")
-	require.Equal(t, feeRate, e2.FeeProportionalMillionths, "invalid fee")
+	require.Equal(
+		t, feeRate, edge1.ForwardingPolicy().FeeRate, "invalid fee",
+	)
+	require.Equal(
+		t, feeRate, edge2.ForwardingPolicy().FeeRate, "invalid fee",
+	)
 
 	// Setup a route from source a to destination c. The route will be used
 	// in a call to SendToRoute. SendToRoute also applies channel updates,
@@ -490,6 +532,12 @@ func TestChannelUpdateValidation(t *testing.T) {
 	)
 	require.NoError(t, err, "unable to create route")
 
+	e1, ok := edge1.(*models.ChannelEdgePolicy1)
+	require.True(t, ok)
+
+	e2, ok := edge2.(*models.ChannelEdgePolicy1)
+	require.True(t, ok)
+
 	// Set up a channel update message with an invalid signature to be
 	// returned to the sender.
 	var invalidSignature lnwire.Sig
@@ -510,7 +558,7 @@ func TestChannelUpdateValidation(t *testing.T) {
 		func(firstHop lnwire.ShortChannelID) ([32]byte, error) {
 			return [32]byte{}, htlcswitch.NewForwardingError(
 				&lnwire.FailFeeInsufficient{
-					Update: errChanUpdate,
+					Update: &errChanUpdate,
 				},
 				1,
 			)
@@ -530,10 +578,16 @@ func TestChannelUpdateValidation(t *testing.T) {
 	_, err = ctx.router.SendToRoute(payment, rt, nil)
 	require.Error(t, err, "expected route to fail with channel update")
 
-	_, e1, e2, err = ctx.graph.FetchChannelEdgesByID(
+	_, edge1, edge2, err = ctx.graph.FetchChannelEdgesByID(
 		lnwire.NewShortChanIDFromInt(1).ToUint64(),
 	)
 	require.NoError(t, err, "cannot retrieve channel")
+
+	_, ok = edge1.(*models.ChannelEdgePolicy1)
+	require.True(t, ok)
+
+	e2, ok = edge2.(*models.ChannelEdgePolicy1)
+	require.True(t, ok)
 
 	require.Equal(t, feeRate, e1.FeeProportionalMillionths,
 		"fee updated without valid signature")
@@ -552,10 +606,16 @@ func TestChannelUpdateValidation(t *testing.T) {
 
 	// This time a valid signature was supplied and the policy change should
 	// have been applied to the graph.
-	_, e1, e2, err = ctx.graph.FetchChannelEdgesByID(
+	_, edge1, edge2, err = ctx.graph.FetchChannelEdgesByID(
 		lnwire.NewShortChanIDFromInt(1).ToUint64(),
 	)
 	require.NoError(t, err, "cannot retrieve channel")
+
+	e1, ok = edge1.(*models.ChannelEdgePolicy1)
+	require.True(t, ok)
+
+	e2, ok = edge2.(*models.ChannelEdgePolicy1)
+	require.True(t, ok)
 
 	require.Equal(t, feeRate, e1.FeeProportionalMillionths,
 		"fee should not be updated")
@@ -598,21 +658,12 @@ func TestSendPaymentErrorRepeatedFeeInsufficient(t *testing.T) {
 	)
 	require.NoError(t, err, "unable to fetch chan id")
 
-	errChanUpdate := lnwire.ChannelUpdate1{
-		ShortChannelID: lnwire.NewShortChanIDFromInt(
-			songokuSophonChanID,
-		),
-		Timestamp:       uint32(edgeUpdateToFail.LastUpdate.Unix()),
-		MessageFlags:    edgeUpdateToFail.MessageFlags,
-		ChannelFlags:    edgeUpdateToFail.ChannelFlags,
-		TimeLockDelta:   edgeUpdateToFail.TimeLockDelta,
-		HtlcMinimumMsat: edgeUpdateToFail.MinHTLC,
-		HtlcMaximumMsat: edgeUpdateToFail.MaxHTLC,
-		BaseFee:         uint32(edgeUpdateToFail.FeeBaseMSat),
-		FeeRate:         uint32(edgeUpdateToFail.FeeProportionalMillionths),
-	}
+	errChanUpdate, err := netann.UnsignedChannelUpdateFromEdge(
+		chainhash.Hash{}, edgeUpdateToFail,
+	)
+	require.NoError(t, err)
 
-	signErrChanUpdate(t, ctx.privKeys["songoku"], &errChanUpdate)
+	signErrChanUpdate(t, ctx.privKeys["songoku"], errChanUpdate)
 
 	// We'll now modify the SendToSwitch method to return an error for the
 	// outgoing channel to Son goku. This will be a fee related error, so
@@ -627,15 +678,17 @@ func TestSendPaymentErrorRepeatedFeeInsufficient(t *testing.T) {
 			roasbeefSongokuChanID,
 		)
 		if firstHop == roasbeefSongoku {
-			return [32]byte{}, htlcswitch.NewForwardingError(
-				// Within our error, we'll add a
-				// channel update which is meant to
-				// reflect the new fee schedule for the
-				// node/channel.
-				&lnwire.FailFeeInsufficient{
-					Update: errChanUpdate,
-				}, 1,
-			)
+			if firstHop == roasbeefSongoku {
+				return [32]byte{}, htlcswitch.NewForwardingError(
+					// Within our error, we'll add a
+					// channel update which is meant to
+					// reflect the new fee schedule for the
+					// node/channel.
+					&lnwire.FailFeeInsufficient{
+						Update: errChanUpdate,
+					}, 1,
+				)
+			}
 		}
 
 		return preImage, nil
@@ -742,7 +795,7 @@ func TestSendPaymentErrorFeeInsufficientPrivateEdge(t *testing.T) {
 				// reflect the new fee schedule for the
 				// node/channel.
 				&lnwire.FailFeeInsufficient{
-					Update: errChanUpdate,
+					Update: &errChanUpdate,
 				}, 1,
 			)
 		},
@@ -868,7 +921,7 @@ func TestSendPaymentPrivateEdgeUpdateFeeExceedsLimit(t *testing.T) {
 				// reflect the new fee schedule for the
 				// node/channel.
 				&lnwire.FailFeeInsufficient{
-					Update: errChanUpdate,
+					Update: &errChanUpdate,
 				}, 1,
 			)
 		},
@@ -944,17 +997,13 @@ func TestSendPaymentErrorNonFinalTimeLockErrors(t *testing.T) {
 	_, _, edgeUpdateToFail, err := ctx.graph.FetchChannelEdgesByID(chanID)
 	require.NoError(t, err, "unable to fetch chan id")
 
-	errChanUpdate := lnwire.ChannelUpdate1{
-		ShortChannelID:  lnwire.NewShortChanIDFromInt(chanID),
-		Timestamp:       uint32(edgeUpdateToFail.LastUpdate.Unix()),
-		MessageFlags:    edgeUpdateToFail.MessageFlags,
-		ChannelFlags:    edgeUpdateToFail.ChannelFlags,
-		TimeLockDelta:   edgeUpdateToFail.TimeLockDelta,
-		HtlcMinimumMsat: edgeUpdateToFail.MinHTLC,
-		HtlcMaximumMsat: edgeUpdateToFail.MaxHTLC,
-		BaseFee:         uint32(edgeUpdateToFail.FeeBaseMSat),
-		FeeRate:         uint32(edgeUpdateToFail.FeeProportionalMillionths),
-	}
+	edgeUpdToFail, ok := edgeUpdateToFail.(*models.ChannelEdgePolicy1)
+	require.True(t, ok)
+
+	errChanUpdate, err := netann.UnsignedChannelUpdateFromEdge(
+		chainhash.Hash{}, edgeUpdToFail,
+	)
+	require.NoError(t, err)
 
 	// We'll now modify the SendToSwitch method to return an error for the
 	// outgoing channel to son goku. Since this is a time lock related
@@ -1413,7 +1462,7 @@ func TestSendToRouteStructuredError(t *testing.T) {
 	testCases := map[int]lnwire.FailureMessage{
 		finalHopIndex: lnwire.NewFailIncorrectDetails(payAmt, 100),
 		1: &lnwire.FailFeeInsufficient{
-			Update: lnwire.ChannelUpdate1{},
+			Update: &lnwire.ChannelUpdate1{},
 		},
 	}
 
@@ -2764,7 +2813,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 	)
 	require.NoError(t, err, "unable to create channel edge")
 
-	edge := &models.ChannelEdgeInfo{
+	edge := &models.ChannelEdgeInfo1{
 		ChannelID:        chanID.ToUint64(),
 		NodeKey1Bytes:    pub1,
 		NodeKey2Bytes:    pub2,
@@ -2776,7 +2825,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 
 	// We must add the edge policy to be able to use the edge for route
 	// finding.
-	edgePolicy := &models.ChannelEdgePolicy{
+	edgePolicy := &models.ChannelEdgePolicy1{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 edge.ChannelID,
 		LastUpdate:                testTime,
@@ -2791,7 +2840,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 	require.NoError(t, ctx.graph.UpdateEdgePolicy(edgePolicy))
 
 	// Create edge in the other direction as well.
-	edgePolicy = &models.ChannelEdgePolicy{
+	edgePolicy = &models.ChannelEdgePolicy1{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 edge.ChannelID,
 		LastUpdate:                testTime,
@@ -2843,7 +2892,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 		10000, 510)
 	require.NoError(t, err, "unable to create channel edge")
 
-	edge = &models.ChannelEdgeInfo{
+	edge = &models.ChannelEdgeInfo1{
 		ChannelID: chanID.ToUint64(),
 		AuthProof: nil,
 	}
@@ -2854,7 +2903,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 
 	require.NoError(t, ctx.graph.AddChannelEdge(edge))
 
-	edgePolicy = &models.ChannelEdgePolicy{
+	edgePolicy = &models.ChannelEdgePolicy1{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 edge.ChannelID,
 		LastUpdate:                testTime,
@@ -2868,7 +2917,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 
 	require.NoError(t, ctx.graph.UpdateEdgePolicy(edgePolicy))
 
-	edgePolicy = &models.ChannelEdgePolicy{
+	edgePolicy = &models.ChannelEdgePolicy1{
 		SigBytes:                  testSig.Serialize(),
 		ChannelID:                 edge.ChannelID,
 		LastUpdate:                testTime,
@@ -2964,13 +3013,15 @@ func createDummyLightningPayment(t *testing.T,
 }
 
 type mockGraphBuilder struct {
+	t            *testing.T
 	rejectUpdate bool
-	updateEdge   func(update *models.ChannelEdgePolicy) error
+	updateEdge   func(update models.ChannelEdgePolicy) error
 }
 
-func newMockGraphBuilder(graph graph.DB) *mockGraphBuilder {
+func newMockGraphBuilder(t *testing.T, graph graph.DB) *mockGraphBuilder {
 	return &mockGraphBuilder{
-		updateEdge: func(update *models.ChannelEdgePolicy) error {
+		t: t,
+		updateEdge: func(update models.ChannelEdgePolicy) error {
 			return graph.UpdateEdgePolicy(update)
 		},
 	}
@@ -2980,26 +3031,15 @@ func (m *mockGraphBuilder) setNextReject(reject bool) {
 	m.rejectUpdate = reject
 }
 
-func (m *mockGraphBuilder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
+func (m *mockGraphBuilder) ApplyChannelUpdate(msg lnwire.ChannelUpdate) bool {
 	if m.rejectUpdate {
 		return false
 	}
 
-	err := m.updateEdge(&models.ChannelEdgePolicy{
-		SigBytes:                  msg.Signature.ToSignatureBytes(),
-		ChannelID:                 msg.ShortChannelID.ToUint64(),
-		LastUpdate:                time.Unix(int64(msg.Timestamp), 0),
-		MessageFlags:              msg.MessageFlags,
-		ChannelFlags:              msg.ChannelFlags,
-		TimeLockDelta:             msg.TimeLockDelta,
-		MinHTLC:                   msg.HtlcMinimumMsat,
-		MaxHTLC:                   msg.HtlcMaximumMsat,
-		FeeBaseMSat:               lnwire.MilliSatoshi(msg.BaseFee),
-		FeeProportionalMillionths: lnwire.MilliSatoshi(msg.FeeRate),
-		ExtraOpaqueData:           msg.ExtraOpaqueData,
-	})
+	policy, err := models.EdgePolicyFromUpdate(msg)
+	require.NoError(m.t, err)
 
-	return err == nil
+	return m.updateEdge(policy) == nil
 }
 
 type mockChain struct {

@@ -44,13 +44,13 @@ func TestCreateChanAnnouncement(t *testing.T) {
 		ExtraOpaqueData: []byte{0x1},
 	}
 
-	chanProof := &models.ChannelAuthProof{
+	chanProof := &models.ChannelAuthProof1{
 		NodeSig1Bytes:    expChanAnn.NodeSig1.ToSignatureBytes(),
 		NodeSig2Bytes:    expChanAnn.NodeSig2.ToSignatureBytes(),
 		BitcoinSig1Bytes: expChanAnn.BitcoinSig1.ToSignatureBytes(),
 		BitcoinSig2Bytes: expChanAnn.BitcoinSig2.ToSignatureBytes(),
 	}
-	chanInfo := &models.ChannelEdgeInfo{
+	chanInfo := &models.ChannelEdgeInfo1{
 		ChainHash:        expChanAnn.ChainHash,
 		ChannelID:        expChanAnn.ShortChannelID.ToUint64(),
 		ChannelPoint:     wire.OutPoint{Index: 1},
@@ -162,7 +162,7 @@ func test4of4MuSig2ChanAnnouncement(t *testing.T) {
 	sig, err := lnwire.NewSigFromSignature(s)
 	require.NoError(t, err)
 
-	ann.Signature = sig
+	ann.Signature.Val = sig
 
 	// Validate the announcement.
 	require.NoError(t, ValidateChannelAnn(ann, nil))
@@ -262,7 +262,7 @@ func test3of3MuSig2ChanAnnouncement(t *testing.T) {
 	sig, err := lnwire.NewSigFromSignature(s)
 	require.NoError(t, err)
 
-	ann.Signature = sig
+	ann.Signature.Val = sig
 
 	// Validate the announcement.
 	require.NoError(t, ValidateChannelAnn(ann, fetchTx))

@@ -211,15 +211,15 @@ type ClosedChanSummary struct {
 // createCloseSummaries takes in a slice of channels closed at the target block
 // height and creates a slice of summaries which of each channel closure.
 func createCloseSummaries(blockHeight uint32,
-	closedChans ...*models.ChannelEdgeInfo) []*ClosedChanSummary {
+	closedChans ...models.ChannelEdgeInfo) []*ClosedChanSummary {
 
 	closeSummaries := make([]*ClosedChanSummary, len(closedChans))
 	for i, closedChan := range closedChans {
 		closeSummaries[i] = &ClosedChanSummary{
-			ChanID:       closedChan.ChannelID,
-			Capacity:     closedChan.Capacity,
+			ChanID:       closedChan.GetChanID(),
+			Capacity:     closedChan.GetCapacity(),
 			ClosedHeight: blockHeight,
-			ChanPoint:    closedChan.ChannelPoint,
+			ChanPoint:    closedChan.GetChanPoint(),
 		}
 	}
 
@@ -337,16 +337,18 @@ func addToTopologyChange(graph DB, update *TopologyChange,
 
 	// We ignore initial channel announcements as we'll only send out
 	// updates once the individual edges themselves have been updated.
-	case *models.ChannelEdgeInfo:
+	case models.ChannelEdgeInfo:
 		return nil
 
 	// Any new ChannelUpdateAnnouncements will generate a corresponding
 	// ChannelEdgeUpdate notification.
-	case *models.ChannelEdgePolicy:
+	case models.ChannelEdgePolicy:
 		// We'll need to fetch the edge's information from the database
 		// in order to get the information concerning which nodes are
 		// being connected.
-		edgeInfo, _, _, err := graph.FetchChannelEdgesByID(m.ChannelID)
+		edgeInfo, _, _, err := graph.FetchChannelEdgesByID(
+			m.SCID().ToUint64(),
+		)
 		if err != nil {
 			return errors.Errorf("unable fetch channel edge: %v",
 				err)
@@ -356,7 +358,7 @@ func addToTopologyChange(graph DB, update *TopologyChange,
 		// the second node.
 		sourceNode := edgeInfo.NodeKey1
 		connectingNode := edgeInfo.NodeKey2
-		if m.ChannelFlags&lnwire.ChanUpdateDirection == 1 {
+		if !m.IsNode1() {
 			sourceNode = edgeInfo.NodeKey2
 			connectingNode = edgeInfo.NodeKey1
 		}
@@ -370,19 +372,25 @@ func addToTopologyChange(graph DB, update *TopologyChange,
 			return err
 		}
 
+		extra, err := m.ExtraData()
+		if err != nil {
+			return err
+		}
+
+		policy := m.ForwardingPolicy()
 		edgeUpdate := &ChannelEdgeUpdate{
-			ChanID:          m.ChannelID,
-			ChanPoint:       edgeInfo.ChannelPoint,
-			TimeLockDelta:   m.TimeLockDelta,
-			Capacity:        edgeInfo.Capacity,
-			MinHTLC:         m.MinHTLC,
-			MaxHTLC:         m.MaxHTLC,
-			BaseFee:         m.FeeBaseMSat,
-			FeeRate:         m.FeeProportionalMillionths,
+			ChanID:          m.SCID().ToUint64(),
+			ChanPoint:       edgeInfo.GetChanPoint(),
+			TimeLockDelta:   policy.TimeLockDelta,
+			Capacity:        edgeInfo.GetCapacity(),
+			MinHTLC:         policy.MinHTLC,
+			MaxHTLC:         policy.MaxHTLC,
+			BaseFee:         policy.BaseFee,
+			FeeRate:         policy.FeeRate,
 			AdvertisingNode: aNode,
 			ConnectingNode:  cNode,
-			Disabled:        m.ChannelFlags&lnwire.ChanUpdateDisabled != 0,
-			ExtraOpaqueData: m.ExtraOpaqueData,
+			Disabled:        m.IsDisabled(),
+			ExtraOpaqueData: extra,
 		}
 
 		// TODO(roasbeef): add bit to toggle
