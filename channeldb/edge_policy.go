@@ -394,9 +394,9 @@ func serializeChanEdgePolicy1(w io.Writer,
 func serializeChanEdgePolicy2(w io.Writer,
 	edge *models.ChannelEdgePolicy2) error {
 
-	if len(edge.ExtraOpaqueData) > MaxAllowedExtraOpaqueBytes {
-		return ErrTooManyExtraOpaqueBytes(len(edge.ExtraOpaqueData))
-	}
+	//if len(edge.ExtraOpaqueData) > MaxAllowedExtraOpaqueBytes {
+	//	return ErrTooManyExtraOpaqueBytes(len(edge.ExtraOpaqueData))
+	//}
 
 	var b bytes.Buffer
 	if err := edge.Encode(&b, 0); err != nil {

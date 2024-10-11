@@ -6628,7 +6628,7 @@ func marshalDBEdge(edgeInfo models.ChannelEdgeInfo,
 		customRecords := marshalExtraOpaqueData(info.ExtraOpaqueData)
 		edge.CustomRecords = customRecords
 	case *models.ChannelEdgeInfo2:
-		customRecords := marshalExtraOpaqueData(info.ExtraOpaqueData)
+		customRecords := info.ExtraFieldsInSignedRange
 		edge.CustomRecords = customRecords
 	default:
 		return nil, fmt.Errorf("unhandled implementation of "+
@@ -6663,7 +6663,7 @@ func marshalDBRoutingPolicy(policy models.ChannelEdgePolicy) (
 		routingPolicy.InboundFeeRateMilliMsat = inboundFee.FeeRate
 
 	case *models.ChannelEdgePolicy2:
-		customRecords := marshalExtraOpaqueData(p.ExtraOpaqueData)
+		customRecords := p.ExtraFieldsInSignedRange
 		routingPolicy.CustomRecords = customRecords
 		routingPolicy.BlockHeight = p.BlockHeight.Val
 

@@ -1700,7 +1700,7 @@ func marshallChannelUpdate(update lnwire.ChannelUpdate) (*lnrpc.ChannelUpdate,
 
 	case *lnwire.ChannelUpdate2:
 		return nil, &lnrpc.ChannelUpdate2{
-			Signature:       upd.Signature.RawBytes(),
+			Signature:       upd.Signature.Val.RawBytes(),
 			ChainHash:       upd.ChainHash.Val[:],
 			ChanId:          upd.ShortChannelID.Val.ToUint64(),
 			BlockHeight:     upd.BlockHeight.Val,
@@ -1711,7 +1711,7 @@ func marshallChannelUpdate(update lnwire.ChannelUpdate) (*lnrpc.ChannelUpdate,
 			FeeRate:         upd.FeeProportionalMillionths.Val,
 			HtlcMinimumMsat: uint64(upd.HTLCMinimumMsat.Val),
 			HtlcMaximumMsat: uint64(upd.HTLCMaximumMsat.Val),
-			ExtraOpaqueData: upd.ExtraOpaqueData,
+			//ExtraOpaqueData: upd.ExtraOpaqueData,
 		}, nil
 
 	default:

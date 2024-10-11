@@ -28,7 +28,8 @@ const (
 const (
 	// EdgeInfo2MsgType is the tlv type used within the serialisation of
 	// ChannelEdgeInfo2 for storing the serialisation of the associated
-	// lnwire.ChannelAnnouncement2 message.
+	// lnwire.ChannelAnnouncement2 message. This will exclude the signature
+	// TLV record.
 	EdgeInfo2MsgType = tlv.Type(0)
 
 	// EdgeInfo2Sig is the tlv type used within the serialisation of
@@ -182,17 +183,18 @@ func serializeChanEdgeInfo1(w io.Writer,
 }
 
 func serializeChanEdgeInfo2(w io.Writer, edge *models.ChannelEdgeInfo2) error {
-	if len(edge.ExtraOpaqueData) > MaxAllowedExtraOpaqueBytes {
-		return ErrTooManyExtraOpaqueBytes(len(edge.ExtraOpaqueData))
-	}
+	//if len(edge.ExtraOpaqueData) > MaxAllowedExtraOpaqueBytes {
+	//	return ErrTooManyExtraOpaqueBytes(len(edge.ExtraOpaqueData))
+	//}
 
-	serializedMsg, err := edge.DataToSign()
-	if err != nil {
+	var msgBuff bytes.Buffer
+	if err := edge.EncodeAllNonSigFields(&msgBuff); err != nil {
 		return err
 	}
 
+	msgBytes := msgBuff.Bytes()
 	records := []tlv.Record{
-		tlv.MakePrimitiveRecord(EdgeInfo2MsgType, &serializedMsg),
+		tlv.MakePrimitiveRecord(EdgeInfo2MsgType, &msgBytes),
 	}
 
 	if edge.AuthProof != nil {
@@ -380,7 +382,7 @@ func deserializeChanEdgeInfo2(r io.Reader) (*models.ChannelEdgeInfo2, error) {
 	}
 
 	reader := bytes.NewReader(msgBytes)
-	err = edgeInfo.ChannelAnnouncement2.DecodeTLVRecords(reader)
+	err = edgeInfo.ChannelAnnouncement2.DecodeNonSigTLVRecords(reader)
 	if err != nil {
 		return nil, err
 	}

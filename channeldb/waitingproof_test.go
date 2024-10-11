@@ -25,25 +25,25 @@ func TestWaitingProofStore(t *testing.T) {
 	})
 
 	// No agg nonce.
-	proof2 := NewTaprootWaitingProof(true, &lnwire.AnnounceSignatures2{
-		ShortChannelID: lnwire.ShortChannelID{
-			BlockHeight: 2000,
-		},
-		PartialSignature: *randPartialSig(t),
-		ExtraOpaqueData:  make([]byte, 0),
-	}, nil)
+	proof2 := NewTaprootWaitingProof(
+		true, lnwire.NewAnnSigs2(
+			lnwire.ChannelID{},
+			lnwire.ShortChannelID{BlockHeight: 2000},
+			*randPartialSig(t),
+		), nil,
+	)
 
 	// With agg nonce.
 	priv, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 
-	proof3 := NewTaprootWaitingProof(true, &lnwire.AnnounceSignatures2{
-		ShortChannelID: lnwire.ShortChannelID{
-			BlockHeight: 2000,
-		},
-		PartialSignature: *randPartialSig(t),
-		ExtraOpaqueData:  make([]byte, 0),
-	}, priv.PubKey())
+	proof3 := NewTaprootWaitingProof(
+		true, lnwire.NewAnnSigs2(
+			lnwire.ChannelID{},
+			lnwire.ShortChannelID{BlockHeight: 2000},
+			*randPartialSig(t),
+		), priv.PubKey(),
+	)
 
 	proofs := []*WaitingProof{
 		proof1,

@@ -372,6 +372,11 @@ func addToTopologyChange(graph DB, update *TopologyChange,
 			return err
 		}
 
+		extra, err := m.ExtraData()
+		if err != nil {
+			return err
+		}
+
 		policy := m.ForwardingPolicy()
 		edgeUpdate := &ChannelEdgeUpdate{
 			ChanID:          m.SCID().ToUint64(),
@@ -385,7 +390,7 @@ func addToTopologyChange(graph DB, update *TopologyChange,
 			AdvertisingNode: aNode,
 			ConnectingNode:  cNode,
 			Disabled:        m.IsDisabled(),
-			ExtraOpaqueData: m.ExtraData(),
+			ExtraOpaqueData: extra,
 		}
 
 		// TODO(roasbeef): add bit to toggle

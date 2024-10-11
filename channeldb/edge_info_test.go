@@ -133,9 +133,11 @@ func TestEdgeInfoSerialisation(t *testing.T) {
 				return mainScenario(&m)
 			},
 			genValue: func(v []reflect.Value, r *rand.Rand) {
-				ann := lnwire.ChannelAnnouncement2{
-					ExtraOpaqueData: make([]byte, 0),
-				}
+				var ann lnwire.ChannelAnnouncement2
+
+				ann.ExtraFieldsInSignedRange = randTLVMap(
+					t, r, 1000000000,
+				)
 
 				features := randRawFeatureVector(r)
 				ann.Features.Val = *features
@@ -184,15 +186,6 @@ func TestEdgeInfoSerialisation(t *testing.T) {
 					ann.MerkleRootHash = tlv.SomeRecordT(
 						hash,
 					)
-				}
-
-				numExtraBytes := r.Int31n(1000)
-				if numExtraBytes > 0 {
-					ann.ExtraOpaqueData = make(
-						[]byte, numExtraBytes,
-					)
-					_, err := r.Read(ann.ExtraOpaqueData[:])
-					require.NoError(t, err)
 				}
 
 				info := &models.ChannelEdgeInfo2{
@@ -261,4 +254,32 @@ func randRawFeatureVector(r *rand.Rand) *lnwire.RawFeatureVector {
 	}
 
 	return featureVec
+}
+
+func randTLVMap(t *testing.T, r *rand.Rand,
+	rangeStart uint64) map[uint64][]byte {
+
+	var (
+		m = make(map[uint64][]byte)
+
+		// We'll generate a random number of records, between 1 and 10.
+		numRecords = r.Intn(9) + 1
+	)
+
+	// For each record, we'll generate a random key and value.
+	for i := 0; i < numRecords; i++ {
+		// Keys must be equal to or greater than
+		// MinCustomRecordsTlvType.
+		keyOffset := uint64(r.Intn(100))
+		key := rangeStart + keyOffset
+
+		// Values are byte slices of any length.
+		value := make([]byte, r.Intn(10))
+		_, err := r.Read(value)
+		require.NoError(t, err)
+
+		m[key] = value
+	}
+
+	return m
 }

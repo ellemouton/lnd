@@ -2511,8 +2511,18 @@ func IsKeepAliveUpdate(update lnwire.ChannelUpdate,
 		if fwd.MaxHTLC != prevFwd.MinHTLC {
 			return false, nil
 		}
-		if !bytes.Equal(upd.ExtraOpaqueData, prev.ExtraOpaqueData) {
+		if len(upd.ExtraFieldsInSignedRange) != len(prev.ExtraFieldsInSignedRange) {
 			return false, nil
+		}
+		for t, b := range upd.ExtraFieldsInSignedRange {
+			bb, ok := prev.ExtraFieldsInSignedRange[t]
+			if !ok {
+				return false, nil
+			}
+
+			if !bytes.Equal(bb, b) {
+				return false, nil
+			}
 		}
 
 		return true, nil
@@ -3723,11 +3733,11 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 		}
 
 		ps1 := musig2.NewPartialSignature(
-			&a.PartialSignature.Sig, aggNonce,
+			&a.PartialSignature.Val.Sig, aggNonce,
 		)
 
 		ps2 := musig2.NewPartialSignature(
-			&oppProof.PartialSignature.Sig, aggNonce,
+			&oppProof.PartialSignature.Val.Sig, aggNonce,
 		)
 
 		// Now aggregate the partial sigs.
@@ -3933,7 +3943,7 @@ func buildChanProof(ann lnwire.ChannelAnnouncement) (
 
 	case *lnwire.ChannelAnnouncement2:
 		return &models.ChannelAuthProof2{
-			SchnorrSigBytes: a.Signature.ToSignatureBytes(),
+			SchnorrSigBytes: a.Signature.Val.ToSignatureBytes(),
 		}, nil
 
 	default:

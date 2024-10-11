@@ -273,16 +273,16 @@ func (r *Manager) updateEdge(tx kvdb.RTx, chanPoint wire.OutPoint,
 		edge.CLTVExpiryDelta.Val = uint16(newSchema.TimeLockDelta)
 
 		// If inbound fees are set, we update the edge with them.
-		err := fn.MapOptionZ(newSchema.InboundFee,
-			func(f models.InboundFee) error {
-				inboundWireFee := f.ToWire()
-				return edge.ExtraOpaqueData.PackRecords(
-					&inboundWireFee,
-				)
-			})
-		if err != nil {
-			return err
-		}
+		//err := fn.MapOptionZ(newSchema.InboundFee,
+		//	func(f models.InboundFee) error {
+		//		inboundWireFee := f.ToWire()
+		//		return edge.ExtraOpaqueData.PackRecords(
+		//			&inboundWireFee,
+		//		)
+		//	})
+		//if err != nil {
+		//	return err
+		//}
 
 		// Retrieve negotiated channel htlc amt limits.
 		amtMin, amtMax, err := r.getHtlcAmtLimits(tx, chanPoint)
@@ -335,7 +335,7 @@ func (r *Manager) updateEdge(tx kvdb.RTx, chanPoint wire.OutPoint,
 
 		// Clear signature to help prevent usage of the previous
 		// signature.
-		edge.Signature = lnwire.Sig{}
+		edge.Signature.Val = lnwire.Sig{}
 
 	default:
 		return fmt.Errorf("unhandled implementation of "+

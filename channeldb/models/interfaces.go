@@ -95,5 +95,5 @@ type ChannelEdgePolicy interface {
 	// Sig returns the signature of the update message.
 	Sig() (input.Signature, error)
 
-	ExtraData() lnwire.ExtraOpaqueData
+	ExtraData() (lnwire.ExtraOpaqueData, error)
 }

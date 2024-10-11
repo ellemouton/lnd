@@ -4774,7 +4774,7 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 	// signature that signs a double-sha digest of the announcement.
 	// This'll serve to authenticate this announcement and any other future
 	// updates we may send.
-	chanUpdateMsg, err := chanUpdateAnn.DataToSign()
+	chanUpdateMsg, err := lnwire.SerialiseFieldsToSign(&chanUpdateAnn)
 	if err != nil {
 		return nil, err
 	}
@@ -4786,7 +4786,7 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 		return nil, errors.Errorf("unable to generate channel "+
 			"update announcement signature: %v", err)
 	}
-	chanUpdateAnn.Signature, err = lnwire.NewSigFromSignature(sig)
+	chanUpdateAnn.Signature.Val, err = lnwire.NewSigFromSignature(sig)
 	if err != nil {
 		return nil, errors.Errorf("unable to generate channel "+
 			"update announcement signature: %v", err)
@@ -4894,11 +4894,9 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 	// Finally, we'll generate the announcement proof which we'll use to
 	// provide the other side with the necessary signatures required to
 	// allow them to reconstruct the full channel announcement.
-	proof := &lnwire.AnnounceSignatures2{
-		ChannelID:        chanID,
-		ShortChannelID:   shortChanID,
-		PartialSignature: lnwire.NewPartialSig(*ps.S),
-	}
+	proof := lnwire.NewAnnSigs2(
+		chanID, shortChanID, lnwire.NewPartialSig(*ps.S),
+	)
 
 	return &chanAnnouncement{
 		chanAnn:       &chanAnn,

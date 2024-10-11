@@ -188,8 +188,8 @@ func (c *ChannelEdgePolicy1) AfterUpdateMsg(msg lnwire.ChannelUpdate) (bool,
 	return c.LastUpdate.After(timestamp), nil
 }
 
-func (c *ChannelEdgePolicy1) ExtraData() lnwire.ExtraOpaqueData {
-	return c.ExtraOpaqueData
+func (c *ChannelEdgePolicy1) ExtraData() (lnwire.ExtraOpaqueData, error) {
+	return c.ExtraOpaqueData, nil
 }
 
 // Sig returns the signature of the update message.
@@ -213,7 +213,7 @@ type ChannelEdgePolicy2 struct {
 //
 // NOTE: This is part of the ChannelEdgePolicy interface.
 func (c *ChannelEdgePolicy2) Sig() (input.Signature, error) {
-	return c.Signature.ToSignature()
+	return c.Signature.Val.ToSignature()
 }
 
 // AfterUpdateMsg compares this update against the passed lnwire.ChannelUpdate
