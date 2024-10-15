@@ -24,42 +24,13 @@ const (
 func NewDefaultLoggers(cfg *LogConfig, rotator *RotatingLogWriter) (
 	btclog.Handler, btclog.Handler) {
 
-	var (
-		consoleOpts []btclog.HandlerOption
-		fileOpts    []btclog.HandlerOption
+	consoleLogHandler := btclog.NewDefaultHandler(
+		os.Stdout, cfg.Console.HandlerOptions()...,
 	)
-	if cfg.File.NoTimestamps {
-		fileOpts = append(fileOpts, btclog.WithNoTimestamp())
-	}
-	if cfg.Console.NoTimestamps {
-		consoleOpts = append(consoleOpts, btclog.WithNoTimestamp())
-	}
-	if cfg.Console.Style {
-		consoleOpts = append(consoleOpts,
-			btclog.WithStyledLevel(
-				func(l btclogv1.Level) string {
-					return styleString(
-						fmt.Sprintf("[%s]", l),
-						boldSeq,
-						string(ansiColoSeq(l)),
-					)
-				},
-			),
-			btclog.WithStyledCallSite(
-				func(file string, line int) string {
-					str := fmt.Sprintf("%s:%d", file, line)
 
-					return styleString(str, faintSeq)
-				},
-			),
-			btclog.WithStyledKeys(func(key string) string {
-				return styleString(key, faintSeq)
-			}),
-		)
-	}
-
-	consoleLogHandler := btclog.NewDefaultHandler(os.Stdout, consoleOpts...)
-	logFileHandler := btclog.NewDefaultHandler(rotator, fileOpts...)
+	logFileHandler := btclog.NewDefaultHandler(
+		rotator, cfg.File.HandlerOptions()...,
+	)
 
 	return consoleLogHandler, logFileHandler
 }

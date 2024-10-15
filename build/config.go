@@ -1,11 +1,16 @@
+//go:build !dev
+// +build !dev
+
 package build
+
+import "github.com/btcsuite/btclog/v2"
 
 // LogConfig holds logging configuration options.
 //
 //nolint:lll
 type LogConfig struct {
-	Console *consoleLoggerCfg `group:"console" namespace:"console" description:"The logger writing to stdout and stderr."`
-	File    *LoggerConfig     `group:"file" namespace:"file" description:"The logger writing to LND's standard log file."`
+	Console *LoggerConfig `group:"console" namespace:"console" description:"The logger writing to stdout and stderr."`
+	File    *LoggerConfig `group:"file" namespace:"file" description:"The logger writing to LND's standard log file."`
 }
 
 // LoggerConfig holds options for a particular logger.
@@ -16,19 +21,21 @@ type LoggerConfig struct {
 	NoTimestamps bool `long:"no-timestamps" description:"Omit timestamps from log lines."`
 }
 
-// consoleLoggerCfg extends the LoggerConfig struct by adding a Color option
-// which is only available for a console logger.
-//
-//nolint:lll
-type consoleLoggerCfg struct {
-	LoggerConfig
-	Style bool `long:"style" description:"If set, the output will be styled with color and fonts"`
+// HandlerOptions returns the set of btclog.HandlerOptions that the state of the
+// config struct translates to.
+func (cfg *LoggerConfig) HandlerOptions() []btclog.HandlerOption {
+	var opts []btclog.HandlerOption
+	if cfg.NoTimestamps {
+		opts = append(opts, btclog.WithNoTimestamp())
+	}
+
+	return opts
 }
 
 // DefaultLogConfig returns the default logging config options.
 func DefaultLogConfig() *LogConfig {
 	return &LogConfig{
-		Console: &consoleLoggerCfg{},
+		Console: &LoggerConfig{},
 		File:    &LoggerConfig{},
 	}
 }
