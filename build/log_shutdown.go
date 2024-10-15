@@ -3,7 +3,7 @@ package build
 import (
 	"context"
 
-	"github.com/btcsuite/btclog"
+	"github.com/btcsuite/btclog/v2"
 )
 
 // ShutdownLogger wraps an existing logger with a shutdown function which will

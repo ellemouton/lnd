@@ -4,18 +4,19 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/btcsuite/btclog"
+	btclogv1 "github.com/btcsuite/btclog"
+	"github.com/btcsuite/btclog/v2"
 )
 
 // handlerSet is an implementation of Handler that abstracts away multiple
 // Handlers.
 type handlerSet struct {
-	level btclog.Level
+	level btclogv1.Level
 	set   []btclog.Handler
 }
 
 // newHandlerSet constructs a new HandlerSet.
-func newHandlerSet(level btclog.Level, set ...btclog.Handler) *handlerSet {
+func newHandlerSet(level btclogv1.Level, set ...btclog.Handler) *handlerSet {
 	h := &handlerSet{
 		set:   set,
 		level: level,
@@ -93,7 +94,7 @@ func (h *handlerSet) SubSystem(tag string) btclog.Handler {
 // level.
 //
 // NOTE: this is part of the btclog.Handler interface.
-func (h *handlerSet) SetLevel(level btclog.Level) {
+func (h *handlerSet) SetLevel(level btclogv1.Level) {
 	for _, handler := range h.set {
 		handler.SetLevel(level)
 	}
@@ -103,7 +104,7 @@ func (h *handlerSet) SetLevel(level btclog.Level) {
 // Level returns the current logging level of the Handler.
 //
 // NOTE: this is part of the btclog.Handler interface.
-func (h *handlerSet) Level() btclog.Level {
+func (h *handlerSet) Level() btclogv1.Level {
 	return h.level
 }
 

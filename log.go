@@ -3,7 +3,8 @@ package lnd
 import (
 	"github.com/btcsuite/btcd/connmgr"
 	"github.com/btcsuite/btcd/rpcclient"
-	"github.com/btcsuite/btclog"
+	btclogv1 "github.com/btcsuite/btclog"
+	"github.com/btcsuite/btclog/v2"
 	"github.com/lightninglabs/neutrino"
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/autopilot"
@@ -194,7 +195,7 @@ func SetupLoggers(root *build.SubLoggerManager, interceptor signal.Interceptor) 
 // AddSubLogger is a helper method to conveniently create and register the
 // logger of one or more sub systems.
 func AddSubLogger(root *build.SubLoggerManager, subsystem string,
-	interceptor signal.Interceptor, useLoggers ...func(btclog.Logger)) {
+	interceptor signal.Interceptor, useLoggers ...func(btclogv1.Logger)) {
 
 	// genSubLogger will return a callback for creating a logger instance,
 	// which we will give to the root logger.
@@ -209,7 +210,7 @@ func AddSubLogger(root *build.SubLoggerManager, subsystem string,
 // SetSubLogger is a helper method to conveniently register the logger of a sub
 // system.
 func SetSubLogger(root *build.SubLoggerManager, subsystem string,
-	logger btclog.Logger, useLoggers ...func(btclog.Logger)) {
+	logger btclog.Logger, useLoggers ...func(btclogv1.Logger)) {
 
 	root.RegisterSubLogger(subsystem, logger)
 	for _, useLogger := range useLoggers {

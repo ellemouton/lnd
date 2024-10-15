@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/btcsuite/btclog"
+	"github.com/btcsuite/btclog/v2"
 )
 
 // SubLogCreator can be used to create a new logger for a particular subsystem.

@@ -5,7 +5,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/btcsuite/btclog"
+	btclogv1 "github.com/btcsuite/btclog"
+	"github.com/btcsuite/btclog/v2"
 )
 
 const (
@@ -36,7 +37,7 @@ func NewDefaultLoggers(cfg *LogConfig, rotator *RotatingLogWriter) (
 	if cfg.Console.Style {
 		consoleOpts = append(consoleOpts,
 			btclog.WithStyledLevel(
-				func(l btclog.Level) string {
+				func(l btclogv1.Level) string {
 					return styleString(
 						fmt.Sprintf("[%s]", l),
 						boldSeq,
@@ -87,7 +88,7 @@ const (
 	ansiColorSeqPink      ansiColorSeq = "38;5;134"
 )
 
-func ansiColoSeq(l btclog.Level) ansiColorSeq {
+func ansiColoSeq(l btclogv1.Level) ansiColorSeq {
 	switch l {
 	case btclog.LevelTrace:
 		return ansiColorSeqDarkTeal

@@ -3,7 +3,7 @@ package build
 import (
 	"os"
 
-	"github.com/btcsuite/btclog"
+	"github.com/btcsuite/btclog/v2"
 )
 
 // LogType is an indicating the type of logging specified by the build flag.
@@ -93,8 +93,10 @@ func NewSubLogger(subsystem string,
 		// that they share the same backend, since all output is written
 		// to std out.
 		case LogTypeStdOut:
-			backend := btclog.NewBackend(os.Stdout)
-			logger := backend.Logger(subsystem)
+			handler := btclog.NewDefaultHandler(os.Stdout)
+			logger := btclog.NewSLogger(
+				handler.SubSystem(subsystem),
+			)
 
 			// Set the logging level of the stdout logger to use the
 			// configured logging level specified by build flags.

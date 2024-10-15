@@ -1,8 +1,6 @@
 package build
 
 import (
-	"context"
-
 	"github.com/btcsuite/btclog"
 )
 
@@ -110,48 +108,6 @@ func (p *PrefixLog) Error(v ...interface{}) {
 // writes to log with LevelCritical.
 func (p *PrefixLog) Critical(v ...interface{}) {
 	p.log.Critical(p.addArgsPrefix(v)...)
-}
-
-// TraceS writes a structured log with the given message and key-value pair
-// attributes with LevelTrace to the log.
-func (p *PrefixLog) TraceS(ctx context.Context, msg string, attrs ...any) {
-	p.log.TraceS(ctx, p.addFormatPrefix(msg), p.mergeAttr(attrs)...)
-}
-
-// DebugS writes a structured log with the given message and key-value pair
-// attributes with LevelDebug to the log.
-func (p *PrefixLog) DebugS(ctx context.Context, msg string, attrs ...any) {
-	p.log.DebugS(ctx, p.addFormatPrefix(msg), p.mergeAttr(attrs)...)
-}
-
-// InfoS writes a structured log with the given message and key-value pair
-// attributes with LevelInfo to the log.
-func (p *PrefixLog) InfoS(ctx context.Context, msg string, attrs ...any) {
-	p.log.InfoS(ctx, p.addFormatPrefix(msg), p.mergeAttr(attrs)...)
-}
-
-// WarnS writes a structured log with the given message and key-value pair
-// attributes with LevelWarn to the log.
-func (p *PrefixLog) WarnS(ctx context.Context, msg string, err error,
-	attrs ...any) {
-
-	p.log.WarnS(ctx, p.addFormatPrefix(msg), err, p.mergeAttr(attrs)...)
-}
-
-// ErrorS writes a structured log with the given message and key-value pair
-// attributes with LevelError to the log.
-func (p *PrefixLog) ErrorS(ctx context.Context, msg string, err error,
-	attrs ...any) {
-
-	p.log.ErrorS(ctx, p.addFormatPrefix(msg), err, p.mergeAttr(attrs)...)
-}
-
-// CriticalS writes a structured log with the given message and key-value pair
-// attributes with LevelCritical to the log.
-func (p *PrefixLog) CriticalS(ctx context.Context, msg string, err error,
-	attrs ...any) {
-
-	p.log.CriticalS(ctx, p.addFormatPrefix(msg), err, p.mergeAttr(attrs)...)
 }
 
 // Level returns the current logging level.
