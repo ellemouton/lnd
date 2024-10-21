@@ -591,12 +591,17 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		HtlcInterceptor:             invoiceHtlcModifier,
 	}
 
+	addrSource := &addrSource{
+		graph:         dbs.GraphDB.ChannelGraph(),
+		linkNodeAddrs: dbs.ChanStateDB.NodeAddrs,
+	}
+
 	s := &server{
 		cfg:            cfg,
 		implCfg:        implCfg,
 		graphDB:        dbs.GraphDB.ChannelGraph(),
 		chanStateDB:    dbs.ChanStateDB.ChannelStateDB(),
-		addrSource:     dbs.ChanStateDB,
+		addrSource:     addrSource,
 		miscDB:         dbs.ChanStateDB,
 		invoicesDB:     dbs.InvoiceDB,
 		cc:             cc,
@@ -1594,7 +1599,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	// static backup of the latest channel state.
 	chanNotifier := &channelNotifier{
 		chanNotifier: s.channelNotifier,
-		addrs:        dbs.ChanStateDB,
+		addrs:        addrSource,
 	}
 	backupFile := chanbackup.NewMultiFile(cfg.BackupFilePath)
 	startingChans, err := chanbackup.FetchStaticChanBackups(
