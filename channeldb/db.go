@@ -30,6 +30,7 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb/migration33"
 	"github.com/lightningnetwork/lnd/channeldb/migration_01_to_11"
 	"github.com/lightningnetwork/lnd/clock"
+	"github.com/lightningnetwork/lnd/graph/graphdb"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -335,7 +336,7 @@ type DB struct {
 	channelStateDB *ChannelStateDB
 
 	dbPath                    string
-	graph                     *ChannelGraph
+	graph                     *graphdb.ChannelGraph
 	clock                     clock.Clock
 	dryRun                    bool
 	keepFailedPaymentAttempts bool
@@ -358,16 +359,21 @@ func Open(dbPath string, modifiers ...OptionModifier) (*DB, error) {
 	backend, err := kvdb.GetBoltBackend(&kvdb.BoltBackendConfig{
 		DBPath:            dbPath,
 		DBFileName:        dbName,
-		NoFreelistSync:    opts.NoFreelistSync,
-		AutoCompact:       opts.AutoCompact,
-		AutoCompactMinAge: opts.AutoCompactMinAge,
-		DBTimeout:         opts.DBTimeout,
+		NoFreelistSync:    true,
+		AutoCompact:       false,
+		AutoCompactMinAge: kvdb.DefaultBoltAutoCompactMinAge,
+		DBTimeout:         kvdb.DefaultDBTimeout,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	db, err := CreateWithBackend(backend, modifiers...)
+	graphDB, err := graphdb.NewChannelGraph(backend)
+	if err != nil {
+		return nil, err
+	}
+
+	db, err := CreateWithBackend(backend, graphDB, modifiers...)
 	if err == nil {
 		db.dbPath = dbPath
 	}
@@ -376,7 +382,7 @@ func Open(dbPath string, modifiers ...OptionModifier) (*DB, error) {
 
 // CreateWithBackend creates channeldb instance using the passed kvdb.Backend.
 // Any necessary schemas migrations due to updates will take place as necessary.
-func CreateWithBackend(backend kvdb.Backend,
+func CreateWithBackend(backend kvdb.Backend, graphDB *graphdb.ChannelGraph,
 	modifiers ...OptionModifier) (*DB, error) {
 
 	opts := DefaultOptions()
@@ -408,15 +414,7 @@ func CreateWithBackend(backend kvdb.Backend,
 	// Set the parent pointer (only used in tests).
 	chanDB.channelStateDB.parent = chanDB
 
-	var err error
-	chanDB.graph, err = NewChannelGraph(
-		backend, opts.RejectCacheSize, opts.ChannelCacheSize,
-		opts.BatchCommitInterval, opts.PreAllocCacheNumNodes,
-		opts.UseGraphCache, opts.NoMigration,
-	)
-	if err != nil {
-		return nil, err
-	}
+	chanDB.graph = graphDB
 
 	// Synchronize the version of database and apply migrations if needed.
 	if !opts.NoMigration {
@@ -1362,12 +1360,12 @@ func (d *DB) AddrsForNode(nodePub *btcec.PublicKey) ([]net.Addr,
 		return nil, err
 	}
 	graphNode, err := d.graph.FetchLightningNode(pubKey)
-	if err != nil && err != ErrGraphNodeNotFound {
+	if err != nil && err != graphdb.ErrGraphNodeNotFound {
 		return nil, err
-	} else if err == ErrGraphNodeNotFound {
+	} else if err == graphdb.ErrGraphNodeNotFound {
 		// If the node isn't found, then that's OK, as we still have the
 		// link node data. But any other error needs to be returned.
-		graphNode = &LightningNode{}
+		graphNode = &graphdb.LightningNode{}
 	}
 
 	// Now that we have both sources of addrs for this node, we'll use a
@@ -1639,7 +1637,7 @@ func (d *DB) applyOptionalVersions(cfg OptionalMiragtionConfig) error {
 }
 
 // ChannelGraph returns the current instance of the directed channel graph.
-func (d *DB) ChannelGraph() *ChannelGraph {
+func (d *DB) ChannelGraph() *graphdb.ChannelGraph {
 	return d.graph
 }
 
@@ -1858,7 +1856,13 @@ func MakeTestDB(t *testing.T, modifiers ...OptionModifier) (*DB, error) {
 		return nil, err
 	}
 
-	cdb, err := CreateWithBackend(backend, modifiers...)
+	graphDB, err := graphdb.NewChannelGraph(backend)
+	if err != nil {
+		backendCleanup()
+		return nil, err
+	}
+
+	cdb, err := CreateWithBackend(backend, graphDB, modifiers...)
 	if err != nil {
 		backendCleanup()
 		return nil, err

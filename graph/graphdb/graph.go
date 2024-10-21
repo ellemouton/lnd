@@ -1,4 +1,4 @@
-package channeldb
+package graphdb
 
 import (
 	"bytes"
@@ -161,6 +161,10 @@ var (
 	//
 	// maps: scid -> []byte{}
 	closedScidBucket = []byte("closed-scid")
+
+	// byteOrder denotes the byte order of database (de)-serialization
+	// operations.
+	byteOrder = binary.BigEndian
 )
 
 const (
@@ -198,11 +202,15 @@ type ChannelGraph struct {
 
 // NewChannelGraph allocates a new ChannelGraph backed by a DB instance. The
 // returned instance has its own unique reject cache and channel cache.
-func NewChannelGraph(db kvdb.Backend, rejectCacheSize, chanCacheSize int,
-	batchCommitInterval time.Duration, preAllocCacheNumNodes int,
-	useGraphCache, noMigrations bool) (*ChannelGraph, error) {
+func NewChannelGraph(db kvdb.Backend, options ...OptionModifier) (*ChannelGraph,
+	error) {
 
-	if !noMigrations {
+	opts := DefaultOptions()
+	for _, o := range options {
+		o(opts)
+	}
+
+	if !opts.NoMigration {
 		if err := initChannelGraph(db); err != nil {
 			return nil, err
 		}
@@ -210,20 +218,20 @@ func NewChannelGraph(db kvdb.Backend, rejectCacheSize, chanCacheSize int,
 
 	g := &ChannelGraph{
 		db:          db,
-		rejectCache: newRejectCache(rejectCacheSize),
-		chanCache:   newChannelCache(chanCacheSize),
+		rejectCache: newRejectCache(opts.RejectCacheSize),
+		chanCache:   newChannelCache(opts.ChannelCacheSize),
 	}
 	g.chanScheduler = batch.NewTimeScheduler(
-		db, &g.cacheMu, batchCommitInterval,
+		db, &g.cacheMu, opts.BatchCommitInterval,
 	)
 	g.nodeScheduler = batch.NewTimeScheduler(
-		db, nil, batchCommitInterval,
+		db, nil, opts.BatchCommitInterval,
 	)
 
 	// The graph cache can be turned off (e.g. for mobile users) for a
 	// speed/memory usage tradeoff.
-	if useGraphCache {
-		g.graphCache = NewGraphCache(preAllocCacheNumNodes)
+	if opts.UseGraphCache {
+		g.graphCache = NewGraphCache(opts.PreAllocCacheNumNodes)
 		startTime := time.Now()
 		log.Debugf("Populating in-memory channel graph, this might " +
 			"take a while...")
@@ -349,7 +357,7 @@ func (c *ChannelGraph) Wipe() error {
 	return initChannelGraph(c.db)
 }
 
-// createChannelDB creates and initializes a fresh version of channeldb. In
+// createChannelDB creates and initializes a fresh version of the graph db. In
 // the case that the target path has not yet been created or doesn't yet exist,
 // then the path is created. Additionally, all required top-level buckets used
 // within the database are created.
@@ -4012,7 +4020,7 @@ func putLightningNode(nodeBucket kvdb.RwBucket, aliasBucket kvdb.RwBucket, // no
 	}
 
 	for _, address := range node.Addresses {
-		if err := serializeAddr(&b, address); err != nil {
+		if err := SerializeAddr(&b, address); err != nil {
 			return err
 		}
 	}
@@ -4205,7 +4213,7 @@ func deserializeLightningNode(r io.Reader) (LightningNode, error) {
 
 	var addresses []net.Addr
 	for i := 0; i < numAddresses; i++ {
-		address, err := deserializeAddr(r)
+		address, err := DeserializeAddr(r)
 		if err != nil {
 			return LightningNode{}, err
 		}

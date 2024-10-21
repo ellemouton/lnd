@@ -8,6 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var testPub = route.Vertex{2, 202, 4}
+
 // TestFlapCount tests lookup and writing of flap count to disk.
 func TestFlapCount(t *testing.T) {
 	db, err := MakeTestDB(t)

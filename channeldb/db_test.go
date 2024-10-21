@@ -1,23 +1,38 @@
 package channeldb
 
 import (
+	"image/color"
 	"math"
 	"math/rand"
 	"net"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/lightningnetwork/lnd/graph/graphdb"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/shachain"
 	"github.com/stretchr/testify/require"
+)
+
+var (
+	testAddr = &net.TCPAddr{IP: (net.IP)([]byte{0xA, 0x0, 0x0, 0x1}),
+		Port: 9000}
+	anotherAddr, _ = net.ResolveTCPAddr("tcp",
+		"[2001:db8:85a3:0:0:8a2e:370:7334]:80")
+	testAddrs    = []net.Addr{testAddr, anotherAddr}
+	testFeatures = lnwire.NewFeatureVector(
+		lnwire.NewRawFeatureVector(lnwire.GossipQueriesRequired),
+		lnwire.Features,
+	)
 )
 
 func TestOpenWithCreate(t *testing.T) {
@@ -38,7 +53,10 @@ func TestOpenWithCreate(t *testing.T) {
 	require.NoError(t, err, "unable to get test db backend")
 	t.Cleanup(cleanup)
 
-	cdb, err := CreateWithBackend(backend)
+	graphdb, err := graphdb.NewChannelGraph(backend)
+	require.NoError(t, err)
+
+	cdb, err := CreateWithBackend(backend, graphdb)
 	require.NoError(t, err, "unable to create channeldb")
 	if err := cdb.Close(); err != nil {
 		t.Fatalf("unable to close channeldb: %v", err)
@@ -74,7 +92,10 @@ func TestWipe(t *testing.T) {
 	require.NoError(t, err, "unable to get test db backend")
 	t.Cleanup(cleanup)
 
-	fullDB, err := CreateWithBackend(backend)
+	graphdb, err := graphdb.NewChannelGraph(backend)
+	require.NoError(t, err)
+
+	fullDB, err := CreateWithBackend(backend, graphdb)
 	require.NoError(t, err, "unable to create channeldb")
 	defer fullDB.Close()
 
@@ -179,7 +200,7 @@ func TestAddrsForNode(t *testing.T) {
 	// We'll make a test vertex to insert into the database, as the source
 	// node, but this node will only have half the number of addresses it
 	// usually does.
-	testNode, err := createTestVertex(fullDB)
+	testNode, err := createTestVertex()
 	require.NoError(t, err, "unable to create test node")
 	testNode.Addresses = []net.Addr{testAddr}
 	if err := graph.SetSourceNode(testNode); err != nil {
@@ -217,6 +238,33 @@ func TestAddrsForNode(t *testing.T) {
 			t.Fatalf("unexpected addr: %v", addr)
 		}
 	}
+}
+
+func createLightningNode(priv *btcec.PrivateKey) (*graphdb.LightningNode, error) {
+	updateTime := rand.Int63()
+
+	pub := priv.PubKey().SerializeCompressed()
+	n := &graphdb.LightningNode{
+		HaveNodeAnnouncement: true,
+		AuthSigBytes:         testSig.Serialize(),
+		LastUpdate:           time.Unix(updateTime, 0),
+		Color:                color.RGBA{1, 2, 3, 0},
+		Alias:                "kek" + string(pub[:]),
+		Features:             testFeatures,
+		Addresses:            testAddrs,
+	}
+	copy(n.PubKeyBytes[:], priv.PubKey().SerializeCompressed())
+
+	return n, nil
+}
+
+func createTestVertex() (*graphdb.LightningNode, error) {
+	priv, err := btcec.NewPrivateKey()
+	if err != nil {
+		return nil, err
+	}
+
+	return createLightningNode(priv)
 }
 
 // TestFetchChannel tests that we're able to fetch an arbitrary channel from

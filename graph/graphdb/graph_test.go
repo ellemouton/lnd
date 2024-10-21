@@ -1,4 +1,4 @@
-package channeldb
+package graphdb
 
 import (
 	"bytes"
@@ -51,13 +51,27 @@ var (
 	)
 
 	testPub = route.Vertex{2, 202, 4}
+
+	key = [chainhash.HashSize]byte{
+		0x81, 0xb6, 0x37, 0xd8, 0xfc, 0xd2, 0xc6, 0xda,
+		0x68, 0x59, 0xe6, 0x96, 0x31, 0x13, 0xa1, 0x17,
+		0xd, 0xe7, 0x93, 0xe4, 0xb7, 0x25, 0xb8, 0x4d,
+		0x1e, 0xb, 0x4c, 0xf9, 0x9e, 0xc5, 0x8c, 0xe9,
+	}
+	rev = [chainhash.HashSize]byte{
+		0x51, 0xb6, 0x37, 0xd8, 0xfc, 0xd2, 0xc6, 0xda,
+		0x48, 0x59, 0xe6, 0x96, 0x31, 0x13, 0xa1, 0x17,
+		0x2d, 0xe7, 0x93, 0xe4,
+	}
 )
 
 // MakeTestGraph creates a new instance of the ChannelGraph for testing purposes.
-func MakeTestGraph(t testing.TB, modifiers ...OptionModifier) (*ChannelGraph, error) {
+func MakeTestGraph(t testing.TB, modifiers ...OptionModifier) (
+	*ChannelGraph, error) {
+
 	opts := DefaultOptions()
 	for _, modifier := range modifiers {
-		modifier(&opts)
+		modifier(opts)
 	}
 
 	// Next, create channelgraph for the first time.
@@ -67,11 +81,7 @@ func MakeTestGraph(t testing.TB, modifiers ...OptionModifier) (*ChannelGraph, er
 		return nil, err
 	}
 
-	graph, err := NewChannelGraph(
-		backend, opts.RejectCacheSize, opts.ChannelCacheSize,
-		opts.BatchCommitInterval, opts.PreAllocCacheNumNodes,
-		true, false,
-	)
+	graph, err := NewChannelGraph(backend)
 	if err != nil {
 		backendCleanup()
 		return nil, err
@@ -4004,12 +4014,7 @@ func TestGraphLoading(t *testing.T) {
 	defer backend.Close()
 	defer backendCleanup()
 
-	opts := DefaultOptions()
-	graph, err := NewChannelGraph(
-		backend, opts.RejectCacheSize, opts.ChannelCacheSize,
-		opts.BatchCommitInterval, opts.PreAllocCacheNumNodes,
-		true, false,
-	)
+	graph, err := NewChannelGraph(backend)
 	require.NoError(t, err)
 
 	// Populate the graph with test data.
@@ -4019,11 +4024,7 @@ func TestGraphLoading(t *testing.T) {
 
 	// Recreate the graph. This should cause the graph cache to be
 	// populated.
-	graphReloaded, err := NewChannelGraph(
-		backend, opts.RejectCacheSize, opts.ChannelCacheSize,
-		opts.BatchCommitInterval, opts.PreAllocCacheNumNodes,
-		true, false,
-	)
+	graphReloaded, err := NewChannelGraph(backend)
 	require.NoError(t, err)
 
 	// Assert that the cache content is identical.

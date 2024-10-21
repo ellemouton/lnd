@@ -6,6 +6,7 @@ import (
 
 	"github.com/btcsuite/btcwallet/walletdb"
 	"github.com/go-errors/errors"
+	"github.com/lightningnetwork/lnd/graph/graphdb"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/stretchr/testify/require"
 )
@@ -22,7 +23,7 @@ func applyMigration(t *testing.T, beforeMigration, afterMigration func(d *DB),
 	cdb.dryRun = dryRun
 
 	// Create a test node that will be our source node.
-	testNode, err := createTestVertex(cdb)
+	testNode, err := createTestVertex()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +425,10 @@ func TestMigrationReversion(t *testing.T) {
 	backend, cleanup, err := kvdb.GetTestBackend(tempDirName, "cdb")
 	require.NoError(t, err, "unable to get test db backend")
 
-	cdb, err := CreateWithBackend(backend)
+	graphDB, err := graphdb.NewChannelGraph(backend)
+	require.NoError(t, err)
+
+	cdb, err := CreateWithBackend(backend, graphDB)
 	if err != nil {
 		cleanup()
 		t.Fatalf("unable to open channeldb: %v", err)
@@ -450,7 +454,10 @@ func TestMigrationReversion(t *testing.T) {
 	require.NoError(t, err, "unable to get test db backend")
 	t.Cleanup(cleanup)
 
-	_, err = CreateWithBackend(backend)
+	graphDB, err = graphdb.NewChannelGraph(backend)
+	require.NoError(t, err)
+
+	_, err = CreateWithBackend(backend, graphDB)
 	if err != ErrDBReversion {
 		t.Fatalf("unexpected error when opening channeldb, "+
 			"want: %v, got: %v", ErrDBReversion, err)
@@ -678,8 +685,11 @@ func TestMarkerAndTombstone(t *testing.T) {
 	err = db.View(EnsureNoTombstone, func() {})
 	require.ErrorContains(t, err, string(tombstoneText))
 
+	graphDB, err := graphdb.NewChannelGraph(db.Backend)
+	require.NoError(t, err)
+
 	// Now that the DB has a tombstone, we should no longer be able to open
 	// it once we close it.
-	_, err = CreateWithBackend(db.Backend)
+	_, err = CreateWithBackend(db.Backend, graphDB)
 	require.ErrorContains(t, err, string(tombstoneText))
 }
