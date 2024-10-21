@@ -25,8 +25,8 @@ import (
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/build"
 	"github.com/lightningnetwork/lnd/channeldb"
-	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/contractcourt"
+	models2 "github.com/lightningnetwork/lnd/graph/graphdb/models"
 	"github.com/lightningnetwork/lnd/htlcswitch/hodl"
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
 	"github.com/lightningnetwork/lnd/input"
@@ -655,7 +655,7 @@ func TestChannelLinkInboundFee(t *testing.T) {
 	t.Run("negative", func(t *testing.T) {
 		t.Parallel()
 
-		bobInboundFee := models.InboundFee{
+		bobInboundFee := models2.InboundFee{
 			Base: -500,
 			Rate: -100,
 		}
@@ -678,7 +678,7 @@ func TestChannelLinkInboundFee(t *testing.T) {
 	t.Run("negative overpaid", func(t *testing.T) {
 		t.Parallel()
 
-		bobInboundFee := models.InboundFee{
+		bobInboundFee := models2.InboundFee{
 			Base: -500,
 			Rate: -100,
 		}
@@ -695,7 +695,7 @@ func TestChannelLinkInboundFee(t *testing.T) {
 	t.Run("negative total", func(t *testing.T) {
 		t.Parallel()
 
-		bobInboundFee := models.InboundFee{
+		bobInboundFee := models2.InboundFee{
 			Base: -5000,
 		}
 
@@ -711,7 +711,7 @@ func TestChannelLinkInboundFee(t *testing.T) {
 	t.Run("positive", func(t *testing.T) {
 		t.Parallel()
 
-		bobInboundFee := models.InboundFee{
+		bobInboundFee := models2.InboundFee{
 			Base: 1_000,
 			Rate: 100_000,
 		}
@@ -725,7 +725,7 @@ func TestChannelLinkInboundFee(t *testing.T) {
 }
 
 func testChannelLinkInboundFee(t *testing.T, //nolint:thelper
-	bobInboundFee models.InboundFee, expectedBobInFee int64,
+	bobInboundFee models2.InboundFee, expectedBobInFee int64,
 	expectedFail bool) {
 
 	channels, _, err := createClusterChannels(
@@ -746,7 +746,7 @@ func testChannelLinkInboundFee(t *testing.T, //nolint:thelper
 	// Set an inbound fee for Carol. Because Carol is the payee, the fee
 	// should not be applied.
 	carolPolicy := n.globalPolicy
-	carolPolicy.InboundFee = models.InboundFee{
+	carolPolicy.InboundFee = models2.InboundFee{
 		Base: -2_000,
 		Rate: -200_000,
 	}
@@ -2163,7 +2163,7 @@ func newSingleLinkTestHarness(t *testing.T, chanAmt,
 			sentMsgs: make(chan lnwire.Message, 2000),
 			quit:     make(chan struct{}),
 		}
-		globalPolicy = models.ForwardingPolicy{
+		globalPolicy = models2.ForwardingPolicy{
 			MinHTLCOut:    lnwire.NewMSatFromSatoshis(5),
 			MaxHTLC:       lnwire.NewMSatFromSatoshis(chanAmt),
 			BaseFee:       lnwire.NewMSatFromSatoshis(1),
@@ -4832,7 +4832,7 @@ func (h *persistentLinkHarness) restartLink(
 			quit:     make(chan struct{}),
 		}
 
-		globalPolicy = models.ForwardingPolicy{
+		globalPolicy = models2.ForwardingPolicy{
 			MinHTLCOut:    lnwire.NewMSatFromSatoshis(5),
 			BaseFee:       lnwire.NewMSatFromSatoshis(1),
 			TimeLockDelta: 6,
@@ -6107,7 +6107,7 @@ func TestExpectedFee(t *testing.T) {
 	}
 
 	for _, test := range testCases {
-		f := models.ForwardingPolicy{
+		f := models2.ForwardingPolicy{
 			BaseFee: test.baseFee,
 			FeeRate: test.feeRate,
 		}
@@ -6193,7 +6193,7 @@ func TestCheckHtlcForward(t *testing.T) {
 
 	link := channelLink{
 		cfg: ChannelLinkConfig{
-			FwrdingPolicy: models.ForwardingPolicy{
+			FwrdingPolicy: models2.ForwardingPolicy{
 				TimeLockDelta: 20,
 				MinHTLCOut:    500,
 				MaxHTLC:       1000,
@@ -6213,7 +6213,7 @@ func TestCheckHtlcForward(t *testing.T) {
 
 	t.Run("satisfied", func(t *testing.T) {
 		result := link.CheckHtlcForward(hash, 1500, 1000,
-			200, 150, models.InboundFee{}, 0,
+			200, 150, models2.InboundFee{}, 0,
 			lnwire.ShortChannelID{},
 		)
 		if result != nil {
@@ -6223,7 +6223,7 @@ func TestCheckHtlcForward(t *testing.T) {
 
 	t.Run("below minhtlc", func(t *testing.T) {
 		result := link.CheckHtlcForward(hash, 100, 50,
-			200, 150, models.InboundFee{}, 0,
+			200, 150, models2.InboundFee{}, 0,
 			lnwire.ShortChannelID{},
 		)
 		if _, ok := result.WireMessage().(*lnwire.FailAmountBelowMinimum); !ok {
@@ -6233,7 +6233,7 @@ func TestCheckHtlcForward(t *testing.T) {
 
 	t.Run("above maxhtlc", func(t *testing.T) {
 		result := link.CheckHtlcForward(hash, 1500, 1200,
-			200, 150, models.InboundFee{}, 0,
+			200, 150, models2.InboundFee{}, 0,
 			lnwire.ShortChannelID{},
 		)
 		if _, ok := result.WireMessage().(*lnwire.FailTemporaryChannelFailure); !ok {
@@ -6243,7 +6243,7 @@ func TestCheckHtlcForward(t *testing.T) {
 
 	t.Run("insufficient fee", func(t *testing.T) {
 		result := link.CheckHtlcForward(hash, 1005, 1000,
-			200, 150, models.InboundFee{}, 0,
+			200, 150, models2.InboundFee{}, 0,
 			lnwire.ShortChannelID{},
 		)
 		if _, ok := result.WireMessage().(*lnwire.FailFeeInsufficient); !ok {
@@ -6258,7 +6258,7 @@ func TestCheckHtlcForward(t *testing.T) {
 
 		result := link.CheckHtlcForward(
 			hash, 100005, 100000, 200,
-			150, models.InboundFee{}, 0, lnwire.ShortChannelID{},
+			150, models2.InboundFee{}, 0, lnwire.ShortChannelID{},
 		)
 		_, ok := result.WireMessage().(*lnwire.FailFeeInsufficient)
 		require.True(t, ok, "expected FailFeeInsufficient failure code")
@@ -6266,7 +6266,7 @@ func TestCheckHtlcForward(t *testing.T) {
 
 	t.Run("expiry too soon", func(t *testing.T) {
 		result := link.CheckHtlcForward(hash, 1500, 1000,
-			200, 150, models.InboundFee{}, 190,
+			200, 150, models2.InboundFee{}, 190,
 			lnwire.ShortChannelID{},
 		)
 		if _, ok := result.WireMessage().(*lnwire.FailExpiryTooSoon); !ok {
@@ -6276,7 +6276,7 @@ func TestCheckHtlcForward(t *testing.T) {
 
 	t.Run("incorrect cltv expiry", func(t *testing.T) {
 		result := link.CheckHtlcForward(hash, 1500, 1000,
-			200, 190, models.InboundFee{}, 0,
+			200, 190, models2.InboundFee{}, 0,
 			lnwire.ShortChannelID{},
 		)
 		if _, ok := result.WireMessage().(*lnwire.FailIncorrectCltvExpiry); !ok {
@@ -6288,7 +6288,7 @@ func TestCheckHtlcForward(t *testing.T) {
 	t.Run("cltv expiry too far in the future", func(t *testing.T) {
 		// Check that expiry isn't too far in the future.
 		result := link.CheckHtlcForward(hash, 1500, 1000,
-			10200, 10100, models.InboundFee{}, 0,
+			10200, 10100, models2.InboundFee{}, 0,
 			lnwire.ShortChannelID{},
 		)
 		if _, ok := result.WireMessage().(*lnwire.FailExpiryTooFar); !ok {
@@ -6300,7 +6300,7 @@ func TestCheckHtlcForward(t *testing.T) {
 		t.Parallel()
 
 		result := link.CheckHtlcForward(hash, 1000+10-2-1, 1000,
-			200, 150, models.InboundFee{Base: -2, Rate: -1_000},
+			200, 150, models2.InboundFee{Base: -2, Rate: -1_000},
 			0, lnwire.ShortChannelID{})
 		if result != nil {
 			t.Fatalf("expected policy to be satisfied")
@@ -6311,7 +6311,7 @@ func TestCheckHtlcForward(t *testing.T) {
 		t.Parallel()
 
 		result := link.CheckHtlcForward(hash, 1000+10-10-101-1, 1000,
-			200, 150, models.InboundFee{Base: -10, Rate: -100_000},
+			200, 150, models2.InboundFee{Base: -10, Rate: -100_000},
 			0, lnwire.ShortChannelID{})
 
 		msg := result.WireMessage()

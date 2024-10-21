@@ -34,7 +34,6 @@ import (
 	"github.com/lightningnetwork/lnd/chanfitness"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channeldb/graphsession"
-	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/channelnotifier"
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/cluster"
@@ -45,6 +44,7 @@ import (
 	"github.com/lightningnetwork/lnd/funding"
 	"github.com/lightningnetwork/lnd/graph"
 	"github.com/lightningnetwork/lnd/graph/graphdb"
+	models2 "github.com/lightningnetwork/lnd/graph/graphdb/models"
 	"github.com/lightningnetwork/lnd/healthcheck"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
@@ -1324,7 +1324,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 		// TODO(yy): remove this hack once PaymentCircuit is interfaced.
 		QueryIncomingCircuit: func(
-			circuit models.CircuitKey) *models.CircuitKey {
+			circuit models2.CircuitKey) *models2.CircuitKey {
 
 			// Get the circuit map.
 			circuits := s.htlcSwitch.CircuitLookup()
@@ -1355,7 +1355,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	// Wrap the DeleteChannelEdges method so that the funding manager can
 	// use it without depending on several layers of indirection.
 	deleteAliasEdge := func(scid lnwire.ShortChannelID) (
-		*models.ChannelEdgePolicy, error) {
+		*models2.ChannelEdgePolicy, error) {
 
 		info, e1, e2, err := s.graphDB.FetchChannelEdgesByID(
 			scid.ToUint64(),
@@ -1374,7 +1374,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		var ourKey [33]byte
 		copy(ourKey[:], nodeKeyDesc.PubKey.SerializeCompressed())
 
-		var ourPolicy *models.ChannelEdgePolicy
+		var ourPolicy *models2.ChannelEdgePolicy
 		if info != nil && info.NodeKey1Bytes == ourKey {
 			ourPolicy = e1
 		} else {
@@ -3338,8 +3338,8 @@ func (s *server) establishPersistentConnections() error {
 	selfPub := s.identityECDH.PubKey().SerializeCompressed()
 	err = s.graphDB.ForEachNodeChannel(sourceNode.PubKeyBytes, func(
 		tx kvdb.RTx,
-		chanInfo *models.ChannelEdgeInfo,
-		policy, _ *models.ChannelEdgePolicy) error {
+		chanInfo *models2.ChannelEdgeInfo,
+		policy, _ *models2.ChannelEdgePolicy) error {
 
 		// If the remote party has announced the channel to us, but we
 		// haven't yet, then we won't have a policy. However, we don't

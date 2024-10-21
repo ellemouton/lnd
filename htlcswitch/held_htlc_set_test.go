@@ -3,7 +3,7 @@ package htlcswitch
 import (
 	"testing"
 
-	"github.com/lightningnetwork/lnd/channeldb/models"
+	"github.com/lightningnetwork/lnd/graph/graphdb/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/stretchr/testify/require"
 )

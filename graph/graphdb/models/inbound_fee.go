@@ -1,6 +1,8 @@
 package models
 
-import "github.com/lightningnetwork/lnd/lnwire"
+import (
+	"github.com/lightningnetwork/lnd/lnwire"
+)
 
 const (
 	// maxFeeRate is the maximum fee rate that we allow. It is set to allow

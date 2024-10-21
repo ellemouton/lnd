@@ -5,11 +5,13 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/lightningnetwork/lnd/graph/graphdb"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/shachain"
@@ -214,6 +216,22 @@ func WriteElement(w io.Writer, element interface{}) error {
 	case lnwire.FundingFlag:
 		if err := binary.Write(w, byteOrder, e); err != nil {
 			return err
+		}
+
+	case net.Addr:
+		if err := graphdb.SerializeAddr(w, e); err != nil {
+			return err
+		}
+
+	case []net.Addr:
+		if err := WriteElement(w, uint32(len(e))); err != nil {
+			return err
+		}
+
+		for _, addr := range e {
+			if err := graphdb.SerializeAddr(w, addr); err != nil {
+				return err
+			}
 		}
 
 	default:
@@ -431,6 +449,28 @@ func ReadElement(r io.Reader, element interface{}) error {
 	case *lnwire.FundingFlag:
 		if err := binary.Read(r, byteOrder, e); err != nil {
 			return err
+		}
+
+	case *net.Addr:
+		addr, err := graphdb.DeserializeAddr(r)
+		if err != nil {
+			return err
+		}
+		*e = addr
+
+	case *[]net.Addr:
+		var numAddrs uint32
+		if err := ReadElement(r, &numAddrs); err != nil {
+			return err
+		}
+
+		*e = make([]net.Addr, numAddrs)
+		for i := uint32(0); i < numAddrs; i++ {
+			addr, err := graphdb.DeserializeAddr(r)
+			if err != nil {
+				return err
+			}
+			(*e)[i] = addr
 		}
 
 	default:
