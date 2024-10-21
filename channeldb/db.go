@@ -30,7 +30,6 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb/migration33"
 	"github.com/lightningnetwork/lnd/channeldb/migration_01_to_11"
 	"github.com/lightningnetwork/lnd/clock"
-	"github.com/lightningnetwork/lnd/graph/graphdb"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -335,7 +334,6 @@ type DB struct {
 	channelStateDB *ChannelStateDB
 
 	dbPath                    string
-	graph                     *graphdb.ChannelGraph
 	clock                     clock.Clock
 	dryRun                    bool
 	keepFailedPaymentAttempts bool
@@ -346,15 +344,7 @@ type DB struct {
 	noRevLogAmtData bool
 }
 
-// Open opens or creates channeldb. Any necessary schemas migrations due
-// to updates will take place as necessary.
-// TODO(bhandras): deprecate this function.
-func Open(dbPath string, modifiers ...OptionModifier) (*DB, error) {
-	opts := DefaultOptions()
-	for _, modifier := range modifiers {
-		modifier(&opts)
-	}
-
+func OpenWithBackend(dbPath string, modifiers ...OptionModifier) (*DB, error) {
 	backend, err := kvdb.GetBoltBackend(&kvdb.BoltBackendConfig{
 		DBPath:            dbPath,
 		DBFileName:        dbName,
@@ -367,12 +357,30 @@ func Open(dbPath string, modifiers ...OptionModifier) (*DB, error) {
 		return nil, err
 	}
 
-	graphDB, err := graphdb.NewChannelGraph(backend)
+	db, err := CreateWithBackend(backend, modifiers...)
+	if err == nil {
+		db.dbPath = dbPath
+	}
+	return db, err
+}
+
+// Open opens or creates channeldb. Any necessary schemas migrations due
+// to updates will take place as necessary.
+// TODO(bhandras): deprecate this function.
+func Open(dbPath string, modifiers ...OptionModifier) (*DB, error) {
+	backend, err := kvdb.GetBoltBackend(&kvdb.BoltBackendConfig{
+		DBPath:            dbPath,
+		DBFileName:        dbName,
+		NoFreelistSync:    true,
+		AutoCompact:       false,
+		AutoCompactMinAge: kvdb.DefaultBoltAutoCompactMinAge,
+		DBTimeout:         kvdb.DefaultDBTimeout,
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	db, err := CreateWithBackend(backend, graphDB, modifiers...)
+	db, err := CreateWithBackend(backend, modifiers...)
 	if err == nil {
 		db.dbPath = dbPath
 	}
@@ -381,8 +389,8 @@ func Open(dbPath string, modifiers ...OptionModifier) (*DB, error) {
 
 // CreateWithBackend creates channeldb instance using the passed kvdb.Backend.
 // Any necessary schemas migrations due to updates will take place as necessary.
-func CreateWithBackend(backend kvdb.Backend, graphDB *graphdb.ChannelGraph,
-	modifiers ...OptionModifier) (*DB, error) {
+func CreateWithBackend(backend kvdb.Backend, modifiers ...OptionModifier) (*DB,
+	error) {
 
 	opts := DefaultOptions()
 	for _, modifier := range modifiers {
@@ -412,8 +420,6 @@ func CreateWithBackend(backend kvdb.Backend, graphDB *graphdb.ChannelGraph,
 
 	// Set the parent pointer (only used in tests).
 	chanDB.channelStateDB.parent = chanDB
-
-	chanDB.graph = graphDB
 
 	// Synchronize the version of database and apply migrations if needed.
 	if !opts.NoMigration {
@@ -1602,11 +1608,6 @@ func (d *DB) applyOptionalVersions(cfg OptionalMiragtionConfig) error {
 	return nil
 }
 
-// ChannelGraph returns the current instance of the directed channel graph.
-func (d *DB) ChannelGraph() *graphdb.ChannelGraph {
-	return d.graph
-}
-
 // ChannelStateDB returns the sub database that is concerned with the channel
 // state.
 func (d *DB) ChannelStateDB() *ChannelStateDB {
@@ -1822,13 +1823,7 @@ func MakeTestDB(t *testing.T, modifiers ...OptionModifier) (*DB, error) {
 		return nil, err
 	}
 
-	graphDB, err := graphdb.NewChannelGraph(backend)
-	if err != nil {
-		backendCleanup()
-		return nil, err
-	}
-
-	cdb, err := CreateWithBackend(backend, graphDB, modifiers...)
+	cdb, err := CreateWithBackend(backend, modifiers...)
 	if err != nil {
 		backendCleanup()
 		return nil, err

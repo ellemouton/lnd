@@ -19,9 +19,11 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channelnotifier"
 	"github.com/lightningnetwork/lnd/fn"
+	"github.com/lightningnetwork/lnd/graph/graphdb"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/keychain"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lntest/channels"
 	"github.com/lightningnetwork/lnd/lntest/mock"
 	"github.com/lightningnetwork/lnd/lnwallet"
@@ -594,10 +596,25 @@ func createTestPeer(t *testing.T) *peerTestCtx {
 
 	const chanActiveTimeout = time.Minute
 
-	dbAlice, err := channeldb.Open(t.TempDir())
+	dbPath := t.TempDir()
+
+	backend, err := kvdb.GetBoltBackend(&kvdb.BoltBackendConfig{
+		DBPath:            dbPath,
+		DBFileName:        "graph.db",
+		NoFreelistSync:    true,
+		AutoCompact:       false,
+		AutoCompactMinAge: kvdb.DefaultBoltAutoCompactMinAge,
+		DBTimeout:         kvdb.DefaultDBTimeout,
+	})
+	require.NoError(t, err)
+
+	dbAliceGraph, err := graphdb.NewChannelGraph(backend)
+	require.NoError(t, err)
+
+	dbAliceChannel, err := channeldb.Open(dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		require.NoError(t, dbAlice.Close())
+		require.NoError(t, dbAliceChannel.Close())
 	})
 
 	nodeSignerAlice := netann.NewNodeSigner(aliceKeySigner)
@@ -607,8 +624,8 @@ func createTestPeer(t *testing.T) *peerTestCtx {
 		ChanStatusSampleInterval: 30 * time.Second,
 		ChanEnableTimeout:        chanActiveTimeout,
 		ChanDisableTimeout:       2 * time.Minute,
-		DB:                       dbAlice.ChannelStateDB(),
-		Graph:                    dbAlice.ChannelGraph(),
+		DB:                       dbAliceChannel.ChannelStateDB(),
+		Graph:                    dbAliceGraph,
 		MessageSigner:            nodeSignerAlice,
 		OurPubKey:                aliceKeyPub,
 		OurKeyLoc:                testKeyLoc,
@@ -650,7 +667,7 @@ func createTestPeer(t *testing.T) *peerTestCtx {
 	mockSwitch := &mockMessageSwitch{}
 
 	// TODO(yy): change ChannelNotifier to be an interface.
-	channelNotifier := channelnotifier.New(dbAlice.ChannelStateDB())
+	channelNotifier := channelnotifier.New(dbAliceChannel.ChannelStateDB())
 	require.NoError(t, channelNotifier.Start())
 	t.Cleanup(func() {
 		require.NoError(t, channelNotifier.Stop(),
@@ -694,7 +711,7 @@ func createTestPeer(t *testing.T) *peerTestCtx {
 		Switch:            mockSwitch,
 		ChanActiveTimeout: chanActiveTimeout,
 		InterceptSwitch:   interceptableSwitch,
-		ChannelDB:         dbAlice.ChannelStateDB(),
+		ChannelDB:         dbAliceChannel.ChannelStateDB(),
 		FeeEstimator:      estimator,
 		Wallet:            wallet,
 		ChainNotifier:     notifier,
@@ -736,7 +753,7 @@ func createTestPeer(t *testing.T) *peerTestCtx {
 		mockSwitch:    mockSwitch,
 		peer:          alicePeer,
 		notifier:      notifier,
-		db:            dbAlice,
+		db:            dbAliceChannel,
 		privKey:       aliceKeyPriv,
 		mockConn:      mockConn,
 		customChan:    receivedCustomChan,

@@ -592,14 +592,14 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	}
 
 	addrSource := &addrSource{
-		graph:         dbs.GraphDB.ChannelGraph(),
+		graph:         dbs.GraphDB,
 		linkNodeAddrs: dbs.ChanStateDB.NodeAddrs,
 	}
 
 	s := &server{
 		cfg:            cfg,
 		implCfg:        implCfg,
-		graphDB:        dbs.GraphDB.ChannelGraph(),
+		graphDB:        dbs.GraphDB,
 		chanStateDB:    dbs.ChanStateDB.ChannelStateDB(),
 		addrSource:     addrSource,
 		miscDB:         dbs.ChanStateDB,
@@ -753,7 +753,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		IsChannelActive:          s.htlcSwitch.HasActiveLink,
 		ApplyChannelUpdate:       s.applyChannelUpdate,
 		DB:                       s.chanStateDB,
-		Graph:                    dbs.GraphDB.ChannelGraph(),
+		Graph:                    dbs.GraphDB,
 	}
 
 	chanStatusMgr, err := netann.NewChanStatusManager(chanStatusMgrCfg)
@@ -845,7 +845,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	// As the graph can be obtained at anytime from the network, we won't
 	// replicate it, and instead it'll only be stored locally.
-	chanGraph := dbs.GraphDB.ChannelGraph()
+	chanGraph := dbs.GraphDB
 
 	// We'll now reconstruct a node announcement based on our current
 	// configuration so we can send it out as a sort of heart beat within
