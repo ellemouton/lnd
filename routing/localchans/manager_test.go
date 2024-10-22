@@ -106,12 +106,12 @@ func TestManager(t *testing.T) {
 		return nil
 	}
 
-	forAllOutgoingChannels := func(cb func(kvdb.RTx,
+	forAllOutgoingChannels := func(cb func(
 		*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy) error) error {
 
 		for _, c := range channelSet {
-			if err := cb(nil, c.edgeInfo, &currentPolicy); err != nil {
+			if err := cb(c.edgeInfo, &currentPolicy); err != nil {
 				return err
 			}
 		}
@@ -241,8 +241,10 @@ func TestManager(t *testing.T) {
 			channelSet = test.channelSet
 			expectedNumUpdates = test.expectedNumUpdates
 
-			failedUpdates, err := manager.UpdatePolicy(test.newPolicy,
-				test.specifiedChanPoints...)
+			failedUpdates, err := manager.UpdatePolicy(
+				test.newPolicy,
+				test.specifiedChanPoints...,
+			)
 
 			if len(failedUpdates) != len(test.expectedUpdateFailures) {
 				t.Fatalf("wrong number of failed policy updates")
