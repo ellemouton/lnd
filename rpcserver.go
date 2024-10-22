@@ -6508,7 +6508,7 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// First iterate through all the known nodes (connected or unconnected
 	// within the graph), collating their current state into the RPC
 	// response.
-	err := graph.ForEachNode(func(_ kvdb.RTx, node *graphdb.LightningNode) error {
+	err := graph.ForEachNode(func(node *graphdb.LightningNode) error {
 		lnNode := marshalNode(node)
 
 		resp.Nodes = append(resp.Nodes, lnNode)
@@ -7749,8 +7749,9 @@ func (r *rpcServer) UpdateChannelPolicy(ctx context.Context,
 
 	// With the scope resolved, we'll now send this to the local channel
 	// manager so it can propagate the new policy for our target channel(s).
-	failedUpdates, err := r.server.localChanMgr.UpdatePolicy(chanPolicy,
-		targetChans...)
+	failedUpdates, err := r.server.localChanMgr.UpdatePolicy(
+		chanPolicy, targetChans...,
+	)
 	if err != nil {
 		return nil, err
 	}

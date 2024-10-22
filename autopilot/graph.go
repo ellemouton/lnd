@@ -134,7 +134,7 @@ func (d *dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 //
 // NOTE: Part of the autopilot.ChannelGraph interface.
 func (d *databaseChannelGraph) ForEachNode(cb func(Node) error) error {
-	return d.db.ForEachNode(func(tx kvdb.RTx, n *graphdb.LightningNode) error {
+	return d.db.ForEachNodeWithTx(func(tx kvdb.RTx, n *graphdb.LightningNode) error {
 		// We'll skip over any node that doesn't have any advertised
 		// addresses. As we won't be able to reach them to actually
 		// open any channels.

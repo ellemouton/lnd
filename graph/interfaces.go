@@ -69,8 +69,7 @@ type ChannelGraphSource interface {
 	// ForAllOutgoingChannels is used to iterate over all channels
 	// emanating from the "source" node which is the center of the
 	// star-graph.
-	ForAllOutgoingChannels(cb func(tx kvdb.RTx,
-		c *models.ChannelEdgeInfo,
+	ForAllOutgoingChannels(cb func(c *models.ChannelEdgeInfo,
 		e *models.ChannelEdgePolicy) error) error
 
 	// CurrentBlockHeight returns the block height from POV of the router
@@ -246,7 +245,7 @@ type DB interface {
 	// graph, executing the passed callback with each node encountered. If
 	// the callback returns an error, then the transaction is aborted and
 	// the iteration stops early.
-	ForEachNode(cb func(kvdb.RTx, *graphdb.LightningNode) error) error
+	ForEachNode(cb func(*graphdb.LightningNode) error) error
 
 	// ForEachNodeChannel iterates through all channels of the given node,
 	// executing the passed callback with an edge info structure and the
