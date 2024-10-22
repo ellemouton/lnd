@@ -106,6 +106,7 @@ var (
 			migration: nil,
 		},
 		{
+			// ELLE: graph mig
 			// The version of the database where two new indexes
 			// for the update time of node and channel updates were
 			// added.
@@ -125,6 +126,7 @@ var (
 			migration: migration_01_to_11.MigrateInvoiceTimeSeriesOutgoingPayments,
 		},
 		{
+			// ELLE: graph mig
 			// The version of the database where every channel
 			// always has two entries in the edges bucket. If
 			// a policy is unknown, this will be represented
@@ -140,6 +142,7 @@ var (
 			migration: migration_01_to_11.PaymentStatusesMigration,
 		},
 		{
+			// ELLE: graph mig
 			// The DB version that properly prunes stale entries
 			// from the edge update index.
 			number:    6,
