@@ -6538,7 +6538,7 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 
 		return nil
 	})
-	if err != nil && err != graphdb.ErrGraphNoEdgesFound {
+	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
 		return nil, err
 	}
 
@@ -6784,7 +6784,7 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 	// be returned.
 	node, err := graph.FetchLightningNode(pubKey)
 	switch {
-	case err == graphdb.ErrGraphNodeNotFound:
+	case errors.Is(err, graphdb.ErrGraphNodeNotFound):
 		return nil, status.Error(codes.NotFound, err.Error())
 	case err != nil:
 		return nil, err
