@@ -1,23 +1,36 @@
 package channeldb
 
 import (
+	"image/color"
 	"math"
 	"math/rand"
 	"net"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/shachain"
 	"github.com/stretchr/testify/require"
+)
+
+var (
+	testAddr = &net.TCPAddr{IP: (net.IP)([]byte{0xA, 0x0, 0x0, 0x1}),
+		Port: 9000}
+	anotherAddr, _ = net.ResolveTCPAddr("tcp",
+		"[2001:db8:85a3:0:0:8a2e:370:7334]:80")
+	testAddrs = []net.Addr{testAddr}
+
+	testFeatures = lnwire.NewFeatureVector(nil, lnwire.Features)
 )
 
 func TestOpenWithCreate(t *testing.T) {
@@ -166,25 +179,25 @@ func TestFetchClosedChannelForID(t *testing.T) {
 	}
 }
 
-// TestAddrsForNode tests the we're able to properly obtain all the addresses
-// for a target node.
-func TestAddrsForNode(t *testing.T) {
+// TestMultiSourceAddrsForNode tests the we're able to properly obtain all the
+// addresses for a target node from multiple backends - in this case, the
+// channel db and graph db.
+func TestMultiSourceAddrsForNode(t *testing.T) {
 	t.Parallel()
 
 	fullDB, err := MakeTestDB(t)
 	require.NoError(t, err, "unable to make test database")
 
-	graph := fullDB.ChannelGraph()
+	graph, err := graphdb.MakeTestGraph(t)
+	require.NoError(t, err)
 
 	// We'll make a test vertex to insert into the database, as the source
 	// node, but this node will only have half the number of addresses it
 	// usually does.
-	testNode, err := createTestVertex(fullDB)
+	testNode := createTestVertex(t)
 	require.NoError(t, err, "unable to create test node")
 	testNode.Addresses = []net.Addr{testAddr}
-	if err := graph.SetSourceNode(testNode); err != nil {
-		t.Fatalf("unable to set source node: %v", err)
-	}
+	require.NoError(t, graph.SetSourceNode(testNode))
 
 	// Next, we'll make a link node with the same pubkey, but with an
 	// additional address.
@@ -194,13 +207,15 @@ func TestAddrsForNode(t *testing.T) {
 		fullDB.channelStateDB.linkNodeDB, wire.MainNet, nodePub,
 		anotherAddr,
 	)
-	if err := linkNode.Sync(); err != nil {
-		t.Fatalf("unable to sync link node: %v", err)
-	}
+	require.NoError(t, linkNode.Sync())
+
+	// Create a multi-backend address source from the channel db and graph
+	// db.
+	addrSource := NewMultiAddrSource(fullDB, graph)
 
 	// Now that we've created a link node, as well as a vertex for the
 	// node, we'll query for all its addresses.
-	nodeAddrs, err := fullDB.AddrsForNode(nodePub)
+	nodeAddrs, err := addrSource.AddrsForNode(nodePub)
 	require.NoError(t, err, "unable to obtain node addrs")
 
 	expectedAddrs := make(map[string]struct{})
@@ -208,14 +223,10 @@ func TestAddrsForNode(t *testing.T) {
 	expectedAddrs[anotherAddr.String()] = struct{}{}
 
 	// Finally, ensure that all the expected addresses are found.
-	if len(nodeAddrs) != len(expectedAddrs) {
-		t.Fatalf("expected %v addrs, got %v",
-			len(expectedAddrs), len(nodeAddrs))
-	}
+	require.Len(t, nodeAddrs, len(expectedAddrs))
+
 	for _, addr := range nodeAddrs {
-		if _, ok := expectedAddrs[addr.String()]; !ok {
-			t.Fatalf("unexpected addr: %v", addr)
-		}
+		require.Contains(t, expectedAddrs, addr.String())
 	}
 }
 
@@ -710,4 +721,29 @@ func TestFetchHistoricalChannel(t *testing.T) {
 	if err != ErrChannelNotFound {
 		t.Fatalf("expected chan not found, got: %v", err)
 	}
+}
+
+func createLightningNode(priv *btcec.PrivateKey) *graphdb.LightningNode {
+	updateTime := rand.Int63()
+
+	pub := priv.PubKey().SerializeCompressed()
+	n := &graphdb.LightningNode{
+		HaveNodeAnnouncement: true,
+		AuthSigBytes:         testSig.Serialize(),
+		LastUpdate:           time.Unix(updateTime, 0),
+		Color:                color.RGBA{1, 2, 3, 0},
+		Alias:                "kek" + string(pub[:]),
+		Features:             testFeatures,
+		Addresses:            testAddrs,
+	}
+	copy(n.PubKeyBytes[:], priv.PubKey().SerializeCompressed())
+
+	return n
+}
+
+func createTestVertex(t *testing.T) *graphdb.LightningNode {
+	priv, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	return createLightningNode(priv)
 }

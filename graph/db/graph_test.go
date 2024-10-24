@@ -1,4 +1,4 @@
-package channeldb
+package graphdb
 
 import (
 	"bytes"
@@ -22,7 +22,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/davecgh/go-spew/spew"
-	"github.com/lightningnetwork/lnd/channeldb/models"
+	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -51,39 +51,19 @@ var (
 	)
 
 	testPub = route.Vertex{2, 202, 4}
+
+	key = [chainhash.HashSize]byte{
+		0x81, 0xb6, 0x37, 0xd8, 0xfc, 0xd2, 0xc6, 0xda,
+		0x68, 0x59, 0xe6, 0x96, 0x31, 0x13, 0xa1, 0x17,
+		0xd, 0xe7, 0x93, 0xe4, 0xb7, 0x25, 0xb8, 0x4d,
+		0x1e, 0xb, 0x4c, 0xf9, 0x9e, 0xc5, 0x8c, 0xe9,
+	}
+	rev = [chainhash.HashSize]byte{
+		0x51, 0xb6, 0x37, 0xd8, 0xfc, 0xd2, 0xc6, 0xda,
+		0x48, 0x59, 0xe6, 0x96, 0x31, 0x13, 0xa1, 0x17,
+		0x2d, 0xe7, 0x93, 0xe4,
+	}
 )
-
-// MakeTestGraph creates a new instance of the ChannelGraph for testing purposes.
-func MakeTestGraph(t testing.TB, modifiers ...OptionModifier) (*ChannelGraph, error) {
-	opts := DefaultOptions()
-	for _, modifier := range modifiers {
-		modifier(&opts)
-	}
-
-	// Next, create channelgraph for the first time.
-	backend, backendCleanup, err := kvdb.GetTestBackend(t.TempDir(), "cgr")
-	if err != nil {
-		backendCleanup()
-		return nil, err
-	}
-
-	graph, err := NewChannelGraph(
-		backend, opts.RejectCacheSize, opts.ChannelCacheSize,
-		opts.BatchCommitInterval, opts.PreAllocCacheNumNodes,
-		true, false,
-	)
-	if err != nil {
-		backendCleanup()
-		return nil, err
-	}
-
-	t.Cleanup(func() {
-		_ = backend.Close()
-		backendCleanup()
-	})
-
-	return graph, nil
-}
 
 func createLightningNode(db kvdb.Backend, priv *btcec.PrivateKey) (*LightningNode, error) {
 	updateTime := prand.Int63()
@@ -1109,7 +1089,7 @@ func TestGraphTraversalCacheable(t *testing.T) {
 	// Create a map of all nodes with the iteration we know works (because
 	// it is tested in another test).
 	nodeMap := make(map[route.Vertex]struct{})
-	err = graph.ForEachNode(func(tx kvdb.RTx, n *LightningNode) error {
+	err = graph.ForEachNode(func(n *LightningNode) error {
 		nodeMap[n.PubKeyBytes] = struct{}{}
 
 		return nil
@@ -1232,7 +1212,7 @@ func fillTestGraph(t require.TestingT, graph *ChannelGraph, numNodes,
 
 	// Iterate over each node as returned by the graph, if all nodes are
 	// reached, then the map created above should be empty.
-	err := graph.ForEachNode(func(_ kvdb.RTx, node *LightningNode) error {
+	err := graph.ForEachNode(func(node *LightningNode) error {
 		delete(nodeIndex, node.Alias)
 		return nil
 	})
@@ -1340,7 +1320,7 @@ func assertNumChans(t *testing.T, graph *ChannelGraph, n int) {
 
 func assertNumNodes(t *testing.T, graph *ChannelGraph, n int) {
 	numNodes := 0
-	err := graph.ForEachNode(func(_ kvdb.RTx, _ *LightningNode) error {
+	err := graph.ForEachNode(func(_ *LightningNode) error {
 		numNodes++
 		return nil
 	})
@@ -4004,12 +3984,7 @@ func TestGraphLoading(t *testing.T) {
 	defer backend.Close()
 	defer backendCleanup()
 
-	opts := DefaultOptions()
-	graph, err := NewChannelGraph(
-		backend, opts.RejectCacheSize, opts.ChannelCacheSize,
-		opts.BatchCommitInterval, opts.PreAllocCacheNumNodes,
-		true, false,
-	)
+	graph, err := NewChannelGraph(backend)
 	require.NoError(t, err)
 
 	// Populate the graph with test data.
@@ -4019,11 +3994,7 @@ func TestGraphLoading(t *testing.T) {
 
 	// Recreate the graph. This should cause the graph cache to be
 	// populated.
-	graphReloaded, err := NewChannelGraph(
-		backend, opts.RejectCacheSize, opts.ChannelCacheSize,
-		opts.BatchCommitInterval, opts.PreAllocCacheNumNodes,
-		true, false,
-	)
+	graphReloaded, err := NewChannelGraph(backend)
 	require.NoError(t, err)
 
 	// Assert that the cache content is identical.

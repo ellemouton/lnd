@@ -33,8 +33,6 @@ import (
 	"github.com/lightningnetwork/lnd/chanbackup"
 	"github.com/lightningnetwork/lnd/chanfitness"
 	"github.com/lightningnetwork/lnd/channeldb"
-	"github.com/lightningnetwork/lnd/channeldb/graphsession"
-	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/channelnotifier"
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/cluster"
@@ -44,6 +42,9 @@ import (
 	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/funding"
 	"github.com/lightningnetwork/lnd/graph"
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
+	"github.com/lightningnetwork/lnd/graph/db/models"
+	"github.com/lightningnetwork/lnd/graph/graphsession"
 	"github.com/lightningnetwork/lnd/healthcheck"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
@@ -244,11 +245,11 @@ type server struct {
 
 	fundingMgr *funding.Manager
 
-	graphDB *channeldb.ChannelGraph
+	graphDB *graphdb.ChannelGraph
 
 	chanStateDB *channeldb.ChannelStateDB
 
-	addrSource chanbackup.AddressSource
+	addrSource channeldb.AddrSource
 
 	// miscDB is the DB that contains all "other" databases within the main
 	// channel DB that haven't been separated out yet.
@@ -590,12 +591,14 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		HtlcInterceptor:             invoiceHtlcModifier,
 	}
 
+	addrSource := channeldb.NewMultiAddrSource(dbs.ChanStateDB, dbs.GraphDB)
+
 	s := &server{
 		cfg:            cfg,
 		implCfg:        implCfg,
-		graphDB:        dbs.GraphDB.ChannelGraph(),
+		graphDB:        dbs.GraphDB,
 		chanStateDB:    dbs.ChanStateDB.ChannelStateDB(),
-		addrSource:     dbs.ChanStateDB,
+		addrSource:     addrSource,
 		miscDB:         dbs.ChanStateDB,
 		invoicesDB:     dbs.InvoiceDB,
 		cc:             cc,
@@ -747,7 +750,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		IsChannelActive:          s.htlcSwitch.HasActiveLink,
 		ApplyChannelUpdate:       s.applyChannelUpdate,
 		DB:                       s.chanStateDB,
-		Graph:                    dbs.GraphDB.ChannelGraph(),
+		Graph:                    dbs.GraphDB,
 	}
 
 	chanStatusMgr, err := netann.NewChanStatusManager(chanStatusMgrCfg)
@@ -837,10 +840,6 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	selfAddrs := make([]net.Addr, 0, len(externalIPs))
 	selfAddrs = append(selfAddrs, externalIPs...)
 
-	// As the graph can be obtained at anytime from the network, we won't
-	// replicate it, and instead it'll only be stored locally.
-	chanGraph := dbs.GraphDB.ChannelGraph()
-
 	// We'll now reconstruct a node announcement based on our current
 	// configuration so we can send it out as a sort of heart beat within
 	// the network.
@@ -862,7 +861,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	if err != nil {
 		return nil, err
 	}
-	selfNode := &channeldb.LightningNode{
+	selfNode := &graphdb.LightningNode{
 		HaveNodeAnnouncement: true,
 		LastUpdate:           time.Now(),
 		Addresses:            selfAddrs,
@@ -899,7 +898,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	// Finally, we'll update the representation on disk, and update our
 	// cached in-memory version as well.
-	if err := chanGraph.SetSourceNode(selfNode); err != nil {
+	if err := dbs.GraphDB.SetSourceNode(selfNode); err != nil {
 		return nil, fmt.Errorf("can't set self node: %w", err)
 	}
 	s.currentNodeAnn = nodeAnn
@@ -999,13 +998,13 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		MinProbability: routingConfig.MinRouteProbability,
 	}
 
-	sourceNode, err := chanGraph.SourceNode()
+	sourceNode, err := dbs.GraphDB.SourceNode()
 	if err != nil {
 		return nil, fmt.Errorf("error getting source node: %w", err)
 	}
 	paymentSessionSource := &routing.SessionSource{
 		GraphSessionFactory: graphsession.NewGraphSessionFactory(
-			chanGraph,
+			dbs.GraphDB,
 		),
 		SourceNode:        sourceNode,
 		MissionControl:    s.defaultMC,
@@ -1022,7 +1021,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	s.graphBuilder, err = graph.NewBuilder(&graph.Config{
 		SelfNode:            selfNode.PubKeyBytes,
-		Graph:               chanGraph,
+		Graph:               dbs.GraphDB,
 		Chain:               cc.ChainIO,
 		ChainView:           cc.ChainView,
 		Notifier:            cc.ChainNotifier,
@@ -1039,7 +1038,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	s.chanRouter, err = routing.New(routing.Config{
 		SelfNode:           selfNode.PubKeyBytes,
-		RoutingGraph:       graphsession.NewRoutingGraph(chanGraph),
+		RoutingGraph:       graphsession.NewRoutingGraph(dbs.GraphDB),
 		Chain:              cc.ChainIO,
 		Payer:              s.htlcSwitch,
 		Control:            s.controlTower,
@@ -1354,7 +1353,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		info, e1, e2, err := s.graphDB.FetchChannelEdgesByID(
 			scid.ToUint64(),
 		)
-		if errors.Is(err, channeldb.ErrEdgeNotFound) {
+		if errors.Is(err, graphdb.ErrEdgeNotFound) {
 			// This is unlikely but there is a slim chance of this
 			// being hit if lnd was killed via SIGKILL and the
 			// funding manager was stepping through the delete
@@ -1593,7 +1592,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	// static backup of the latest channel state.
 	chanNotifier := &channelNotifier{
 		chanNotifier: s.channelNotifier,
-		addrs:        dbs.ChanStateDB,
+		addrs:        s.addrSource,
 	}
 	backupFile := chanbackup.NewMultiFile(cfg.BackupFilePath)
 	startingChans, err := chanbackup.FetchStaticChanBackups(
@@ -3147,7 +3146,7 @@ func (s *server) createNewHiddenService() error {
 
 	// Finally, we'll update the on-disk version of our announcement so it
 	// will eventually propagate to nodes in the network.
-	selfNode := &channeldb.LightningNode{
+	selfNode := &graphdb.LightningNode{
 		HaveNodeAnnouncement: true,
 		LastUpdate:           time.Unix(int64(newNodeAnn.Timestamp), 0),
 		Addresses:            newNodeAnn.Addresses,
@@ -3410,7 +3409,7 @@ func (s *server) establishPersistentConnections() error {
 		nodeAddrsMap[pubStr] = n
 		return nil
 	})
-	if err != nil && err != channeldb.ErrGraphNoEdgesFound {
+	if err != nil && err != graphdb.ErrGraphNoEdgesFound {
 		return err
 	}
 

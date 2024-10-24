@@ -30,10 +30,10 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb/migration33"
 	"github.com/lightningnetwork/lnd/channeldb/migration_01_to_11"
 	"github.com/lightningnetwork/lnd/clock"
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
-	"github.com/lightningnetwork/lnd/routing/route"
 )
 
 const (
@@ -335,7 +335,6 @@ type DB struct {
 	channelStateDB *ChannelStateDB
 
 	dbPath                    string
-	graph                     *ChannelGraph
 	clock                     clock.Clock
 	dryRun                    bool
 	keepFailedPaymentAttempts bool
@@ -350,18 +349,13 @@ type DB struct {
 // to updates will take place as necessary.
 // TODO(bhandras): deprecate this function.
 func Open(dbPath string, modifiers ...OptionModifier) (*DB, error) {
-	opts := DefaultOptions()
-	for _, modifier := range modifiers {
-		modifier(&opts)
-	}
-
 	backend, err := kvdb.GetBoltBackend(&kvdb.BoltBackendConfig{
 		DBPath:            dbPath,
 		DBFileName:        dbName,
-		NoFreelistSync:    opts.NoFreelistSync,
-		AutoCompact:       opts.AutoCompact,
-		AutoCompactMinAge: opts.AutoCompactMinAge,
-		DBTimeout:         opts.DBTimeout,
+		NoFreelistSync:    true,
+		AutoCompact:       false,
+		AutoCompactMinAge: kvdb.DefaultBoltAutoCompactMinAge,
+		DBTimeout:         kvdb.DefaultDBTimeout,
 	})
 	if err != nil {
 		return nil, err
@@ -371,13 +365,14 @@ func Open(dbPath string, modifiers ...OptionModifier) (*DB, error) {
 	if err == nil {
 		db.dbPath = dbPath
 	}
+
 	return db, err
 }
 
 // CreateWithBackend creates channeldb instance using the passed kvdb.Backend.
 // Any necessary schemas migrations due to updates will take place as necessary.
-func CreateWithBackend(backend kvdb.Backend,
-	modifiers ...OptionModifier) (*DB, error) {
+func CreateWithBackend(backend kvdb.Backend, modifiers ...OptionModifier) (*DB,
+	error) {
 
 	opts := DefaultOptions()
 	for _, modifier := range modifiers {
@@ -407,16 +402,6 @@ func CreateWithBackend(backend kvdb.Backend,
 
 	// Set the parent pointer (only used in tests).
 	chanDB.channelStateDB.parent = chanDB
-
-	var err error
-	chanDB.graph, err = NewChannelGraph(
-		backend, opts.RejectCacheSize, opts.ChannelCacheSize,
-		opts.BatchCommitInterval, opts.PreAllocCacheNumNodes,
-		opts.UseGraphCache, opts.NoMigration,
-	)
-	if err != nil {
-		return nil, err
-	}
 
 	// Synchronize the version of database and apply migrations if needed.
 	if !opts.NoMigration {
@@ -646,7 +631,9 @@ func (c *ChannelStateDB) fetchNodeChannels(chainBucket kvdb.RBucket) (
 		chanBucket := chainBucket.NestedReadBucket(chanPoint)
 
 		var outPoint wire.OutPoint
-		err := readOutpoint(bytes.NewReader(chanPoint), &outPoint)
+		err := graphdb.ReadOutpoint(
+			bytes.NewReader(chanPoint), &outPoint,
+		)
 		if err != nil {
 			return err
 		}
@@ -675,7 +662,8 @@ func (c *ChannelStateDB) FetchChannel(tx kvdb.RTx, chanPoint wire.OutPoint) (
 	*OpenChannel, error) {
 
 	var targetChanPoint bytes.Buffer
-	if err := writeOutpoint(&targetChanPoint, &chanPoint); err != nil {
+	err := graphdb.WriteOutpoint(&targetChanPoint, &chanPoint)
+	if err != nil {
 		return nil, err
 	}
 
@@ -709,7 +697,9 @@ func (c *ChannelStateDB) FetchChannelByID(tx kvdb.RTx, id lnwire.ChannelID) (
 		)
 		err := chainBkt.ForEach(func(k, _ []byte) error {
 			var outPoint wire.OutPoint
-			err := readOutpoint(bytes.NewReader(k), &outPoint)
+			err := graphdb.ReadOutpoint(
+				bytes.NewReader(k), &outPoint,
+			)
 			if err != nil {
 				return err
 			}
@@ -1089,7 +1079,7 @@ func (c *ChannelStateDB) FetchClosedChannel(chanID *wire.OutPoint) (
 
 		var b bytes.Buffer
 		var err error
-		if err = writeOutpoint(&b, chanID); err != nil {
+		if err = graphdb.WriteOutpoint(&b, chanID); err != nil {
 			return err
 		}
 
@@ -1131,7 +1121,9 @@ func (c *ChannelStateDB) FetchClosedChannelForID(cid lnwire.ChannelID) (
 		// We scan over all possible candidates for this channel ID.
 		for ; op != nil && bytes.Compare(cid[:30], op[:30]) <= 0; op, c = cursor.Next() {
 			var outPoint wire.OutPoint
-			err := readOutpoint(bytes.NewReader(op), &outPoint)
+			err := graphdb.ReadOutpoint(
+				bytes.NewReader(op), &outPoint,
+			)
 			if err != nil {
 				return err
 			}
@@ -1173,7 +1165,7 @@ func (c *ChannelStateDB) MarkChanFullyClosed(chanPoint *wire.OutPoint) error {
 	)
 	err := kvdb.Update(c.backend, func(tx kvdb.RwTx) error {
 		var b bytes.Buffer
-		if err := writeOutpoint(&b, chanPoint); err != nil {
+		if err := graphdb.WriteOutpoint(&b, chanPoint); err != nil {
 			return err
 		}
 
@@ -1344,48 +1336,17 @@ func (c *ChannelStateDB) RestoreChannelShells(channelShells ...*ChannelShell) er
 	return nil
 }
 
-// AddrsForNode consults the graph and channel database for all addresses known
-// to the passed node public key.
-func (d *DB) AddrsForNode(nodePub *btcec.PublicKey) ([]net.Addr,
-	error) {
-
+// AddrsForNode consults the and channel database for all addresses known to the
+// passed node public key.
+//
+// NOTE: this is part of the AddrSource interface.
+func (d *DB) AddrsForNode(nodePub *btcec.PublicKey) ([]net.Addr, error) {
 	linkNode, err := d.channelStateDB.linkNodeDB.FetchLinkNode(nodePub)
 	if err != nil {
 		return nil, err
 	}
 
-	// We'll also query the graph for this peer to see if they have any
-	// addresses that we don't currently have stored within the link node
-	// database.
-	pubKey, err := route.NewVertexFromBytes(nodePub.SerializeCompressed())
-	if err != nil {
-		return nil, err
-	}
-	graphNode, err := d.graph.FetchLightningNode(pubKey)
-	if err != nil && err != ErrGraphNodeNotFound {
-		return nil, err
-	} else if err == ErrGraphNodeNotFound {
-		// If the node isn't found, then that's OK, as we still have the
-		// link node data. But any other error needs to be returned.
-		graphNode = &LightningNode{}
-	}
-
-	// Now that we have both sources of addrs for this node, we'll use a
-	// map to de-duplicate any addresses between the two sources, and
-	// produce a final list of the combined addrs.
-	addrs := make(map[string]net.Addr)
-	for _, addr := range linkNode.Addresses {
-		addrs[addr.String()] = addr
-	}
-	for _, addr := range graphNode.Addresses {
-		addrs[addr.String()] = addr
-	}
-	dedupedAddrs := make([]net.Addr, 0, len(addrs))
-	for _, addr := range addrs {
-		dedupedAddrs = append(dedupedAddrs, addr)
-	}
-
-	return dedupedAddrs, nil
+	return linkNode.Addresses, nil
 }
 
 // AbandonChannel attempts to remove the target channel from the open channel
@@ -1638,11 +1599,6 @@ func (d *DB) applyOptionalVersions(cfg OptionalMiragtionConfig) error {
 	return nil
 }
 
-// ChannelGraph returns the current instance of the directed channel graph.
-func (d *DB) ChannelGraph() *ChannelGraph {
-	return d.graph
-}
-
 // ChannelStateDB returns the sub database that is concerned with the channel
 // state.
 func (d *DB) ChannelStateDB() *ChannelStateDB {
@@ -1693,7 +1649,7 @@ func fetchHistoricalChanBucket(tx kvdb.RTx,
 	// With the bucket for the node and chain fetched, we can now go down
 	// another level, for the channel itself.
 	var chanPointBuf bytes.Buffer
-	if err := writeOutpoint(&chanPointBuf, outPoint); err != nil {
+	if err := graphdb.WriteOutpoint(&chanPointBuf, outPoint); err != nil {
 		return nil, err
 	}
 	chanBucket := historicalChanBucket.NestedReadBucket(

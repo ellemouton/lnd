@@ -1,4 +1,4 @@
-package channeldb
+package graphdb
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"net"
 	"sort"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -21,7 +22,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/aliasmgr"
 	"github.com/lightningnetwork/lnd/batch"
-	"github.com/lightningnetwork/lnd/channeldb/models"
+	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -198,11 +199,15 @@ type ChannelGraph struct {
 
 // NewChannelGraph allocates a new ChannelGraph backed by a DB instance. The
 // returned instance has its own unique reject cache and channel cache.
-func NewChannelGraph(db kvdb.Backend, rejectCacheSize, chanCacheSize int,
-	batchCommitInterval time.Duration, preAllocCacheNumNodes int,
-	useGraphCache, noMigrations bool) (*ChannelGraph, error) {
+func NewChannelGraph(db kvdb.Backend, options ...OptionModifier) (*ChannelGraph,
+	error) {
 
-	if !noMigrations {
+	opts := DefaultOptions()
+	for _, o := range options {
+		o(opts)
+	}
+
+	if !opts.NoMigration {
 		if err := initChannelGraph(db); err != nil {
 			return nil, err
 		}
@@ -210,20 +215,20 @@ func NewChannelGraph(db kvdb.Backend, rejectCacheSize, chanCacheSize int,
 
 	g := &ChannelGraph{
 		db:          db,
-		rejectCache: newRejectCache(rejectCacheSize),
-		chanCache:   newChannelCache(chanCacheSize),
+		rejectCache: newRejectCache(opts.RejectCacheSize),
+		chanCache:   newChannelCache(opts.ChannelCacheSize),
 	}
 	g.chanScheduler = batch.NewTimeScheduler(
-		db, &g.cacheMu, batchCommitInterval,
+		db, &g.cacheMu, opts.BatchCommitInterval,
 	)
 	g.nodeScheduler = batch.NewTimeScheduler(
-		db, nil, batchCommitInterval,
+		db, nil, opts.BatchCommitInterval,
 	)
 
 	// The graph cache can be turned off (e.g. for mobile users) for a
 	// speed/memory usage tradeoff.
-	if useGraphCache {
-		g.graphCache = NewGraphCache(preAllocCacheNumNodes)
+	if opts.UseGraphCache {
+		g.graphCache = NewGraphCache(opts.PreAllocCacheNumNodes)
 		startTime := time.Now()
 		log.Debugf("Populating in-memory channel graph, this might " +
 			"take a while...")
@@ -349,7 +354,7 @@ func (c *ChannelGraph) Wipe() error {
 	return initChannelGraph(c.db)
 }
 
-// createChannelDB creates and initializes a fresh version of channeldb. In
+// createChannelDB creates and initializes a fresh version of  In
 // the case that the target path has not yet been created or doesn't yet exist,
 // then the path is created. Additionally, all required top-level buckets used
 // within the database are created.
@@ -408,6 +413,29 @@ func (c *ChannelGraph) NewPathFindTx() (kvdb.RTx, error) {
 	}
 
 	return c.db.BeginReadTx()
+}
+
+// AddrsForNode returns all known addresses for the target node public key that
+// the graph DB is aware of.
+//
+// NOTE: this is part of the channeldb.AddrSource interface.
+func (c *ChannelGraph) AddrsForNode(nodePub *btcec.PublicKey) ([]net.Addr,
+	error) {
+
+	pubKey, err := route.NewVertexFromBytes(nodePub.SerializeCompressed())
+	if err != nil {
+		return nil, err
+	}
+
+	graphNode, err := c.FetchLightningNode(pubKey)
+	if err != nil && err != ErrGraphNodeNotFound {
+		return nil, err
+	} else if err == ErrGraphNodeNotFound {
+		return []net.Addr{}, nil
+	}
+
+	return graphNode.Addresses, nil
+
 }
 
 // ForEachChannel iterates through all the channel edges stored within the
@@ -571,7 +599,7 @@ func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
 	// We'll iterate over each node, then the set of channels for each
 	// node, and construct a similar callback functiopn signature as the
 	// main funcotin expects.
-	return c.ForEachNode(func(tx kvdb.RTx, node *LightningNode) error {
+	return c.forEachNode(func(tx kvdb.RTx, node *LightningNode) error {
 		channels := make(map[uint64]*DirectedChannel)
 
 		err := c.ForEachNodeChannelTx(tx, node.PubKeyBytes,
@@ -678,7 +706,17 @@ func (c *ChannelGraph) DisabledChannelIDs() ([]uint64, error) {
 //
 // TODO(roasbeef): add iterator interface to allow for memory efficient graph
 // traversal when graph gets mega
-func (c *ChannelGraph) ForEachNode(
+func (c *ChannelGraph) ForEachNode(cb func(*LightningNode) error) error {
+	return c.forEachNode(func(_ kvdb.RTx, node *LightningNode) error {
+		return cb(node)
+	})
+}
+
+func (c *ChannelGraph) ForEachNodeWithTx(cb func(kvdb.RTx, *LightningNode) error) error {
+	return c.forEachNode(cb)
+}
+
+func (c *ChannelGraph) forEachNode(
 	cb func(kvdb.RTx, *LightningNode) error) error {
 
 	traversal := func(tx kvdb.RTx) error {
@@ -1124,7 +1162,7 @@ func (c *ChannelGraph) addChannelEdge(tx kvdb.RwTx,
 	// Finally we add it to the channel index which maps channel points
 	// (outpoints) to the shorter channel ID's.
 	var b bytes.Buffer
-	if err := writeOutpoint(&b, &edge.ChannelPoint); err != nil {
+	if err := WriteOutpoint(&b, &edge.ChannelPoint); err != nil {
 		return err
 	}
 	return chanIndex.Put(b.Bytes(), chanKey[:])
@@ -1331,7 +1369,7 @@ func (c *ChannelGraph) PruneGraph(spentOutputs []*wire.OutPoint,
 			// if NOT if filter
 
 			var opBytes bytes.Buffer
-			if err := writeOutpoint(&opBytes, chanPoint); err != nil {
+			if err := WriteOutpoint(&opBytes, chanPoint); err != nil {
 				return err
 			}
 
@@ -1803,7 +1841,7 @@ func (c *ChannelGraph) ChannelID(chanPoint *wire.OutPoint) (uint64, error) {
 // getChanID returns the assigned channel ID for a given channel point.
 func getChanID(tx kvdb.RTx, chanPoint *wire.OutPoint) (uint64, error) {
 	var b bytes.Buffer
-	if err := writeOutpoint(&b, chanPoint); err != nil {
+	if err := WriteOutpoint(&b, chanPoint); err != nil {
 		return 0, err
 	}
 
@@ -2631,7 +2669,7 @@ func (c *ChannelGraph) delChannelEdgeUnsafe(edges, edgeIndex, chanIndex,
 		return err
 	}
 	var b bytes.Buffer
-	if err := writeOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
+	if err := WriteOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
 		return err
 	}
 	if err := chanIndex.Delete(b.Bytes()); err != nil {
@@ -3409,7 +3447,7 @@ func (c *ChannelGraph) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 			return ErrGraphNoEdgesFound
 		}
 		var b bytes.Buffer
-		if err := writeOutpoint(&b, op); err != nil {
+		if err := WriteOutpoint(&b, op); err != nil {
 			return err
 		}
 		chanID := chanIndex.Get(b.Bytes())
@@ -3655,7 +3693,7 @@ func (c *ChannelGraph) ChannelView() ([]EdgePoint, error) {
 			chanPointReader := bytes.NewReader(chanPointBytes)
 
 			var chanPoint wire.OutPoint
-			err := readOutpoint(chanPointReader, &chanPoint)
+			err := ReadOutpoint(chanPointReader, &chanPoint)
 			if err != nil {
 				return err
 			}
@@ -4012,7 +4050,7 @@ func putLightningNode(nodeBucket kvdb.RwBucket, aliasBucket kvdb.RwBucket, // no
 	}
 
 	for _, address := range node.Addresses {
-		if err := serializeAddr(&b, address); err != nil {
+		if err := SerializeAddr(&b, address); err != nil {
 			return err
 		}
 	}
@@ -4205,7 +4243,7 @@ func deserializeLightningNode(r io.Reader) (LightningNode, error) {
 
 	var addresses []net.Addr
 	for i := 0; i < numAddresses; i++ {
-		address, err := deserializeAddr(r)
+		address, err := DeserializeAddr(r)
 		if err != nil {
 			return LightningNode{}, err
 		}
@@ -4277,7 +4315,7 @@ func putChanEdgeInfo(edgeIndex kvdb.RwBucket,
 		return err
 	}
 
-	if err := writeOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
+	if err := WriteOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
 		return err
 	}
 	if err := binary.Write(&b, byteOrder, uint64(edgeInfo.Capacity)); err != nil {
@@ -4361,7 +4399,7 @@ func deserializeChanEdgeInfo(r io.Reader) (models.ChannelEdgeInfo, error) {
 	}
 
 	edgeInfo.ChannelPoint = wire.OutPoint{}
-	if err := readOutpoint(r, &edgeInfo.ChannelPoint); err != nil {
+	if err := ReadOutpoint(r, &edgeInfo.ChannelPoint); err != nil {
 		return models.ChannelEdgeInfo{}, err
 	}
 	if err := binary.Read(r, byteOrder, &edgeInfo.Capacity); err != nil {
@@ -4740,4 +4778,32 @@ func deserializeChanEdgePolicyRaw(r io.Reader) (*models.ChannelEdgePolicy,
 	}
 
 	return edge, nil
+}
+
+// MakeTestGraph creates a new instance of the ChannelGraph for testing purposes.
+func MakeTestGraph(t testing.TB, modifiers ...OptionModifier) (*ChannelGraph, error) {
+	opts := DefaultOptions()
+	for _, modifier := range modifiers {
+		modifier(opts)
+	}
+
+	// Next, create channelgraph for the first time.
+	backend, backendCleanup, err := kvdb.GetTestBackend(t.TempDir(), "cgr")
+	if err != nil {
+		backendCleanup()
+		return nil, err
+	}
+
+	graph, err := NewChannelGraph(backend)
+	if err != nil {
+		backendCleanup()
+		return nil, err
+	}
+
+	t.Cleanup(func() {
+		_ = backend.Close()
+		backendCleanup()
+	})
+
+	return graph, nil
 }
