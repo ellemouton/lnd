@@ -59,7 +59,7 @@ type dbNode struct {
 
 	tx kvdb.RTx
 
-	node *graphdb.LightningNode
+	node *models.LightningNode
 }
 
 // A compile time assertion to ensure dbNode meets the autopilot.Node
@@ -135,7 +135,7 @@ func (d *dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 //
 // NOTE: Part of the autopilot.ChannelGraph interface.
 func (d *databaseChannelGraph) ForEachNode(cb func(Node) error) error {
-	return d.db.ForEachNode(func(tx kvdb.RTx, n *graphdb.LightningNode) error {
+	return d.db.ForEachNode(func(tx kvdb.RTx, n *models.LightningNode) error {
 		// We'll skip over any node that doesn't have any advertised
 		// addresses. As we won't be able to reach them to actually
 		// open any channels.
@@ -158,7 +158,7 @@ func (d *databaseChannelGraph) ForEachNode(cb func(Node) error) error {
 func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 	capacity btcutil.Amount) (*ChannelEdge, *ChannelEdge, error) {
 
-	fetchNode := func(pub *btcec.PublicKey) (*graphdb.LightningNode, error) {
+	fetchNode := func(pub *btcec.PublicKey) (*models.LightningNode, error) {
 		if pub != nil {
 			vertex, err := route.NewVertexFromBytes(
 				pub.SerializeCompressed(),
@@ -172,7 +172,7 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 			case errors.Is(err, graphdb.ErrGraphNodeNotFound):
 				fallthrough
 			case errors.Is(err, graphdb.ErrGraphNotFound):
-				graphNode := &graphdb.LightningNode{
+				graphNode := &models.LightningNode{
 					HaveNodeAnnouncement: true,
 					Addresses: []net.Addr{
 						&net.TCPAddr{
@@ -199,7 +199,7 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 		if err != nil {
 			return nil, err
 		}
-		dbNode := &graphdb.LightningNode{
+		dbNode := &models.LightningNode{
 			HaveNodeAnnouncement: true,
 			Addresses: []net.Addr{
 				&net.TCPAddr{
@@ -303,7 +303,7 @@ func (d *databaseChannelGraph) addRandNode() (*btcec.PublicKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	dbNode := &graphdb.LightningNode{
+	dbNode := &models.LightningNode{
 		HaveNodeAnnouncement: true,
 		Addresses: []net.Addr{
 			&net.TCPAddr{
