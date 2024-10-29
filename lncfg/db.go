@@ -20,6 +20,7 @@ import (
 
 const (
 	ChannelDBName     = "channel.db"
+	GraphDBName       = "graph.db"
 	MacaroonDBName    = "macaroons.db"
 	DecayedLogDbName  = "sphinxreplay.db"
 	TowerClientDBName = "wtclient.db"
@@ -27,6 +28,7 @@ const (
 	WalletDBName      = "wallet.db"
 
 	SqliteChannelDBName  = "channel.sqlite"
+	SqliteGraphDBName    = "graph.sqlite"
 	SqliteChainDBName    = "chain.sqlite"
 	SqliteNeutrinoDBName = "neutrino.sqlite"
 	SqliteTowerDBName    = "watchtower.sqlite"
@@ -46,6 +48,8 @@ const (
 	// NSChannelDB is the namespace name that we use for the combined graph
 	// and channel state DB.
 	NSChannelDB = "channeldb"
+
+	NSGraphDB = "graphdb"
 
 	// NSMacaroonDB is the namespace name that we use for the macaroon DB.
 	NSMacaroonDB = "macaroondb"
@@ -300,14 +304,25 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 		// code used the root namespace. We assume that nobody used etcd
 		// for mainnet just yet since that feature was clearly marked as
 		// experimental in 0.13.x.
-		etcdBackend, err := kvdb.Open(
+		etcdChannelDBBackend, err := kvdb.Open(
 			kvdb.EtcdBackendName, ctx,
 			db.Etcd.CloneWithSubNamespace(NSChannelDB),
 		)
 		if err != nil {
-			return nil, fmt.Errorf("error opening etcd DB: %w", err)
+			return nil, fmt.Errorf("error opening etcd channel "+
+				"DB: %w", err)
 		}
-		closeFuncs[NSChannelDB] = etcdBackend.Close
+		closeFuncs[NSChannelDB] = etcdChannelDBBackend.Close
+
+		etcdGraphDBBackend, err := kvdb.Open(
+			kvdb.EtcdBackendName, ctx,
+			db.Etcd.CloneWithSubNamespace(NSGraphDB),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error opening etcd graph "+
+				"DB: %w", err)
+		}
+		closeFuncs[NSGraphDB] = etcdGraphDBBackend.Close
 
 		etcdMacaroonBackend, err := kvdb.Open(
 			kvdb.EtcdBackendName, ctx,
@@ -364,9 +379,9 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 		returnEarly = false
 
 		return &DatabaseBackends{
-			GraphDB:       etcdBackend,
-			ChanStateDB:   etcdBackend,
-			HeightHintDB:  etcdBackend,
+			GraphDB:       etcdGraphDBBackend,
+			ChanStateDB:   etcdChannelDBBackend,
+			HeightHintDB:  etcdChannelDBBackend,
 			MacaroonDB:    etcdMacaroonBackend,
 			DecayedLogDB:  etcdDecayedLogBackend,
 			TowerClientDB: etcdTowerClientBackend,
@@ -389,15 +404,25 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 		// users to native SQL.
 		postgresConfig := GetPostgresConfigKVDB(db.Postgres)
 
-		postgresBackend, err := kvdb.Open(
+		postgresChannelDBlBackend, err := kvdb.Open(
 			kvdb.PostgresBackendName, ctx,
 			postgresConfig, NSChannelDB,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error opening postgres "+
+				"channel DB: %v", err)
+		}
+		closeFuncs[NSChannelDB] = postgresChannelDBlBackend.Close
+
+		postgresGraphDBBackend, err := kvdb.Open(
+			kvdb.PostgresBackendName, ctx,
+			postgresConfig, NSGraphDB,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("error opening postgres graph "+
 				"DB: %v", err)
 		}
-		closeFuncs[NSChannelDB] = postgresBackend.Close
+		closeFuncs[NSGraphDB] = postgresGraphDBBackend.Close
 
 		postgresMacaroonBackend, err := kvdb.Open(
 			kvdb.PostgresBackendName, ctx,
@@ -475,9 +500,9 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 		returnEarly = false
 
 		return &DatabaseBackends{
-			GraphDB:       postgresBackend,
-			ChanStateDB:   postgresBackend,
-			HeightHintDB:  postgresBackend,
+			GraphDB:       postgresGraphDBBackend,
+			ChanStateDB:   postgresChannelDBlBackend,
+			HeightHintDB:  postgresChannelDBlBackend,
 			MacaroonDB:    postgresMacaroonBackend,
 			DecayedLogDB:  postgresDecayedLogBackend,
 			TowerClientDB: postgresTowerClientBackend,
@@ -516,10 +541,20 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 			SqliteChannelDBName, NSChannelDB,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("error opening sqlite graph "+
+			return nil, fmt.Errorf("error opening sqlite channel "+
 				"DB: %v", err)
 		}
 		closeFuncs[NSChannelDB] = sqliteBackend.Close
+
+		sqliteGraphBackend, err := kvdb.Open(
+			kvdb.SqliteBackendName, ctx, sqliteConfig, chanDBPath,
+			SqliteGraphDBName, NSGraphDB,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error opening sqlite graph "+
+				"DB: %v", err)
+		}
+		closeFuncs[NSGraphDB] = sqliteGraphBackend.Close
 
 		sqliteMacaroonBackend, err := kvdb.Open(
 			kvdb.SqliteBackendName, ctx, sqliteConfig, walletDBPath,
@@ -598,7 +633,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 		returnEarly = false
 
 		return &DatabaseBackends{
-			GraphDB:       sqliteBackend,
+			GraphDB:       sqliteGraphBackend,
 			ChanStateDB:   sqliteBackend,
 			HeightHintDB:  sqliteBackend,
 			MacaroonDB:    sqliteMacaroonBackend,
@@ -631,6 +666,19 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 		return nil, fmt.Errorf("error opening bolt DB: %w", err)
 	}
 	closeFuncs[NSChannelDB] = boltBackend.Close
+
+	boltGraphBackend, err := kvdb.GetBoltBackend(&kvdb.BoltBackendConfig{
+		DBPath:            chanDBPath,
+		DBFileName:        GraphDBName,
+		DBTimeout:         db.Bolt.DBTimeout,
+		NoFreelistSync:    db.Bolt.NoFreelistSync,
+		AutoCompact:       db.Bolt.AutoCompact,
+		AutoCompactMinAge: db.Bolt.AutoCompactMinAge,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("error opening bolt DB: %w", err)
+	}
+	closeFuncs[NSGraphDB] = boltGraphBackend.Close
 
 	macaroonBackend, err := kvdb.GetBoltBackend(&kvdb.BoltBackendConfig{
 		DBPath:            walletDBPath,
@@ -703,7 +751,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 	returnEarly = false
 
 	return &DatabaseBackends{
-		GraphDB:       boltBackend,
+		GraphDB:       boltGraphBackend,
 		ChanStateDB:   boltBackend,
 		HeightHintDB:  boltBackend,
 		MacaroonDB:    macaroonBackend,
