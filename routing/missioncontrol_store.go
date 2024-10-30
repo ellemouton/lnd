@@ -166,21 +166,9 @@ func serializeResult(rp *paymentResult) ([]byte, []byte, error) {
 		&rp.route,
 	}
 
-	rp.success.WhenSome(
-		func(success tlv.RecordT[tlv.TlvType3, lnwire.TrueBoolean]) {
-			recordProducers = append(recordProducers, &success)
-		},
-	)
-
-	rp.failureSourceIdx.WhenSome(
-		func(idx tlv.RecordT[tlv.TlvType4, uint8]) {
-			recordProducers = append(recordProducers, &idx)
-		},
-	)
-
 	rp.failure.WhenSome(
-		func(failMsg tlv.RecordT[tlv.TlvType5, failureMessage]) {
-			recordProducers = append(recordProducers, &failMsg)
+		func(failure tlv.RecordT[tlv.TlvType3, paymentFailure]) {
+			recordProducers = append(recordProducers, &failure)
 		},
 	)
 
@@ -205,18 +193,12 @@ func deserializeResult(k, v []byte) (*paymentResult, error) {
 		id: byteOrder.Uint64(k[8:]),
 	}
 
-	var (
-		success   = tlv.ZeroRecordT[tlv.TlvType3, lnwire.TrueBoolean]()
-		failIndex = tlv.ZeroRecordT[tlv.TlvType4, uint8]()
-		failMsg   = tlv.ZeroRecordT[tlv.TlvType5, failureMessage]()
-	)
+	failure := tlv.ZeroRecordT[tlv.TlvType3, paymentFailure]()
 	recordProducers := []tlv.RecordProducer{
 		&result.timeFwd,
 		&result.timeReply,
 		&result.route,
-		&success,
-		&failIndex,
-		&failMsg,
+		&failure,
 	}
 
 	r := bytes.NewReader(v)
@@ -227,16 +209,8 @@ func deserializeResult(k, v []byte) (*paymentResult, error) {
 		return nil, err
 	}
 
-	if _, ok := typeMap[result.success.TlvType()]; ok {
-		result.success = tlv.SomeRecordT(success)
-	}
-
-	if _, ok := typeMap[result.failureSourceIdx.TlvType()]; ok {
-		result.failureSourceIdx = tlv.SomeRecordT(failIndex)
-	}
-
 	if _, ok := typeMap[result.failure.TlvType()]; ok {
-		result.failure = tlv.SomeRecordT(failMsg)
+		result.failure = tlv.SomeRecordT(failure)
 	}
 
 	return &result, nil

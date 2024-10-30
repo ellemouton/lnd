@@ -1,8 +1,10 @@
 package routing
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -262,19 +264,167 @@ type MissionControlPairSnapshot struct {
 // paymentResult is the information that becomes available when a payment
 // attempt completes.
 type paymentResult struct {
-	id               uint64
-	timeFwd          tlv.RecordT[tlv.TlvType0, uint64]
-	timeReply        tlv.RecordT[tlv.TlvType1, uint64]
-	route            tlv.RecordT[tlv.TlvType2, mcRoute]
-	success          tlv.OptionalRecordT[tlv.TlvType3, lnwire.TrueBoolean]
-	failureSourceIdx tlv.OptionalRecordT[tlv.TlvType4, uint8]
-	failure          tlv.OptionalRecordT[tlv.TlvType5, failureMessage]
+	id        uint64
+	timeFwd   tlv.RecordT[tlv.TlvType0, uint64]
+	timeReply tlv.RecordT[tlv.TlvType1, uint64]
+	route     tlv.RecordT[tlv.TlvType2, mcRoute]
+
+	// failure holds information related to the failure of a payment. The
+	// presence of this record indicates a payment failure. The absence of
+	// this record indicates a successful payment.
+	failure tlv.OptionalRecordT[tlv.TlvType3, paymentFailure]
+}
+
+// paymentFailure represents the presence of a payment failure. It may or may
+// not include additional information about said failure.
+type paymentFailure struct {
+	info tlv.OptionalRecordT[tlv.TlvType0, paymentFailureInfo]
+}
+
+func newPaymentFailure(failureSourceIdx *int,
+	failureMsg lnwire.FailureMessage) *paymentFailure {
+
+	if failureSourceIdx == nil {
+		return &paymentFailure{}
+	}
+
+	info := paymentFailureInfo{
+		sourceIdx: tlv.NewPrimitiveRecord[tlv.TlvType0](
+			uint8(*failureSourceIdx),
+		),
+		msg: tlv.NewRecordT[tlv.TlvType1](failureMessage{failureMsg}),
+	}
+
+	return &paymentFailure{
+		info: tlv.SomeRecordT(tlv.NewRecordT[tlv.TlvType0](info)),
+	}
+}
+
+// Record returns a TLV record that can be used to encode/decode a
+// paymentFailure to/from a TLV stream.
+func (r *paymentFailure) Record() tlv.Record {
+	recordSize := func() uint64 {
+		var (
+			b   bytes.Buffer
+			buf [8]byte
+		)
+		if err := encodePaymentFailure(&b, r, &buf); err != nil {
+			panic(err)
+		}
+
+		return uint64(len(b.Bytes()))
+	}
+
+	return tlv.MakeDynamicRecord(
+		0, r, recordSize, encodePaymentFailure, decodePaymentFailure,
+	)
+}
+
+func encodePaymentFailure(w io.Writer, val interface{}, _ *[8]byte) error {
+	if v, ok := val.(*paymentFailure); ok {
+		var recordProducers []tlv.RecordProducer
+		v.info.WhenSome(
+			func(r tlv.RecordT[tlv.TlvType0, paymentFailureInfo]) {
+				recordProducers = append(recordProducers, &r)
+			},
+		)
+
+		return lnwire.EncodeRecordsTo(
+			w, lnwire.ProduceRecordsSorted(recordProducers...),
+		)
+	}
+
+	return tlv.NewTypeForEncodingErr(val, "routing.paymentFailure")
+}
+
+func decodePaymentFailure(r io.Reader, val interface{}, _ *[8]byte, l uint64) error {
+	if v, ok := val.(*paymentFailure); ok {
+		var h paymentFailure
+
+		info := tlv.ZeroRecordT[tlv.TlvType0, paymentFailureInfo]()
+		records := lnwire.ProduceRecordsSorted(&info)
+
+		typeMap, err := lnwire.DecodeRecords(r, records...)
+		if err != nil {
+			return err
+		}
+
+		if _, ok := typeMap[h.info.TlvType()]; ok {
+			h.info = tlv.SomeRecordT(info)
+		}
+
+		*v = h
+
+		return nil
+	}
+
+	return tlv.NewTypeForDecodingErr(val, "routing.paymentFailure", l, l)
+}
+
+// paymentFailureInfo holds additional information about a payment failure.
+type paymentFailureInfo struct {
+	sourceIdx tlv.RecordT[tlv.TlvType0, uint8]
+	msg       tlv.RecordT[tlv.TlvType1, failureMessage]
+}
+
+// Record returns a TLV record that can be used to encode/decode a
+// paymentFailureInfo to/from a TLV stream.
+func (r *paymentFailureInfo) Record() tlv.Record {
+	recordSize := func() uint64 {
+		var (
+			b   bytes.Buffer
+			buf [8]byte
+		)
+		if err := encodePaymentFailureInfo(&b, r, &buf); err != nil {
+			panic(err)
+		}
+
+		return uint64(len(b.Bytes()))
+	}
+
+	return tlv.MakeDynamicRecord(
+		0, r, recordSize, encodePaymentFailureInfo,
+		decodePaymentFailureInfo,
+	)
+}
+
+func encodePaymentFailureInfo(w io.Writer, val interface{}, _ *[8]byte) error {
+	if v, ok := val.(*paymentFailureInfo); ok {
+		recordProducers := []tlv.RecordProducer{
+			&v.sourceIdx,
+			&v.msg,
+		}
+
+		return lnwire.EncodeRecordsTo(
+			w, lnwire.ProduceRecordsSorted(recordProducers...),
+		)
+	}
+
+	return tlv.NewTypeForEncodingErr(val, "routing.paymentFailureInfo")
+}
+
+func decodePaymentFailureInfo(r io.Reader, val interface{}, _ *[8]byte, l uint64) error {
+	if v, ok := val.(*paymentFailureInfo); ok {
+		var h paymentFailureInfo
+
+		records := lnwire.ProduceRecordsSorted(&h.sourceIdx, &h.msg)
+
+		_, err := lnwire.DecodeRecords(r, records...)
+		if err != nil {
+			return err
+		}
+
+		*v = h
+
+		return nil
+	}
+
+	return tlv.NewTypeForDecodingErr(val, "routing.paymentFailureInfo", l, l)
 }
 
 // newPaymentResult constructs a new paymentResult.
 func newPaymentResult(id uint64, rt *mcRoute, timeFwd, timeReply time.Time,
-	success bool, failureSourceIdx *int,
-	failure lnwire.FailureMessage) *paymentResult {
+	failure *paymentFailure) *paymentResult {
 
 	result := &paymentResult{
 		id: id,
@@ -287,23 +437,9 @@ func newPaymentResult(id uint64, rt *mcRoute, timeFwd, timeReply time.Time,
 		route: tlv.NewRecordT[tlv.TlvType2](*rt),
 	}
 
-	if success {
-		result.success = tlv.SomeRecordT(
-			tlv.NewRecordT[tlv.TlvType3](lnwire.TrueBoolean{}),
-		)
-	}
-
-	if failureSourceIdx != nil {
-		result.failureSourceIdx = tlv.SomeRecordT(
-			tlv.NewPrimitiveRecord[tlv.TlvType4](
-				uint8(*failureSourceIdx),
-			),
-		)
-	}
-
 	if failure != nil {
 		result.failure = tlv.SomeRecordT(
-			tlv.NewRecordT[tlv.TlvType5](failureMessage{failure}),
+			tlv.NewRecordT[tlv.TlvType3](*failure),
 		)
 	}
 
@@ -632,8 +768,8 @@ func (m *MissionControl) ReportPaymentFail(paymentID uint64, rt *route.Route,
 	timestamp := m.cfg.clock.Now()
 
 	result := newPaymentResult(
-		paymentID, extractMCRoute(rt), timestamp, timestamp, false,
-		failureSourceIdx, failure,
+		paymentID, extractMCRoute(rt), timestamp, timestamp,
+		newPaymentFailure(failureSourceIdx, failure),
 	)
 
 	return m.processPaymentResult(result)
@@ -647,8 +783,7 @@ func (m *MissionControl) ReportPaymentSuccess(paymentID uint64,
 	timestamp := m.cfg.clock.Now()
 
 	result := newPaymentResult(
-		paymentID, extractMCRoute(rt), timestamp, timestamp, true, nil,
-		nil,
+		paymentID, extractMCRoute(rt), timestamp, timestamp, nil,
 	)
 
 	_, err := m.processPaymentResult(result)
@@ -680,12 +815,7 @@ func (m *MissionControl) applyPaymentResult(
 	result *paymentResult) *channeldb.FailureReason {
 
 	// Interpret result.
-	i := interpretResult(
-		&result.route.Val,
-		result.success.IsSome(),
-		result.failureSourceIdx.ValOpt(),
-		result.failure.ValOpt(),
-	)
+	i := interpretResult(&result.route.Val, result.failure.ValOpt())
 
 	if i.policyFailure != nil {
 		if m.state.requestSecondChance(

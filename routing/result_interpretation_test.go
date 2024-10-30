@@ -691,11 +691,15 @@ func TestResultInterpretation(t *testing.T) {
 
 	for _, testCase := range resultTestCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			i := interpretResult(
-				testCase.route, testCase.success,
-				fn.Some(uint8(testCase.failureSrcIdx)),
-				fn.Some(failureMessage{testCase.failure}),
-			)
+			var failure fn.Option[paymentFailure]
+			if !testCase.success {
+				failure = fn.Some(*newPaymentFailure(
+					&testCase.failureSrcIdx,
+					testCase.failure,
+				))
+			}
+
+			i := interpretResult(testCase.route, failure)
 
 			expected := testCase.expectedResult
 

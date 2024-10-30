@@ -80,19 +80,23 @@ type interpretedResult struct {
 
 // interpretResult interprets a payment outcome and returns an object that
 // contains information required to update mission control.
-func interpretResult(rt *mcRoute, success bool,
-	failureSrcIdx fn.Option[uint8],
-	failure fn.Option[failureMessage]) *interpretedResult {
+func interpretResult(rt *mcRoute,
+	failure fn.Option[paymentFailure]) *interpretedResult {
 
 	i := &interpretedResult{
 		pairResults: make(map[DirectedNodePair]pairResult),
 	}
 
-	if success {
+	fn.ElimOption(failure, func() bool {
 		i.processSuccess(rt)
-	} else {
-		i.processFail(rt, failureSrcIdx, failure)
-	}
+
+		return true
+	}, func(info paymentFailure) bool {
+		i.processFail(rt, info)
+
+		return true
+	})
+
 	return i
 }
 
@@ -104,24 +108,25 @@ func (i *interpretedResult) processSuccess(route *mcRoute) {
 }
 
 // processFail processes a failed payment attempt.
-func (i *interpretedResult) processFail(rt *mcRoute,
-	errSourceIdx fn.Option[uint8], failure fn.Option[failureMessage]) {
-
-	var idx int
-	indexSet := fn.MapOptionZ(errSourceIdx, func(a uint8) bool {
-		idx = int(a)
-		return true
-	})
-
-	if !indexSet {
+func (i *interpretedResult) processFail(rt *mcRoute, failure paymentFailure) {
+	if failure.info.IsNone() {
 		i.processPaymentOutcomeUnknown(rt)
+
 		return
 	}
 
-	var failMsg lnwire.FailureMessage
-	failure.WhenSome(func(f failureMessage) {
-		failMsg = f.FailureMessage
-	})
+	// We've checked IsNone above, so this will execute.
+	var info paymentFailureInfo
+	failure.info.WhenSome(
+		func(r tlv.RecordT[tlv.TlvType0, paymentFailureInfo]) {
+			info = r.Val
+		},
+	)
+
+	var (
+		failMsg = info.msg.Val
+		idx     = int(info.sourceIdx.Val)
+	)
 
 	// If the payment was to a blinded route and we received an error from
 	// after the introduction point, handle this error separately - there

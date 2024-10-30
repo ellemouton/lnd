@@ -83,14 +83,20 @@ func TestMissionControlStore(t *testing.T) {
 	failureSourceIdx := 1
 
 	result1 := newPaymentResult(
-		99, mcStoreTestRoute, testTime, testTime, false,
-		&failureSourceIdx, lnwire.NewFailIncorrectDetails(100, 1000),
+		99, mcStoreTestRoute, testTime, testTime,
+		newPaymentFailure(
+			&failureSourceIdx,
+			lnwire.NewFailIncorrectDetails(100, 1000),
+		),
 	)
 
 	result2 := newPaymentResult(
 		2, mcStoreTestRoute, testTime.Add(time.Hour),
-		testTime.Add(time.Hour), false, &failureSourceIdx,
-		lnwire.NewFailIncorrectDetails(100, 1000),
+		testTime.Add(time.Hour),
+		newPaymentFailure(
+			&failureSourceIdx,
+			lnwire.NewFailIncorrectDetails(100, 1000),
+		),
 	)
 
 	// Store result.
@@ -126,10 +132,11 @@ func TestMissionControlStore(t *testing.T) {
 		uint64(testTime.Add(2 * time.Hour).UnixNano()),
 	)
 	result3.id = 3
+
 	result3.failure = tlv.SomeRecordT(
-		tlv.NewRecordT[tlv.TlvType5](
-			failureMessage{&lnwire.FailMPPTimeout{}},
-		),
+		tlv.NewRecordT[tlv.TlvType3](*newPaymentFailure(
+			&failureSourceIdx, &lnwire.FailMPPTimeout{},
+		)),
 	)
 
 	store.AddResult(result3)
@@ -141,6 +148,20 @@ func TestMissionControlStore(t *testing.T) {
 	require.Len(t, results, 2)
 
 	require.Equal(t, result2, results[0])
+	require.Equal(t, result3, results[1])
+
+	// Test adding a success result.
+	result4 := newPaymentResult(
+		9, mcStoreTestRoute, testTime, testTime, nil,
+	)
+	store.AddResult(result4)
+	require.NoError(t, store.storeResults())
+
+	results, err = store.fetchAll()
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+
+	require.Equal(t, result4, results[0])
 	require.Equal(t, result3, results[1])
 }
 
@@ -161,7 +182,8 @@ func TestMissionControlStoreFlushing(t *testing.T) {
 		lastID += 1
 		return newPaymentResult(
 			lastID, mcStoreTestRoute, testTime.Add(-time.Hour),
-			testTime, false, &failureSourceIdx, failureDetails,
+			testTime,
+			newPaymentFailure(&failureSourceIdx, failureDetails),
 		)
 	}
 
@@ -261,8 +283,11 @@ func BenchmarkMissionControlStoreFlushing(b *testing.B) {
 				lastID++
 				result := newPaymentResult(
 					lastID, mcStoreTestRoute, testTimeFwd,
-					testTime, false, &failureSourceIdx,
-					failureDetails,
+					testTime,
+					newPaymentFailure(
+						&failureSourceIdx,
+						failureDetails,
+					),
 				)
 				store.AddResult(result)
 			}
@@ -276,8 +301,11 @@ func BenchmarkMissionControlStoreFlushing(b *testing.B) {
 			for i := 0; i < len(results); i++ {
 				results[i] = newPaymentResult(
 					0, mcStoreTestRoute, testTimeFwd,
-					testTime, false, &failureSourceIdx,
-					failureDetails,
+					testTime,
+					newPaymentFailure(
+						&failureSourceIdx,
+						failureDetails,
+					),
 				)
 			}
 

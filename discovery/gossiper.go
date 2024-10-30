@@ -267,7 +267,6 @@ type Config struct {
 	// Lightning node.
 	//
 	// TODO(roasbeef): extract ann crafting + sign from fundingMgr into
-	// here?
 	AnnSigner lnwallet.MessageSigner
 
 	// ScidCloser is an instance of ClosedChannelTracker that helps the
