@@ -253,12 +253,16 @@ type DB interface {
 	// incoming edge *from* the connecting node. If the callback returns an
 	// error, then the iteration is halted with the error propagated back up
 	// to the caller.
+	// If the caller wishes to re-use an existing DB transaction, then it
+	// should be passed as the first argument. Otherwise, the first argument
+	// should be nil and a fresh transaction will be created to execute the
+	// graph traversal.
 	//
 	// Unknown policies are passed into the callback as nil values.
-	ForEachNodeChannel(nodePub route.Vertex, cb func(graphdb.RTx,
-		*models.ChannelEdgeInfo,
-		*models.ChannelEdgePolicy,
-		*models.ChannelEdgePolicy) error) error
+	ForEachNodeChannel(tx graphdb.RTx, nodePub route.Vertex,
+		cb func(graphdb.RTx, *models.ChannelEdgeInfo,
+			*models.ChannelEdgePolicy,
+			*models.ChannelEdgePolicy) error) error
 
 	// UpdateChannelEdge retrieves and update edge of the graph database.
 	// Method only reserved for updating an edge info after its already been

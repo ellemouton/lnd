@@ -3328,7 +3328,7 @@ func (s *server) establishPersistentConnections() error {
 	// TODO(roasbeef): instead iterate over link nodes and query graph for
 	// each of the nodes.
 	selfPub := s.identityECDH.PubKey().SerializeCompressed()
-	err = s.graphDB.ForEachNodeChannel(sourceNode.PubKeyBytes, func(
+	err = s.graphDB.ForEachNodeChannel(nil, sourceNode.PubKeyBytes, func(
 		tx graphdb.RTx, chanInfo *models.ChannelEdgeInfo,
 		policy, _ *models.ChannelEdgePolicy) error {
 
