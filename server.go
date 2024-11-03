@@ -45,7 +45,6 @@ import (
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/graph/graphsession"
-	"github.com/lightningnetwork/lnd/graph/stats"
 	"github.com/lightningnetwork/lnd/healthcheck"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
@@ -246,7 +245,13 @@ type server struct {
 
 	fundingMgr *funding.Manager
 
+	// graphDB is the pointer to this node's local graph DB.
 	graphDB *graphdb.ChannelGraph
+
+	// graphSource can be used for any read only graph queries. This may be
+	// backed by the graphDB pointer above or replace a different graph
+	// source.
+	graphSource GraphSource
 
 	chanStateDB *channeldb.ChannelStateDB
 
@@ -493,7 +498,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	chansToRestore walletunlocker.ChannelsToRecover,
 	chanPredicate chanacceptor.ChannelAcceptor,
 	torController *tor.Controller, tlsManager *TLSManager,
-	leaderElector cluster.LeaderElector,
+	leaderElector cluster.LeaderElector, graphSource GraphSource,
 	implCfg *ImplementationCfg) (*server, error) {
 
 	var (
@@ -591,12 +596,13 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		HtlcInterceptor:             invoiceHtlcModifier,
 	}
 
-	addrSource := channeldb.NewMultiAddrSource(dbs.ChanStateDB, dbs.GraphDB)
+	addrSource := channeldb.NewMultiAddrSource(dbs.ChanStateDB, graphSource)
 
 	s := &server{
 		cfg:            cfg,
 		implCfg:        implCfg,
 		graphDB:        dbs.GraphDB,
+		graphSource:    graphSource,
 		chanStateDB:    dbs.ChanStateDB.ChannelStateDB(),
 		addrSource:     addrSource,
 		miscDB:         dbs.ChanStateDB,
@@ -750,7 +756,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		IsChannelActive:          s.htlcSwitch.HasActiveLink,
 		ApplyChannelUpdate:       s.applyChannelUpdate,
 		DB:                       s.chanStateDB,
-		Graph:                    dbs.GraphDB,
+		Graph:                    graphSource,
 	}
 
 	chanStatusMgr, err := netann.NewChanStatusManager(chanStatusMgrCfg)
@@ -1004,7 +1010,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	}
 	paymentSessionSource := &routing.SessionSource{
 		GraphSessionFactory: graphsession.NewGraphSessionFactory(
-			dbs.GraphDB,
+			graphSource,
 		),
 		SourceNode:        sourceNode,
 		MissionControl:    s.defaultMC,
@@ -1038,7 +1044,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 
 	s.chanRouter, err = routing.New(routing.Config{
 		SelfNode:           selfNode.PubKeyBytes,
-		RoutingGraph:       graphsession.NewRoutingGraph(dbs.GraphDB),
+		RoutingGraph:       graphsession.NewRoutingGraph(graphSource),
 		Chain:              cc.ChainIO,
 		Payer:              s.htlcSwitch,
 		Control:            s.controlTower,
@@ -2786,8 +2792,7 @@ func initNetworkBootstrappers(ctx context.Context, s *server) (
 	// First, we'll create an instance of the ChannelGraphBootstrapper as
 	// this can be used by default if we've already partially seeded the
 	// network.
-	graph := &stats.ChanGraphStatsCollector{ChannelGraph: s.graphDB}
-	graphBootstrapper, err := graph.GraphBootstrapper(ctx)
+	graphBootstrapper, err := s.graphSource.GraphBootstrapper(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -4915,7 +4920,7 @@ func (s *server) fetchNodeAdvertisedAddrs(ctx context.Context,
 		return nil, err
 	}
 
-	node, err := s.graphDB.FetchLightningNode(ctx, vertex)
+	node, err := s.graphSource.FetchLightningNode(ctx, vertex)
 	if err != nil {
 		return nil, err
 	}

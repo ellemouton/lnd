@@ -50,7 +50,6 @@ import (
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/graph/graphsession"
-	"github.com/lightningnetwork/lnd/graph/stats"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
 	"github.com/lightningnetwork/lnd/input"
@@ -692,7 +691,7 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 	if err != nil {
 		return err
 	}
-	graph := s.graphDB
+	graph := s.graphSource
 
 	routerBackend := &routerrpc.RouterBackend{
 		SelfNode: selfNode.PubKeyBytes,
@@ -787,12 +786,12 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 	err = subServerCgs.PopulateDependencies(
 		r.cfg, s.cc, r.cfg.networkDir, macService, atpl, invoiceRegistry,
 		s.htlcSwitch, r.cfg.ActiveNetParams.Params, s.chanRouter,
-		routerBackend, s.nodeSigner, s.graphDB, s.chanStateDB,
-		s.sweeper, tower, s.towerClientMgr, r.cfg.net.ResolveTCPAddr,
-		genInvoiceFeatures, genAmpInvoiceFeatures,
-		s.getNodeAnnouncement, s.updateAndBrodcastSelfNode, parseAddr,
-		rpcsLog, s.aliasMgr, r.implCfg.AuxDataParser,
-		invoiceHtlcModifier,
+		routerBackend, s.nodeSigner, s.graphDB, s.graphSource,
+		s.chanStateDB, s.sweeper, tower, s.towerClientMgr,
+		r.cfg.net.ResolveTCPAddr, genInvoiceFeatures,
+		genAmpInvoiceFeatures, s.getNodeAnnouncement,
+		s.updateAndBrodcastSelfNode, parseAddr, rpcsLog, s.aliasMgr,
+		r.implCfg.AuxDataParser, invoiceHtlcModifier,
 	)
 	if err != nil {
 		return err
@@ -1748,7 +1747,7 @@ func (r *rpcServer) VerifyMessage(ctx context.Context,
 	// channels signed the message.
 	//
 	// TODO(phlip9): Require valid nodes to have capital in active channels.
-	graph := r.server.graphDB
+	graph := r.server.graphSource
 	_, active, err := graph.HasLightningNode(ctx, pub)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query graph: %w", err)
@@ -4740,7 +4739,7 @@ func createRPCOpenChannel(ctx context.Context, r *rpcServer,
 
 	// Look up our channel peer's node alias if the caller requests it.
 	if peerAliasLookup {
-		peerAlias, err := r.server.graphDB.LookupAlias(ctx, nodePub)
+		peerAlias, err := r.server.graphSource.LookupAlias(ctx, nodePub)
 		if err != nil {
 			peerAlias = fmt.Sprintf("unable to lookup "+
 				"peer alias: %v", err)
@@ -6084,7 +6083,7 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 		NodeSigner:        r.server.nodeSigner,
 		DefaultCLTVExpiry: defaultDelta,
 		ChanDB:            r.server.chanStateDB,
-		Graph:             r.server.graphDB,
+		Graph:             r.server.graphSource,
 		GenInvoiceFeatures: func() *lnwire.FeatureVector {
 			v := r.server.featureMgr.Get(feature.SetInvoice)
 
@@ -6515,7 +6514,7 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// Obtain the pointer to the global singleton channel graph, this will
 	// provide a consistent view of the graph due to bolt db's
 	// transactional model.
-	graph := r.server.graphDB
+	graph := r.server.graphSource
 
 	// First iterate through all the known nodes (connected or unconnected
 	// within the graph), collating their current state into the RPC
@@ -6696,7 +6695,7 @@ func (r *rpcServer) GetNodeMetrics(ctx context.Context,
 	// Obtain the pointer to the global singleton channel graph, this will
 	// provide a consistent view of the graph due to bolt db's
 	// transactional model.
-	graph := &stats.ChanGraphStatsCollector{ChannelGraph: r.server.graphDB}
+	graph := r.server.graphSource
 
 	centrality, err := graph.BetweenessCentrality(ctx)
 	if err != nil {
@@ -6721,7 +6720,7 @@ func (r *rpcServer) GetNodeMetrics(ctx context.Context,
 func (r *rpcServer) GetChanInfo(ctx context.Context,
 	in *lnrpc.ChanInfoRequest) (*lnrpc.ChannelEdge, error) {
 
-	graph := r.server.graphDB
+	graph := r.server.graphSource
 
 	var (
 		edgeInfo     *models.ChannelEdgeInfo
@@ -6765,7 +6764,7 @@ func (r *rpcServer) GetChanInfo(ctx context.Context,
 func (r *rpcServer) GetNodeInfo(ctx context.Context,
 	in *lnrpc.NodeInfoRequest) (*lnrpc.NodeInfo, error) {
 
-	graph := r.server.graphDB
+	graph := r.server.graphSource
 
 	// First, parse the hex-encoded public key into a full in-memory public
 	// key object we can work with for querying.
@@ -6876,7 +6875,7 @@ func (r *rpcServer) QueryRoutes(ctx context.Context,
 func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 	_ *lnrpc.NetworkInfoRequest) (*lnrpc.NetworkInfo, error) {
 
-	graph := &stats.ChanGraphStatsCollector{ChannelGraph: r.server.graphDB}
+	graph := r.server.graphSource
 
 	var (
 		excludeChans = make(map[uint64]struct{})
@@ -7770,7 +7769,9 @@ func (r *rpcServer) ForwardingHistory(ctx context.Context,
 			return "", err
 		}
 
-		peer, err := r.server.graphDB.FetchLightningNode(ctx, vertex)
+		peer, err := r.server.graphSource.FetchLightningNode(
+			ctx, vertex,
+		)
 		if err != nil {
 			return "", err
 		}
