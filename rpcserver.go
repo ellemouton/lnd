@@ -6696,7 +6696,7 @@ func (r *rpcServer) GetNodeMetrics(ctx context.Context,
 
 	// Calculate betweenness centrality if requested. Note that depending on the
 	// graph size, this may take up to a few minutes.
-	channelGraph := autopilot.ChannelGraphFromDatabase(graph)
+	channelGraph := autopilot.ChannelGraphFromGraphSource(graph)
 	centralityMetric, err := autopilot.NewBetweennessCentralityMetric(
 		runtime.NumCPU(),
 	)
@@ -6985,7 +6985,7 @@ func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 	}
 
 	// Graph diameter.
-	channelGraph := autopilot.ChannelGraphFromCachedDatabase(graph)
+	channelGraph := autopilot.ChannelGraphFromCachedGraphSource(graph)
 	simpleGraph, err := autopilot.NewSimpleGraph(channelGraph)
 	if err != nil {
 		return nil, err

@@ -2,15 +2,20 @@ package autopilot
 
 import (
 	"bytes"
+	"errors"
 	prand "math/rand"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
+	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/kvdb"
+	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,12 +44,13 @@ func newDiskChanGraph(t *testing.T) (testGraph, error) {
 	graphDB, err := graphdb.NewChannelGraph(backend)
 	require.NoError(t, err)
 
-	return &databaseChannelGraph{
-		db: graphDB,
+	return &testDBChanGraph{
+		db:                      graphDB,
+		graphSourceChannelGraph: graphSourceChannelGraph{db: graphDB},
 	}, nil
 }
 
-var _ testGraph = (*databaseChannelGraph)(nil)
+var _ testGraph = (*testDBChanGraph)(nil)
 
 func newMemChanGraph(_ *testing.T) (testGraph, error) {
 	return newMemChannelGraph(), nil
@@ -504,4 +510,201 @@ func (m *memChannelGraph) addRandNode() (*btcec.PublicKey, error) {
 	m.graph[NewNodeID(newPub)] = vertex
 
 	return newPub, nil
+}
+
+type testDBChanGraph struct {
+	db *graphdb.ChannelGraph
+	graphSourceChannelGraph
+}
+
+// addRandChannel creates a new channel two target nodes. This function is
+// meant to aide in the generation of random graphs for use within test cases
+// the exercise the autopilot package.
+func (d *testDBChanGraph) addRandChannel(node1, node2 *btcec.PublicKey,
+	capacity btcutil.Amount) (*ChannelEdge, *ChannelEdge, error) {
+
+	fetchNode := func(pub *btcec.PublicKey) (*models.LightningNode, error) {
+		if pub != nil {
+			vertex, err := route.NewVertexFromBytes(
+				pub.SerializeCompressed(),
+			)
+			if err != nil {
+				return nil, err
+			}
+
+			dbNode, err := d.db.FetchLightningNode(nil, vertex)
+			switch {
+			case errors.Is(err, graphdb.ErrGraphNodeNotFound):
+				fallthrough
+			case errors.Is(err, graphdb.ErrGraphNotFound):
+				graphNode := &models.LightningNode{
+					HaveNodeAnnouncement: true,
+					Addresses: []net.Addr{
+						&net.TCPAddr{
+							IP: bytes.Repeat(
+								[]byte("a"),
+								16,
+							),
+						},
+					},
+					Features: lnwire.NewFeatureVector(
+						nil, lnwire.Features,
+					),
+					AuthSigBytes: testSig.Serialize(),
+				}
+				graphNode.AddPubKey(pub)
+				err := d.db.AddLightningNode(graphNode)
+				if err != nil {
+					return nil, err
+				}
+			case err != nil:
+				return nil, err
+			}
+
+			return dbNode, nil
+		}
+
+		nodeKey, err := randKey()
+		if err != nil {
+			return nil, err
+		}
+		dbNode := &models.LightningNode{
+			HaveNodeAnnouncement: true,
+			Addresses: []net.Addr{
+				&net.TCPAddr{
+					IP: bytes.Repeat([]byte("a"), 16),
+				},
+			},
+			Features: lnwire.NewFeatureVector(
+				nil, lnwire.Features,
+			),
+			AuthSigBytes: testSig.Serialize(),
+		}
+		dbNode.AddPubKey(nodeKey)
+		if err := d.db.AddLightningNode(dbNode); err != nil {
+			return nil, err
+		}
+
+		return dbNode, nil
+	}
+
+	vertex1, err := fetchNode(node1)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	vertex2, err := fetchNode(node2)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var lnNode1, lnNode2 *btcec.PublicKey
+	if bytes.Compare(vertex1.PubKeyBytes[:], vertex2.PubKeyBytes[:]) == -1 {
+		lnNode1, _ = vertex1.PubKey()
+		lnNode2, _ = vertex2.PubKey()
+	} else {
+		lnNode1, _ = vertex2.PubKey()
+		lnNode2, _ = vertex1.PubKey()
+	}
+
+	chanID := randChanID()
+	edge := &models.ChannelEdgeInfo{
+		ChannelID: chanID.ToUint64(),
+		Capacity:  capacity,
+	}
+	edge.AddNodeKeys(lnNode1, lnNode2, lnNode1, lnNode2)
+	if err := d.db.AddChannelEdge(edge); err != nil {
+		return nil, nil, err
+	}
+	edgePolicy := &models.ChannelEdgePolicy{
+		SigBytes:                  testSig.Serialize(),
+		ChannelID:                 chanID.ToUint64(),
+		LastUpdate:                time.Now(),
+		TimeLockDelta:             10,
+		MinHTLC:                   1,
+		MaxHTLC:                   lnwire.NewMSatFromSatoshis(capacity),
+		FeeBaseMSat:               10,
+		FeeProportionalMillionths: 10000,
+		MessageFlags:              1,
+		ChannelFlags:              0,
+	}
+
+	if err := d.db.UpdateEdgePolicy(edgePolicy); err != nil {
+		return nil, nil, err
+	}
+	edgePolicy = &models.ChannelEdgePolicy{
+		SigBytes:                  testSig.Serialize(),
+		ChannelID:                 chanID.ToUint64(),
+		LastUpdate:                time.Now(),
+		TimeLockDelta:             10,
+		MinHTLC:                   1,
+		MaxHTLC:                   lnwire.NewMSatFromSatoshis(capacity),
+		FeeBaseMSat:               10,
+		FeeProportionalMillionths: 10000,
+		MessageFlags:              1,
+		ChannelFlags:              1,
+	}
+	if err := d.db.UpdateEdgePolicy(edgePolicy); err != nil {
+		return nil, nil, err
+	}
+
+	return &ChannelEdge{
+			ChanID:   chanID,
+			Capacity: capacity,
+			Peer: &dbNode{
+				db:   d.db,
+				node: vertex1,
+			},
+		},
+		&ChannelEdge{
+			ChanID:   chanID,
+			Capacity: capacity,
+			Peer: &dbNode{
+				db:   d.db,
+				node: vertex2,
+			},
+		},
+		nil
+}
+
+func (d *testDBChanGraph) addRandNode() (*btcec.PublicKey, error) {
+	nodeKey, err := randKey()
+	if err != nil {
+		return nil, err
+	}
+	dbNode := &models.LightningNode{
+		HaveNodeAnnouncement: true,
+		Addresses: []net.Addr{
+			&net.TCPAddr{
+				IP: bytes.Repeat([]byte("a"), 16),
+			},
+		},
+		Features: lnwire.NewFeatureVector(
+			nil, lnwire.Features,
+		),
+		AuthSigBytes: testSig.Serialize(),
+	}
+	dbNode.AddPubKey(nodeKey)
+	if err := d.db.AddLightningNode(dbNode); err != nil {
+		return nil, err
+	}
+
+	return nodeKey, nil
+
+}
+
+// randChanID generates a new random channel ID.
+func randChanID() lnwire.ShortChannelID {
+	id := atomic.AddUint64(&chanIDCounter, 1)
+	return lnwire.NewShortChanIDFromInt(id)
+}
+
+// randKey returns a random public key.
+func randKey() (*btcec.PublicKey, error) {
+	priv, err := btcec.NewPrivateKey()
+	if err != nil {
+		return nil, err
+	}
+
+	return priv.PubKey(), nil
 }

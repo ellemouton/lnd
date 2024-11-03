@@ -6,7 +6,10 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/wire"
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
+	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing/route"
 )
 
 // DefaultConfTarget is the default confirmation target for autopilot channels.
@@ -215,4 +218,42 @@ type ChannelController interface {
 	//
 	// TODO(roasbeef): add force option?
 	CloseChannel(chanPoint *wire.OutPoint) error
+}
+
+// GraphSource defines the graph interface required by the autopilot agent.
+type GraphSource interface {
+	// ForEachNode iterates through all the stored vertices/nodes in the
+	// graph, executing the passed callback with each node encountered. If
+	// the callback returns an error, then the transaction is aborted and
+	// the iteration stops early.
+	ForEachNode(cb func(graphdb.RTx, *models.LightningNode) error) error
+
+	// FetchLightningNode attempts to look up a target node by its identity
+	// public key. If the node isn't found in the database, then
+	// graphdb.ErrGraphNodeNotFound is returned. An optional transaction may
+	// be provided. If none is provided, then a new one will be created.
+	FetchLightningNode(tx graphdb.RTx, nodePub route.Vertex) (
+		*models.LightningNode, error)
+
+	// ForEachNodeChannel iterates through all channels of the given node,
+	// executing the passed callback with an edge info structure and the
+	// policies of each end of the channel. The first edge policy is the
+	// outgoing edge *to* the connecting node, while the second is the
+	// incoming edge *from* the connecting node. If the callback returns an
+	// error, then the iteration is halted with the error propagated back up
+	// to the caller. Unknown policies are passed into the callback as nil
+	// values. An optional transaction may be provided. If none is provided,
+	// then a new one will be created.
+	ForEachNodeChannel(tx graphdb.RTx, nodePub route.Vertex,
+		cb func(graphdb.RTx, *models.ChannelEdgeInfo,
+			*models.ChannelEdgePolicy,
+			*models.ChannelEdgePolicy) error) error
+
+	// ForEachNodeCached iterates through all the stored vertices/nodes in
+	// the graph, executing the passed callback with each node encountered.
+	// If the callback returns an error, then the transaction is aborted
+	// and the iteration stops early. It utilizes the graph cache if one is
+	// available.
+	ForEachNodeCached(cb func(node route.Vertex,
+		chans map[uint64]*graphdb.DirectedChannel) error) error
 }
