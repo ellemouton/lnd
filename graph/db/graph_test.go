@@ -1045,7 +1045,7 @@ func TestGraphTraversal(t *testing.T) {
 	// outgoing channels for a particular node.
 	numNodeChans := 0
 	firstNode, secondNode := nodeList[0], nodeList[1]
-	err = graph.ForEachNodeChannel(firstNode.PubKeyBytes,
+	err = graph.ForEachNodeChannel(nil, firstNode.PubKeyBytes,
 		func(_ RTx, _ *models.ChannelEdgeInfo, outEdge,
 			inEdge *models.ChannelEdgePolicy) error {
 
@@ -2758,7 +2758,7 @@ func TestIncompleteChannelPolicies(t *testing.T) {
 		expectedOut bool) {
 
 		calls := 0
-		err := graph.ForEachNodeChannel(node.PubKeyBytes,
+		err := graph.ForEachNodeChannel(nil, node.PubKeyBytes,
 			func(_ RTx, _ *models.ChannelEdgeInfo, outEdge,
 				inEdge *models.ChannelEdgePolicy) error {
 
