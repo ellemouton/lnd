@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/lightningnetwork/lnd/graph/db/models"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/stretchr/testify/require"
@@ -41,8 +40,8 @@ func (n *node) Features() *lnwire.FeatureVector {
 	return n.features
 }
 
-func (n *node) ForEachChannel(tx kvdb.RTx,
-	cb func(kvdb.RTx, *models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+func (n *node) ForEachChannel(tx RTx,
+	cb func(RTx, *models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
 
 	for idx := range n.edgeInfos {
