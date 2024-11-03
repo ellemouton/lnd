@@ -6,7 +6,6 @@ import (
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/lightningnetwork/lnd/graph/db/models"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -27,10 +26,9 @@ type GraphCacheNode interface {
 	// incoming edge *from* the connecting node. If the callback returns an
 	// error, then the iteration is halted with the error propagated back up
 	// to the caller.
-	ForEachChannel(kvdb.RTx,
-		func(kvdb.RTx, *models.ChannelEdgeInfo,
-			*models.ChannelEdgePolicy,
-			*models.ChannelEdgePolicy) error) error
+	ForEachChannel(RTx, func(RTx, *models.ChannelEdgeInfo,
+		*models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy) error) error
 }
 
 // DirectedChannel is a type that stores the channel information as seen from
@@ -138,11 +136,11 @@ func (c *GraphCache) AddNodeFeatures(node GraphCacheNode) {
 
 // AddNode adds a graph node, including all the (directed) channels of that
 // node.
-func (c *GraphCache) AddNode(tx kvdb.RTx, node GraphCacheNode) error {
+func (c *GraphCache) AddNode(tx RTx, node GraphCacheNode) error {
 	c.AddNodeFeatures(node)
 
 	return node.ForEachChannel(
-		tx, func(tx kvdb.RTx, info *models.ChannelEdgeInfo,
+		tx, func(tx RTx, info *models.ChannelEdgeInfo,
 			outPolicy *models.ChannelEdgePolicy,
 			inPolicy *models.ChannelEdgePolicy) error {
 

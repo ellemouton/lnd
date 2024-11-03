@@ -8,7 +8,6 @@ import (
 	"github.com/lightningnetwork/lnd/batch"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -245,7 +244,7 @@ type DB interface {
 	// graph, executing the passed callback with each node encountered. If
 	// the callback returns an error, then the transaction is aborted and
 	// the iteration stops early.
-	ForEachNode(cb func(kvdb.RTx, *models.LightningNode) error) error
+	ForEachNode(cb func(graphdb.RTx, *models.LightningNode) error) error
 
 	// ForEachNodeChannel iterates through all channels of the given node,
 	// executing the passed callback with an edge info structure and the
@@ -256,7 +255,7 @@ type DB interface {
 	// to the caller.
 	//
 	// Unknown policies are passed into the callback as nil values.
-	ForEachNodeChannel(nodePub route.Vertex, cb func(kvdb.RTx,
+	ForEachNodeChannel(nodePub route.Vertex, cb func(graphdb.RTx,
 		*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error

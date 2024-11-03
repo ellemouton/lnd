@@ -14,7 +14,6 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -57,7 +56,7 @@ func ChannelGraphFromDatabase(db *graphdb.ChannelGraph) ChannelGraph {
 type dbNode struct {
 	db *graphdb.ChannelGraph
 
-	tx kvdb.RTx
+	tx graphdb.RTx
 
 	node *models.LightningNode
 }
@@ -91,7 +90,7 @@ func (d *dbNode) Addrs() []net.Addr {
 // NOTE: Part of the autopilot.Node interface.
 func (d *dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 	return d.db.ForEachNodeChannelTx(d.tx, d.node.PubKeyBytes,
-		func(tx kvdb.RTx, ei *models.ChannelEdgeInfo, ep,
+		func(tx graphdb.RTx, ei *models.ChannelEdgeInfo, ep,
 			_ *models.ChannelEdgePolicy) error {
 
 			// Skip channels for which no outgoing edge policy is
@@ -135,7 +134,7 @@ func (d *dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 //
 // NOTE: Part of the autopilot.ChannelGraph interface.
 func (d *databaseChannelGraph) ForEachNode(cb func(Node) error) error {
-	return d.db.ForEachNode(func(tx kvdb.RTx,
+	return d.db.ForEachNode(func(tx graphdb.RTx,
 		n *models.LightningNode) error {
 
 		// We'll skip over any node that doesn't have any advertised
