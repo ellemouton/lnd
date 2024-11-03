@@ -244,7 +244,13 @@ type server struct {
 
 	fundingMgr *funding.Manager
 
+	// graphDB is the pointer to this node's local graph DB.
 	graphDB *graphdb.ChannelGraph
+
+	// graphSource can be used for any read only graph queries. This may be
+	// backed by the graphDB pointer above or replace a different graph
+	// source.
+	graphSource GraphSource
 
 	chanStateDB *channeldb.ChannelStateDB
 
@@ -492,7 +498,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	chansToRestore walletunlocker.ChannelsToRecover,
 	chanPredicate chanacceptor.ChannelAcceptor,
 	torController *tor.Controller, tlsManager *TLSManager,
-	leaderElector cluster.LeaderElector,
+	leaderElector cluster.LeaderElector, graphSource GraphSource,
 	implCfg *ImplementationCfg) (*server, error) {
 
 	var (
@@ -590,12 +596,13 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		HtlcInterceptor:             invoiceHtlcModifier,
 	}
 
-	addrSource := channeldb.NewMultiAddrSource(dbs.ChanStateDB, dbs.GraphDB)
+	addrSource := channeldb.NewMultiAddrSource(dbs.ChanStateDB, graphSource)
 
 	s := &server{
 		cfg:            cfg,
 		implCfg:        implCfg,
 		graphDB:        dbs.GraphDB,
+		graphSource:    graphSource,
 		chanStateDB:    dbs.ChanStateDB.ChannelStateDB(),
 		addrSource:     addrSource,
 		miscDB:         dbs.ChanStateDB,
@@ -749,7 +756,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		IsChannelActive:          s.htlcSwitch.HasActiveLink,
 		ApplyChannelUpdate:       s.applyChannelUpdate,
 		DB:                       s.chanStateDB,
-		Graph:                    dbs.GraphDB,
+		Graph:                    graphSource,
 	}
 
 	chanStatusMgr, err := netann.NewChanStatusManager(chanStatusMgrCfg)
@@ -1003,7 +1010,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	}
 	paymentSessionSource := &routing.SessionSource{
 		GraphSessionFactory: graphsession.NewGraphSessionFactory(
-			dbs.GraphDB,
+			graphSource,
 		),
 		SourceNode:        sourceNode,
 		MissionControl:    s.defaultMC,
@@ -1037,7 +1044,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	s.chanRouter, err = routing.New(routing.Config{
 		SelfNode:           selfNode.PubKeyBytes,
-		RoutingGraph:       graphsession.NewRoutingGraph(dbs.GraphDB),
+		RoutingGraph:       graphsession.NewRoutingGraph(graphSource),
 		Chain:              cc.ChainIO,
 		Payer:              s.htlcSwitch,
 		Control:            s.controlTower,
@@ -2779,7 +2786,7 @@ func initNetworkBootstrappers(s *server) ([]discovery.NetworkPeerBootstrapper, e
 	// First, we'll create an instance of the ChannelGraphBootstrapper as
 	// this can be used by default if we've already partially seeded the
 	// network.
-	chanGraph := autopilot.ChannelGraphFromGraphSource(s.graphDB)
+	chanGraph := autopilot.ChannelGraphFromGraphSource(s.graphSource)
 	graphBootstrapper, err := discovery.NewGraphBootstrapper(chanGraph)
 	if err != nil {
 		return nil, err
@@ -4903,7 +4910,7 @@ func (s *server) fetchNodeAdvertisedAddrs(pub *btcec.PublicKey) ([]net.Addr, err
 		return nil, err
 	}
 
-	node, err := s.graphDB.FetchLightningNode(nil, vertex)
+	node, err := s.graphSource.FetchLightningNode(nil, vertex)
 	if err != nil {
 		return nil, err
 	}
