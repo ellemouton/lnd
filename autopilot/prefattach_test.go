@@ -3,6 +3,7 @@ package autopilot
 import (
 	"bytes"
 	prand "math/rand"
+	"net"
 	"testing"
 	"time"
 
@@ -367,4 +368,140 @@ func TestPrefAttachmentSelectSkipNodes(t *testing.T) {
 			break
 		}
 	}
+}
+
+// memChannelGraph is an implementation of the autopilot.ChannelGraph backed by
+// an in-memory graph.
+type memChannelGraph struct {
+	graph map[NodeID]*memNode
+}
+
+// A compile time assertion to ensure memChannelGraph meets the
+// autopilot.ChannelGraph interface.
+var _ ChannelGraph = (*memChannelGraph)(nil)
+
+// newMemChannelGraph creates a new blank in-memory channel graph
+// implementation.
+func newMemChannelGraph() *memChannelGraph {
+	return &memChannelGraph{
+		graph: make(map[NodeID]*memNode),
+	}
+}
+
+// ForEachNode is a higher-order function that should be called once for each
+// connected node within the channel graph. If the passed callback returns an
+// error, then execution should be terminated.
+//
+// NOTE: Part of the autopilot.ChannelGraph interface.
+func (m memChannelGraph) ForEachNode(cb func(Node) error) error {
+	for _, node := range m.graph {
+		if err := cb(node); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// addRandChannel creates a new channel two target nodes. This function is
+// meant to aide in the generation of random graphs for use within test cases
+// the exercise the autopilot package.
+func (m *memChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
+	capacity btcutil.Amount) (*ChannelEdge, *ChannelEdge, error) {
+
+	var (
+		vertex1, vertex2 *memNode
+		ok               bool
+	)
+
+	if node1 != nil {
+		vertex1, ok = m.graph[NewNodeID(node1)]
+		if !ok {
+			vertex1 = &memNode{
+				pub: node1,
+				addrs: []net.Addr{
+					&net.TCPAddr{
+						IP: bytes.Repeat([]byte("a"), 16),
+					},
+				},
+			}
+		}
+	} else {
+		newPub, err := randKey()
+		if err != nil {
+			return nil, nil, err
+		}
+		vertex1 = &memNode{
+			pub: newPub,
+			addrs: []net.Addr{
+				&net.TCPAddr{
+					IP: bytes.Repeat([]byte("a"), 16),
+				},
+			},
+		}
+	}
+
+	if node2 != nil {
+		vertex2, ok = m.graph[NewNodeID(node2)]
+		if !ok {
+			vertex2 = &memNode{
+				pub: node2,
+				addrs: []net.Addr{
+					&net.TCPAddr{
+						IP: bytes.Repeat([]byte("a"), 16),
+					},
+				},
+			}
+		}
+	} else {
+		newPub, err := randKey()
+		if err != nil {
+			return nil, nil, err
+		}
+		vertex2 = &memNode{
+			pub: newPub,
+			addrs: []net.Addr{
+				&net.TCPAddr{
+					IP: bytes.Repeat([]byte("a"), 16),
+				},
+			},
+		}
+	}
+
+	edge1 := ChannelEdge{
+		ChanID:   randChanID(),
+		Capacity: capacity,
+		Peer:     vertex2,
+	}
+	vertex1.chans = append(vertex1.chans, edge1)
+
+	edge2 := ChannelEdge{
+		ChanID:   randChanID(),
+		Capacity: capacity,
+		Peer:     vertex1,
+	}
+	vertex2.chans = append(vertex2.chans, edge2)
+
+	m.graph[NewNodeID(vertex1.pub)] = vertex1
+	m.graph[NewNodeID(vertex2.pub)] = vertex2
+
+	return &edge1, &edge2, nil
+}
+
+func (m *memChannelGraph) addRandNode() (*btcec.PublicKey, error) {
+	newPub, err := randKey()
+	if err != nil {
+		return nil, err
+	}
+	vertex := &memNode{
+		pub: newPub,
+		addrs: []net.Addr{
+			&net.TCPAddr{
+				IP: bytes.Repeat([]byte("a"), 16),
+			},
+		},
+	}
+	m.graph[NewNodeID(newPub)] = vertex
+
+	return newPub, nil
 }
