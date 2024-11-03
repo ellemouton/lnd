@@ -369,7 +369,7 @@ var _ GraphSessionFactory = (*mockGraphSessionFactoryChanDB)(nil)
 
 type mockGraphSessionChanDB struct {
 	graph *graphdb.ChannelGraph
-	tx    kvdb.RTx
+	tx    graphdb.RTx
 }
 
 func newMockGraphSessionChanDB(graph *graphdb.ChannelGraph) Graph {
@@ -383,7 +383,7 @@ func (g *mockGraphSessionChanDB) close() error {
 		return nil
 	}
 
-	err := g.tx.Rollback()
+	err := g.tx.Close()
 	if err != nil {
 		return fmt.Errorf("error closing db tx: %w", err)
 	}

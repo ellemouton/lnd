@@ -1046,7 +1046,7 @@ func TestGraphTraversal(t *testing.T) {
 	numNodeChans := 0
 	firstNode, secondNode := nodeList[0], nodeList[1]
 	err = graph.ForEachNodeChannel(firstNode.PubKeyBytes,
-		func(_ kvdb.RTx, _ *models.ChannelEdgeInfo, outEdge,
+		func(_ RTx, _ *models.ChannelEdgeInfo, outEdge,
 			inEdge *models.ChannelEdgePolicy) error {
 
 			// All channels between first and second node should
@@ -1100,7 +1100,7 @@ func TestGraphTraversalCacheable(t *testing.T) {
 	// it is tested in another test).
 	nodeMap := make(map[route.Vertex]struct{})
 	err = graph.ForEachNode(
-		func(tx kvdb.RTx, n *models.LightningNode) error {
+		func(tx RTx, n *models.LightningNode) error {
 			nodeMap[n.PubKeyBytes] = struct{}{}
 
 			return nil
@@ -1128,7 +1128,7 @@ func TestGraphTraversalCacheable(t *testing.T) {
 	err = graph.db.View(func(tx kvdb.RTx) error {
 		for _, node := range nodes {
 			err := node.ForEachChannel(
-				tx, func(tx kvdb.RTx,
+				NewKVDBRTx(tx), func(tx RTx,
 					info *models.ChannelEdgeInfo,
 					policy *models.ChannelEdgePolicy,
 					policy2 *models.ChannelEdgePolicy) error { //nolint:lll
@@ -1225,7 +1225,7 @@ func fillTestGraph(t require.TestingT, graph *ChannelGraph, numNodes,
 	// Iterate over each node as returned by the graph, if all nodes are
 	// reached, then the map created above should be empty.
 	err := graph.ForEachNode(
-		func(_ kvdb.RTx, node *models.LightningNode) error {
+		func(_ RTx, node *models.LightningNode) error {
 			delete(nodeIndex, node.Alias)
 			return nil
 		},
@@ -1337,7 +1337,7 @@ func assertNumChans(t *testing.T, graph *ChannelGraph, n int) {
 func assertNumNodes(t *testing.T, graph *ChannelGraph, n int) {
 	numNodes := 0
 	err := graph.ForEachNode(
-		func(_ kvdb.RTx, _ *models.LightningNode) error {
+		func(_ RTx, _ *models.LightningNode) error {
 			numNodes++
 			return nil
 		},
@@ -2759,7 +2759,7 @@ func TestIncompleteChannelPolicies(t *testing.T) {
 
 		calls := 0
 		err := graph.ForEachNodeChannel(node.PubKeyBytes,
-			func(_ kvdb.RTx, _ *models.ChannelEdgeInfo, outEdge,
+			func(_ RTx, _ *models.ChannelEdgeInfo, outEdge,
 				inEdge *models.ChannelEdgePolicy) error {
 
 				if !expectedOut && outEdge != nil {
@@ -3902,7 +3902,7 @@ func BenchmarkForEachChannel(b *testing.B) {
 
 		err = graph.db.View(func(tx kvdb.RTx) error {
 			for _, n := range nodes {
-				cb := func(tx kvdb.RTx,
+				cb := func(tx RTx,
 					info *models.ChannelEdgeInfo,
 					policy *models.ChannelEdgePolicy,
 					policy2 *models.ChannelEdgePolicy) error { //nolint:lll
@@ -3919,7 +3919,7 @@ func BenchmarkForEachChannel(b *testing.B) {
 					return nil
 				}
 
-				err := n.ForEachChannel(tx, cb)
+				err := n.ForEachChannel(NewKVDBRTx(tx), cb)
 				if err != nil {
 					return err
 				}

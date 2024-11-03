@@ -51,7 +51,6 @@ import (
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/keychain"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnencrypt"
 	"github.com/lightningnetwork/lnd/lnpeer"
@@ -3330,8 +3329,7 @@ func (s *server) establishPersistentConnections() error {
 	// each of the nodes.
 	selfPub := s.identityECDH.PubKey().SerializeCompressed()
 	err = s.graphDB.ForEachNodeChannel(sourceNode.PubKeyBytes, func(
-		tx kvdb.RTx,
-		chanInfo *models.ChannelEdgeInfo,
+		tx graphdb.RTx, chanInfo *models.ChannelEdgeInfo,
 		policy, _ *models.ChannelEdgePolicy) error {
 
 		// If the remote party has announced the channel to us, but we

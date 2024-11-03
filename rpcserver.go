@@ -56,7 +56,6 @@ import (
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/keychain"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/labels"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -6508,7 +6507,7 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// First iterate through all the known nodes (connected or unconnected
 	// within the graph), collating their current state into the RPC
 	// response.
-	err := graph.ForEachNode(func(_ kvdb.RTx,
+	err := graph.ForEachNode(func(_ graphdb.RTx,
 		node *models.LightningNode) error {
 
 		lnNode := marshalNode(node)
@@ -6801,7 +6800,7 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 	)
 
 	err = graph.ForEachNodeChannel(node.PubKeyBytes,
-		func(_ kvdb.RTx, edge *models.ChannelEdgeInfo,
+		func(_ graphdb.RTx, edge *models.ChannelEdgeInfo,
 			c1, c2 *models.ChannelEdgePolicy) error {
 
 			numChannels++
@@ -7475,7 +7474,7 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 
 	var feeReports []*lnrpc.ChannelFeeReport
 	err = channelGraph.ForEachNodeChannel(selfNode.PubKeyBytes,
-		func(_ kvdb.RTx, chanInfo *models.ChannelEdgeInfo,
+		func(_ graphdb.RTx, chanInfo *models.ChannelEdgeInfo,
 			edgePolicy, _ *models.ChannelEdgePolicy) error {
 
 			// Self node should always have policies for its
