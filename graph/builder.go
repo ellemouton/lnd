@@ -1625,7 +1625,7 @@ func (b *Builder) GetChannelByID(chanID lnwire.ShortChannelID) (
 func (b *Builder) FetchLightningNode(
 	node route.Vertex) (*models.LightningNode, error) {
 
-	return b.cfg.Graph.FetchLightningNode(node)
+	return b.cfg.Graph.FetchLightningNode(nil, node)
 }
 
 // ForEachNode is used to iterate over every node in router topology.
