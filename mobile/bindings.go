@@ -110,7 +110,7 @@ func Start(extraArgs string, rpcReady Callback) {
 		defer close(quit)
 
 		if err := lnd.Main(
-			loadedConfig, cfg, implCfg, shutdownInterceptor,
+			loadedConfig, cfg, implCfg, shutdownInterceptor, nil,
 		); err != nil {
 			if e, ok := err.(*flags.Error); ok &&
 				e.Type == flags.ErrHelp {
