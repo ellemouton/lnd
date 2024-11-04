@@ -426,6 +426,9 @@ type Config struct {
 	// used to modify the way the co-op close transaction is constructed.
 	AuxChanCloser fn.Option[chancloser.AuxChanCloser]
 
+	// NoGossipSync is true if we should not sync gossip with this peer.
+	NoGossipSync bool
+
 	// Quit is the server's quit channel. If this is closed, we halt operation.
 	Quit chan struct{}
 }
@@ -869,6 +872,11 @@ func (p *Brontide) Start() error {
 // initGossipSync initializes either a gossip syncer or an initial routing
 // dump, depending on the negotiated synchronization method.
 func (p *Brontide) initGossipSync() {
+	// If gossip syncing has explicitly been disabled, we'll exit early.
+	if p.cfg.NoGossipSync {
+		return
+	}
+
 	// If the remote peer knows of the new gossip queries feature, then
 	// we'll create a new gossipSyncer in the AuthenticatedGossiper for it.
 	if p.remoteFeatures.HasFeature(lnwire.GossipQueriesOptional) {
