@@ -251,6 +251,11 @@ The underlying functionality between those two options remain the same.
   [GoroutineManager](https://github.com/lightningnetwork/lnd/pull/9141) so that 
   its constructor does not take a context.
 
+* Add a [graph source abstraction](https://github.com/lightningnetwork/lnd/pull/9243) 
+  and use it throughout LND. This is so that callers of LND can choose provide 
+  it with an external graph source rather than requiring it to first sync its 
+  own graph. 
+
 ## Tooling and Documentation
 
 * [Improved `lncli create` command help text](https://github.com/lightningnetwork/lnd/pull/9077)
