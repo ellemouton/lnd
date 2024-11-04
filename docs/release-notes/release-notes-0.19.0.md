@@ -181,6 +181,12 @@ The underlying functionality between those two options remain the same.
   `channeldb` package](https://github.com/lightningnetwork/lnd/pull/9236) and 
   into the `graph/db` package.
 
+* Add a [graph source abstraction]() and use it throughout LND. This is so that 
+  callers of LND can choose provide it with an external graph source rather than
+  requiring it to first sync its own graph. A new `--gossip.no-sync` config 
+  option has also been added which can be used to switch off gossip syncing so 
+  that LND does not attempt to sync its own graph. 
+
 ## Tooling and Documentation
 
 * [Improved `lncli create` command help text](https://github.com/lightningnetwork/lnd/pull/9077)
