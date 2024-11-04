@@ -244,7 +244,8 @@ type DB interface {
 	// graph, executing the passed callback with each node encountered. If
 	// the callback returns an error, then the transaction is aborted and
 	// the iteration stops early.
-	ForEachNode(cb func(graphdb.RTx, *models.LightningNode) error) error
+	ForEachNode(tx graphdb.RTx,
+		cb func(graphdb.RTx, *models.LightningNode) error) error
 
 	// ForEachNodeChannel iterates through all channels of the given node,
 	// executing the passed callback with an edge info structure and the
