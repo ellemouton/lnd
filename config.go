@@ -856,6 +856,100 @@ func LoadConfig(interceptor signal.Interceptor) (*Config, error) {
 	return cleanCfg, nil
 }
 
+func LoadConfigNoFlags(preCfg Config, interceptor signal.Interceptor) (*Config, error) {
+	// Show the version and exit if the version flag was specified.
+	appName := filepath.Base(os.Args[0])
+	appName = strings.TrimSuffix(appName, filepath.Ext(appName))
+	usageMessage := fmt.Sprintf("Use %s -h to show usage", appName)
+	if preCfg.ShowVersion {
+		fmt.Println(appName, "version", build.Version(),
+			"commit="+build.Commit)
+		os.Exit(0)
+	}
+
+	// If the config file path has not been modified by the user, then we'll
+	// use the default config file path. However, if the user has modified
+	// their lnddir, then we should assume they intend to use the config
+	// file within it.
+	configFileDir := CleanAndExpandPath(preCfg.LndDir)
+	configFilePath := CleanAndExpandPath(preCfg.ConfigFile)
+	switch {
+	// User specified --lnddir but no --configfile. Update the config file
+	// path to the lnd config directory, but don't require it to exist.
+	case configFileDir != DefaultLndDir &&
+		configFilePath == DefaultConfigFile:
+
+		configFilePath = filepath.Join(
+			configFileDir, lncfg.DefaultConfigFilename,
+		)
+
+	// User did specify an explicit --configfile, so we check that it does
+	// exist under that path to avoid surprises.
+	case configFilePath != DefaultConfigFile:
+		if !lnrpc.FileExists(configFilePath) {
+			return nil, fmt.Errorf("specified config file does "+
+				"not exist in %s", configFilePath)
+		}
+	}
+
+	// Next, load any additional configuration options from the file.
+	var configFileError error
+	cfg := preCfg
+	fileParser := flags.NewParser(&cfg, flags.Default)
+	err := flags.NewIniParser(fileParser).ParseFile(configFilePath)
+	if err != nil {
+		// If it's a parsing related error, then we'll return
+		// immediately, otherwise we can proceed as possibly the config
+		// file doesn't exist which is OK.
+		if lnutils.ErrorAs[*flags.IniError](err) ||
+			lnutils.ErrorAs[*flags.Error](err) {
+
+			return nil, err
+		}
+
+		configFileError = err
+	}
+
+	// Make sure everything we just loaded makes sense.
+	cleanCfg, err := ValidateConfig(
+		cfg, interceptor, fileParser, nil,
+	)
+	var usageErr *lncfg.UsageError
+	if errors.As(err, &usageErr) {
+		// The logging system might not yet be initialized, so we also
+		// write to stderr to make sure the error appears somewhere.
+		_, _ = fmt.Fprintln(os.Stderr, usageMessage)
+		ltndLog.Warnf("Incorrect usage: %v", usageMessage)
+
+		// The log subsystem might not yet be initialized. But we still
+		// try to log the error there since some packaging solutions
+		// might only look at the log and not stdout/stderr.
+		ltndLog.Warnf("Error validating config: %v", err)
+
+		return nil, err
+	}
+	if err != nil {
+		// The log subsystem might not yet be initialized. But we still
+		// try to log the error there since some packaging solutions
+		// might only look at the log and not stdout/stderr.
+		ltndLog.Warnf("Error validating config: %v", err)
+
+		return nil, err
+	}
+
+	// Warn about missing config file only after all other configuration is
+	// done. This prevents the warning on help messages and invalid options.
+	// Note this should go directly before the return.
+	if configFileError != nil {
+		ltndLog.Warnf("%v", configFileError)
+	}
+
+	// Finally, log warnings for deprecated config options if they are set.
+	logWarningsForDeprecation(*cleanCfg)
+
+	return cleanCfg, nil
+}
+
 // ValidateConfig check the given configuration to be sane. This makes sure no
 // illegal values or combination of values are set. All file system paths are
 // normalized. The cleaned up config is returned on success.
@@ -936,10 +1030,17 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 		fileOptionNested := fileParser.FindOptionByLongName(
 			"lnd." + long,
 		)
-		flagOption := flagParser.FindOptionByLongName(long)
-		flagOptionNested := flagParser.FindOptionByLongName(
-			"lnd." + long,
+		var (
+			flagOption       *flags.Option
+			flagOptionNested *flags.Option
 		)
+
+		if flagParser != nil {
+			flagOption = flagParser.FindOptionByLongName(long)
+			flagOptionNested = flagParser.FindOptionByLongName(
+				"lnd." + long,
+			)
+		}
 
 		return (fileOption != nil && fileOption.IsSet()) ||
 				(fileOptionNested != nil && fileOptionNested.IsSet()) ||
