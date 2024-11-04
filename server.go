@@ -578,6 +578,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		NoTaprootChans:           !cfg.ProtocolOptions.TaprootChans,
 		NoTaprootOverlay:         !cfg.ProtocolOptions.TaprootOverlayChans,
 		NoRouteBlinding:          cfg.ProtocolOptions.NoRouteBlinding(),
+		NoGossipQueries:          cfg.Gossip.NoSync,
 	})
 	if err != nil {
 		return nil, err
@@ -4188,6 +4189,7 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 		MsgRouter:              s.implCfg.MsgRouter,
 		AuxChanCloser:          s.implCfg.AuxChanCloser,
 		AuxResolver:            s.implCfg.AuxContractResolver,
+		NoGossipSync:           s.cfg.Gossip.NoSync,
 	}
 
 	copy(pCfg.PubKeyBytes[:], peerAddr.IdentityKey.SerializeCompressed())
