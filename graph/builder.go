@@ -1635,7 +1635,7 @@ func (b *Builder) ForEachNode(
 	cb func(*models.LightningNode) error) error {
 
 	return b.cfg.Graph.ForEachNode(
-		func(_ graphdb.RTx, n *models.LightningNode) error {
+		nil, func(_ graphdb.RTx, n *models.LightningNode) error {
 			return cb(n)
 		})
 }

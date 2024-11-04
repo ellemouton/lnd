@@ -1100,7 +1100,7 @@ func TestGraphTraversalCacheable(t *testing.T) {
 	// it is tested in another test).
 	nodeMap := make(map[route.Vertex]struct{})
 	err = graph.ForEachNode(
-		func(tx RTx, n *models.LightningNode) error {
+		nil, func(tx RTx, n *models.LightningNode) error {
 			nodeMap[n.PubKeyBytes] = struct{}{}
 
 			return nil
@@ -1225,7 +1225,7 @@ func fillTestGraph(t require.TestingT, graph *ChannelGraph, numNodes,
 	// Iterate over each node as returned by the graph, if all nodes are
 	// reached, then the map created above should be empty.
 	err := graph.ForEachNode(
-		func(_ RTx, node *models.LightningNode) error {
+		nil, func(_ RTx, node *models.LightningNode) error {
 			delete(nodeIndex, node.Alias)
 			return nil
 		},
@@ -1337,7 +1337,7 @@ func assertNumChans(t *testing.T, graph *ChannelGraph, n int) {
 func assertNumNodes(t *testing.T, graph *ChannelGraph, n int) {
 	numNodes := 0
 	err := graph.ForEachNode(
-		func(_ RTx, _ *models.LightningNode) error {
+		nil, func(_ RTx, _ *models.LightningNode) error {
 			numNodes++
 			return nil
 		},

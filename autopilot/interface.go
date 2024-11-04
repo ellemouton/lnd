@@ -226,7 +226,8 @@ type GraphSource interface {
 	// graph, executing the passed callback with each node encountered. If
 	// the callback returns an error, then the transaction is aborted and
 	// the iteration stops early.
-	ForEachNode(cb func(graphdb.RTx, *models.LightningNode) error) error
+	ForEachNode(tx graphdb.RTx,
+		cb func(graphdb.RTx, *models.LightningNode) error) error
 
 	// FetchLightningNode attempts to look up a target node by its identity
 	// public key. If the node isn't found in the database, then
