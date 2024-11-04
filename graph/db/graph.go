@@ -403,11 +403,14 @@ func initChannelGraph(db kvdb.Backend) error {
 	return nil
 }
 
-// NewPathFindTx returns a new read transaction that can be used for a single
-// path finding session. Will return nil if the graph cache is enabled.
-func (c *ChannelGraph) NewPathFindTx() (RTx, error) {
+// NewReadTx returns a new read transaction that can be used other read calls to
+// the backing graph. If the graph cache is enabled, the underlying transaction
+// will be nil.
+//
+// NOTE: this is part of the graphsession.ReadOnlyGraph interface.
+func (c *ChannelGraph) NewReadTx() (RTx, error) {
 	if c.graphCache != nil {
-		return nil, nil
+		return NewKVDBRTx(nil), nil
 	}
 
 	rtx, err := c.db.BeginReadTx()

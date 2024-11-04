@@ -30,7 +30,7 @@ func NewGraphSessionFactory(graph ReadOnlyGraph) routing.GraphSessionFactory {
 //
 // NOTE: This is part of the routing.GraphSessionFactory interface.
 func (g *Factory) NewGraphSession() (routing.Graph, func() error, error) {
-	tx, err := g.graph.NewPathFindTx()
+	tx, err := g.graph.NewReadTx()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -105,10 +105,10 @@ var _ routing.Graph = (*session)(nil)
 // ReadOnlyGraph is a graph extended with a call to create a new read-only
 // transaction that can then be used to make further queries to the graph.
 type ReadOnlyGraph interface {
-	// NewPathFindTx returns a new read transaction that can be used for a
-	// single path finding session. Will return nil if the graph cache is
-	// enabled.
-	NewPathFindTx() (graphdb.RTx, error)
+	// NewReadTx returns a new read transaction that can be used with the
+	// graph backend. Close MUST be called on the transaction once it is no
+	// longer needed.
+	NewReadTx() (graphdb.RTx, error)
 
 	graph
 }

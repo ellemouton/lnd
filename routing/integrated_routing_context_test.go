@@ -352,7 +352,7 @@ func newMockGraphSessionFactoryFromChanDB(
 func (g *mockGraphSessionFactoryChanDB) NewGraphSession() (Graph, func() error,
 	error) {
 
-	tx, err := g.graph.NewPathFindTx()
+	tx, err := g.graph.NewReadTx()
 	if err != nil {
 		return nil, nil, err
 	}
