@@ -32,6 +32,8 @@ type Gossip struct {
 	SubBatchDelay time.Duration `long:"sub-batch-delay" description:"The duration to wait before sending the next announcement batch if there are multiple. Use a small value if there are a lot announcements and they need to be broadcast quickly."`
 
 	AnnouncementConf uint32 `long:"announcement-conf" description:"The number of confirmations required before processing channel announcements."`
+
+	NoSync bool `long:"no-sync" description:"If set, lnd will not request graph updates from its peers and wont advertise the gossip queries feature bit. This is useful if LND has been provided with an external graph source that it may use for pathfinding."`
 }
 
 // Parse the pubkeys for the pinned syncers.
