@@ -524,7 +524,7 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(tx RTx,
 	toNodeCallback := func() route.Vertex {
 		return node
 	}
-	toNodeFeatures, err := c.FetchNodeFeatures(node)
+	toNodeFeatures, err := c.FetchNodeFeatures(tx, node)
 	if err != nil {
 		return err
 	}
@@ -570,7 +570,7 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(tx RTx,
 
 // FetchNodeFeatures returns the features of a given node. If no features are
 // known for the node, an empty feature vector is returned.
-func (c *ChannelGraph) FetchNodeFeatures(
+func (c *ChannelGraph) FetchNodeFeatures(tx RTx,
 	node route.Vertex) (*lnwire.FeatureVector, error) {
 
 	if c.graphCache != nil {
@@ -578,7 +578,7 @@ func (c *ChannelGraph) FetchNodeFeatures(
 	}
 
 	// Fallback that uses the database.
-	targetNode, err := c.FetchLightningNode(nil, node)
+	targetNode, err := c.FetchLightningNode(tx, node)
 	switch err {
 	// If the node exists and has features, return them directly.
 	case nil:
@@ -625,7 +625,7 @@ func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
 					return node.PubKeyBytes
 				}
 				toNodeFeatures, err := c.FetchNodeFeatures(
-					node.PubKeyBytes,
+					tx, node.PubKeyBytes,
 				)
 				if err != nil {
 					return err

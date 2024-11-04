@@ -95,7 +95,7 @@ func (g *session) ForEachNodeChannel(nodePub route.Vertex,
 func (g *session) FetchNodeFeatures(nodePub route.Vertex) (
 	*lnwire.FeatureVector, error) {
 
-	return g.graph.FetchNodeFeatures(nodePub)
+	return g.graph.FetchNodeFeatures(g.tx, nodePub)
 }
 
 // A compile-time check to ensure that *session implements the
@@ -132,7 +132,8 @@ type graph interface {
 
 	// FetchNodeFeatures returns the features of a given node. If no
 	// features are known for the node, an empty feature vector is returned.
-	FetchNodeFeatures(node route.Vertex) (*lnwire.FeatureVector, error)
+	FetchNodeFeatures(tx graphdb.RTx, node route.Vertex) (
+		*lnwire.FeatureVector, error)
 }
 
 // A compile-time check to ensure that *channeldb.ChannelGraph implements the
