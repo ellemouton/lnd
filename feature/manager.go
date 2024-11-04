@@ -66,6 +66,9 @@ type Config struct {
 	// NoTaprootOverlay unsets the taproot overlay channel feature bits.
 	NoTaprootOverlay bool
 
+	// NoGossipQueries unsets the gossip queries feature bit.
+	NoGossipQueries bool
+
 	// CustomFeatures is a set of custom features to advertise in each
 	// set.
 	CustomFeatures map[Set][]lnwire.FeatureBit
@@ -198,6 +201,10 @@ func newManager(cfg Config, desc setDesc) (*Manager, error) {
 		if cfg.NoTaprootOverlay {
 			raw.Unset(lnwire.SimpleTaprootOverlayChansOptional)
 			raw.Unset(lnwire.SimpleTaprootOverlayChansRequired)
+		}
+		if cfg.NoGossipQueries {
+			raw.Unset(lnwire.GossipQueriesOptional)
+			raw.Unset(lnwire.GossipQueriesRequired)
 		}
 		for _, custom := range cfg.CustomFeatures[set] {
 			if custom > set.Maximum() {
