@@ -37,6 +37,7 @@ func main() {
 	// be executed in the case of a graceful shutdown.
 	if err = lnd.Main(
 		loadedConfig, lnd.ListenerCfg{}, implCfg, shutdownInterceptor,
+		nil,
 	); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
