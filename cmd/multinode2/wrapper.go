@@ -69,8 +69,8 @@ func (r *remoteWrapper) ForEachChannel(cb func(*models.ChannelEdgeInfo, *models.
 	return r.local.ForEachChannel(cb)
 }
 
-func (r *remoteWrapper) HasLightningNode(nodePub [33]byte) (time.Time, bool, error) {
-	return r.local.HasLightningNode(nodePub)
+func (r *remoteWrapper) HasLightningNode(ctx context.Context, nodePub [33]byte) (time.Time, bool, error) {
+	return r.local.HasLightningNode(ctx, nodePub)
 }
 
 func (r *remoteWrapper) NumZombies(ctx context.Context) (uint64, error) {

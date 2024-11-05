@@ -397,8 +397,8 @@ func (g *GraphSourceMux) ForEachChannel(cb func(*models.ChannelEdgeInfo,
 // boolean.
 //
 // NOTE: this is part of the GraphSource interface.
-func (g *GraphSourceMux) HasLightningNode(nodePub [33]byte) (time.Time, bool, error) {
-	timeStamp, localHas, err := g.local.HasLightningNode(nodePub)
+func (g *GraphSourceMux) HasLightningNode(ctx context.Context, nodePub [33]byte) (time.Time, bool, error) {
+	timeStamp, localHas, err := g.local.HasLightningNode(ctx, nodePub)
 	if err != nil {
 		return timeStamp, false, err
 	}
@@ -406,7 +406,7 @@ func (g *GraphSourceMux) HasLightningNode(nodePub [33]byte) (time.Time, bool, er
 		return timeStamp, true, nil
 	}
 
-	return g.remote.HasLightningNode(nodePub)
+	return g.remote.HasLightningNode(ctx, nodePub)
 }
 
 // NumZombies returns the current number of zombie channels in the

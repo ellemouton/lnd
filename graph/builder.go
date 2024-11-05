@@ -2,6 +2,7 @@ package graph
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"runtime"
 	"strings"
@@ -1049,7 +1050,7 @@ func (b *Builder) assertNodeAnnFreshness(node route.Vertex,
 	// node announcements, we will ignore such nodes. If we do know about
 	// this node, check that this update brings info newer than what we
 	// already have.
-	lastUpdate, exists, err := b.cfg.Graph.HasLightningNode(node)
+	lastUpdate, exists, err := b.cfg.Graph.HasLightningNode(context.TODO(), node)
 	if err != nil {
 		return errors.Errorf("unable to query for the "+
 			"existence of node: %v", err)

@@ -3083,7 +3083,7 @@ var _ GraphCacheNode = (*graphCacheNode)(nil)
 // timestamp of when the data for the node was lasted updated is returned along
 // with a true boolean. Otherwise, an empty time.Time is returned with a false
 // boolean.
-func (c *ChannelGraph) HasLightningNode(nodePub [33]byte) (time.Time, bool,
+func (c *ChannelGraph) HasLightningNode(_ context.Context, nodePub [33]byte) (time.Time, bool,
 	error) {
 
 	var (
