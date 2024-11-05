@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package graphrpc;
+
+option go_package = "github.com/lightningnetwork/lnd/lnrpc/graphrpc";
+
+// Graph is a service that can be used to query information about the
+// Lightning Network channel graph.
+service Graph {
+    /*
+    Stats returns some statistics about the known channel graph.
+    */
+    rpc Stats (StatsReq) returns (StatsResp);
+}
+
+message StatsReq {
+}
+
+message StatsResp {
+    /*
+    The current number of nodes considered zombies in the channel graph.
+    */
+    int64 num_zombies = 1;
+}

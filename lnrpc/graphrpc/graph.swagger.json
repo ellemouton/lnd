@@ -1,0 +1,85 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "graphrpc/graph.proto",
+    "version": "version not set"
+  },
+  "tags": [
+    {
+      "name": "Graph"
+    }
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {
+    "/v2/graph/stats": {
+      "get": {
+        "summary": "Stats returns some statistics about the known channel graph.",
+        "operationId": "Graph_Stats",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/graphrpcStatsResp"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "Graph"
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "graphrpcStatsResp": {
+      "type": "object",
+      "properties": {
+        "num_zombies": {
+          "type": "string",
+          "format": "int64",
+          "description": "The current number of nodes considered zombies in the channel graph."
+        }
+      }
+    },
+    "protobufAny": {
+      "type": "object",
+      "properties": {
+        "type_url": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string",
+          "format": "byte"
+        }
+      }
+    },
+    "rpcStatus": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/protobufAny"
+          }
+        }
+      }
+    }
+  }
+}

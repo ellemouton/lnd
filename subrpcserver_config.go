@@ -19,6 +19,7 @@ import (
 	"github.com/lightningnetwork/lnd/lnrpc/autopilotrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/chainrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/devrpc"
+	"github.com/lightningnetwork/lnd/lnrpc/graphrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/invoicesrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/neutrinorpc"
 	"github.com/lightningnetwork/lnd/lnrpc/peersrpc"
@@ -95,6 +96,8 @@ type subRPCServerConfigs struct {
 	// developers manipulate LND state that is normally not possible.
 	// Should only be used for development purposes.
 	DevRPC *devrpc.Config `group:"devrpc" namespace:"devrpc"`
+
+	GraphRPC *graphrpc.Config `group:"graphrpc" namespace:"graphrpc"`
 }
 
 // PopulateDependencies attempts to iterate through all the sub-server configs
@@ -361,6 +364,12 @@ func (s *subRPCServerConfigs) PopulateDependencies(cfg *Config,
 
 			subCfgValue.FieldByName("UpdateNodeAnnouncement").Set(
 				reflect.ValueOf(updateNodeAnnouncement),
+			)
+
+		case *graphrpc.Config:
+			subCfgValue := extractReflectValue(subCfg)
+			subCfgValue.FieldByName("GraphDB").Set(
+				reflect.ValueOf(graphDB),
 			)
 
 		default:
