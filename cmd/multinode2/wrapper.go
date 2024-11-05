@@ -70,7 +70,14 @@ func (r *remoteWrapper) ForEachChannel(cb func(*models.ChannelEdgeInfo, *models.
 }
 
 func (r *remoteWrapper) HasLightningNode(ctx context.Context, nodePub [33]byte) (time.Time, bool, error) {
-	return r.local.HasLightningNode(ctx, nodePub)
+	resp, err := r.conn.HasLightningNode(ctx, &graphrpc.HasLightningNodeReq{
+		PubKey: nodePub[:],
+	})
+	if err != nil {
+		return time.Time{}, false, err
+	}
+
+	return time.Unix(int64(resp.LastUpdate), 0), resp.Known, nil
 }
 
 func (r *remoteWrapper) NumZombies(ctx context.Context) (uint64, error) {

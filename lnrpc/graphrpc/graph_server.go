@@ -9,6 +9,7 @@ import (
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/lightningnetwork/lnd/lnrpc"
+	"github.com/lightningnetwork/lnd/routing/route"
 	"google.golang.org/grpc"
 	"gopkg.in/macaroon-bakery.v2/bakery"
 )
@@ -25,6 +26,10 @@ var (
 	// macPermissions maps RPC calls to the permissions they require.
 	macPermissions = map[string][]bakery.Op{
 		"/graphrpc.Graph/Stats": {{
+			Entity: "graph",
+			Action: "read",
+		}},
+		"/graphrpc.Graph/HasLightningNode": {{
 			Entity: "graph",
 			Action: "read",
 		}},
@@ -168,5 +173,24 @@ func (s *Server) Stats(ctx context.Context, _ *StatsReq) (*StatsResp, error) {
 
 	return &StatsResp{
 		NumZombies: numZombies,
+	}, nil
+}
+
+func (s *Server) HasLightningNode(ctx context.Context,
+	req *HasLightningNodeReq) (*HasLightningNodeResp, error) {
+
+	pub, err := route.NewVertexFromBytes(req.PubKey)
+	if err != nil {
+		return nil, err
+	}
+
+	lastUpdateTime, hasNode, err := s.cfg.GraphDB.HasLightningNode(ctx, pub)
+	if err != nil {
+		return nil, err
+	}
+
+	return &HasLightningNodeResp{
+		Known:      hasNode,
+		LastUpdate: uint32(lastUpdateTime.Unix()),
 	}, nil
 }
