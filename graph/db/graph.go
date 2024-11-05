@@ -2,6 +2,7 @@ package graphdb
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -408,7 +409,7 @@ func initChannelGraph(db kvdb.Backend) error {
 // will be nil.
 //
 // NOTE: this is part of the graphsession.ReadOnlyGraph interface.
-func (c *ChannelGraph) NewReadTx() (RTx, error) {
+func (c *ChannelGraph) NewReadTx(_ context.Context) (RTx, error) {
 	if c.graphCache != nil {
 		return NewKVDBRTx(nil), nil
 	}
@@ -3818,7 +3819,7 @@ func isZombieEdge(zombieIndex kvdb.RBucket,
 }
 
 // NumZombies returns the current number of zombie channels in the graph.
-func (c *ChannelGraph) NumZombies() (uint64, error) {
+func (c *ChannelGraph) NumZombies(_ context.Context) (uint64, error) {
 	var numZombies uint64
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		edges := tx.ReadBucket(edgeBucket)

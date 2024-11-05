@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net"
 	"time"
 
@@ -20,8 +21,8 @@ type remoteWrapper struct {
 	local *graphdb.ChannelGraph
 }
 
-func (r *remoteWrapper) NewReadTx() (graphdb.RTx, error) {
-	return r.local.NewReadTx()
+func (r *remoteWrapper) NewReadTx(ctx context.Context) (graphdb.RTx, error) {
+	return r.local.NewReadTx(ctx)
 }
 
 func (r *remoteWrapper) ForEachNodeDirectedChannel(tx graphdb.RTx, node route.Vertex, cb func(channel *graphdb.DirectedChannel) error) error {
@@ -72,8 +73,8 @@ func (r *remoteWrapper) HasLightningNode(nodePub [33]byte) (time.Time, bool, err
 	return r.local.HasLightningNode(nodePub)
 }
 
-func (r *remoteWrapper) NumZombies() (uint64, error) {
-	return r.local.NumZombies()
+func (r *remoteWrapper) NumZombies(ctx context.Context) (uint64, error) {
+	return r.local.NumZombies(ctx)
 }
 
 func (r *remoteWrapper) LookupAlias(pub *btcec.PublicKey) (string, error) {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net"
 	"sync"
@@ -43,8 +44,8 @@ func NewGraphBackend(local *graphdb.ChannelGraph,
 // the backing graph.
 //
 // NOTE: this is part of the graphsession.ReadOnlyGraph interface.
-func (g *GraphSourceMux) NewReadTx() (graphdb.RTx, error) {
-	return newRTxSet(g.remote, g.local)
+func (g *GraphSourceMux) NewReadTx(ctx context.Context) (graphdb.RTx, error) {
+	return newRTxSet(ctx, g.remote, g.local)
 }
 
 // ForEachNodeDirectedChannel iterates through all channels of a given
@@ -412,8 +413,8 @@ func (g *GraphSourceMux) HasLightningNode(nodePub [33]byte) (time.Time, bool, er
 // graph. This only queries the remote graph.
 //
 // NOTE: this is part of the GraphSource interface.
-func (g *GraphSourceMux) NumZombies() (uint64, error) {
-	return g.remote.NumZombies()
+func (g *GraphSourceMux) NumZombies(ctx context.Context) (uint64, error) {
+	return g.remote.NumZombies(ctx)
 }
 
 // LookupAlias attempts to return the alias as advertised by the target node.
@@ -459,7 +460,7 @@ func (g *GraphSourceMux) selfNodePub() (route.Vertex, error) {
 }
 
 type rTxConstructor interface {
-	NewReadTx() (graphdb.RTx, error)
+	NewReadTx(ctx context.Context) (graphdb.RTx, error)
 }
 
 // rTxSet is an implementation of graphdb.RTx which is backed a read transaction
@@ -471,15 +472,15 @@ type rTxSet struct {
 
 // newMultiRTx uses the given rTxConstructors to begin a read transaction for
 // each and returns a multiRTx that represents this open set of transactions.
-func newRTxSet(localConstructor, remoteConstructor rTxConstructor) (*rTxSet,
-	error) {
+func newRTxSet(ctx context.Context, localConstructor,
+	remoteConstructor rTxConstructor) (*rTxSet, error) {
 
-	localRTx, err := localConstructor.NewReadTx()
+	localRTx, err := localConstructor.NewReadTx(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	remoteRTx, err := remoteConstructor.NewReadTx()
+	remoteRTx, err := remoteConstructor.NewReadTx(ctx)
 	if err != nil {
 		_ = localRTx.Close()
 

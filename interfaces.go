@@ -1,6 +1,7 @@
 package lnd
 
 import (
+	"context"
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -39,7 +40,7 @@ type GraphSource interface {
 
 	// NumZombies returns the current number of zombie channels in the
 	// graph.
-	NumZombies() (uint64, error)
+	NumZombies(ctx context.Context) (uint64, error)
 
 	// LookupAlias attempts to return the alias as advertised by the target
 	// node. graphdb.ErrNodeAliasNotFound is returned if the alias is not

@@ -1,6 +1,7 @@
 package graphsession
 
 import (
+	"context"
 	"fmt"
 
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
@@ -30,7 +31,7 @@ func NewGraphSessionFactory(graph ReadOnlyGraph) routing.GraphSessionFactory {
 //
 // NOTE: This is part of the routing.GraphSessionFactory interface.
 func (g *Factory) NewGraphSession() (routing.Graph, func() error, error) {
-	tx, err := g.graph.NewReadTx()
+	tx, err := g.graph.NewReadTx(context.TODO())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -108,7 +109,7 @@ type ReadOnlyGraph interface {
 	// NewReadTx returns a new read transaction that can be used with the
 	// graph backend. Close MUST be called on the transaction once it is no
 	// longer needed.
-	NewReadTx() (graphdb.RTx, error)
+	NewReadTx(ctx context.Context) (graphdb.RTx, error)
 
 	graph
 }

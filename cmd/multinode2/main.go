@@ -37,8 +37,8 @@ func main() {
 }
 
 func connectToGraphRPC() (graphrpc.GraphClient, error) {
-	macPath := "/Users/elle/.lnd-dev-graph/data/chain/bitcoin/regtest"
-	tlsCertPath := "/Users/elle/.lnd-dev-graph"
+	macPath := "/Users/elle/.lnd-dev-graph/data/chain/bitcoin/regtest/admin.macaroon"
+	tlsCertPath := "/Users/elle/.lnd-dev-graph/tls.cert"
 
 	tlsCert, err := os.ReadFile(tlsCertPath)
 	if err != nil {

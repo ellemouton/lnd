@@ -6970,7 +6970,7 @@ func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 	}
 
 	// Query the graph for the current number of zombie channels.
-	numZombies, err := graph.NumZombies()
+	numZombies, err := graph.NumZombies(ctx)
 	if err != nil {
 		return nil, err
 	}
