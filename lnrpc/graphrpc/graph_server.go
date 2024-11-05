@@ -159,3 +159,14 @@ func (r *ServerShell) CreateSubServer(
 
 	return subServer, macPermissions, nil
 }
+
+func (s *Server) Stats(ctx context.Context, _ *StatsReq) (*StatsResp, error) {
+	numZombies, err := s.cfg.GraphDB.NumZombies(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &StatsResp{
+		NumZombies: numZombies,
+	}, nil
+}

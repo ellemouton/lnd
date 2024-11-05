@@ -138,6 +138,10 @@ var (
 			Entity: "macaroon",
 			Action: "read",
 		},
+		{
+			Entity: "graph",
+			Action: "read",
+		},
 	}
 
 	// writePermissions is a slice of all entities that allow write

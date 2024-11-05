@@ -46,7 +46,7 @@
       "properties": {
         "num_zombies": {
           "type": "string",
-          "format": "int64",
+          "format": "uint64",
           "description": "The current number of nodes considered zombies in the channel graph."
         }
       }

@@ -20,5 +20,5 @@ message StatsResp {
     /*
     The current number of nodes considered zombies in the channel graph.
     */
-    int64 num_zombies = 1;
+    uint64 num_zombies = 1;
 }

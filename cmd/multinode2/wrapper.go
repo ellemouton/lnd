@@ -74,7 +74,12 @@ func (r *remoteWrapper) HasLightningNode(nodePub [33]byte) (time.Time, bool, err
 }
 
 func (r *remoteWrapper) NumZombies(ctx context.Context) (uint64, error) {
-	return r.local.NumZombies(ctx)
+	stats, err := r.conn.Stats(ctx, &graphrpc.StatsReq{})
+	if err != nil {
+		return 0, err
+	}
+
+	return stats.NumZombies, nil
 }
 
 func (r *remoteWrapper) LookupAlias(pub *btcec.PublicKey) (string, error) {
