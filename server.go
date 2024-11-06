@@ -402,7 +402,6 @@ func (s *server) updatePersistentPeerAddrs() error {
 							&lnwire.NetAddress{
 								IdentityKey: update.IdentityKey,
 								Address:     addr,
-								ChainNet:    s.cfg.ActiveNetParams.Net,
 							},
 						)
 					}
@@ -2327,7 +2326,6 @@ func (s *server) Start() error {
 			peerAddr := &lnwire.NetAddress{
 				IdentityKey: parsedPubkey,
 				Address:     addr,
-				ChainNet:    s.cfg.ActiveNetParams.Net,
 			}
 
 			err = s.ConnectToPeer(
@@ -2787,8 +2785,7 @@ func initNetworkBootstrappers(s *server) ([]discovery.NetworkPeerBootstrapper, e
 	// First, we'll create an instance of the ChannelGraphBootstrapper as
 	// this can be used by default if we've already partially seeded the
 	// network.
-	chanGraph := autopilot.ChannelGraphFromGraphSource(s.graphSource)
-	graphBootstrapper, err := discovery.NewGraphBootstrapper(chanGraph)
+	graphBootstrapper, err := s.graphSource.GraphBootstrapper(context.TODO())
 	if err != nil {
 		return nil, err
 	}
@@ -4078,7 +4075,6 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 	peerAddr := &lnwire.NetAddress{
 		IdentityKey: pubKey,
 		Address:     addr,
-		ChainNet:    s.cfg.ActiveNetParams.Net,
 	}
 
 	// With the brontide connection established, we'll now craft the feature
@@ -4473,7 +4469,6 @@ func (s *server) peerTerminationWatcher(p *peer.Brontide, ready chan struct{}) {
 			&lnwire.NetAddress{
 				IdentityKey: p.IdentityKey(),
 				Address:     addr,
-				ChainNet:    p.NetAddress().ChainNet,
 			},
 		)
 	}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/lightningnetwork/lnd/autopilot"
+	"github.com/lightningnetwork/lnd/discovery"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -17,10 +18,20 @@ type StatsCollector interface {
 		excludeNodes map[route.Vertex]struct{},
 		excludeChannels map[uint64]struct{}) (*models.NetworkStats,
 		error)
+
+	GraphBootstrapper(ctx context.Context) (discovery.NetworkPeerBootstrapper, error)
 }
 
 type ChanGraphStatsCollector struct {
 	*graphdb.ChannelGraph
+}
+
+var _ StatsCollector = (*ChanGraphStatsCollector)(nil)
+
+func (c *ChanGraphStatsCollector) GraphBootstrapper(_ context.Context) (discovery.NetworkPeerBootstrapper, error) {
+	chanGraph := autopilot.ChannelGraphFromGraphSource(c.ChannelGraph)
+
+	return discovery.NewGraphBootstrapper(chanGraph)
 }
 
 func (c *ChanGraphStatsCollector) NetworkStats(ctx context.Context,

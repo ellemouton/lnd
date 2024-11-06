@@ -3,5 +3,7 @@ config_version: 3
 
 http:
   rules:
-    - selector: graphrpc.Graph.Stats
-      get: "/v2/graph/stats"
+    - selector: graphrpc.Graph.BootstrapAddrs
+      get: "/v2/graph/bootstrapaddrs"
+    - selector: graphrpc.Graph.BoostrapperName
+      get: "/v2/graph/bootstrappername"

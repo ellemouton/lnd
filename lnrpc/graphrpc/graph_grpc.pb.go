@@ -18,8 +18,8 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type GraphClient interface {
-	// Stats returns some statistics about the known channel graph.
-	Stats(ctx context.Context, in *StatsReq, opts ...grpc.CallOption) (*StatsResp, error)
+	BootstrapAddrs(ctx context.Context, in *BootstrapAddrsReq, opts ...grpc.CallOption) (*BootstrapAddrsResp, error)
+	BoostrapperName(ctx context.Context, in *BoostrapperNameReq, opts ...grpc.CallOption) (*BoostrapperNameResp, error)
 }
 
 type graphClient struct {
@@ -30,9 +30,18 @@ func NewGraphClient(cc grpc.ClientConnInterface) GraphClient {
 	return &graphClient{cc}
 }
 
-func (c *graphClient) Stats(ctx context.Context, in *StatsReq, opts ...grpc.CallOption) (*StatsResp, error) {
-	out := new(StatsResp)
-	err := c.cc.Invoke(ctx, "/graphrpc.Graph/Stats", in, out, opts...)
+func (c *graphClient) BootstrapAddrs(ctx context.Context, in *BootstrapAddrsReq, opts ...grpc.CallOption) (*BootstrapAddrsResp, error) {
+	out := new(BootstrapAddrsResp)
+	err := c.cc.Invoke(ctx, "/graphrpc.Graph/BootstrapAddrs", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *graphClient) BoostrapperName(ctx context.Context, in *BoostrapperNameReq, opts ...grpc.CallOption) (*BoostrapperNameResp, error) {
+	out := new(BoostrapperNameResp)
+	err := c.cc.Invoke(ctx, "/graphrpc.Graph/BoostrapperName", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -43,8 +52,8 @@ func (c *graphClient) Stats(ctx context.Context, in *StatsReq, opts ...grpc.Call
 // All implementations must embed UnimplementedGraphServer
 // for forward compatibility
 type GraphServer interface {
-	// Stats returns some statistics about the known channel graph.
-	Stats(context.Context, *StatsReq) (*StatsResp, error)
+	BootstrapAddrs(context.Context, *BootstrapAddrsReq) (*BootstrapAddrsResp, error)
+	BoostrapperName(context.Context, *BoostrapperNameReq) (*BoostrapperNameResp, error)
 	mustEmbedUnimplementedGraphServer()
 }
 
@@ -52,8 +61,11 @@ type GraphServer interface {
 type UnimplementedGraphServer struct {
 }
 
-func (UnimplementedGraphServer) Stats(context.Context, *StatsReq) (*StatsResp, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Stats not implemented")
+func (UnimplementedGraphServer) BootstrapAddrs(context.Context, *BootstrapAddrsReq) (*BootstrapAddrsResp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BootstrapAddrs not implemented")
+}
+func (UnimplementedGraphServer) BoostrapperName(context.Context, *BoostrapperNameReq) (*BoostrapperNameResp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BoostrapperName not implemented")
 }
 func (UnimplementedGraphServer) mustEmbedUnimplementedGraphServer() {}
 
@@ -68,20 +80,38 @@ func RegisterGraphServer(s grpc.ServiceRegistrar, srv GraphServer) {
 	s.RegisterService(&Graph_ServiceDesc, srv)
 }
 
-func _Graph_Stats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(StatsReq)
+func _Graph_BootstrapAddrs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BootstrapAddrsReq)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(GraphServer).Stats(ctx, in)
+		return srv.(GraphServer).BootstrapAddrs(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/graphrpc.Graph/Stats",
+		FullMethod: "/graphrpc.Graph/BootstrapAddrs",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(GraphServer).Stats(ctx, req.(*StatsReq))
+		return srv.(GraphServer).BootstrapAddrs(ctx, req.(*BootstrapAddrsReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Graph_BoostrapperName_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BoostrapperNameReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GraphServer).BoostrapperName(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/graphrpc.Graph/BoostrapperName",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GraphServer).BoostrapperName(ctx, req.(*BoostrapperNameReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -94,8 +124,12 @@ var Graph_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*GraphServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "Stats",
-			Handler:    _Graph_Stats_Handler,
+			MethodName: "BootstrapAddrs",
+			Handler:    _Graph_BootstrapAddrs_Handler,
+		},
+		{
+			MethodName: "BoostrapperName",
+			Handler:    _Graph_BoostrapperName_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

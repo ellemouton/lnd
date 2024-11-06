@@ -13,6 +13,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/lightningnetwork/lnd"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/discovery"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -32,6 +33,10 @@ func (g *GraphSourceMux) NetworkStats(ctx context.Context, excludeNodes map[rout
 	// TODO(elle): need to call local first & build exclude lists to send to
 	// remote.
 	return g.remote.NetworkStats(ctx, excludeNodes, excludeChannels)
+}
+
+func (g *GraphSourceMux) GraphBootstrapper(ctx context.Context) (discovery.NetworkPeerBootstrapper, error) {
+	return g.remote.GraphBootstrapper(ctx)
 }
 
 // A compile-time check to ensure that GraphSourceMux implements GraphSource.

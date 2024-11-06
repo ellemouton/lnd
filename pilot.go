@@ -208,7 +208,6 @@ func initAutoPilot(svr *server, cfg *lncfg.AutoPilot,
 
 			lnAddr := &lnwire.NetAddress{
 				IdentityKey: target,
-				ChainNet:    netParams.Net,
 			}
 
 			// We'll attempt to successively connect to each of the

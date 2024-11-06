@@ -11,6 +11,8 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd"
+	"github.com/lightningnetwork/lnd/autopilot"
+	"github.com/lightningnetwork/lnd/discovery"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -30,6 +32,65 @@ type remoteWrapper struct {
 	net tor.Net
 
 	local *graphdb.ChannelGraph
+}
+
+func (r *remoteWrapper) GraphBootstrapper(ctx context.Context) (discovery.NetworkPeerBootstrapper, error) {
+	resp, err := r.graphConn.BoostrapperName(ctx, &graphrpc.BoostrapperNameReq{})
+	if err != nil {
+		return nil, err
+	}
+
+	return &bootstrapper{
+		name:          resp.Name,
+		remoteWrapper: r,
+	}, nil
+}
+
+type bootstrapper struct {
+	name string
+	*remoteWrapper
+}
+
+func (r *bootstrapper) SampleNodeAddrs(numAddrs uint32,
+	ignore map[autopilot.NodeID]struct{}) ([]*lnwire.NetAddress, error) {
+
+	var toIgnore [][]byte
+	for id := range ignore {
+		toIgnore = append(toIgnore, id[:])
+	}
+
+	resp, err := r.graphConn.BootstrapAddrs(
+		context.Background(), &graphrpc.BootstrapAddrsReq{
+			NumAddrs:    numAddrs,
+			IgnoreNodes: toIgnore,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	netAddrs := make([]*lnwire.NetAddress, 0, len(resp.Addrs))
+	for _, addr := range resp.Addrs {
+		netAddr, err := r.net.ResolveTCPAddr(addr.Address.Network, addr.Address.Addr)
+		if err != nil {
+			return nil, err
+		}
+		idKey, err := btcec.ParsePubKey(addr.NodeId)
+		if err != nil {
+			return nil, err
+		}
+		netAddrs = append(netAddrs, &lnwire.NetAddress{
+			IdentityKey: idKey,
+			Address:     netAddr,
+		})
+	}
+
+	return netAddrs, nil
+
+}
+
+func (r *bootstrapper) Name() string {
+	return r.name
 }
 
 func (r *remoteWrapper) NetworkStats(ctx context.Context, excludeNodes map[route.Vertex]struct{}, excludeChannels map[uint64]struct{}) (*models.NetworkStats, error) {

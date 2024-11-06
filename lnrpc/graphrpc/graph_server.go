@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"github.com/lightningnetwork/lnd/autopilot"
+	"github.com/lightningnetwork/lnd/discovery"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"google.golang.org/grpc"
 	"gopkg.in/macaroon-bakery.v2/bakery"
@@ -44,6 +46,8 @@ type Server struct {
 	UnimplementedGraphServer
 
 	cfg *Config
+
+	bootstrapper discovery.NetworkPeerBootstrapper
 }
 
 // A compile-time check to ensure that Server fully implements the GraphServer
@@ -56,8 +60,16 @@ var _ GraphServer = (*Server)(nil)
 // we'll create them on start up. If we're unable to locate, or create the
 // macaroons we need, then we'll return with an error.
 func New(cfg *Config) (*Server, lnrpc.MacaroonPerms, error) {
+	chanGraph := autopilot.ChannelGraphFromGraphSource(cfg.GraphDB)
+
+	bootstrapper, err := discovery.NewGraphBootstrapper(chanGraph)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	server := &Server{
-		cfg: cfg,
+		cfg:          cfg,
+		bootstrapper: bootstrapper,
 	}
 
 	return server, macPermissions, nil
@@ -153,4 +165,42 @@ func (r *ServerShell) CreateSubServer(
 	r.GraphServer = subServer
 
 	return subServer, macPermissions, nil
+}
+
+func (s *Server) BoostrapperName(ctx context.Context, req *BoostrapperNameReq) (
+	*BoostrapperNameResp, error) {
+
+	return &BoostrapperNameResp{
+		Name: s.bootstrapper.Name(),
+	}, nil
+}
+
+func (s *Server) BootstrapAddrs(ctx context.Context, req *BootstrapAddrsReq) (
+	*BootstrapAddrsResp, error) {
+
+	ignore := make(map[autopilot.NodeID]struct{})
+	for _, addr := range req.IgnoreNodes {
+		var id autopilot.NodeID
+		copy(id[:], addr)
+
+		ignore[id] = struct{}{}
+	}
+
+	addrs, err := s.bootstrapper.SampleNodeAddrs(req.NumAddrs, ignore)
+	if err != nil {
+		return nil, err
+	}
+
+	netAddrs := make([]*NetAddress, 0, len(addrs))
+	for _, addr := range addrs {
+		netAddrs = append(netAddrs, &NetAddress{
+			NodeId: addr.IdentityKey.SerializeCompressed(),
+			Address: &lnrpc.NodeAddress{
+				Network: addr.Network(),
+				Addr:    addr.String(),
+			},
+		})
+	}
+
+	return &BootstrapAddrsResp{Addrs: netAddrs}, nil
 }

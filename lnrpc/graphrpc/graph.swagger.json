@@ -16,15 +16,56 @@
     "application/json"
   ],
   "paths": {
-    "/v2/graph/stats": {
+    "/v2/graph/bootstrapaddrs": {
       "get": {
-        "summary": "Stats returns some statistics about the known channel graph.",
-        "operationId": "Graph_Stats",
+        "operationId": "Graph_BootstrapAddrs",
         "responses": {
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/graphrpcStatsResp"
+              "$ref": "#/definitions/graphrpcBootstrapAddrsResp"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "num_addrs",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int64"
+          },
+          {
+            "name": "ignore_nodes",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "byte"
+            },
+            "collectionFormat": "multi"
+          }
+        ],
+        "tags": [
+          "Graph"
+        ]
+      }
+    },
+    "/v2/graph/bootstrappername": {
+      "get": {
+        "operationId": "Graph_BoostrapperName",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/graphrpcBoostrapperNameResp"
             }
           },
           "default": {
@@ -41,13 +82,45 @@
     }
   },
   "definitions": {
-    "graphrpcStatsResp": {
+    "graphrpcBoostrapperNameResp": {
       "type": "object",
       "properties": {
-        "num_zombies": {
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "graphrpcBootstrapAddrsResp": {
+      "type": "object",
+      "properties": {
+        "addrs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/graphrpcNetAddress"
+          }
+        }
+      }
+    },
+    "graphrpcNetAddress": {
+      "type": "object",
+      "properties": {
+        "node_id": {
           "type": "string",
-          "format": "uint64",
-          "description": "The current number of nodes considered zombies in the channel graph."
+          "format": "byte"
+        },
+        "address": {
+          "$ref": "#/definitions/lnrpcNodeAddress"
+        }
+      }
+    },
+    "lnrpcNodeAddress": {
+      "type": "object",
+      "properties": {
+        "network": {
+          "type": "string"
+        },
+        "addr": {
+          "type": "string"
         }
       }
     },
