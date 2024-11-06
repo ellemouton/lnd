@@ -126,6 +126,17 @@ func (r *remoteWrapper) ForEachNodeCached(ctx context.Context,
 	return r.local.ForEachNodeCached(ctx, cb)
 }
 
+func (r *remoteWrapper) FetchChannelEdgesByOutpoint(ctx context.Context, point *wire.OutPoint) (*models.ChannelEdgeInfo, *models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error) {
+	info, err := r.lnConn.GetChanInfo(ctx, &lnrpc.ChanInfoRequest{
+		ChanPoint: point.String(),
+	})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return unmarshalChannelInfo(info)
+}
+
 func (r *remoteWrapper) FetchChannelEdgesByID(ctx context.Context, chanID uint64) (*models.ChannelEdgeInfo, *models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error) {
 	info, err := r.lnConn.GetChanInfo(ctx, &lnrpc.ChanInfoRequest{
 		ChanId: chanID,
@@ -134,6 +145,10 @@ func (r *remoteWrapper) FetchChannelEdgesByID(ctx context.Context, chanID uint64
 		return nil, nil, nil, err
 	}
 
+	return unmarshalChannelInfo(info)
+}
+
+func unmarshalChannelInfo(info *lnrpc.ChannelEdge) (*models.ChannelEdgeInfo, *models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error) {
 	chanPoint, err := wire.NewOutPointFromString(info.ChanPoint)
 	if err != nil {
 		return nil, nil, nil, err
@@ -229,10 +244,6 @@ func (r *remoteWrapper) IsPublicNode(ctx context.Context, pubKey [33]byte) (bool
 	}
 
 	return resp.IsPublic, nil
-}
-
-func (r *remoteWrapper) FetchChannelEdgesByOutpoint(point *wire.OutPoint) (*models.ChannelEdgeInfo, *models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error) {
-	return r.local.FetchChannelEdgesByOutpoint(point)
 }
 
 func (r *remoteWrapper) AddrsForNode(ctx context.Context, nodePub *btcec.PublicKey) (bool, []net.Addr, error) {

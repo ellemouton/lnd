@@ -6759,7 +6759,7 @@ func (r *rpcServer) GetChanInfo(ctx context.Context,
 			return nil, err
 		}
 		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByOutpoint(
-			chanPoint,
+			ctx, chanPoint,
 		)
 
 	default:

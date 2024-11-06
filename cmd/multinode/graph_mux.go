@@ -330,16 +330,16 @@ func (g *GraphSourceMux) IsPublicNode(ctx context.Context,
 // channel edge policies for a given outpoint.
 //
 // NOTE: this is part of the GraphSource interface.
-func (g *GraphSourceMux) FetchChannelEdgesByOutpoint(point *wire.OutPoint) (
+func (g *GraphSourceMux) FetchChannelEdgesByOutpoint(ctx context.Context, point *wire.OutPoint) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
-	edge, p1, p2, err := g.local.FetchChannelEdgesByOutpoint(point)
+	edge, p1, p2, err := g.local.FetchChannelEdgesByOutpoint(ctx, point)
 	if err == nil {
 		return edge, p1, p2, nil
 	}
 
-	return g.remote.FetchChannelEdgesByOutpoint(point)
+	return g.remote.FetchChannelEdgesByOutpoint(ctx, point)
 }
 
 // AddrsForNode returns all known addresses for the target node public key. The
