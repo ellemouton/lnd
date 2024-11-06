@@ -21,6 +21,7 @@ type GraphSource interface {
 	invoicesrpc.GraphSource
 	netann.ChannelGraph
 	channeldb.AddrSource
+	StatsCollector
 
 	// ForEachChannel iterates through all the channel edges stored within
 	// the graph and invokes the passed callback for each edge. If the
@@ -37,10 +38,6 @@ type GraphSource interface {
 	// updated is returned along with a true boolean. Otherwise, an empty
 	// time.Time is returned with a false boolean.
 	HasLightningNode(ctx context.Context, nodePub [33]byte) (time.Time, bool, error)
-
-	// NumZombies returns the current number of zombie channels in the
-	// graph.
-	NumZombies(ctx context.Context) (uint64, error)
 
 	// LookupAlias attempts to return the alias as advertised by the target
 	// node. graphdb.ErrNodeAliasNotFound is returned if the alias is not
@@ -63,5 +60,5 @@ var _ Providers = (*server)(nil)
 //
 // NOTE: this method is part of the Providers interface.
 func (s *server) GraphSource() (GraphSource, error) {
-	return s.graphDB, nil
+	return &ChanGraphStatsCollector{ChannelGraph: s.graphDB}, nil
 }

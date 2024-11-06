@@ -48,6 +48,12 @@ func (g *GraphSourceMux) NewReadTx(ctx context.Context) (graphdb.RTx, error) {
 	return newRTxSet(ctx, g.remote, g.local)
 }
 
+func (g *GraphSourceMux) NetworkStats(ctx context.Context, excludeNodes map[route.Vertex]struct{}, excludeChannels map[uint64]struct{}) (*models.NetworkStats, error) {
+	// TODO(elle): need to call local first & build exclude lists to send to
+	// remote.
+	return g.remote.NetworkStats(ctx, excludeNodes, excludeChannels)
+}
+
 // ForEachNodeDirectedChannel iterates through all channels of a given
 // node, executing the passed callback on the directed edge representing
 // the channel and its incoming policy.
@@ -249,46 +255,6 @@ func (g *GraphSourceMux) ForEachNodeChannel(tx graphdb.RTx,
 	return g.remote.ForEachNodeChannel(rTx, nodePub, cb)
 }
 
-// TODO(elle): what about our private channels in direction from peer to us.
-func (g *GraphSourceMux) ForEachNodeCached(ctx context.Context,
-	cb func(node route.Vertex, chans map[uint64]*graphdb.DirectedChannel) error) error {
-
-	srcPub, err := g.selfNodePub()
-	if err != nil {
-		return err
-	}
-
-	// Only for our own node do we call our local DB for this, else use the
-	// remote.
-	ourChans := make(map[uint64]*graphdb.DirectedChannel)
-	err = g.local.ForEachNodeDirectedChannel(
-		ctx, nil, srcPub, func(channel *graphdb.DirectedChannel) error {
-			ourChans[channel.ChannelID] = channel
-
-			return nil
-		},
-	)
-	if err != nil {
-		return err
-	}
-
-	err = cb(srcPub, ourChans)
-	if err != nil {
-		return err
-	}
-
-	return g.remote.ForEachNodeCached(ctx, func(node route.Vertex,
-		chans map[uint64]*graphdb.DirectedChannel) error {
-
-		// Skip our own node.
-		if bytes.Equal(node[:], srcPub[:]) {
-			return nil
-		}
-
-		return cb(node, chans)
-	})
-}
-
 // FetchChannelEdgesByID attempts to look up the two directed edges for the
 // channel identified by the channel ID. If the channel can't be found, then
 // graphdb.ErrEdgeNotFound is returned.
@@ -413,14 +379,6 @@ func (g *GraphSourceMux) HasLightningNode(ctx context.Context, nodePub [33]byte)
 	}
 
 	return g.remote.HasLightningNode(ctx, nodePub)
-}
-
-// NumZombies returns the current number of zombie channels in the
-// graph. This only queries the remote graph.
-//
-// NOTE: this is part of the GraphSource interface.
-func (g *GraphSourceMux) NumZombies(ctx context.Context) (uint64, error) {
-	return g.remote.NumZombies(ctx)
 }
 
 // LookupAlias attempts to return the alias as advertised by the target node.

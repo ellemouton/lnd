@@ -3524,7 +3524,10 @@ message ChanInfoRequest {
 }
 
 message NetworkInfoRequest {
+    repeated uint64 exclude_chans = 1;
+    repeated bytes exclude_nodes = 2;
 }
+
 message NetworkInfo {
     uint32 graph_diameter = 1;
     double avg_out_degree = 2;

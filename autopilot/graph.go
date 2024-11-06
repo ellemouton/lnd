@@ -151,7 +151,7 @@ func (d *graphSourceChannelGraph) ForEachNode(cb func(Node) error) error {
 // databaseChannelGraphCached wraps a channeldb.ChannelGraph instance with the
 // necessary API to properly implement the autopilot.ChannelGraph interface.
 type databaseChannelGraphCached struct {
-	db GraphSource
+	db *graphdb.ChannelGraph
 }
 
 // A compile time assertion to ensure databaseChannelGraphCached meets the
@@ -160,7 +160,7 @@ var _ ChannelGraph = (*databaseChannelGraphCached)(nil)
 
 // ChannelGraphFromCachedGraphSource returns an instance of the
 // autopilot.ChannelGraph backed by a GraphSource.
-func ChannelGraphFromCachedGraphSource(db GraphSource) ChannelGraph {
+func ChannelGraphFromCachedGraphSource(db *graphdb.ChannelGraph) ChannelGraph {
 	return &databaseChannelGraphCached{
 		db: db,
 	}

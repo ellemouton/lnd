@@ -23,16 +23,7 @@ const (
 
 var (
 	// macPermissions maps RPC calls to the permissions they require.
-	macPermissions = map[string][]bakery.Op{
-		"/graphrpc.Graph/Stats": {{
-			Entity: "graph",
-			Action: "read",
-		}},
-		"/graphrpc.Graph/HasLightningNode": {{
-			Entity: "graph",
-			Action: "read",
-		}},
-	}
+	macPermissions = map[string][]bakery.Op{}
 )
 
 // ServerShell is a shell struct holding a reference to the actual sub-server.
@@ -162,15 +153,4 @@ func (r *ServerShell) CreateSubServer(
 	r.GraphServer = subServer
 
 	return subServer, macPermissions, nil
-}
-
-func (s *Server) Stats(ctx context.Context, _ *StatsReq) (*StatsResp, error) {
-	numZombies, err := s.cfg.GraphDB.NumZombies(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return &StatsResp{
-		NumZombies: numZombies,
-	}, nil
 }

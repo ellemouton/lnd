@@ -32,12 +32,64 @@ type remoteWrapper struct {
 	local *graphdb.ChannelGraph
 }
 
+func (r *remoteWrapper) NetworkStats(ctx context.Context, excludeNodes map[route.Vertex]struct{}, excludeChannels map[uint64]struct{}) (*models.NetworkStats, error) {
+	var (
+		exNodes [][]byte
+		exChans []uint64
+	)
+
+	for node := range excludeNodes {
+		exNodes = append(exNodes, node[:])
+	}
+
+	for chanID := range excludeChannels {
+		exChans = append(exChans, chanID)
+	}
+
+	info, err := r.lnConn.GetNetworkInfo(ctx, &lnrpc.NetworkInfoRequest{
+		ExcludeNodes: exNodes,
+		ExcludeChans: exChans,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.NetworkStats{
+		Diameter:             info.GraphDiameter,
+		MaxChanOut:           info.MaxOutDegree,
+		NumNodes:             info.NumNodes,
+		NumChannels:          info.NumChannels,
+		TotalNetworkCapacity: btcutil.Amount(info.TotalNetworkCapacity),
+		MinChanSize:          btcutil.Amount(info.MinChannelSize),
+		MaxChanSize:          btcutil.Amount(info.MaxChannelSize),
+		MedianChanSize:       btcutil.Amount(info.MedianChannelSizeSat),
+		NumZombies:           info.NumZombieChans,
+	}, nil
+}
+
+// Pathfinding.
 func (r *remoteWrapper) NewReadTx(ctx context.Context) (graphdb.RTx, error) {
 	return r.local.NewReadTx(ctx)
 }
 
+// Pathfinding.
 func (r *remoteWrapper) ForEachNodeDirectedChannel(ctx context.Context, tx graphdb.RTx, node route.Vertex, cb func(channel *graphdb.DirectedChannel) error) error {
 	return r.local.ForEachNodeDirectedChannel(ctx, tx, node, cb)
+}
+
+// DescribeGraph & autopilot.
+func (r *remoteWrapper) ForEachNode(tx graphdb.RTx, cb func(graphdb.RTx, *models.LightningNode) error) error {
+	return r.local.ForEachNode(tx, cb)
+}
+
+// DescribeGraph.
+func (r *remoteWrapper) ForEachChannel(cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
+	return r.local.ForEachChannel(cb)
+}
+
+// GetNodeInfo & autopilot.
+func (r *remoteWrapper) ForEachNodeChannel(tx graphdb.RTx, nodePub route.Vertex, cb func(graphdb.RTx, *models.ChannelEdgeInfo, *models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
+	return r.local.ForEachNodeChannel(tx, nodePub, cb)
 }
 
 func (r *remoteWrapper) FetchNodeFeatures(ctx context.Context, tx graphdb.RTx, node route.Vertex) (*lnwire.FeatureVector, error) {
@@ -52,10 +104,6 @@ func (r *remoteWrapper) FetchNodeFeatures(ctx context.Context, tx graphdb.RTx, n
 	}
 
 	return unmarshalFeatures(resp.Node.Features), nil
-}
-
-func (r *remoteWrapper) ForEachNode(tx graphdb.RTx, cb func(graphdb.RTx, *models.LightningNode) error) error {
-	return r.local.ForEachNode(tx, cb)
 }
 
 func (r *remoteWrapper) FetchLightningNode(ctx context.Context, tx graphdb.RTx,
@@ -113,17 +161,6 @@ func unmarshalFeatures(features map[uint32]*lnrpc.Feature) *lnwire.FeatureVector
 	return lnwire.NewFeatureVector(
 		lnwire.NewRawFeatureVector(featureBits...), featureNames,
 	)
-}
-
-func (r *remoteWrapper) ForEachNodeChannel(tx graphdb.RTx, nodePub route.Vertex, cb func(graphdb.RTx, *models.ChannelEdgeInfo, *models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
-	return r.local.ForEachNodeChannel(tx, nodePub, cb)
-}
-
-func (r *remoteWrapper) ForEachNodeCached(ctx context.Context,
-	cb func(node route.Vertex,
-		chans map[uint64]*graphdb.DirectedChannel) error) error {
-
-	return r.local.ForEachNodeCached(ctx, cb)
 }
 
 func (r *remoteWrapper) FetchChannelEdgesByOutpoint(ctx context.Context, point *wire.OutPoint) (*models.ChannelEdgeInfo, *models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error) {
@@ -278,10 +315,6 @@ func (r *remoteWrapper) unmarshalAddrs(addrs []*lnrpc.NodeAddress) ([]net.Addr, 
 	return netAddrs, nil
 }
 
-func (r *remoteWrapper) ForEachChannel(cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
-	return r.local.ForEachChannel(cb)
-}
-
 func (r *remoteWrapper) HasLightningNode(ctx context.Context, nodePub [33]byte) (time.Time, bool, error) {
 	resp, err := r.lnConn.GetNodeInfo(ctx, &lnrpc.NodeInfoRequest{
 		PubKey:          hex.EncodeToString(nodePub[:]),
@@ -294,15 +327,6 @@ func (r *remoteWrapper) HasLightningNode(ctx context.Context, nodePub [33]byte) 
 	}
 
 	return time.Unix(int64(resp.Node.LastUpdate), 0), true, nil
-}
-
-func (r *remoteWrapper) NumZombies(ctx context.Context) (uint64, error) {
-	stats, err := r.graphConn.Stats(ctx, &graphrpc.StatsReq{})
-	if err != nil {
-		return 0, err
-	}
-
-	return stats.NumZombies, nil
 }
 
 func (r *remoteWrapper) LookupAlias(ctx context.Context, pub *btcec.PublicKey) (

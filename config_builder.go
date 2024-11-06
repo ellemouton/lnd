@@ -269,7 +269,7 @@ func (d *DefaultWalletImpl) RegisterGrpcSubserver(s *grpc.Server) error {
 func (d *DefaultWalletImpl) Graph(_ context.Context,
 	dbs *DatabaseInstances) (GraphSource, error) {
 
-	return dbs.GraphDB, nil
+	return &ChanGraphStatsCollector{ChannelGraph: dbs.GraphDB}, nil
 }
 
 // ValidateMacaroon extracts the macaroon from the context's gRPC metadata,

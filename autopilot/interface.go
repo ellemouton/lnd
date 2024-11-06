@@ -250,12 +250,4 @@ type GraphSource interface {
 		cb func(graphdb.RTx, *models.ChannelEdgeInfo,
 			*models.ChannelEdgePolicy,
 			*models.ChannelEdgePolicy) error) error
-
-	// ForEachNodeCached iterates through all the stored vertices/nodes in
-	// the graph, executing the passed callback with each node encountered.
-	// If the callback returns an error, then the transaction is aborted
-	// and the iteration stops early. It utilizes the graph cache if one is
-	// available.
-	ForEachNodeCached(ctx context.Context, cb func(node route.Vertex,
-		chans map[uint64]*graphdb.DirectedChannel) error) error
 }
