@@ -2,6 +2,7 @@ package graphdb
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -127,7 +128,7 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 	dbNode, err := graph.FetchLightningNode(nil, testPub)
 	require.NoError(t, err, "unable to locate node")
 
-	_, exists, err := graph.HasLightningNode(dbNode.PubKeyBytes)
+	_, exists, err := graph.HasLightningNode(context.Background(), dbNode.PubKeyBytes)
 	if err != nil {
 		t.Fatalf("unable to query for node: %v", err)
 	} else if !exists {
@@ -179,7 +180,7 @@ func TestPartialNode(t *testing.T) {
 	dbNode, err := graph.FetchLightningNode(nil, testPub)
 	require.NoError(t, err, "unable to locate node")
 
-	_, exists, err := graph.HasLightningNode(dbNode.PubKeyBytes)
+	_, exists, err := graph.HasLightningNode(context.Background(), dbNode.PubKeyBytes)
 	if err != nil {
 		t.Fatalf("unable to query for node: %v", err)
 	} else if !exists {
@@ -3200,7 +3201,7 @@ func TestNodeIsPublic(t *testing.T) {
 		for _, node := range nodes {
 			for _, graph := range graphs {
 				isPublic, err := graph.IsPublicNode(
-					node.PubKeyBytes,
+					context.Background(), node.PubKeyBytes,
 				)
 				if err != nil {
 					t.Fatalf("unable to determine if "+
@@ -3513,7 +3514,7 @@ func TestEdgePolicyMissingMaxHtcl(t *testing.T) {
 func assertNumZombies(t *testing.T, graph *ChannelGraph, expZombies uint64) {
 	t.Helper()
 
-	numZombies, err := graph.NumZombies()
+	numZombies, err := graph.NumZombies(context.Background())
 	require.NoError(t, err, "unable to query number of zombies")
 
 	if numZombies != expZombies {

@@ -41,18 +41,6 @@
     }
   },
   "definitions": {
-    "graphrpcHasLightningNodeResp": {
-      "type": "object",
-      "properties": {
-        "known": {
-          "type": "boolean"
-        },
-        "last_update": {
-          "type": "integer",
-          "format": "int64"
-        }
-      }
-    },
     "graphrpcStatsResp": {
       "type": "object",
       "properties": {

@@ -1,6 +1,7 @@
 package autopilot
 
 import (
+	"context"
 	"encoding/hex"
 	"net"
 	"sort"
@@ -223,7 +224,7 @@ func (nc dbNodeCached) ForEachChannel(cb func(ChannelEdge) error) error {
 //
 // NOTE: Part of the autopilot.ChannelGraph interface.
 func (dc *databaseChannelGraphCached) ForEachNode(cb func(Node) error) error {
-	return dc.db.ForEachNodeCached(func(n route.Vertex,
+	return dc.db.ForEachNodeCached(context.TODO(), func(n route.Vertex,
 		channels map[uint64]*graphdb.DirectedChannel) error {
 
 		if len(channels) > 0 {

@@ -1,6 +1,7 @@
 package lnd
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/btcsuite/btcd/wire"
@@ -46,7 +47,7 @@ func (c *channelNotifier) SubscribeChans(startingChans map[wire.OutPoint]struct{
 	// confirmed channels.
 	sendChanOpenUpdate := func(newOrPendingChan *channeldb.OpenChannel) {
 		_, nodeAddrs, err := c.addrs.AddrsForNode(
-			newOrPendingChan.IdentityPub,
+			context.TODO(), newOrPendingChan.IdentityPub,
 		)
 		if err != nil {
 			pub := newOrPendingChan.IdentityPub

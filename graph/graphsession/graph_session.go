@@ -83,20 +83,20 @@ func (g *session) close() error {
 // ForEachNodeChannel calls the callback for every channel of the given node.
 //
 // NOTE: Part of the routing.Graph interface.
-func (g *session) ForEachNodeChannel(nodePub route.Vertex,
+func (g *session) ForEachNodeChannel(ctx context.Context, nodePub route.Vertex,
 	cb func(channel *graphdb.DirectedChannel) error) error {
 
-	return g.graph.ForEachNodeDirectedChannel(g.tx, nodePub, cb)
+	return g.graph.ForEachNodeDirectedChannel(ctx, g.tx, nodePub, cb)
 }
 
 // FetchNodeFeatures returns the features of the given node. If the node is
 // unknown, assume no additional features are supported.
 //
 // NOTE: Part of the routing.Graph interface.
-func (g *session) FetchNodeFeatures(nodePub route.Vertex) (
+func (g *session) FetchNodeFeatures(ctx context.Context, nodePub route.Vertex) (
 	*lnwire.FeatureVector, error) {
 
-	return g.graph.FetchNodeFeatures(g.tx, nodePub)
+	return g.graph.FetchNodeFeatures(ctx, g.tx, nodePub)
 }
 
 // A compile-time check to ensure that *session implements the
@@ -128,13 +128,14 @@ type graph interface {
 	//
 	// NOTE: if a nil tx is provided, then it is expected that the
 	// implementation create a read only tx.
-	ForEachNodeDirectedChannel(tx graphdb.RTx, node route.Vertex,
+	ForEachNodeDirectedChannel(ctx context.Context, tx graphdb.RTx,
+		node route.Vertex,
 		cb func(channel *graphdb.DirectedChannel) error) error
 
 	// FetchNodeFeatures returns the features of a given node. If no
 	// features are known for the node, an empty feature vector is returned.
-	FetchNodeFeatures(tx graphdb.RTx, node route.Vertex) (
-		*lnwire.FeatureVector, error)
+	FetchNodeFeatures(ctx context.Context, tx graphdb.RTx,
+		node route.Vertex) (*lnwire.FeatureVector, error)
 }
 
 // A compile-time check to ensure that *channeldb.ChannelGraph implements the

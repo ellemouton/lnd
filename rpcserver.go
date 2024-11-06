@@ -4741,7 +4741,9 @@ func createRPCOpenChannel(r *rpcServer, dbChannel *channeldb.OpenChannel,
 
 	// Look up our channel peer's node alias if the caller requests it.
 	if peerAliasLookup {
-		peerAlias, err := r.server.graphSource.LookupAlias(nodePub)
+		peerAlias, err := r.server.graphSource.LookupAlias(
+			context.TODO(), nodePub,
+		)
 		if err != nil {
 			peerAlias = fmt.Sprintf("unable to lookup "+
 				"peer alias: %v", err)
@@ -6838,11 +6840,17 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 		return nil, err
 	}
 
+	public, err := graph.IsPublicNode(ctx, pubKey)
+	if err != nil {
+		return nil, err
+	}
+
 	return &lnrpc.NodeInfo{
 		Node:          marshalNode(node),
 		NumChannels:   numChannels,
 		TotalCapacity: int64(totalCapacity),
 		Channels:      channels,
+		IsPublic:      public,
 	}, nil
 }
 
@@ -6916,7 +6924,7 @@ func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 	// network, tallying up the total number of nodes, and also gathering
 	// each node so we can measure the graph diameter and degree stats
 	// below.
-	err := graph.ForEachNodeCached(func(node route.Vertex,
+	err := graph.ForEachNodeCached(ctx, func(node route.Vertex,
 		edges map[uint64]*graphdb.DirectedChannel) error {
 
 		// Increment the total number of nodes with each iteration.

@@ -3390,6 +3390,8 @@ message NodeInfo {
 
     // A list of all public channels for the node.
     repeated ChannelEdge channels = 4;
+
+    bool is_public = 5;
 }
 
 /*

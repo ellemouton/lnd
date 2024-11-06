@@ -20,7 +20,6 @@ const _ = grpc.SupportPackageIsVersion7
 type GraphClient interface {
 	// Stats returns some statistics about the known channel graph.
 	Stats(ctx context.Context, in *StatsReq, opts ...grpc.CallOption) (*StatsResp, error)
-	HasLightningNode(ctx context.Context, in *HasLightningNodeReq, opts ...grpc.CallOption) (*HasLightningNodeResp, error)
 }
 
 type graphClient struct {
@@ -40,22 +39,12 @@ func (c *graphClient) Stats(ctx context.Context, in *StatsReq, opts ...grpc.Call
 	return out, nil
 }
 
-func (c *graphClient) HasLightningNode(ctx context.Context, in *HasLightningNodeReq, opts ...grpc.CallOption) (*HasLightningNodeResp, error) {
-	out := new(HasLightningNodeResp)
-	err := c.cc.Invoke(ctx, "/graphrpc.Graph/HasLightningNode", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // GraphServer is the server API for Graph service.
 // All implementations must embed UnimplementedGraphServer
 // for forward compatibility
 type GraphServer interface {
 	// Stats returns some statistics about the known channel graph.
 	Stats(context.Context, *StatsReq) (*StatsResp, error)
-	HasLightningNode(context.Context, *HasLightningNodeReq) (*HasLightningNodeResp, error)
 	mustEmbedUnimplementedGraphServer()
 }
 
@@ -65,9 +54,6 @@ type UnimplementedGraphServer struct {
 
 func (UnimplementedGraphServer) Stats(context.Context, *StatsReq) (*StatsResp, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Stats not implemented")
-}
-func (UnimplementedGraphServer) HasLightningNode(context.Context, *HasLightningNodeReq) (*HasLightningNodeResp, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method HasLightningNode not implemented")
 }
 func (UnimplementedGraphServer) mustEmbedUnimplementedGraphServer() {}
 
@@ -100,24 +86,6 @@ func _Graph_Stats_Handler(srv interface{}, ctx context.Context, dec func(interfa
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Graph_HasLightningNode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(HasLightningNodeReq)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(GraphServer).HasLightningNode(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/graphrpc.Graph/HasLightningNode",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(GraphServer).HasLightningNode(ctx, req.(*HasLightningNodeReq))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // Graph_ServiceDesc is the grpc.ServiceDesc for Graph service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -128,10 +96,6 @@ var Graph_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Stats",
 			Handler:    _Graph_Stats_Handler,
-		},
-		{
-			MethodName: "HasLightningNode",
-			Handler:    _Graph_HasLightningNode_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

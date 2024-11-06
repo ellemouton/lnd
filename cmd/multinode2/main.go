@@ -8,9 +8,11 @@ import (
 
 	"github.com/jessevdk/go-flags"
 	"github.com/lightningnetwork/lnd"
+	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/graphrpc"
 	"github.com/lightningnetwork/lnd/macaroons"
 	"github.com/lightningnetwork/lnd/signal"
+	"github.com/lightningnetwork/lnd/tor"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"gopkg.in/macaroon.v2"
@@ -26,17 +28,23 @@ func main() {
 
 	_ = setupGraphSourceNode(shutdownInterceptor)
 
-	graphConn, err := connectToGraphRPC()
+	conn, err := connectToGraphNode()
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
-	setupDependentNode(shutdownInterceptor, graphConn)
+	provider := &graphProvider{
+		remoteGraphConn: graphrpc.NewGraphClient(conn),
+		remoteLNConn:    lnrpc.NewLightningClient(conn),
+	}
+	graphrpc.NewGraphClient(conn)
+
+	setupDependentNode(shutdownInterceptor, provider)
 	<-shutdownInterceptor.ShutdownChannel()
 }
 
-func connectToGraphRPC() (graphrpc.GraphClient, error) {
+func connectToGraphNode() (*grpc.ClientConn, error) {
 	macPath := "/Users/elle/.lnd-dev-graph/data/chain/bitcoin/regtest/admin.macaroon"
 	tlsCertPath := "/Users/elle/.lnd-dev-graph/tls.cert"
 
@@ -71,12 +79,7 @@ func connectToGraphRPC() (graphrpc.GraphClient, error) {
 		grpc.WithPerRPCCredentials(cred),
 	}
 
-	conn, err := grpc.Dial("localhost:10020", opts...)
-	if err != nil {
-		return nil, err
-	}
-
-	return graphrpc.NewGraphClient(conn), nil
+	return grpc.Dial("localhost:10020", opts...)
 }
 
 func setupGraphSourceNode(interceptor signal.Interceptor) lnd.Providers {
@@ -106,7 +109,7 @@ func setupGraphSourceNode(interceptor signal.Interceptor) lnd.Providers {
 }
 
 func setupDependentNode(interceptor signal.Interceptor,
-	graphRPCConn graphrpc.GraphClient) {
+	graphProvider *graphProvider) {
 
 	// Load the configuration, and parse any command line options. This
 	// function will also set up logging properly.
@@ -124,7 +127,7 @@ func setupDependentNode(interceptor signal.Interceptor,
 	}
 	loadedConfig.Gossip.NoSync = true
 	implCfg := loadedConfig.ImplementationConfig(interceptor)
-	implCfg.GraphProvider = &graphProvider{remoteGraphConn: graphRPCConn}
+	implCfg.GraphProvider = graphProvider
 
 	// Call the "real" main in a nested manner so the defers will properly
 	// be executed in the case of a graceful shutdown.
@@ -139,14 +142,17 @@ func setupDependentNode(interceptor signal.Interceptor,
 
 type graphProvider struct {
 	remoteGraphConn graphrpc.GraphClient
+	remoteLNConn    lnrpc.LightningClient
 }
 
 func (g *graphProvider) Graph(_ context.Context, dbs *lnd.DatabaseInstances) (
 	lnd.GraphSource, error) {
 
 	return NewGraphBackend(dbs.GraphDB, &remoteWrapper{
-		conn:  g.remoteGraphConn,
-		local: dbs.GraphDB,
+		graphConn: g.remoteGraphConn,
+		lnConn:    g.remoteLNConn,
+		local:     dbs.GraphDB,
+		net:       &tor.ClearNet{},
 	}), nil
 }
 

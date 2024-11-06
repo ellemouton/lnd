@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"context"
 	"math"
 
 	"github.com/btcsuite/btcd/btcutil"
@@ -120,7 +121,7 @@ func (u *nodeEdgeUnifier) addGraphPolicies(g Graph) error {
 	}
 
 	// Iterate over all channels of the to node.
-	return g.ForEachNodeChannel(u.toNode, cb)
+	return g.ForEachNodeChannel(context.TODO(), u.toNode, cb)
 }
 
 // unifiedEdge is the individual channel data that is kept inside an edgeUnifier

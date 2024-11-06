@@ -427,7 +427,7 @@ func (c *ChannelGraph) NewReadTx(_ context.Context) (RTx, error) {
 // unknown to the graph DB or not.
 //
 // NOTE: this is part of the channeldb.AddrSource interface.
-func (c *ChannelGraph) AddrsForNode(nodePub *btcec.PublicKey) (bool, []net.Addr,
+func (c *ChannelGraph) AddrsForNode(_ context.Context, nodePub *btcec.PublicKey) (bool, []net.Addr,
 	error) {
 
 	pubKey, err := route.NewVertexFromBytes(nodePub.SerializeCompressed())
@@ -514,7 +514,7 @@ func (c *ChannelGraph) ForEachChannel(cb func(*models.ChannelEdgeInfo,
 // is halted with the error propagated back up to the caller.
 //
 // Unknown policies are passed into the callback as nil values.
-func (c *ChannelGraph) ForEachNodeDirectedChannel(tx RTx,
+func (c *ChannelGraph) ForEachNodeDirectedChannel(ctx context.Context, tx RTx,
 	node route.Vertex, cb func(channel *DirectedChannel) error) error {
 
 	if c.graphCache != nil {
@@ -525,7 +525,7 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(tx RTx,
 	toNodeCallback := func() route.Vertex {
 		return node
 	}
-	toNodeFeatures, err := c.FetchNodeFeatures(tx, node)
+	toNodeFeatures, err := c.FetchNodeFeatures(ctx, tx, node)
 	if err != nil {
 		return err
 	}
@@ -571,7 +571,7 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(tx RTx,
 
 // FetchNodeFeatures returns the features of a given node. If no features are
 // known for the node, an empty feature vector is returned.
-func (c *ChannelGraph) FetchNodeFeatures(tx RTx,
+func (c *ChannelGraph) FetchNodeFeatures(_ context.Context, tx RTx,
 	node route.Vertex) (*lnwire.FeatureVector, error) {
 
 	if c.graphCache != nil {
@@ -601,8 +601,9 @@ func (c *ChannelGraph) FetchNodeFeatures(tx RTx,
 // regular ForEachNode method does.
 //
 // NOTE: The callback contents MUST not be modified.
-func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
-	chans map[uint64]*DirectedChannel) error) error {
+func (c *ChannelGraph) ForEachNodeCached(ctx context.Context,
+	cb func(node route.Vertex,
+		chans map[uint64]*DirectedChannel) error) error {
 
 	if c.graphCache != nil {
 		return c.graphCache.ForEachNode(cb)
@@ -626,7 +627,7 @@ func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
 					return node.PubKeyBytes
 				}
 				toNodeFeatures, err := c.FetchNodeFeatures(
-					tx, node.PubKeyBytes,
+					ctx, tx, node.PubKeyBytes,
 				)
 				if err != nil {
 					return err
@@ -940,7 +941,8 @@ func addLightningNode(tx kvdb.RwTx, node *models.LightningNode) error {
 
 // LookupAlias attempts to return the alias as advertised by the target node.
 // TODO(roasbeef): currently assumes that aliases are unique...
-func (c *ChannelGraph) LookupAlias(pub *btcec.PublicKey) (string, error) {
+func (c *ChannelGraph) LookupAlias(_ context.Context, pub *btcec.PublicKey) (
+	string, error) {
 	var alias string
 
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
@@ -3507,7 +3509,9 @@ func (c *ChannelGraph) FetchChannelEdgesByID(chanID uint64) (
 // IsPublicNode is a helper method that determines whether the node with the
 // given public key is seen as a public node in the graph from the graph's
 // source node's point of view.
-func (c *ChannelGraph) IsPublicNode(pubKey [33]byte) (bool, error) {
+func (c *ChannelGraph) IsPublicNode(_ context.Context, pubKey [33]byte) (bool,
+	error) {
+
 	var nodeIsPublic bool
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		nodes := tx.ReadBucket(nodeBucket)

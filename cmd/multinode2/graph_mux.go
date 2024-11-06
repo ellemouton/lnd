@@ -62,8 +62,8 @@ func (g *GraphSourceMux) NewReadTx(ctx context.Context) (graphdb.RTx, error) {
 // any channels we have already handled.
 //
 // NOTE: this is part of the GraphSource interface.
-func (g *GraphSourceMux) ForEachNodeDirectedChannel(tx graphdb.RTx,
-	node route.Vertex,
+func (g *GraphSourceMux) ForEachNodeDirectedChannel(ctx context.Context,
+	tx graphdb.RTx, node route.Vertex,
 	cb func(channel *graphdb.DirectedChannel) error) error {
 
 	srcPub, err := g.selfNodePub()
@@ -79,12 +79,12 @@ func (g *GraphSourceMux) ForEachNodeDirectedChannel(tx graphdb.RTx,
 	// If we are the source node, we know all our channels, so just use
 	// local DB.
 	if bytes.Equal(srcPub[:], node[:]) {
-		return g.local.ForEachNodeDirectedChannel(lTx, node, cb)
+		return g.local.ForEachNodeDirectedChannel(ctx, lTx, node, cb)
 	}
 
 	// Call our local DB to collect any private channels we have.
 	handledPeerChans := make(map[uint64]bool)
-	err = g.local.ForEachNodeDirectedChannel(lTx, node,
+	err = g.local.ForEachNodeDirectedChannel(ctx, lTx, node,
 		func(channel *graphdb.DirectedChannel) error {
 
 			// If the other node is not us, we don't need to handle
@@ -103,7 +103,7 @@ func (g *GraphSourceMux) ForEachNodeDirectedChannel(tx graphdb.RTx,
 		return err
 	}
 
-	return g.remote.ForEachNodeDirectedChannel(rTx, node,
+	return g.remote.ForEachNodeDirectedChannel(ctx, rTx, node,
 		func(channel *graphdb.DirectedChannel) error {
 
 			// Skip any we have already handled.
@@ -120,12 +120,12 @@ func (g *GraphSourceMux) ForEachNodeDirectedChannel(tx graphdb.RTx,
 // known for the node, an empty feature vector is returned.
 //
 // NOTE: this is part of the GraphSource interface.
-func (g *GraphSourceMux) FetchNodeFeatures(tx graphdb.RTx, node route.Vertex) (
-	*lnwire.FeatureVector, error) {
+func (g *GraphSourceMux) FetchNodeFeatures(ctx context.Context, tx graphdb.RTx,
+	node route.Vertex) (*lnwire.FeatureVector, error) {
 
 	// Query the local DB first. If a non-empty set of features is returned,
 	// we use these. Otherwise, the remote DB is checked.
-	feats, err := g.local.FetchNodeFeatures(tx, node)
+	feats, err := g.local.FetchNodeFeatures(ctx, tx, node)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +134,7 @@ func (g *GraphSourceMux) FetchNodeFeatures(tx graphdb.RTx, node route.Vertex) (
 		return feats, nil
 	}
 
-	return g.remote.FetchNodeFeatures(tx, node)
+	return g.remote.FetchNodeFeatures(ctx, tx, node)
 }
 
 // ForEachNode iterates through all the stored vertices/nodes in the graph,
@@ -250,7 +250,10 @@ func (g *GraphSourceMux) ForEachNodeChannel(tx graphdb.RTx,
 }
 
 // TODO(elle): what about our private channels in direction from peer to us.
-func (g *GraphSourceMux) ForEachNodeCached(cb func(node route.Vertex, chans map[uint64]*graphdb.DirectedChannel) error) error {
+func (g *GraphSourceMux) ForEachNodeCached(ctx context.Context,
+	cb func(node route.Vertex,
+		chans map[uint64]*graphdb.DirectedChannel) error) error {
+
 	srcPub, err := g.selfNodePub()
 	if err != nil {
 		return err
@@ -260,7 +263,7 @@ func (g *GraphSourceMux) ForEachNodeCached(cb func(node route.Vertex, chans map[
 	// remote.
 	ourChans := make(map[uint64]*graphdb.DirectedChannel)
 	err = g.local.ForEachNodeDirectedChannel(
-		nil, srcPub, func(channel *graphdb.DirectedChannel) error {
+		ctx, nil, srcPub, func(channel *graphdb.DirectedChannel) error {
 			ourChans[channel.ChannelID] = channel
 
 			return nil
@@ -275,7 +278,9 @@ func (g *GraphSourceMux) ForEachNodeCached(cb func(node route.Vertex, chans map[
 		return err
 	}
 
-	return g.remote.ForEachNodeCached(func(node route.Vertex, chans map[uint64]*graphdb.DirectedChannel) error {
+	return g.remote.ForEachNodeCached(ctx, func(node route.Vertex,
+		chans map[uint64]*graphdb.DirectedChannel) error {
+
 		// Skip our own node.
 		if bytes.Equal(node[:], srcPub[:]) {
 			return nil
@@ -308,8 +313,8 @@ func (g *GraphSourceMux) FetchChannelEdgesByID(chanID uint64) (
 // remote if the node is not seen as public by the loca node.
 //
 // NOTE: this is part of the GraphSource interface.
-func (g *GraphSourceMux) IsPublicNode(pubKey [33]byte) (bool, error) {
-	isInLocalDB, err := g.local.IsPublicNode(pubKey)
+func (g *GraphSourceMux) IsPublicNode(ctx context.Context, pubKey [33]byte) (bool, error) {
+	isInLocalDB, err := g.local.IsPublicNode(ctx, pubKey)
 	if err != nil {
 		return false, err
 	}
@@ -317,7 +322,7 @@ func (g *GraphSourceMux) IsPublicNode(pubKey [33]byte) (bool, error) {
 		return true, nil
 	}
 
-	return g.remote.IsPublicNode(pubKey)
+	return g.remote.IsPublicNode(ctx, pubKey)
 }
 
 // FetchChannelEdgesByOutpoint returns the channel edge info and most recent
@@ -341,13 +346,13 @@ func (g *GraphSourceMux) FetchChannelEdgesByOutpoint(point *wire.OutPoint) (
 // source. This merges the results from both the local and remote source.
 //
 // NOTE: this is part of the GraphSource interface.
-func (g *GraphSourceMux) AddrsForNode(nodePub *btcec.PublicKey) (bool,
+func (g *GraphSourceMux) AddrsForNode(ctx context.Context, nodePub *btcec.PublicKey) (bool,
 	[]net.Addr, error) {
 
 	// Check both the local and remote sources and merge the results.
 	return channeldb.NewMultiAddrSource(
 		g.local, g.remote,
-	).AddrsForNode(nodePub)
+	).AddrsForNode(ctx, nodePub)
 }
 
 // ForEachChannel iterates through all the channel edges stored within the graph
@@ -421,9 +426,9 @@ func (g *GraphSourceMux) NumZombies(ctx context.Context) (uint64, error) {
 // graphdb.ErrNodeAliasNotFound is returned if the alias is not found.
 //
 // NOTE: this is part of the GraphSource interface.
-func (g *GraphSourceMux) LookupAlias(pub *btcec.PublicKey) (string, error) {
+func (g *GraphSourceMux) LookupAlias(ctx context.Context, pub *btcec.PublicKey) (string, error) {
 	// First check locally.
-	alias, err := g.local.LookupAlias(pub)
+	alias, err := g.local.LookupAlias(ctx, pub)
 	if err == nil {
 		return alias, nil
 	}
@@ -431,7 +436,7 @@ func (g *GraphSourceMux) LookupAlias(pub *btcec.PublicKey) (string, error) {
 		return "", err
 	}
 
-	return g.remote.LookupAlias(pub)
+	return g.remote.LookupAlias(ctx, pub)
 }
 
 // selfNodePub fetches the local nodes pub key. It first checks the cached value

@@ -45,7 +45,7 @@ type GraphSource interface {
 	// LookupAlias attempts to return the alias as advertised by the target
 	// node. graphdb.ErrNodeAliasNotFound is returned if the alias is not
 	// found.
-	LookupAlias(pub *btcec.PublicKey) (string, error)
+	LookupAlias(ctx context.Context, pub *btcec.PublicKey) (string, error)
 }
 
 // Providers is an interface that LND itself can satisfy.

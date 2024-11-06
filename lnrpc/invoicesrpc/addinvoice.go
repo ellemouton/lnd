@@ -462,7 +462,7 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 
 		hopHintsCfg := newSelectHopHintsCfg(cfg, totalHopHints)
 		hopHints, err := PopulateHopHints(
-			hopHintsCfg, amtMSat, invoice.RouteHints,
+			ctx, hopHintsCfg, amtMSat, invoice.RouteHints,
 		)
 		if err != nil {
 			return nil, nil, fmt.Errorf("unable to populate hop "+
@@ -624,7 +624,7 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 
 // chanCanBeHopHint returns true if the target channel is eligible to be a hop
 // hint.
-func chanCanBeHopHint(channel *HopHintInfo, cfg *SelectHopHintsCfg) (
+func chanCanBeHopHint(ctx context.Context, channel *HopHintInfo, cfg *SelectHopHintsCfg) (
 	*models.ChannelEdgePolicy, bool) {
 
 	// Since we're only interested in our private channels, we'll skip
@@ -648,7 +648,7 @@ func chanCanBeHopHint(channel *HopHintInfo, cfg *SelectHopHintsCfg) (
 	// channels.
 	var remotePub [33]byte
 	copy(remotePub[:], channel.RemotePubkey.SerializeCompressed())
-	isRemoteNodePublic, err := cfg.IsPublicNode(remotePub)
+	isRemoteNodePublic, err := cfg.IsPublicNode(ctx, remotePub)
 	if err != nil {
 		log.Errorf("Unable to determine if node %x "+
 			"is advertised: %v", remotePub, err)
@@ -759,7 +759,7 @@ type SelectHopHintsCfg struct {
 	// IsPublicNode is returns a bool indicating whether the node with the
 	// given public key is seen as a public node in the graph from the
 	// graph's source node's point of view.
-	IsPublicNode func(pubKey [33]byte) (bool, error)
+	IsPublicNode func(ctx context.Context, pubKey [33]byte) (bool, error)
 
 	// FetchChannelEdgesByID attempts to lookup the two directed edges for
 	// the channel identified by the channel ID.
@@ -856,7 +856,7 @@ func getPotentialHints(cfg *SelectHopHintsCfg) ([]*channeldb.OpenChannel,
 
 // shouldIncludeChannel returns true if the channel passes all the checks to
 // be a hopHint in a given invoice.
-func shouldIncludeChannel(cfg *SelectHopHintsCfg,
+func shouldIncludeChannel(ctx context.Context, cfg *SelectHopHintsCfg,
 	channel *channeldb.OpenChannel,
 	alreadyIncluded map[uint64]bool) (zpay32.HopHint, lnwire.MilliSatoshi,
 	bool) {
@@ -872,7 +872,7 @@ func shouldIncludeChannel(cfg *SelectHopHintsCfg,
 	hopHintInfo := newHopHintInfo(channel, cfg.IsChannelActive(chanID))
 
 	// If this channel can't be a hop hint, then skip it.
-	edgePolicy, canBeHopHint := chanCanBeHopHint(hopHintInfo, cfg)
+	edgePolicy, canBeHopHint := chanCanBeHopHint(ctx, hopHintInfo, cfg)
 	if edgePolicy == nil || !canBeHopHint {
 		return zpay32.HopHint{}, 0, false
 	}
@@ -901,7 +901,7 @@ func shouldIncludeChannel(cfg *SelectHopHintsCfg,
 //
 // NOTE: selectHopHints expects potentialHints to be already sorted in
 // descending priority.
-func selectHopHints(cfg *SelectHopHintsCfg, nHintsLeft int,
+func selectHopHints(ctx context.Context, cfg *SelectHopHintsCfg, nHintsLeft int,
 	targetBandwidth lnwire.MilliSatoshi,
 	potentialHints []*channeldb.OpenChannel,
 	alreadyIncluded map[uint64]bool) [][]zpay32.HopHint {
@@ -917,7 +917,7 @@ func selectHopHints(cfg *SelectHopHintsCfg, nHintsLeft int,
 		}
 
 		hopHint, remoteBalance, include := shouldIncludeChannel(
-			cfg, channel, alreadyIncluded,
+			ctx, cfg, channel, alreadyIncluded,
 		)
 
 		if include {
@@ -945,7 +945,7 @@ func selectHopHints(cfg *SelectHopHintsCfg, nHintsLeft int,
 // options that'll append the route hint to the set of all route hints.
 //
 // TODO(roasbeef): do proper sub-set sum max hints usually << numChans.
-func PopulateHopHints(cfg *SelectHopHintsCfg, amtMSat lnwire.MilliSatoshi,
+func PopulateHopHints(ctx context.Context, cfg *SelectHopHintsCfg, amtMSat lnwire.MilliSatoshi,
 	forcedHints [][]zpay32.HopHint) ([][]zpay32.HopHint, error) {
 
 	hopHints := forcedHints
@@ -968,7 +968,7 @@ func PopulateHopHints(cfg *SelectHopHintsCfg, amtMSat lnwire.MilliSatoshi,
 
 	targetBandwidth := amtMSat * hopHintFactor
 	selectedHints := selectHopHints(
-		cfg, nHintsLeft, targetBandwidth, potentialHints,
+		ctx, cfg, nHintsLeft, targetBandwidth, potentialHints,
 		alreadyIncluded,
 	)
 

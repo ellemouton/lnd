@@ -1,6 +1,7 @@
 package channeldb
 
 import (
+	"context"
 	"errors"
 	"net"
 
@@ -13,7 +14,7 @@ type AddrSource interface {
 	// AddrsForNode returns all known addresses for the target node public
 	// key. The returned boolean must indicate if the given node is unknown
 	// to the backing source.
-	AddrsForNode(nodePub *btcec.PublicKey) (bool, []net.Addr, error)
+	AddrsForNode(ctx context.Context, nodePub *btcec.PublicKey) (bool, []net.Addr, error)
 }
 
 // multiAddrSource is an implementation of AddrSource which gathers all the
@@ -38,7 +39,7 @@ func NewMultiAddrSource(sources ...AddrSource) AddrSource {
 // node.
 //
 // NOTE: this implements the AddrSource interface.
-func (c *multiAddrSource) AddrsForNode(nodePub *btcec.PublicKey) (bool,
+func (c *multiAddrSource) AddrsForNode(ctx context.Context, nodePub *btcec.PublicKey) (bool,
 	[]net.Addr, error) {
 
 	if len(c.sources) == 0 {
@@ -55,7 +56,7 @@ func (c *multiAddrSource) AddrsForNode(nodePub *btcec.PublicKey) (bool,
 	// Iterate over all the address sources and query each one for the
 	// addresses it has for the node in question.
 	for _, src := range c.sources {
-		isKnown, addrs, err := src.AddrsForNode(nodePub)
+		isKnown, addrs, err := src.AddrsForNode(ctx, nodePub)
 		if err != nil {
 			return false, nil, err
 		}

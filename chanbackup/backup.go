@@ -1,6 +1,7 @@
 package chanbackup
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/btcsuite/btcd/wire"
@@ -32,7 +33,7 @@ func assembleChanBackup(addrSource channeldb.AddrSource,
 
 	// First, we'll query the channel source to obtain all the addresses
 	// that are associated with the peer for this channel.
-	known, nodeAddrs, err := addrSource.AddrsForNode(openChan.IdentityPub)
+	known, nodeAddrs, err := addrSource.AddrsForNode(context.TODO(), openChan.IdentityPub)
 	if err != nil {
 		return nil, err
 	}

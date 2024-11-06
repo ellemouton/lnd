@@ -11,8 +11,6 @@ service Graph {
     Stats returns some statistics about the known channel graph.
     */
     rpc Stats (StatsReq) returns (StatsResp);
-
-    rpc HasLightningNode (HasLightningNodeReq) returns (HasLightningNodeResp);
 }
 
 message StatsReq {
@@ -23,16 +21,4 @@ message StatsResp {
     The current number of nodes considered zombies in the channel graph.
     */
     uint64 num_zombies = 1;
-}
-
-message HasLightningNodeReq {
-    /*
-    The public key of the node to check for existence.
-    */
-    bytes pub_key = 1;
-}
-
-message HasLightningNodeResp {
-    bool known = 1;
-    uint32 last_update = 2;
 }

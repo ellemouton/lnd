@@ -1,6 +1,7 @@
 package autopilot
 
 import (
+	"context"
 	"net"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -255,6 +256,6 @@ type GraphSource interface {
 	// If the callback returns an error, then the transaction is aborted
 	// and the iteration stops early. It utilizes the graph cache if one is
 	// available.
-	ForEachNodeCached(cb func(node route.Vertex,
+	ForEachNodeCached(ctx context.Context, cb func(node route.Vertex,
 		chans map[uint64]*graphdb.DirectedChannel) error) error
 }
