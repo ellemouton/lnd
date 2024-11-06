@@ -6794,7 +6794,7 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 	// With the public key decoded, attempt to fetch the node corresponding
 	// to this public key. If the node cannot be found, then an error will
 	// be returned.
-	node, err := graph.FetchLightningNode(nil, pubKey)
+	node, err := graph.FetchLightningNode(ctx, nil, pubKey)
 	switch {
 	case errors.Is(err, graphdb.ErrGraphNodeNotFound):
 		return nil, status.Error(codes.NotFound, err.Error())
@@ -7877,7 +7877,7 @@ func (r *rpcServer) ForwardingHistory(ctx context.Context,
 			return "", err
 		}
 
-		peer, err := r.server.graphSource.FetchLightningNode(nil, vertex)
+		peer, err := r.server.graphSource.FetchLightningNode(ctx, nil, vertex)
 		if err != nil {
 			return "", err
 		}

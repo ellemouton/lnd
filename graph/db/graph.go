@@ -427,7 +427,7 @@ func (c *ChannelGraph) NewReadTx(_ context.Context) (RTx, error) {
 // unknown to the graph DB or not.
 //
 // NOTE: this is part of the channeldb.AddrSource interface.
-func (c *ChannelGraph) AddrsForNode(_ context.Context, nodePub *btcec.PublicKey) (bool, []net.Addr,
+func (c *ChannelGraph) AddrsForNode(ctx context.Context, nodePub *btcec.PublicKey) (bool, []net.Addr,
 	error) {
 
 	pubKey, err := route.NewVertexFromBytes(nodePub.SerializeCompressed())
@@ -435,7 +435,7 @@ func (c *ChannelGraph) AddrsForNode(_ context.Context, nodePub *btcec.PublicKey)
 		return false, nil, err
 	}
 
-	node, err := c.FetchLightningNode(nil, pubKey)
+	node, err := c.FetchLightningNode(ctx, nil, pubKey)
 	// We don't consider it an error if the graph is unaware of the node.
 	switch {
 	case err != nil && !errors.Is(err, ErrGraphNodeNotFound):
@@ -571,7 +571,7 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(ctx context.Context, tx RTx,
 
 // FetchNodeFeatures returns the features of a given node. If no features are
 // known for the node, an empty feature vector is returned.
-func (c *ChannelGraph) FetchNodeFeatures(_ context.Context, tx RTx,
+func (c *ChannelGraph) FetchNodeFeatures(ctx context.Context, tx RTx,
 	node route.Vertex) (*lnwire.FeatureVector, error) {
 
 	if c.graphCache != nil {
@@ -579,7 +579,7 @@ func (c *ChannelGraph) FetchNodeFeatures(_ context.Context, tx RTx,
 	}
 
 	// Fallback that uses the database.
-	targetNode, err := c.FetchLightningNode(tx, node)
+	targetNode, err := c.FetchLightningNode(ctx, tx, node)
 	switch err {
 	// If the node exists and has features, return them directly.
 	case nil:
@@ -2968,8 +2968,8 @@ func (c *ChannelGraph) isPublic(tx kvdb.RTx, nodePub route.Vertex,
 // key. If the node isn't found in the database, then ErrGraphNodeNotFound is
 // returned. An optional transaction may be provided. If none is provided, then
 // a new one will be created.
-func (c *ChannelGraph) FetchLightningNode(tx RTx, nodePub route.Vertex) (
-	*models.LightningNode, error) {
+func (c *ChannelGraph) FetchLightningNode(_ context.Context, tx RTx,
+	nodePub route.Vertex) (*models.LightningNode, error) {
 
 	return c.fetchLightningNode(tx, nodePub)
 }

@@ -181,7 +181,7 @@ func (g *GraphSourceMux) ForEachNode(tx graphdb.RTx,
 // a new one will be created.
 //
 // NOTE: this is part of the GraphSource interface.
-func (g *GraphSourceMux) FetchLightningNode(tx graphdb.RTx,
+func (g *GraphSourceMux) FetchLightningNode(ctx context.Context, tx graphdb.RTx,
 	nodePub route.Vertex) (*models.LightningNode, error) {
 
 	srcPub, err := g.selfNodePub()
@@ -195,10 +195,10 @@ func (g *GraphSourceMux) FetchLightningNode(tx graphdb.RTx,
 	}
 
 	if bytes.Equal(srcPub[:], nodePub[:]) {
-		return g.local.FetchLightningNode(lTx, nodePub)
+		return g.local.FetchLightningNode(ctx, lTx, nodePub)
 	}
 
-	return g.remote.FetchLightningNode(rTx, nodePub)
+	return g.remote.FetchLightningNode(ctx, rTx, nodePub)
 }
 
 // ForEachNodeChannel iterates through all channels of the given node,
@@ -314,11 +314,11 @@ func (g *GraphSourceMux) FetchChannelEdgesByID(ctx context.Context, chanID uint6
 //
 // NOTE: this is part of the GraphSource interface.
 func (g *GraphSourceMux) IsPublicNode(ctx context.Context, pubKey [33]byte) (bool, error) {
-	isInLocalDB, err := g.local.IsPublicNode(ctx, pubKey)
-	if err != nil {
+	isPublic, err := g.local.IsPublicNode(ctx, pubKey)
+	if err != nil && !errors.Is(err, graphdb.ErrGraphNodeNotFound) {
 		return false, err
 	}
-	if isInLocalDB {
+	if isPublic {
 		return true, nil
 	}
 

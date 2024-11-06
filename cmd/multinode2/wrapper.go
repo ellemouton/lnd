@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/hex"
+	"image/color"
 	"net"
 	"time"
 
@@ -50,10 +51,58 @@ func (r *remoteWrapper) FetchNodeFeatures(ctx context.Context, tx graphdb.RTx, n
 		return nil, err
 	}
 
-	featureBits := make([]lnwire.FeatureBit, 0, len(resp.Node.Features))
-	featureNames := make(map[lnwire.FeatureBit]string)
+	return unmarshalFeatures(resp.Node.Features), nil
+}
 
-	for featureBit, feature := range resp.Node.Features {
+func (r *remoteWrapper) ForEachNode(tx graphdb.RTx, cb func(graphdb.RTx, *models.LightningNode) error) error {
+	return r.local.ForEachNode(tx, cb)
+}
+
+func (r *remoteWrapper) FetchLightningNode(ctx context.Context, tx graphdb.RTx,
+	nodePub route.Vertex) (*models.LightningNode, error) {
+
+	resp, err := r.lnConn.GetNodeInfo(ctx, &lnrpc.NodeInfoRequest{
+		PubKey:          hex.EncodeToString(nodePub[:]),
+		IncludeChannels: false,
+	})
+	if err != nil {
+		return nil, err
+	}
+	node := resp.Node
+
+	pubKey, err := hex.DecodeString(node.PubKey)
+	if err != nil {
+		return nil, err
+	}
+	var pubKeyBytes [33]byte
+	copy(pubKeyBytes[:], pubKey)
+
+	extra, err := lnwire.CustomRecords(node.CustomRecords).Serialize()
+	if err != nil {
+		return nil, err
+	}
+
+	addrs, err := r.unmarshalAddrs(resp.Node.Addresses)
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.LightningNode{
+		PubKeyBytes:          pubKeyBytes,
+		HaveNodeAnnouncement: resp.IsPublic,
+		LastUpdate:           time.Unix(int64(node.LastUpdate), 0),
+		Addresses:            addrs,
+		Color:                color.RGBA{},
+		Alias:                node.Alias,
+		Features:             unmarshalFeatures(node.Features),
+		ExtraOpaqueData:      extra,
+	}, nil
+}
+
+func unmarshalFeatures(features map[uint32]*lnrpc.Feature) *lnwire.FeatureVector {
+	featureBits := make([]lnwire.FeatureBit, 0, len(features))
+	featureNames := make(map[lnwire.FeatureBit]string)
+	for featureBit, feature := range features {
 		featureBits = append(
 			featureBits, lnwire.FeatureBit(featureBit),
 		)
@@ -63,15 +112,7 @@ func (r *remoteWrapper) FetchNodeFeatures(ctx context.Context, tx graphdb.RTx, n
 
 	return lnwire.NewFeatureVector(
 		lnwire.NewRawFeatureVector(featureBits...), featureNames,
-	), nil
-}
-
-func (r *remoteWrapper) ForEachNode(tx graphdb.RTx, cb func(graphdb.RTx, *models.LightningNode) error) error {
-	return r.local.ForEachNode(tx, cb)
-}
-
-func (r *remoteWrapper) FetchLightningNode(tx graphdb.RTx, nodePub route.Vertex) (*models.LightningNode, error) {
-	return r.local.FetchLightningNode(tx, nodePub)
+	)
 }
 
 func (r *remoteWrapper) ForEachNodeChannel(tx graphdb.RTx, nodePub route.Vertex, cb func(graphdb.RTx, *models.ChannelEdgeInfo, *models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
@@ -205,16 +246,25 @@ func (r *remoteWrapper) AddrsForNode(ctx context.Context, nodePub *btcec.PublicK
 		return false, nil, err
 	}
 
-	addrs := make([]net.Addr, 0, len(resp.Node.Addresses))
-	for _, addr := range resp.Node.Addresses {
-		a, err := r.net.ResolveTCPAddr(addr.Network, addr.Addr)
-		if err != nil {
-			return false, nil, err
-		}
-		addrs = append(addrs, a)
+	addrs, err := r.unmarshalAddrs(resp.Node.Addresses)
+	if err != nil {
+		return false, nil, err
 	}
 
 	return true, addrs, nil
+}
+
+func (r *remoteWrapper) unmarshalAddrs(addrs []*lnrpc.NodeAddress) ([]net.Addr, error) {
+	netAddrs := make([]net.Addr, 0, len(addrs))
+	for _, addr := range addrs {
+		netAddr, err := r.net.ResolveTCPAddr(addr.Network, addr.Addr)
+		if err != nil {
+			return nil, err
+		}
+		netAddrs = append(netAddrs, netAddr)
+	}
+
+	return netAddrs, nil
 }
 
 func (r *remoteWrapper) ForEachChannel(cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {

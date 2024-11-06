@@ -234,8 +234,8 @@ type GraphSource interface {
 	// public key. If the node isn't found in the database, then
 	// graphdb.ErrGraphNodeNotFound is returned. An optional transaction may
 	// be provided. If none is provided, then a new one will be created.
-	FetchLightningNode(tx graphdb.RTx, nodePub route.Vertex) (
-		*models.LightningNode, error)
+	FetchLightningNode(ctx context.Context, tx graphdb.RTx,
+		nodePub route.Vertex) (*models.LightningNode, error)
 
 	// ForEachNodeChannel iterates through all channels of the given node,
 	// executing the passed callback with an edge info structure and the

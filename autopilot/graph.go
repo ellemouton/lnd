@@ -102,7 +102,7 @@ func (d *dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 				return nil
 			}
 
-			node, err := d.db.FetchLightningNode(tx, ep.ToNode)
+			node, err := d.db.FetchLightningNode(context.TODO(), tx, ep.ToNode)
 			if err != nil {
 				return err
 			}
