@@ -10,6 +10,7 @@ import (
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/lightningnetwork/lnd/autopilot"
 	"github.com/lightningnetwork/lnd/discovery"
+	"github.com/lightningnetwork/lnd/graph/stats"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"google.golang.org/grpc"
 	"gopkg.in/macaroon-bakery.v2/bakery"
@@ -25,7 +26,20 @@ const (
 
 var (
 	// macPermissions maps RPC calls to the permissions they require.
-	macPermissions = map[string][]bakery.Op{}
+	macPermissions = map[string][]bakery.Op{
+		"/graphrpc.Graph/BetweennessCentrality": {{
+			Entity: "graph",
+			Action: "read",
+		}},
+		"/graphrpc.Graph/BoostrapperName": {{
+			Entity: "graph",
+			Action: "read",
+		}},
+		"/graphrpc.Graph/BootstrapAddrs": {{
+			Entity: "graph",
+			Action: "read",
+		}},
+	}
 )
 
 // ServerShell is a shell struct holding a reference to the actual sub-server.
@@ -165,6 +179,30 @@ func (r *ServerShell) CreateSubServer(
 	r.GraphServer = subServer
 
 	return subServer, macPermissions, nil
+}
+
+func (s *Server) BetweennessCentrality(ctx context.Context,
+	req *BetweennessCentralityReq) (*BetweennessCentralityResp, error) {
+
+	g := &stats.ChanGraphStatsCollector{ChannelGraph: s.cfg.GraphDB}
+
+	res, err := g.BetweenessCentrality(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var nodeBetweenness []*BetweenessCentrality
+	for nodeID, val := range res {
+		nodeBetweenness = append(nodeBetweenness, &BetweenessCentrality{
+			Node:          nodeID[:],
+			Normalized:    float32(val.Normalized),
+			NonNormalized: float32(val.NonNormalized),
+		})
+	}
+
+	return &BetweennessCentralityResp{
+		NodeBetweeness: nodeBetweenness,
+	}, nil
 }
 
 func (s *Server) BoostrapperName(ctx context.Context, req *BoostrapperNameReq) (

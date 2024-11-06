@@ -186,7 +186,7 @@ func initAutoPilot(svr *server, cfg *lncfg.AutoPilot,
 			)
 		},
 		Graph: autopilot.ChannelGraphFromGraphSource(
-			svr.graphSource,
+			svr.graphDB,
 		),
 		Constraints: atplConstraints,
 		ConnectToPeer: func(target *btcec.PublicKey, addrs []net.Addr) (bool, error) {

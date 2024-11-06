@@ -82,6 +82,34 @@
     }
   },
   "definitions": {
+    "graphrpcBetweenessCentrality": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "string",
+          "format": "byte"
+        },
+        "normalized": {
+          "type": "number",
+          "format": "float"
+        },
+        "non_normalized": {
+          "type": "number",
+          "format": "float"
+        }
+      }
+    },
+    "graphrpcBetweennessCentralityResp": {
+      "type": "object",
+      "properties": {
+        "node_betweeness": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/graphrpcBetweenessCentrality"
+          }
+        }
+      }
+    },
     "graphrpcBoostrapperNameResp": {
       "type": "object",
       "properties": {

@@ -5,23 +5,24 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/lightningnetwork/lnd/autopilot"
 	"github.com/lightningnetwork/lnd/channeldb"
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/graph/graphsession"
+	"github.com/lightningnetwork/lnd/graph/stats"
 	"github.com/lightningnetwork/lnd/lnrpc/invoicesrpc"
 	"github.com/lightningnetwork/lnd/netann"
+	"github.com/lightningnetwork/lnd/routing/route"
 )
 
 // GraphSource defines the read-only graph interface required by LND for graph
 // related tasks.
 type GraphSource interface {
 	graphsession.ReadOnlyGraph
-	autopilot.GraphSource
 	invoicesrpc.GraphSource
 	netann.ChannelGraph
 	channeldb.AddrSource
-	StatsCollector
+	stats.StatsCollector
 
 	// ForEachChannel iterates through all the channel edges stored within
 	// the graph and invokes the passed callback for each edge. If the
@@ -43,6 +44,34 @@ type GraphSource interface {
 	// node. graphdb.ErrNodeAliasNotFound is returned if the alias is not
 	// found.
 	LookupAlias(ctx context.Context, pub *btcec.PublicKey) (string, error)
+
+	// ForEachNodeChannel iterates through all channels of the given node,
+	// executing the passed callback with an edge info structure and the
+	// policies of each end of the channel. The first edge policy is the
+	// outgoing edge *to* the connecting node, while the second is the
+	// incoming edge *from* the connecting node. If the callback returns an
+	// error, then the iteration is halted with the error propagated back up
+	// to the caller. Unknown policies are passed into the callback as nil
+	// values. An optional transaction may be provided. If none is provided,
+	// then a new one will be created.
+	ForEachNodeChannel(tx graphdb.RTx, nodePub route.Vertex,
+		cb func(graphdb.RTx, *models.ChannelEdgeInfo,
+			*models.ChannelEdgePolicy,
+			*models.ChannelEdgePolicy) error) error
+
+	// ForEachNode iterates through all the stored vertices/nodes in the
+	// graph, executing the passed callback with each node encountered. If
+	// the callback returns an error, then the transaction is aborted and
+	// the iteration stops early.
+	ForEachNode(tx graphdb.RTx,
+		cb func(graphdb.RTx, *models.LightningNode) error) error
+
+	// FetchLightningNode attempts to look up a target node by its identity
+	// public key. If the node isn't found in the database, then
+	// graphdb.ErrGraphNodeNotFound is returned. An optional transaction may
+	// be provided. If none is provided, then a new one will be created.
+	FetchLightningNode(ctx context.Context, tx graphdb.RTx,
+		nodePub route.Vertex) (*models.LightningNode, error)
 }
 
 // Providers is an interface that LND itself can satisfy.
@@ -60,5 +89,5 @@ var _ Providers = (*server)(nil)
 //
 // NOTE: this method is part of the Providers interface.
 func (s *server) GraphSource() (GraphSource, error) {
-	return &ChanGraphStatsCollector{ChannelGraph: s.graphDB}, nil
+	return &stats.ChanGraphStatsCollector{ChannelGraph: s.graphDB}, nil
 }

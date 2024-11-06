@@ -12,10 +12,12 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/go-errors/errors"
 	"github.com/lightningnetwork/lnd"
+	"github.com/lightningnetwork/lnd/autopilot"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/discovery"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
+	"github.com/lightningnetwork/lnd/graph/stats"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -27,6 +29,10 @@ type GraphSourceMux struct {
 	// srcPub is a cached version of the local nodes own pub key bytes.
 	srcPub *route.Vertex
 	mu     sync.Mutex
+}
+
+func (g *GraphSourceMux) BetweenessCentrality(ctx context.Context) (map[autopilot.NodeID]*stats.BetweenessCentrality, error) {
+	return g.remote.BetweenessCentrality(ctx)
 }
 
 func (g *GraphSourceMux) GraphBootstrapper(ctx context.Context) (discovery.NetworkPeerBootstrapper, error) {

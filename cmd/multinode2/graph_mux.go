@@ -12,10 +12,12 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/go-errors/errors"
 	"github.com/lightningnetwork/lnd"
+	"github.com/lightningnetwork/lnd/autopilot"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/discovery"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
+	"github.com/lightningnetwork/lnd/graph/stats"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -37,6 +39,10 @@ func (g *GraphSourceMux) NetworkStats(ctx context.Context, excludeNodes map[rout
 
 func (g *GraphSourceMux) GraphBootstrapper(ctx context.Context) (discovery.NetworkPeerBootstrapper, error) {
 	return g.remote.GraphBootstrapper(ctx)
+}
+
+func (g *GraphSourceMux) BetweenessCentrality(ctx context.Context) (map[autopilot.NodeID]*stats.BetweenessCentrality, error) {
+	return g.remote.BetweenessCentrality(ctx)
 }
 
 // A compile-time check to ensure that GraphSourceMux implements GraphSource.

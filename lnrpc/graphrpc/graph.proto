@@ -11,6 +11,21 @@ option go_package = "github.com/lightningnetwork/lnd/lnrpc/graphrpc";
 service Graph {
     rpc BootstrapAddrs (BootstrapAddrsReq) returns (BootstrapAddrsResp);
     rpc BoostrapperName (BoostrapperNameReq) returns (BoostrapperNameResp);
+    rpc BetweennessCentrality (BetweennessCentralityReq)
+        returns (BetweennessCentralityResp);
+}
+
+message BetweennessCentralityReq {
+}
+
+message BetweennessCentralityResp {
+    repeated BetweenessCentrality node_betweeness = 1;
+}
+
+message BetweenessCentrality {
+    bytes node = 1;
+    float normalized = 2;
+    float non_normalized = 3;
 }
 
 message BootstrapAddrsReq {

@@ -15,6 +15,7 @@ import (
 	"github.com/lightningnetwork/lnd/discovery"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
+	"github.com/lightningnetwork/lnd/graph/stats"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/graphrpc"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -32,6 +33,25 @@ type remoteWrapper struct {
 	net tor.Net
 
 	local *graphdb.ChannelGraph
+}
+
+func (r *remoteWrapper) BetweenessCentrality(ctx context.Context) (map[autopilot.NodeID]*stats.BetweenessCentrality, error) {
+	resp, err := r.graphConn.BetweennessCentrality(ctx, &graphrpc.BetweennessCentralityReq{})
+	if err != nil {
+		return nil, err
+	}
+
+	centrality := make(map[autopilot.NodeID]*stats.BetweenessCentrality)
+	for _, node := range resp.NodeBetweeness {
+		var id autopilot.NodeID
+		copy(id[:], node.Node)
+		centrality[id] = &stats.BetweenessCentrality{
+			Normalized:    float64(node.Normalized),
+			NonNormalized: float64(node.NonNormalized),
+		}
+	}
+
+	return centrality, nil
 }
 
 func (r *remoteWrapper) GraphBootstrapper(ctx context.Context) (discovery.NetworkPeerBootstrapper, error) {
@@ -138,7 +158,7 @@ func (r *remoteWrapper) ForEachNodeDirectedChannel(ctx context.Context, tx graph
 	return r.local.ForEachNodeDirectedChannel(ctx, tx, node, cb)
 }
 
-// DescribeGraph & autopilot.
+// DescribeGraph.
 func (r *remoteWrapper) ForEachNode(tx graphdb.RTx, cb func(graphdb.RTx, *models.LightningNode) error) error {
 	return r.local.ForEachNode(tx, cb)
 }
@@ -148,7 +168,7 @@ func (r *remoteWrapper) ForEachChannel(cb func(*models.ChannelEdgeInfo, *models.
 	return r.local.ForEachChannel(cb)
 }
 
-// GetNodeInfo & autopilot.
+// GetNodeInfo.
 func (r *remoteWrapper) ForEachNodeChannel(tx graphdb.RTx, nodePub route.Vertex, cb func(graphdb.RTx, *models.ChannelEdgeInfo, *models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
 	return r.local.ForEachNodeChannel(tx, nodePub, cb)
 }

@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -6699,31 +6698,16 @@ func (r *rpcServer) GetNodeMetrics(ctx context.Context,
 	// transactional model.
 	graph := r.server.graphSource
 
-	// Calculate betweenness centrality if requested. Note that depending on the
-	// graph size, this may take up to a few minutes.
-	channelGraph := autopilot.ChannelGraphFromGraphSource(graph)
-	centralityMetric, err := autopilot.NewBetweennessCentralityMetric(
-		runtime.NumCPU(),
-	)
+	centrality, err := graph.BetweenessCentrality(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if err := centralityMetric.Refresh(channelGraph); err != nil {
-		return nil, err
-	}
-
 	// Fill normalized and non normalized centrality.
-	centrality := centralityMetric.GetMetric(true)
-	for nodeID, val := range centrality {
-		resp.BetweennessCentrality[hex.EncodeToString(nodeID[:])] =
-			&lnrpc.FloatMetric{
-				NormalizedValue: val,
-			}
-	}
-
-	centrality = centralityMetric.GetMetric(false)
-	for nodeID, val := range centrality {
-		resp.BetweennessCentrality[hex.EncodeToString(nodeID[:])].Value = val
+	for nodeID, betweenness := range centrality {
+		resp.BetweennessCentrality[hex.EncodeToString(nodeID[:])] = &lnrpc.FloatMetric{
+			Value:           betweenness.NonNormalized,
+			NormalizedValue: betweenness.Normalized,
+		}
 	}
 
 	return resp, nil

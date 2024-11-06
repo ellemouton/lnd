@@ -36,6 +36,7 @@ import (
 	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/funding"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
+	"github.com/lightningnetwork/lnd/graph/stats"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/kvdb"
@@ -269,7 +270,7 @@ func (d *DefaultWalletImpl) RegisterGrpcSubserver(s *grpc.Server) error {
 func (d *DefaultWalletImpl) Graph(_ context.Context,
 	dbs *DatabaseInstances) (GraphSource, error) {
 
-	return &ChanGraphStatsCollector{ChannelGraph: dbs.GraphDB}, nil
+	return &stats.ChanGraphStatsCollector{ChannelGraph: dbs.GraphDB}, nil
 }
 
 // ValidateMacaroon extracts the macaroon from the context's gRPC metadata,

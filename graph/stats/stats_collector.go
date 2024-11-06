@@ -1,9 +1,9 @@
-package lnd
+package stats
 
 import (
 	"context"
 	"math"
-	"time"
+	"runtime"
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/lightningnetwork/lnd/autopilot"
@@ -20,10 +20,52 @@ type StatsCollector interface {
 		error)
 
 	GraphBootstrapper(ctx context.Context) (discovery.NetworkPeerBootstrapper, error)
+
+	BetweenessCentrality(ctx context.Context) (map[autopilot.NodeID]*BetweenessCentrality, error)
+}
+
+type BetweenessCentrality struct {
+	Normalized    float64
+	NonNormalized float64
 }
 
 type ChanGraphStatsCollector struct {
 	*graphdb.ChannelGraph
+}
+
+func (c *ChanGraphStatsCollector) BetweenessCentrality(ctx context.Context) (map[autopilot.NodeID]*BetweenessCentrality, error) {
+	// Calculate betweenness centrality if requested. Note that depending on the
+	// graph size, this may take up to a few minutes.
+	channelGraph := autopilot.ChannelGraphFromGraphSource(c.ChannelGraph)
+	centralityMetric, err := autopilot.NewBetweennessCentralityMetric(
+		runtime.NumCPU(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := centralityMetric.Refresh(channelGraph); err != nil {
+		return nil, err
+	}
+
+	centrality := make(map[autopilot.NodeID]*BetweenessCentrality)
+
+	for nodeID, val := range centralityMetric.GetMetric(true) {
+		centrality[nodeID] = &BetweenessCentrality{
+			Normalized: val,
+		}
+	}
+
+	for nodeID, val := range centralityMetric.GetMetric(false) {
+		if _, ok := centrality[nodeID]; !ok {
+			centrality[nodeID] = &BetweenessCentrality{
+				Normalized: val,
+			}
+			continue
+		}
+		centrality[nodeID].NonNormalized = val
+	}
+
+	return centrality, nil
 }
 
 var _ StatsCollector = (*ChanGraphStatsCollector)(nil)
@@ -142,11 +184,11 @@ func (c *ChanGraphStatsCollector) NetworkStats(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	start := time.Now()
+	// start := time.Now()
 	diameter := simpleGraph.DiameterRadialCutoff()
 
-	srvrLog.Infof("elapsed time for diameter (%d) calculation: %v", diameter,
-		time.Since(start))
+	//log.Infof("elapsed time for diameter (%d) calculation: %v", diameter,
+	// 	time.Since(start))
 
 	// Query the graph for the current number of zombie channels.
 	numZombies, err := c.NumZombies(ctx)

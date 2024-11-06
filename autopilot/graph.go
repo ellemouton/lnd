@@ -32,7 +32,7 @@ var (
 //
 // TODO(roasbeef): move inmpl to main package?
 type graphSourceChannelGraph struct {
-	db GraphSource
+	db *graphdb.ChannelGraph
 }
 
 // A compile time assertion to ensure graphSourceChannelGraph meets the
@@ -41,7 +41,7 @@ var _ ChannelGraph = (*graphSourceChannelGraph)(nil)
 
 // ChannelGraphFromGraphSource returns an instance of the autopilot.ChannelGraph
 // backed by a GraphSource implementation.
-func ChannelGraphFromGraphSource(db GraphSource) ChannelGraph {
+func ChannelGraphFromGraphSource(db *graphdb.ChannelGraph) ChannelGraph {
 	return &graphSourceChannelGraph{
 		db: db,
 	}
@@ -51,7 +51,7 @@ func ChannelGraphFromGraphSource(db GraphSource) ChannelGraph {
 // channeldb.LightningNode. The wrapper method implement the autopilot.Node
 // interface.
 type dbNode struct {
-	db GraphSource
+	db *graphdb.ChannelGraph
 
 	tx graphdb.RTx
 
