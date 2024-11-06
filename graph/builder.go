@@ -1615,7 +1615,7 @@ func (b *Builder) GetChannelByID(chanID lnwire.ShortChannelID) (
 	*models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
-	return b.cfg.Graph.FetchChannelEdgesByID(chanID.ToUint64())
+	return b.cfg.Graph.FetchChannelEdgesByID(context.TODO(), chanID.ToUint64())
 }
 
 // FetchLightningNode attempts to look up a target node by its identity public
@@ -1670,7 +1670,7 @@ func (b *Builder) ForAllOutgoingChannels(cb func(*models.ChannelEdgeInfo,
 func (b *Builder) AddProof(chanID lnwire.ShortChannelID,
 	proof *models.ChannelAuthProof) error {
 
-	info, _, _, err := b.cfg.Graph.FetchChannelEdgesByID(chanID.ToUint64())
+	info, _, _, err := b.cfg.Graph.FetchChannelEdgesByID(context.TODO(), chanID.ToUint64())
 	if err != nil {
 		return err
 	}

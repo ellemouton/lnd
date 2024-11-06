@@ -295,16 +295,16 @@ func (g *GraphSourceMux) ForEachNodeCached(ctx context.Context,
 // graphdb.ErrEdgeNotFound is returned.
 //
 // NOTE: this is part of the GraphSource interface.
-func (g *GraphSourceMux) FetchChannelEdgesByID(chanID uint64) (
+func (g *GraphSourceMux) FetchChannelEdgesByID(ctx context.Context, chanID uint64) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
-	info, p1, p2, err := g.local.FetchChannelEdgesByID(chanID)
+	info, p1, p2, err := g.local.FetchChannelEdgesByID(ctx, chanID)
 	if err == nil {
 		return info, p1, p2, nil
 	}
 
-	return g.remote.FetchChannelEdgesByID(chanID)
+	return g.remote.FetchChannelEdgesByID(ctx, chanID)
 }
 
 // IsPublicNode is a helper method that determines whether the node with the

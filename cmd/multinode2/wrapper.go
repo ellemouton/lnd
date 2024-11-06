@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
@@ -84,8 +85,95 @@ func (r *remoteWrapper) ForEachNodeCached(ctx context.Context,
 	return r.local.ForEachNodeCached(ctx, cb)
 }
 
-func (r *remoteWrapper) FetchChannelEdgesByID(chanID uint64) (*models.ChannelEdgeInfo, *models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error) {
-	return r.local.FetchChannelEdgesByID(chanID)
+func (r *remoteWrapper) FetchChannelEdgesByID(ctx context.Context, chanID uint64) (*models.ChannelEdgeInfo, *models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error) {
+	info, err := r.lnConn.GetChanInfo(ctx, &lnrpc.ChanInfoRequest{
+		ChanId: chanID,
+	})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	chanPoint, err := wire.NewOutPointFromString(info.ChanPoint)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	var (
+		node1Bytes [33]byte
+		node2Bytes [33]byte
+	)
+	node1, err := hex.DecodeString(info.Node1Pub)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	copy(node1Bytes[:], node1)
+
+	node2, err := hex.DecodeString(info.Node2Pub)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	copy(node2Bytes[:], node2)
+
+	extra, err := lnwire.CustomRecords(info.CustomRecords).Serialize()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	edge := &models.ChannelEdgeInfo{
+		ChannelID:       info.ChannelId,
+		ChannelPoint:    *chanPoint,
+		NodeKey1Bytes:   node1Bytes,
+		NodeKey2Bytes:   node2Bytes,
+		Capacity:        btcutil.Amount(info.Capacity),
+		ExtraOpaqueData: extra,
+	}
+
+	var (
+		policy1 *models.ChannelEdgePolicy
+		policy2 *models.ChannelEdgePolicy
+	)
+	if info.Node1Policy != nil {
+		policy1, err = unmarshalPolicy(info.Node1Policy, true)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	if info.Node2Policy != nil {
+		policy2, err = unmarshalPolicy(info.Node2Policy, false)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+
+	return edge, policy1, policy2, nil
+}
+
+func unmarshalPolicy(rpcPolicy *lnrpc.RoutingPolicy, node1 bool) (
+	*models.ChannelEdgePolicy, error) {
+
+	var chanFlags lnwire.ChanUpdateChanFlags
+	if !node1 {
+		chanFlags |= lnwire.ChanUpdateDirection
+	}
+	if rpcPolicy.Disabled {
+		chanFlags |= lnwire.ChanUpdateDisabled
+	}
+
+	extra, err := lnwire.CustomRecords(rpcPolicy.CustomRecords).Serialize()
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.ChannelEdgePolicy{
+		TimeLockDelta:             uint16(rpcPolicy.TimeLockDelta),
+		MinHTLC:                   lnwire.MilliSatoshi(rpcPolicy.MinHtlc),
+		MaxHTLC:                   lnwire.MilliSatoshi(rpcPolicy.MaxHtlcMsat),
+		FeeBaseMSat:               lnwire.MilliSatoshi(rpcPolicy.FeeBaseMsat),
+		FeeProportionalMillionths: lnwire.MilliSatoshi(rpcPolicy.FeeRateMilliMsat),
+		LastUpdate:                time.Unix(int64(rpcPolicy.LastUpdate), 0),
+		ChannelFlags:              chanFlags,
+		ExtraOpaqueData:           extra,
+	}, nil
 }
 
 func (r *remoteWrapper) IsPublicNode(ctx context.Context, pubKey [33]byte) (bool, error) {
