@@ -243,13 +243,14 @@ func NewChannelGraph(db kvdb.Backend, options ...OptionModifier) (*ChannelGraph,
 			return nil, err
 		}
 
-		err = g.ForEachChannel(func(info *models.ChannelEdgeInfo,
-			policy1, policy2 *models.ChannelEdgePolicy) error {
+		err = g.ForEachChannel(context.TODO(),
+			func(info *models.ChannelEdgeInfo,
+				policy1, policy2 *models.ChannelEdgePolicy) error {
 
-			g.graphCache.AddChannel(info, policy1, policy2)
+				g.graphCache.AddChannel(info, policy1, policy2)
 
-			return nil
-		})
+				return nil
+			})
 		if err != nil {
 			return nil, err
 		}
@@ -457,8 +458,9 @@ func (c *ChannelGraph) AddrsForNode(ctx context.Context, nodePub *btcec.PublicKe
 // NOTE: If an edge can't be found, or wasn't advertised, then a nil pointer
 // for that particular channel edge routing policy will be passed into the
 // callback.
-func (c *ChannelGraph) ForEachChannel(cb func(*models.ChannelEdgeInfo,
-	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
+func (c *ChannelGraph) ForEachChannel(_ context.Context,
+	cb func(*models.ChannelEdgeInfo,
+		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
 
 	return c.db.View(func(tx kvdb.RTx) error {
 		edges := tx.ReadBucket(edgeBucket)

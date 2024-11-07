@@ -29,7 +29,7 @@ type GraphSource interface {
 	// callback returns an error, then the transaction is aborted and the
 	// iteration stops early. An edge's policy structs may be nil if the
 	// ChannelUpdate in question has not yet been received for the channel.
-	ForEachChannel(cb func(*models.ChannelEdgeInfo,
+	ForEachChannel(ctx context.Context, cb func(*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error
 

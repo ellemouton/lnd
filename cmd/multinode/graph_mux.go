@@ -340,8 +340,9 @@ func (g *GraphSourceMux) AddrsForNode(ctx context.Context, nodePub *btcec.Public
 // been received for the channel.
 //
 // NOTE: this is part of the GraphSource interface.
-func (g *GraphSourceMux) ForEachChannel(cb func(*models.ChannelEdgeInfo,
-	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
+func (g *GraphSourceMux) ForEachChannel(ctx context.Context,
+	cb func(*models.ChannelEdgeInfo,
+		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
 
 	srcPub, err := g.selfNodePub()
 	if err != nil {
@@ -361,7 +362,7 @@ func (g *GraphSourceMux) ForEachChannel(cb func(*models.ChannelEdgeInfo,
 		return err
 	}
 
-	return g.remote.ForEachChannel(func(info *models.ChannelEdgeInfo,
+	return g.remote.ForEachChannel(ctx, func(info *models.ChannelEdgeInfo,
 		policy *models.ChannelEdgePolicy,
 		policy2 *models.ChannelEdgePolicy) error {
 

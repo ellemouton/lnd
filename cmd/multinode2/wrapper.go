@@ -224,8 +224,31 @@ func (r *remoteWrapper) ForEachNode(ctx context.Context, tx graphdb.RTx,
 }
 
 // DescribeGraph. NB: use --caches.rpc-graph-cache-duration
-func (r *remoteWrapper) ForEachChannel(cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
-	return r.local.ForEachChannel(cb)
+func (r *remoteWrapper) ForEachChannel(ctx context.Context,
+	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
+
+	graph, err := r.lnConn.DescribeGraph(ctx, &lnrpc.ChannelGraphRequest{
+		IncludeUnannounced: true,
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, edge := range graph.Edges {
+		edgeInfo, policy1, policy2, err := unmarshalChannelInfo(edge)
+		if err != nil {
+			return err
+		}
+
+		// To ensure that Describe graph doesnt filter it out.
+		edgeInfo.AuthProof = &models.ChannelAuthProof{}
+
+		if err := cb(edgeInfo, policy1, policy2); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // GetNodeInfo.
