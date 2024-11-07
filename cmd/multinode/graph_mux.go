@@ -160,7 +160,7 @@ func (g *GraphSourceMux) FetchNodeFeatures(ctx context.Context, tx graphdb.RTx,
 // early.
 //
 // NOTE: this is part of the GraphSource interface.
-func (g *GraphSourceMux) ForEachNode(tx graphdb.RTx,
+func (g *GraphSourceMux) ForEachNode(ctx context.Context, tx graphdb.RTx,
 	cb func(graphdb.RTx, *models.LightningNode) error) error {
 
 	source, err := g.local.SourceNode()
@@ -178,7 +178,7 @@ func (g *GraphSourceMux) ForEachNode(tx graphdb.RTx,
 		return err
 	}
 
-	return g.remote.ForEachNode(rTx,
+	return g.remote.ForEachNode(ctx, rTx,
 		func(tx graphdb.RTx, node *models.LightningNode) error {
 
 			if bytes.Equal(

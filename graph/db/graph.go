@@ -613,7 +613,7 @@ func (c *ChannelGraph) ForEachNodeCached(ctx context.Context,
 	// We'll iterate over each node, then the set of channels for each
 	// node, and construct a similar callback functiopn signature as the
 	// main funcotin expects.
-	return c.ForEachNode(nil, func(tx RTx,
+	return c.ForEachNode(ctx, nil, func(tx RTx,
 		node *models.LightningNode) error {
 
 		channels := make(map[uint64]*DirectedChannel)
@@ -729,7 +729,7 @@ func (c *ChannelGraph) DisabledChannelIDs() ([]uint64, error) {
 //
 // TODO(roasbeef): add iterator interface to allow for memory efficient graph
 // traversal when graph gets mega
-func (c *ChannelGraph) ForEachNode(tx RTx, cb func(RTx,
+func (c *ChannelGraph) ForEachNode(_ context.Context, tx RTx, cb func(RTx,
 	*models.LightningNode) error) error {
 
 	traversal := func(tx kvdb.RTx) error {
