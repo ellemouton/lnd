@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"image/color"
@@ -160,9 +161,66 @@ func (r *remoteWrapper) ForEachNodeDirectedChannel(ctx context.Context, tx graph
 }
 
 // DescribeGraph. NB: use --caches.rpc-graph-cache-duration
-func (r *remoteWrapper) ForEachNode(ctx context.Context, tx graphdb.RTx, cb func(graphdb.RTx, *models.LightningNode) error) error {
-	// r.lnConn.DescribeGraph()
-	return r.local.ForEachNode(ctx, tx, cb)
+func (r *remoteWrapper) ForEachNode(ctx context.Context, tx graphdb.RTx,
+	cb func(graphdb.RTx, *models.LightningNode) error) error {
+
+	graph, err := r.lnConn.DescribeGraph(ctx, &lnrpc.ChannelGraphRequest{
+		IncludeUnannounced: true,
+	})
+	if err != nil {
+		return err
+	}
+
+	selfNode, err := r.local.SourceNode()
+	if err != nil {
+		return err
+	}
+
+	for _, node := range graph.Nodes {
+		pubKey, err := hex.DecodeString(node.PubKey)
+		if err != nil {
+			return err
+		}
+		var pubKeyBytes [33]byte
+		copy(pubKeyBytes[:], pubKey)
+
+		extra, err := lnwire.CustomRecords(node.CustomRecords).Serialize()
+		if err != nil {
+			return err
+		}
+
+		addrs, err := r.unmarshalAddrs(node.Addresses)
+		if err != nil {
+			return err
+		}
+
+		var haveNodeAnnouncement bool
+		if bytes.Equal(selfNode.PubKeyBytes[:], pubKeyBytes[:]) {
+			haveNodeAnnouncement = true
+		} else {
+			haveNodeAnnouncement = len(addrs) > 0 ||
+				node.Alias != "" || len(extra) > 0 ||
+				len(node.Features) > 0
+		}
+
+		n := &models.LightningNode{
+			PubKeyBytes:          pubKeyBytes,
+			HaveNodeAnnouncement: haveNodeAnnouncement,
+			LastUpdate:           time.Unix(int64(node.LastUpdate), 0),
+			Addresses:            addrs,
+			Color:                color.RGBA{},
+			Alias:                node.Alias,
+			Features:             unmarshalFeatures(node.Features),
+			ExtraOpaqueData:      extra,
+		}
+
+		err = cb(tx, n)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // DescribeGraph. NB: use --caches.rpc-graph-cache-duration
