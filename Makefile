@@ -114,6 +114,7 @@ build:
 	$(GOBUILD) -tags="$(DEV_TAGS)" -o lncli-debug $(DEV_GCFLAGS) $(DEV_LDFLAGS) $(PKG)/cmd/lncli
 	$(GOBUILD) -tags="$(DEV_TAGS)" -o multinode-debug $(DEV_GCFLAGS) $(DEV_LDFLAGS) $(PKG)/cmd/multinode
 	$(GOBUILD) -tags="$(DEV_TAGS)" -o multinode2-debug $(DEV_GCFLAGS) $(DEV_LDFLAGS) $(PKG)/cmd/multinode2
+	$(GOBUILD) -tags="$(DEV_TAGS)" -o multinode3-debug $(DEV_GCFLAGS) $(DEV_LDFLAGS) $(PKG)/cmd/multinode3
 
 #? build-itest: Build integration test binaries, place them in itest directory
 build-itest:
@@ -140,6 +141,7 @@ install-binaries:
 	$(GOINSTALL) -tags="${tags}" -ldflags="$(RELEASE_LDFLAGS)" $(PKG)/cmd/lncli
 	$(GOINSTALL) -tags="${tags}" -ldflags="$(RELEASE_LDFLAGS)" $(PKG)/cmd/multinode
 	$(GOINSTALL) -tags="${tags}" -ldflags="$(RELEASE_LDFLAGS)" $(PKG)/cmd/multinode2
+	$(GOINSTALL) -tags="${tags}" -ldflags="$(RELEASE_LDFLAGS)" $(PKG)/cmd/multinode3
 
 #? manpages: generate and install man pages
 manpages:
