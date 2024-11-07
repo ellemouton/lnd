@@ -1648,7 +1648,7 @@ func (b *Builder) ForEachNode(
 func (b *Builder) ForAllOutgoingChannels(cb func(*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy) error) error {
 
-	return b.cfg.Graph.ForEachNodeChannel(nil, b.cfg.SelfNode,
+	return b.cfg.Graph.ForEachNodeChannel(context.TODO(), nil, b.cfg.SelfNode,
 		func(_ graphdb.RTx, c *models.ChannelEdgeInfo,
 			e *models.ChannelEdgePolicy,
 			_ *models.ChannelEdgePolicy) error {

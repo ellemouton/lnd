@@ -233,7 +233,7 @@ func (g *GraphSourceMux) FetchLightningNode(ctx context.Context, tx graphdb.RTx,
 // traversal.
 //
 // NOTE: this is part of the GraphSource interface.
-func (g *GraphSourceMux) ForEachNodeChannel(tx graphdb.RTx,
+func (g *GraphSourceMux) ForEachNodeChannel(ctx context.Context, tx graphdb.RTx,
 	nodePub route.Vertex, cb func(graphdb.RTx, *models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
@@ -246,7 +246,7 @@ func (g *GraphSourceMux) ForEachNodeChannel(tx graphdb.RTx,
 	// First query our own db since we may have chan info that our remote
 	// does not know of (regarding our selves or our channel peers).
 	var found bool
-	err = g.local.ForEachNodeChannel(lTx, nodePub, func(tx graphdb.RTx,
+	err = g.local.ForEachNodeChannel(ctx, lTx, nodePub, func(tx graphdb.RTx,
 		info *models.ChannelEdgeInfo, policy *models.ChannelEdgePolicy,
 		policy2 *models.ChannelEdgePolicy) error {
 
@@ -263,7 +263,7 @@ func (g *GraphSourceMux) ForEachNodeChannel(tx graphdb.RTx,
 		return nil
 	}
 
-	return g.remote.ForEachNodeChannel(rTx, nodePub, cb)
+	return g.remote.ForEachNodeChannel(ctx, rTx, nodePub, cb)
 }
 
 // FetchChannelEdgesByID attempts to look up the two directed edges for the
@@ -349,7 +349,7 @@ func (g *GraphSourceMux) ForEachChannel(cb func(*models.ChannelEdgeInfo,
 	}
 
 	ourChans := make(map[uint64]bool)
-	err = g.local.ForEachNodeChannel(nil, srcPub, func(_ graphdb.RTx,
+	err = g.local.ForEachNodeChannel(context.TODO(), nil, srcPub, func(_ graphdb.RTx,
 		info *models.ChannelEdgeInfo, policy *models.ChannelEdgePolicy,
 		policy2 *models.ChannelEdgePolicy) error {
 

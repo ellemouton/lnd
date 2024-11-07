@@ -262,8 +262,8 @@ type DB interface {
 	// graph traversal.
 	//
 	// Unknown policies are passed into the callback as nil values.
-	ForEachNodeChannel(tx graphdb.RTx, nodePub route.Vertex,
-		cb func(graphdb.RTx, *models.ChannelEdgeInfo,
+	ForEachNodeChannel(ctx context.Context, tx graphdb.RTx,
+		nodePub route.Vertex, cb func(graphdb.RTx, *models.ChannelEdgeInfo,
 			*models.ChannelEdgePolicy,
 			*models.ChannelEdgePolicy) error) error
 

@@ -150,7 +150,8 @@ func (r *remoteWrapper) NetworkStats(ctx context.Context, excludeNodes map[route
 
 // Pathfinding.
 func (r *remoteWrapper) NewReadTx(ctx context.Context) (graphdb.RTx, error) {
-	return r.local.NewReadTx(ctx)
+	// TODO(elle): ??
+	return graphdb.NewKVDBRTx(nil), nil
 }
 
 // Pathfinding.
@@ -158,19 +159,41 @@ func (r *remoteWrapper) ForEachNodeDirectedChannel(ctx context.Context, tx graph
 	return r.local.ForEachNodeDirectedChannel(ctx, tx, node, cb)
 }
 
-// DescribeGraph.
+// DescribeGraph. NB: use --caches.rpc-graph-cache-duration
 func (r *remoteWrapper) ForEachNode(tx graphdb.RTx, cb func(graphdb.RTx, *models.LightningNode) error) error {
 	return r.local.ForEachNode(tx, cb)
 }
 
-// DescribeGraph.
+// DescribeGraph. NB: use --caches.rpc-graph-cache-duration
 func (r *remoteWrapper) ForEachChannel(cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
 	return r.local.ForEachChannel(cb)
 }
 
 // GetNodeInfo.
-func (r *remoteWrapper) ForEachNodeChannel(tx graphdb.RTx, nodePub route.Vertex, cb func(graphdb.RTx, *models.ChannelEdgeInfo, *models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
-	return r.local.ForEachNodeChannel(tx, nodePub, cb)
+func (r *remoteWrapper) ForEachNodeChannel(ctx context.Context, tx graphdb.RTx,
+	nodePub route.Vertex, cb func(graphdb.RTx, *models.ChannelEdgeInfo,
+		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
+
+	info, err := r.lnConn.GetNodeInfo(ctx, &lnrpc.NodeInfoRequest{
+		PubKey:          hex.EncodeToString(nodePub[:]),
+		IncludeChannels: true,
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, channel := range info.Channels {
+		edge, policy1, policy2, err := unmarshalChannelInfo(channel)
+		if err != nil {
+			return err
+		}
+
+		if err := cb(tx, edge, policy1, policy2); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (r *remoteWrapper) FetchNodeFeatures(ctx context.Context, tx graphdb.RTx, node route.Vertex) (*lnwire.FeatureVector, error) {
