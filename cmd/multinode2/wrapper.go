@@ -156,8 +156,66 @@ func (r *remoteWrapper) NewReadTx(ctx context.Context) (graphdb.RTx, error) {
 }
 
 // Pathfinding.
-func (r *remoteWrapper) ForEachNodeDirectedChannel(ctx context.Context, tx graphdb.RTx, node route.Vertex, cb func(channel *graphdb.DirectedChannel) error) error {
-	return r.local.ForEachNodeDirectedChannel(ctx, tx, node, cb)
+func (r *remoteWrapper) ForEachNodeDirectedChannel(ctx context.Context,
+	_ graphdb.RTx, node route.Vertex,
+	cb func(channel *graphdb.DirectedChannel) error) error {
+
+	info, err := r.lnConn.GetNodeInfo(ctx, &lnrpc.NodeInfoRequest{
+		PubKey:          hex.EncodeToString(node[:]),
+		IncludeChannels: true,
+	})
+	if err != nil {
+		return err
+	}
+
+	toNodeCallback := func() route.Vertex {
+		return node
+	}
+	toNodeFeatures := unmarshalFeatures(info.Node.Features)
+
+	for _, channel := range info.Channels {
+		e, p1, p2, err := unmarshalChannelInfo(channel)
+		if err != nil {
+			return err
+		}
+
+		var cachedInPolicy *models.CachedEdgePolicy
+		if p2 != nil {
+			cachedInPolicy = models.NewCachedPolicy(p2)
+			cachedInPolicy.ToNodePubKey = toNodeCallback
+			cachedInPolicy.ToNodeFeatures = toNodeFeatures
+		}
+
+		var inboundFee lnwire.Fee
+		if p1 != nil {
+			// Extract inbound fee. If there is a decoding error,
+			// skip this edge.
+			_, err := p1.ExtraOpaqueData.ExtractRecords(&inboundFee)
+			if err != nil {
+				return nil
+			}
+		}
+
+		directedChannel := &graphdb.DirectedChannel{
+			ChannelID:    e.ChannelID,
+			IsNode1:      node == e.NodeKey1Bytes,
+			OtherNode:    e.NodeKey2Bytes,
+			Capacity:     e.Capacity,
+			OutPolicySet: p1 != nil,
+			InPolicy:     cachedInPolicy,
+			InboundFee:   inboundFee,
+		}
+
+		if node == e.NodeKey2Bytes {
+			directedChannel.OtherNode = e.NodeKey1Bytes
+		}
+
+		if err := cb(directedChannel); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // DescribeGraph. NB: use --caches.rpc-graph-cache-duration
@@ -412,13 +470,13 @@ func unmarshalChannelInfo(info *lnrpc.ChannelEdge) (*models.ChannelEdgeInfo, *mo
 		policy2 *models.ChannelEdgePolicy
 	)
 	if info.Node1Policy != nil {
-		policy1, err = unmarshalPolicy(info.Node1Policy, true)
+		policy1, err = unmarshalPolicy(info.ChannelId, info.Node1Policy, true)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 	}
 	if info.Node2Policy != nil {
-		policy2, err = unmarshalPolicy(info.Node2Policy, false)
+		policy2, err = unmarshalPolicy(info.ChannelId, info.Node2Policy, false)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -427,8 +485,8 @@ func unmarshalChannelInfo(info *lnrpc.ChannelEdge) (*models.ChannelEdgeInfo, *mo
 	return edge, policy1, policy2, nil
 }
 
-func unmarshalPolicy(rpcPolicy *lnrpc.RoutingPolicy, node1 bool) (
-	*models.ChannelEdgePolicy, error) {
+func unmarshalPolicy(channelID uint64, rpcPolicy *lnrpc.RoutingPolicy,
+	node1 bool) (*models.ChannelEdgePolicy, error) {
 
 	var chanFlags lnwire.ChanUpdateChanFlags
 	if !node1 {
@@ -444,6 +502,7 @@ func unmarshalPolicy(rpcPolicy *lnrpc.RoutingPolicy, node1 bool) (
 	}
 
 	return &models.ChannelEdgePolicy{
+		ChannelID:                 channelID,
 		TimeLockDelta:             uint16(rpcPolicy.TimeLockDelta),
 		MinHTLC:                   lnwire.MilliSatoshi(rpcPolicy.MinHtlc),
 		MaxHTLC:                   lnwire.MilliSatoshi(rpcPolicy.MaxHtlcMsat),
