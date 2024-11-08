@@ -1796,7 +1796,6 @@ func (r *rpcServer) ConnectPeer(ctx context.Context,
 	peerAddr := &lnwire.NetAddress{
 		IdentityKey: pubKey,
 		Address:     addr,
-		ChainNet:    r.cfg.ActiveNetParams.Net,
 	}
 
 	rpcsLog.Debugf("[connectpeer] requested connection to %x@%s",

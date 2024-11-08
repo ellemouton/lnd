@@ -402,7 +402,6 @@ func (s *server) updatePersistentPeerAddrs() error {
 							&lnwire.NetAddress{
 								IdentityKey: update.IdentityKey,
 								Address:     addr,
-								ChainNet:    s.cfg.ActiveNetParams.Net,
 							},
 						)
 					}
@@ -2332,7 +2331,6 @@ func (s *server) Start(ctx context.Context) error {
 			peerAddr := &lnwire.NetAddress{
 				IdentityKey: parsedPubkey,
 				Address:     addr,
-				ChainNet:    s.cfg.ActiveNetParams.Net,
 			}
 
 			err = s.ConnectToPeer(
@@ -4090,7 +4088,6 @@ func (s *server) peerConnected(ctx context.Context, conn net.Conn,
 	peerAddr := &lnwire.NetAddress{
 		IdentityKey: pubKey,
 		Address:     addr,
-		ChainNet:    s.cfg.ActiveNetParams.Net,
 	}
 
 	// With the brontide connection established, we'll now craft the feature
@@ -4486,7 +4483,6 @@ func (s *server) peerTerminationWatcher(ctx context.Context, p *peer.Brontide,
 			&lnwire.NetAddress{
 				IdentityKey: p.IdentityKey(),
 				Address:     addr,
-				ChainNet:    p.NetAddress().ChainNet,
 			},
 		)
 	}
