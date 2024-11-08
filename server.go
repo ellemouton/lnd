@@ -45,6 +45,7 @@ import (
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/graph/graphsession"
+	"github.com/lightningnetwork/lnd/graph/stats"
 	"github.com/lightningnetwork/lnd/healthcheck"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
@@ -2413,7 +2414,7 @@ func (s *server) Start(ctx context.Context) error {
 		// dedicated goroutine to maintain a set of persistent
 		// connections.
 		if shouldPeerBootstrap(s.cfg) {
-			bootstrappers, err := initNetworkBootstrappers(s)
+			bootstrappers, err := initNetworkBootstrappers(ctx, s)
 			if err != nil {
 				startErr = err
 				return
@@ -2775,7 +2776,9 @@ out:
 // initNetworkBootstrappers initializes a set of network peer bootstrappers
 // based on the server, and currently active bootstrap mechanisms as defined
 // within the current configuration.
-func initNetworkBootstrappers(s *server) ([]discovery.NetworkPeerBootstrapper, error) {
+func initNetworkBootstrappers(ctx context.Context, s *server) (
+	[]discovery.NetworkPeerBootstrapper, error) {
+
 	srvrLog.Infof("Initializing peer network bootstrappers!")
 
 	var bootStrappers []discovery.NetworkPeerBootstrapper
@@ -2783,8 +2786,8 @@ func initNetworkBootstrappers(s *server) ([]discovery.NetworkPeerBootstrapper, e
 	// First, we'll create an instance of the ChannelGraphBootstrapper as
 	// this can be used by default if we've already partially seeded the
 	// network.
-	chanGraph := autopilot.ChannelGraphFromDatabase(s.graphDB)
-	graphBootstrapper, err := discovery.NewGraphBootstrapper(chanGraph)
+	graph := &stats.ChanGraphStatsCollector{ChannelGraph: s.graphDB}
+	graphBootstrapper, err := graph.GraphBootstrapper(ctx)
 	if err != nil {
 		return nil, err
 	}
