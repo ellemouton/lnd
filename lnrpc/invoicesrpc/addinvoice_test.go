@@ -1,6 +1,7 @@
 package invoicesrpc
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"testing"
@@ -35,8 +36,10 @@ func newHopHintsConfigMock(t *testing.T) *hopHintsConfigMock {
 }
 
 // IsPublicNode mocks node public state lookup.
-func (h *hopHintsConfigMock) IsPublicNode(pubKey [33]byte) (bool, error) {
-	args := h.Mock.Called(pubKey)
+func (h *hopHintsConfigMock) IsPublicNode(ctx context.Context, pubKey [33]byte) (
+	bool, error) {
+
+	args := h.Mock.Called(ctx, pubKey)
 	return args.Bool(0), args.Error(1)
 }
 
@@ -453,7 +456,8 @@ func TestShouldIncludeChannel(t *testing.T) {
 			}
 
 			hopHint, remoteBalance, include := shouldIncludeChannel(
-				cfg, tc.channel, tc.alreadyIncluded,
+				context.Background(), cfg, tc.channel,
+				tc.alreadyIncluded,
 			)
 
 			require.Equal(t, tc.include, include)
@@ -887,7 +891,8 @@ func TestPopulateHopHints(t *testing.T) {
 				MaxHopHints:           tc.maxHopHints,
 			}
 			hopHints, err := PopulateHopHints(
-				cfg, tc.amount, tc.forcedHints,
+				context.Background(), cfg, tc.amount,
+				tc.forcedHints,
 			)
 			require.NoError(t, err)
 			// We shuffle the elements in the hop hint list so we

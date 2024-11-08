@@ -2,6 +2,7 @@ package graphdb
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -3192,11 +3193,12 @@ func TestNodeIsPublic(t *testing.T) {
 		graphs []*ChannelGraph, public bool) {
 
 		t.Helper()
+		ctx := context.Background()
 
 		for _, node := range nodes {
 			for _, graph := range graphs {
 				isPublic, err := graph.IsPublicNode(
-					node.PubKeyBytes,
+					ctx, node.PubKeyBytes,
 				)
 				if err != nil {
 					t.Fatalf("unable to determine if "+

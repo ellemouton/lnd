@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"context"
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -28,7 +29,7 @@ type ChannelGraphTimeSeries interface {
 	// update timestamp between the start time and end time. We'll use this
 	// to catch up a remote node to the set of channel updates that they
 	// may have missed out on within the target chain.
-	UpdatesInHorizon(chain chainhash.Hash,
+	UpdatesInHorizon(ctx context.Context, chain chainhash.Hash,
 		startTime time.Time, endTime time.Time) ([]lnwire.Message, error)
 
 	// FilterKnownChanIDs takes a target chain, and a set of channel ID's,
@@ -103,7 +104,7 @@ func (c *ChanSeries) HighestChanID(chain chainhash.Hash) (*lnwire.ShortChannelID
 // within the target chain.
 //
 // NOTE: This is part of the ChannelGraphTimeSeries interface.
-func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
+func (c *ChanSeries) UpdatesInHorizon(ctx context.Context, chain chainhash.Hash,
 	startTime time.Time, endTime time.Time) ([]lnwire.Message, error) {
 
 	var updates []lnwire.Message
@@ -169,7 +170,9 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 
 		// Ensure we only forward nodes that are publicly advertised to
 		// prevent leaking information about nodes.
-		isNodePublic, err := c.graph.IsPublicNode(nodeAnn.PubKeyBytes)
+		isNodePublic, err := c.graph.IsPublicNode(
+			ctx, nodeAnn.PubKeyBytes,
+		)
 		if err != nil {
 			log.Errorf("Unable to determine if node %x is "+
 				"advertised: %v", nodeAnn.PubKeyBytes, err)

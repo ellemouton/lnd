@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -436,8 +437,9 @@ type AuthenticatedGossiper struct {
 	// held.
 	bestHeight uint32
 
-	quit chan struct{}
-	wg   sync.WaitGroup
+	cancel func()
+	quit   chan struct{}
+	wg     sync.WaitGroup
 
 	// cfg is a copy of the configuration struct that the gossiper service
 	// was initialized with.
@@ -631,10 +633,13 @@ func (d *AuthenticatedGossiper) start() error {
 
 	d.banman.start()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	d.cancel = cancel
+
 	// Start receiving blocks in its dedicated goroutine.
 	d.wg.Add(2)
 	go d.syncBlockHeight()
-	go d.networkHandler()
+	go d.networkHandler(ctx)
 
 	return nil
 }
@@ -785,6 +790,8 @@ func (d *AuthenticatedGossiper) stop() {
 		d.blockEpochs.Cancel()
 	}
 
+	d.cancel()
+
 	d.syncMgr.Stop()
 
 	d.banman.stop()
@@ -809,6 +816,9 @@ func (d *AuthenticatedGossiper) ProcessRemoteAnnouncement(msg lnwire.Message,
 	peer lnpeer.Peer) chan error {
 
 	errChan := make(chan error, 1)
+
+	// TODO(elle): let ProcessRemoteAnnouncement take a context.
+	ctx := context.TODO()
 
 	// For messages in the known set of channel series queries, we'll
 	// dispatch the message directly to the GossipSyncer, and skip the main
@@ -849,7 +859,7 @@ func (d *AuthenticatedGossiper) ProcessRemoteAnnouncement(msg lnwire.Message,
 
 		// If we've found the message target, then we'll dispatch the
 		// message directly to it.
-		if err := syncer.ApplyGossipFilter(m); err != nil {
+		if err := syncer.ApplyGossipFilter(ctx, m); err != nil {
 			log.Warnf("Unable to apply gossip filter for peer=%x: "+
 				"%v", peer.PubKey(), err)
 
@@ -1379,7 +1389,7 @@ func (d *AuthenticatedGossiper) sendRemoteBatch(annBatch []msgWithSenders) {
 // broadcasting our latest topology state to all connected peers.
 //
 // NOTE: This MUST be run as a goroutine.
-func (d *AuthenticatedGossiper) networkHandler() {
+func (d *AuthenticatedGossiper) networkHandler(ctx context.Context) {
 	defer d.wg.Done()
 
 	// Initialize empty deDupedAnnouncements to store announcement batch.
@@ -1440,7 +1450,7 @@ func (d *AuthenticatedGossiper) networkHandler() {
 			// messages that we'll process serially.
 			case *lnwire.AnnounceSignatures1:
 				emittedAnnouncements, _ := d.processNetworkAnnouncement(
-					announcement,
+					ctx, announcement,
 				)
 				log.Debugf("Processed network message %s, "+
 					"returned len(announcements)=%v",
@@ -1474,7 +1484,7 @@ func (d *AuthenticatedGossiper) networkHandler() {
 
 			d.wg.Add(1)
 			go d.handleNetworkMessages(
-				announcement, &announcements, validationBarrier,
+				ctx, announcement, &announcements, validationBarrier,
 			)
 
 		// The trickle timer has ticked, which indicates we should
@@ -1524,8 +1534,9 @@ func (d *AuthenticatedGossiper) networkHandler() {
 // signal its dependants and add the new announcements to the announce batch.
 //
 // NOTE: must be run as a goroutine.
-func (d *AuthenticatedGossiper) handleNetworkMessages(nMsg *networkMsg,
-	deDuped *deDupedAnnouncements, vb *graph.ValidationBarrier) {
+func (d *AuthenticatedGossiper) handleNetworkMessages(ctx context.Context,
+	nMsg *networkMsg, deDuped *deDupedAnnouncements,
+	vb *graph.ValidationBarrier) {
 
 	defer d.wg.Done()
 	defer vb.CompleteJob()
@@ -1558,7 +1569,7 @@ func (d *AuthenticatedGossiper) handleNetworkMessages(nMsg *networkMsg,
 	// Process the network announcement to determine if this is either a
 	// new announcement from our PoV or an edges to a prior vertex/edge we
 	// previously proceeded.
-	newAnns, allow := d.processNetworkAnnouncement(nMsg)
+	newAnns, allow := d.processNetworkAnnouncement(ctx, nMsg)
 
 	log.Tracef("Processed network message %s, returned "+
 		"len(announcements)=%v, allowDependents=%v",
@@ -2036,7 +2047,7 @@ func (d *AuthenticatedGossiper) isPremature(chanID lnwire.ShortChannelID,
 // be returned which should be broadcasted to the rest of the network. The
 // boolean returned indicates whether any dependents of the announcement should
 // attempt to be processed as well.
-func (d *AuthenticatedGossiper) processNetworkAnnouncement(
+func (d *AuthenticatedGossiper) processNetworkAnnouncement(ctx context.Context,
 	nMsg *networkMsg) ([]networkMsg, bool) {
 
 	// If this is a remote update, we set the scheduler option to lazily
@@ -2051,7 +2062,7 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(
 	// information about a node in one of the channels we know about, or a
 	// updating previously advertised information.
 	case *lnwire.NodeAnnouncement:
-		return d.handleNodeAnnouncement(nMsg, msg, schedulerOp)
+		return d.handleNodeAnnouncement(ctx, nMsg, msg, schedulerOp)
 
 	// A new channel announcement has arrived, this indicates the
 	// *creation* of a new channel within the network. This only advertises
@@ -2364,8 +2375,8 @@ func (d *AuthenticatedGossiper) latestHeight() uint32 {
 }
 
 // handleNodeAnnouncement processes a new node announcement.
-func (d *AuthenticatedGossiper) handleNodeAnnouncement(nMsg *networkMsg,
-	nodeAnn *lnwire.NodeAnnouncement,
+func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
+	nMsg *networkMsg, nodeAnn *lnwire.NodeAnnouncement,
 	ops []batch.SchedulerOption) ([]networkMsg, bool) {
 
 	timestamp := time.Unix(int64(nodeAnn.Timestamp), 0)
@@ -2402,7 +2413,7 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(nMsg *networkMsg,
 	// In order to ensure we don't leak unadvertised nodes, we'll make a
 	// quick check to ensure this node intends to publicly advertise itself
 	// to the network.
-	isPublic, err := d.cfg.Graph.IsPublicNode(nodeAnn.NodeID)
+	isPublic, err := d.cfg.Graph.IsPublicNode(ctx, nodeAnn.NodeID)
 	if err != nil {
 		log.Errorf("Unable to determine if node %x is advertised: %v",
 			nodeAnn.NodeID, err)

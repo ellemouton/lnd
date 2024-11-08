@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -81,8 +82,9 @@ func newMockChannelGraphTimeSeries(
 func (m *mockChannelGraphTimeSeries) HighestChanID(chain chainhash.Hash) (*lnwire.ShortChannelID, error) {
 	return &m.highestID, nil
 }
-func (m *mockChannelGraphTimeSeries) UpdatesInHorizon(chain chainhash.Hash,
-	startTime time.Time, endTime time.Time) ([]lnwire.Message, error) {
+func (m *mockChannelGraphTimeSeries) UpdatesInHorizon(_ context.Context,
+	chain chainhash.Hash, startTime time.Time, endTime time.Time) (
+	[]lnwire.Message, error) {
 
 	m.horizonReq <- horizonQuery{
 		chain, startTime, endTime,
@@ -447,7 +449,7 @@ func TestGossipSyncerApplyNoHistoricalGossipFilter(t *testing.T) {
 	}()
 
 	// We'll now attempt to apply the gossip filter for the remote peer.
-	syncer.ApplyGossipFilter(remoteHorizon)
+	syncer.ApplyGossipFilter(context.Background(), remoteHorizon)
 
 	// Ensure that the syncer's remote horizon was properly updated.
 	if !reflect.DeepEqual(syncer.remoteUpdateHorizon, remoteHorizon) {
@@ -511,7 +513,7 @@ func TestGossipSyncerApplyGossipFilter(t *testing.T) {
 	}()
 
 	// We'll now attempt to apply the gossip filter for the remote peer.
-	err := syncer.ApplyGossipFilter(remoteHorizon)
+	err := syncer.ApplyGossipFilter(context.Background(), remoteHorizon)
 	require.NoError(t, err, "unable to apply filter")
 
 	// There should be no messages in the message queue as we didn't send
@@ -559,7 +561,7 @@ func TestGossipSyncerApplyGossipFilter(t *testing.T) {
 			errCh <- nil
 		}
 	}()
-	err = syncer.ApplyGossipFilter(remoteHorizon)
+	err = syncer.ApplyGossipFilter(context.Background(), remoteHorizon)
 	require.NoError(t, err, "unable to apply filter")
 
 	// We should get back the exact same message.
