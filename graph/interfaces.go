@@ -243,12 +243,6 @@ type DB interface {
 	FetchLightningNode(ctx context.Context, nodePub route.Vertex) (
 		*models.LightningNode, error)
 
-	// ForEachNode iterates through all the stored vertices/nodes in the
-	// graph, executing the passed callback with each node encountered. If
-	// the callback returns an error, then the transaction is aborted and
-	// the iteration stops early.
-	ForEachNode(cb func(*models.LightningNode) error) error
-
 	// ForEachNodeChannel iterates through all channels of the given node,
 	// executing the passed callback with an edge info structure and the
 	// policies of each end of the channel. The first edge policy is the

@@ -6520,7 +6520,7 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// First iterate through all the known nodes (connected or unconnected
 	// within the graph), collating their current state into the RPC
 	// response.
-	err := graph.ForEachNode(func(node *models.LightningNode) error {
+	err := graph.ForEachNode(ctx, func(node *models.LightningNode) error {
 		resp.Nodes = append(resp.Nodes, marshalNode(node))
 
 		return nil

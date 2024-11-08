@@ -741,7 +741,9 @@ func (c *ChannelGraph) DisabledChannelIDs() ([]uint64, error) {
 // executing the passed callback with each node encountered. If the callback
 // returns an error, then the transaction is aborted and the iteration stops
 // early.
-func (c *ChannelGraph) ForEachNode(cb func(*models.LightningNode) error) error {
+func (c *ChannelGraph) ForEachNode(ctx context.Context,
+	cb func(*models.LightningNode) error) error {
+
 	return c.ForEachNodeWithCBTx(func(_ kvdb.RTx,
 		node *models.LightningNode) error {
 
