@@ -532,7 +532,7 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(ctx context.Context, tx RTx,
 		return err
 	}
 
-	dbCallback := func(tx RTx, e *models.ChannelEdgeInfo, p1,
+	dbCallback := func(_ kvdb.RTx, e *models.ChannelEdgeInfo, p1,
 		p2 *models.ChannelEdgePolicy) error {
 
 		var cachedInPolicy *models.CachedEdgePolicy
@@ -568,7 +568,13 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(ctx context.Context, tx RTx,
 
 		return cb(directedChannel)
 	}
-	return nodeTraversal(tx, node[:], c.db, dbCallback)
+
+	kvdbRTx, err := extractKVDBRTx(tx)
+	if err != nil {
+		return err
+	}
+
+	return nodeTraversal(kvdbRTx, node[:], c.db, dbCallback)
 }
 
 // FetchNodeFeatures returns the features of a given node. If no features are
@@ -615,13 +621,13 @@ func (c *ChannelGraph) ForEachNodeCached(ctx context.Context,
 	// We'll iterate over each node, then the set of channels for each
 	// node, and construct a similar callback functiopn signature as the
 	// main funcotin expects.
-	return c.ForEachNode(ctx, nil, func(tx RTx,
+	return c.ForEachNodeWithTx(func(tx kvdb.RTx,
 		node *models.LightningNode) error {
 
 		channels := make(map[uint64]*DirectedChannel)
 
 		err := c.ForEachNodeChannelWithTx(tx, node.PubKeyBytes,
-			func(tx RTx, e *models.ChannelEdgeInfo,
+			func(tx kvdb.RTx, e *models.ChannelEdgeInfo,
 				p1 *models.ChannelEdgePolicy,
 				p2 *models.ChannelEdgePolicy) error {
 
@@ -629,7 +635,7 @@ func (c *ChannelGraph) ForEachNodeCached(ctx context.Context,
 					return node.PubKeyBytes
 				}
 				toNodeFeatures, err := c.FetchNodeFeatures(
-					ctx, tx, node.PubKeyBytes,
+					ctx, NewKVDBRTx(tx), node.PubKeyBytes,
 				)
 				if err != nil {
 					return err
@@ -724,14 +730,7 @@ func (c *ChannelGraph) DisabledChannelIDs() ([]uint64, error) {
 	return disabledChanIDs, nil
 }
 
-// ForEachNode iterates through all the stored vertices/nodes in the graph,
-// executing the passed callback with each node encountered. If the callback
-// returns an error, then the transaction is aborted and the iteration stops
-// early.
-//
-// TODO(roasbeef): add iterator interface to allow for memory efficient graph
-// traversal when graph gets mega
-func (c *ChannelGraph) ForEachNode(_ context.Context, tx RTx, cb func(RTx,
+func (c *ChannelGraph) ForEachNodeWithTx(cb func(kvdb.RTx,
 	*models.LightningNode) error) error {
 
 	traversal := func(tx kvdb.RTx) error {
@@ -763,6 +762,21 @@ func (c *ChannelGraph) ForEachNode(_ context.Context, tx RTx, cb func(RTx,
 	}
 
 	return kvdb.View(c.db, traversal, func() {})
+}
+
+// ForEachNode iterates through all the stored vertices/nodes in the graph,
+// executing the passed callback with each node encountered. If the callback
+// returns an error, then the transaction is aborted and the iteration stops
+// early.
+//
+// TODO(roasbeef): add iterator interface to allow for memory efficient graph
+// traversal when graph gets mega
+func (c *ChannelGraph) ForEachNode(_ context.Context,
+	cb func(*models.LightningNode) error) error {
+
+	return c.ForEachNodeWithTx(func(_ kvdb.RTx, node *models.LightningNode) error {
+		return cb(node)
+	})
 }
 
 // ForEachNodeCacheable iterates through all the stored vertices/nodes in the
@@ -901,9 +915,7 @@ func (c *ChannelGraph) AddLightningNode(node *models.LightningNode,
 				cNode := newGraphCacheNode(
 					node.PubKeyBytes, node.Features,
 				)
-				err := c.graphCache.AddNode(
-					NewKVDBRTx(tx), cNode,
-				)
+				err := c.graphCache.AddNode(tx, cNode)
 				if err != nil {
 					return err
 				}
@@ -2934,7 +2946,7 @@ func (c *ChannelGraph) isPublic(tx kvdb.RTx, nodePub route.Vertex,
 	// used to terminate the check early.
 	nodeIsPublic := false
 	errDone := errors.New("done")
-	err := c.ForEachNodeChannelWithTx(NewKVDBRTx(tx), nodePub, func(tx RTx,
+	err := c.ForEachNodeChannelWithTx(tx, nodePub, func(tx kvdb.RTx,
 		info *models.ChannelEdgeInfo, _ *models.ChannelEdgePolicy,
 		_ *models.ChannelEdgePolicy) error {
 
@@ -3073,8 +3085,8 @@ func (n *graphCacheNode) Features() *lnwire.FeatureVector {
 // halted with the error propagated back up to the caller.
 //
 // Unknown policies are passed into the callback as nil values.
-func (n *graphCacheNode) ForEachChannel(tx RTx,
-	cb func(RTx, *models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+func (n *graphCacheNode) ForEachChannel(tx kvdb.RTx,
+	cb func(kvdb.RTx, *models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
 
 	return nodeTraversal(tx, n.pubKeyBytes[:], nil, cb)
@@ -3136,8 +3148,8 @@ func (c *ChannelGraph) HasLightningNode(_ context.Context, nodePub [33]byte) (ti
 
 // nodeTraversal is used to traverse all channels of a node given by its
 // public key and passes channel information into the specified callback.
-func nodeTraversal(tx RTx, nodePub []byte, db kvdb.Backend,
-	cb func(RTx, *models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+func nodeTraversal(tx kvdb.RTx, nodePub []byte, db kvdb.Backend,
+	cb func(kvdb.RTx, *models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
 
 	traversal := func(tx kvdb.RTx) error {
@@ -3209,20 +3221,15 @@ func nodeTraversal(tx RTx, nodePub []byte, db kvdb.Backend,
 		return nil
 	}
 
-	kvdbRTx, err := extractKVDBRTx(tx)
-	if err != nil {
-		return err
-	}
-
 	// If no transaction was provided, then we'll create a new transaction
 	// to execute the transaction within.
-	if kvdbRTx == nil {
+	if tx == nil {
 		return kvdb.View(db, traversal, func() {})
 	}
 
 	// Otherwise, we re-use the existing transaction to execute the graph
 	// traversal.
-	return traversal(kvdbRTx)
+	return traversal(tx)
 }
 
 // ForEachNodeChannel iterates through all channels of the given node,
@@ -3243,7 +3250,7 @@ func (c *ChannelGraph) ForEachNodeChannel(_ context.Context,
 		*models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
 
-	return c.ForEachNodeChannelWithTx(nil, nodePub, func(_ RTx,
+	return c.ForEachNodeChannelWithTx(nil, nodePub, func(_ kvdb.RTx,
 		info *models.ChannelEdgeInfo, policy *models.ChannelEdgePolicy,
 		policy2 *models.ChannelEdgePolicy) error {
 
@@ -3251,8 +3258,8 @@ func (c *ChannelGraph) ForEachNodeChannel(_ context.Context,
 	})
 }
 
-func (c *ChannelGraph) ForEachNodeChannelWithTx(tx RTx,
-	nodePub route.Vertex, cb func(RTx, *models.ChannelEdgeInfo,
+func (c *ChannelGraph) ForEachNodeChannelWithTx(tx kvdb.RTx,
+	nodePub route.Vertex, cb func(kvdb.RTx, *models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
 
 	return nodeTraversal(tx, nodePub[:], c.db, cb)

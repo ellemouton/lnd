@@ -219,8 +219,8 @@ func (r *remoteWrapper) ForEachNodeDirectedChannel(ctx context.Context,
 }
 
 // DescribeGraph. NB: use --caches.rpc-graph-cache-duration
-func (r *remoteWrapper) ForEachNode(ctx context.Context, tx graphdb.RTx,
-	cb func(graphdb.RTx, *models.LightningNode) error) error {
+func (r *remoteWrapper) ForEachNode(ctx context.Context,
+	cb func(*models.LightningNode) error) error {
 
 	graph, err := r.lnConn.DescribeGraph(ctx, &lnrpc.ChannelGraphRequest{
 		IncludeUnannounced: true,
@@ -272,7 +272,7 @@ func (r *remoteWrapper) ForEachNode(ctx context.Context, tx graphdb.RTx,
 			ExtraOpaqueData:      extra,
 		}
 
-		err = cb(tx, n)
+		err = cb(n)
 		if err != nil {
 			return err
 		}

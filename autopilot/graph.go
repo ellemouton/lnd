@@ -11,6 +11,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -53,7 +54,7 @@ func ChannelGraphFromGraphSource(db *graphdb.ChannelGraph) ChannelGraph {
 type dbNode struct {
 	db *graphdb.ChannelGraph
 
-	tx graphdb.RTx
+	tx kvdb.RTx
 
 	node *models.LightningNode
 }
@@ -87,7 +88,7 @@ func (d *dbNode) Addrs() []net.Addr {
 // NOTE: Part of the autopilot.Node interface.
 func (d *dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 	return d.db.ForEachNodeChannelWithTx(d.tx,
-		d.node.PubKeyBytes, func(tx graphdb.RTx,
+		d.node.PubKeyBytes, func(tx kvdb.RTx,
 			ei *models.ChannelEdgeInfo, ep,
 			_ *models.ChannelEdgePolicy) error {
 
@@ -103,7 +104,10 @@ func (d *dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 				return nil
 			}
 
-			node, err := d.db.FetchLightningNode(context.TODO(), tx, ep.ToNode)
+			node, err := d.db.FetchLightningNode(
+				context.TODO(), graphdb.NewKVDBRTx(tx),
+				ep.ToNode,
+			)
 			if err != nil {
 				return err
 			}
@@ -130,7 +134,7 @@ func (d *dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 //
 // NOTE: Part of the autopilot.ChannelGraph interface.
 func (d *graphSourceChannelGraph) ForEachNode(cb func(Node) error) error {
-	return d.db.ForEachNode(context.TODO(), nil, func(tx graphdb.RTx,
+	return d.db.ForEachNodeWithTx(func(tx kvdb.RTx,
 		n *models.LightningNode) error {
 
 		// We'll skip over any node that doesn't have any advertised

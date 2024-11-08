@@ -55,6 +55,7 @@ import (
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/keychain"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/labels"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -6516,7 +6517,7 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// First iterate through all the known nodes (connected or unconnected
 	// within the graph), collating their current state into the RPC
 	// response.
-	err := graph.ForEachNode(ctx, nil, func(_ graphdb.RTx,
+	err := graph.ForEachNode(ctx, func(
 		node *models.LightningNode) error {
 
 		lnNode := marshalNode(node)
@@ -7396,7 +7397,7 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 
 	var feeReports []*lnrpc.ChannelFeeReport
 	err = channelGraph.ForEachNodeChannelWithTx(nil, selfNode.PubKeyBytes,
-		func(_ graphdb.RTx, chanInfo *models.ChannelEdgeInfo,
+		func(_ kvdb.RTx, chanInfo *models.ChannelEdgeInfo,
 			edgePolicy, _ *models.ChannelEdgePolicy) error {
 
 			// Self node should always have policies for its
