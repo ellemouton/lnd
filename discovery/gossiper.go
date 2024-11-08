@@ -1406,7 +1406,7 @@ func (d *AuthenticatedGossiper) networkHandler(ctx context.Context) {
 
 	// To start, we'll first check to see if there are any stale channel or
 	// node announcements that we need to re-transmit.
-	if err := d.retransmitStaleAnns(time.Now()); err != nil {
+	if err := d.retransmitStaleAnns(ctx, time.Now()); err != nil {
 		log.Errorf("Unable to rebroadcast stale announcements: %v", err)
 	}
 
@@ -1518,7 +1518,7 @@ func (d *AuthenticatedGossiper) networkHandler(ctx context.Context) {
 		// have been dropped, or not properly propagated through the
 		// network.
 		case tick := <-d.cfg.RetransmitTicker.Ticks():
-			if err := d.retransmitStaleAnns(tick); err != nil {
+			if err := d.retransmitStaleAnns(ctx, tick); err != nil {
 				log.Errorf("unable to rebroadcast stale "+
 					"announcements: %v", err)
 			}
@@ -1636,7 +1636,9 @@ func (d *AuthenticatedGossiper) isRecentlyRejectedMsg(msg lnwire.Message,
 // stale iff, the last timestamp of its rebroadcast is older than the
 // RebroadcastInterval. We also check if a refreshed node announcement should
 // be resent.
-func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
+func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
+	now time.Time) error {
+
 	// Iterate over all of our channels and check if any of them fall
 	// within the prune interval or re-broadcast interval.
 	type updateTuple struct {
@@ -1648,7 +1650,7 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 		havePublicChannels bool
 		edgesToUpdate      []updateTuple
 	)
-	err := d.cfg.Graph.ForAllOutgoingChannels(func(
+	err := d.cfg.Graph.ForAllOutgoingChannels(ctx, func(
 		info *models.ChannelEdgeInfo,
 		edge *models.ChannelEdgePolicy) error {
 

@@ -6805,7 +6805,7 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 		channels      []*lnrpc.ChannelEdge
 	)
 
-	err = graph.ForEachNodeChannel(node.PubKeyBytes,
+	err = graph.ForEachNodeChannel(ctx, node.PubKeyBytes,
 		func(edge *models.ChannelEdgeInfo, c1,
 			c2 *models.ChannelEdgePolicy) error {
 
@@ -7487,7 +7487,7 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 	}
 
 	var feeReports []*lnrpc.ChannelFeeReport
-	err = channelGraph.ForEachNodeChannel(selfNode.PubKeyBytes,
+	err = channelGraph.ForEachNodeChannel(ctx, selfNode.PubKeyBytes,
 		func(chanInfo *models.ChannelEdgeInfo,
 			edgePolicy, _ *models.ChannelEdgePolicy) error {
 
@@ -7764,8 +7764,8 @@ func (r *rpcServer) UpdateChannelPolicy(ctx context.Context,
 
 	// With the scope resolved, we'll now send this to the local channel
 	// manager so it can propagate the new policy for our target channel(s).
-	failedUpdates, err := r.server.localChanMgr.UpdatePolicy(chanPolicy,
-		targetChans...)
+	failedUpdates, err := r.server.localChanMgr.UpdatePolicy(
+		ctx, chanPolicy, targetChans...)
 	if err != nil {
 		return nil, err
 	}
