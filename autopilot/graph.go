@@ -2,6 +2,7 @@ package autopilot
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"errors"
 	"net"
@@ -169,7 +170,9 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 				return nil, err
 			}
 
-			dbNode, err := d.db.FetchLightningNode(vertex)
+			dbNode, err := d.db.FetchLightningNode(
+				context.Background(), vertex,
+			)
 			switch {
 			case errors.Is(err, graphdb.ErrGraphNodeNotFound):
 				fallthrough

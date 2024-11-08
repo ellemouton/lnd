@@ -1812,7 +1812,7 @@ func (r *rpcServer) ConnectPeer(ctx context.Context,
 	}
 
 	if err := r.server.ConnectToPeer(
-		peerAddr, in.Perm, timeout,
+		ctx, peerAddr, in.Perm, timeout,
 	); err != nil {
 		rpcsLog.Errorf("[connectpeer]: error connecting to peer: %v",
 			err)
@@ -6789,7 +6789,7 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 	// With the public key decoded, attempt to fetch the node corresponding
 	// to this public key. If the node cannot be found, then an error will
 	// be returned.
-	node, err := graph.FetchLightningNode(pubKey)
+	node, err := graph.FetchLightningNode(ctx, pubKey)
 	switch {
 	case errors.Is(err, graphdb.ErrGraphNodeNotFound):
 		return nil, status.Error(codes.NotFound, err.Error())
@@ -7866,7 +7866,7 @@ func (r *rpcServer) ForwardingHistory(ctx context.Context,
 			return "", err
 		}
 
-		peer, err := r.server.graphDB.FetchLightningNode(vertex)
+		peer, err := r.server.graphDB.FetchLightningNode(ctx, vertex)
 		if err != nil {
 			return "", err
 		}
@@ -8190,7 +8190,7 @@ func (r *rpcServer) RestoreChannelBackups(ctx context.Context,
 		// out to any peers that we know of which were our prior
 		// channel peers.
 		numRestored, err = chanbackup.UnpackAndRecoverSingles(
-			chanbackup.PackedSingles(packedBackups),
+			ctx, chanbackup.PackedSingles(packedBackups),
 			r.server.cc.KeyRing, chanRestorer, r.server,
 		)
 		if err != nil {
@@ -8207,7 +8207,7 @@ func (r *rpcServer) RestoreChannelBackups(ctx context.Context,
 		// channel peers.
 		packedMulti := chanbackup.PackedMulti(packedMultiBackup)
 		numRestored, err = chanbackup.UnpackAndRecoverMulti(
-			packedMulti, r.server.cc.KeyRing, chanRestorer,
+			ctx, packedMulti, r.server.cc.KeyRing, chanRestorer,
 			r.server,
 		)
 		if err != nil {

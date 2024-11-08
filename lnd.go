@@ -611,7 +611,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, implCfg *ImplementationCfg,
 	// used to manage the underlying autopilot agent, starting and stopping
 	// it at will.
 	atplCfg, err := initAutoPilot(
-		server, cfg.Autopilot, activeChainControl.MinHtlcIn,
+		ctx, server, cfg.Autopilot, activeChainControl.MinHtlcIn,
 		cfg.ActiveNetParams,
 	)
 	if err != nil {
@@ -731,7 +731,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, implCfg *ImplementationCfg,
 	// case the startup of the subservers do not behave as expected.
 	errChan := make(chan error)
 	go func() {
-		errChan <- server.Start()
+		errChan <- server.Start(ctx)
 	}()
 
 	defer func() {
