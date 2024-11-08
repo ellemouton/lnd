@@ -3864,7 +3864,7 @@ func isZombieEdge(zombieIndex kvdb.RBucket,
 }
 
 // NumZombies returns the current number of zombie channels in the graph.
-func (c *ChannelGraph) NumZombies() (uint64, error) {
+func (c *ChannelGraph) NumZombies(_ context.Context) (uint64, error) {
 	var numZombies uint64
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		edges := tx.ReadBucket(edgeBucket)
