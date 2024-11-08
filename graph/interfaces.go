@@ -86,9 +86,6 @@ type ChannelGraphSource interface {
 	// doesn't exist within the graph.
 	FetchLightningNode(route.Vertex) (*models.LightningNode, error)
 
-	// ForEachNode is used to iterate over every node in the known graph.
-	ForEachNode(func(node *models.LightningNode) error) error
-
 	// IsZombieChannel takes the timestamps of the latest channel updates
 	// for a channel and returns true if the channel should be considered a
 	// zombie based on these timestamps.
@@ -245,12 +242,6 @@ type DB interface {
 	// ErrGraphNodeNotFound is returned.
 	FetchLightningNode(nodePub route.Vertex) (*models.LightningNode,
 		error)
-
-	// ForEachNode iterates through all the stored vertices/nodes in the
-	// graph, executing the passed callback with each node encountered. If
-	// the callback returns an error, then the transaction is aborted and
-	// the iteration stops early.
-	ForEachNode(cb func(kvdb.RTx, *models.LightningNode) error) error
 
 	// ForEachNodeChannel iterates through all channels of the given node,
 	// executing the passed callback with an edge info structure and the
