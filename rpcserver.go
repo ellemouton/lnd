@@ -4521,7 +4521,7 @@ func (r *rpcServer) ListChannels(ctx context.Context,
 		// our list depending on the type of channels requested to us.
 		isActive := peerOnline && linkActive
 		channel, err := createRPCOpenChannel(
-			r, dbChannel, isActive, in.PeerAliasLookup,
+			ctx, r, dbChannel, isActive, in.PeerAliasLookup,
 		)
 		if err != nil {
 			return nil, err
@@ -4637,7 +4637,8 @@ func encodeCustomChanData(lnChan *channeldb.OpenChannel) ([]byte, error) {
 }
 
 // createRPCOpenChannel creates an *lnrpc.Channel from the *channeldb.Channel.
-func createRPCOpenChannel(r *rpcServer, dbChannel *channeldb.OpenChannel,
+func createRPCOpenChannel(ctx context.Context, r *rpcServer,
+	dbChannel *channeldb.OpenChannel,
 	isActive, peerAliasLookup bool) (*lnrpc.Channel, error) {
 
 	nodePub := dbChannel.IdentityPub
@@ -4739,7 +4740,7 @@ func createRPCOpenChannel(r *rpcServer, dbChannel *channeldb.OpenChannel,
 
 	// Look up our channel peer's node alias if the caller requests it.
 	if peerAliasLookup {
-		peerAlias, err := r.server.graphDB.LookupAlias(nodePub)
+		peerAlias, err := r.server.graphDB.LookupAlias(ctx, nodePub)
 		if err != nil {
 			peerAlias = fmt.Sprintf("unable to lookup "+
 				"peer alias: %v", err)
@@ -5155,6 +5156,7 @@ func (r *rpcServer) SubscribeChannelEvents(req *lnrpc.ChannelEventSubscription,
 				}
 			case channelnotifier.OpenChannelEvent:
 				channel, err := createRPCOpenChannel(
+					updateStream.Context(),
 					r, event.Channel, true, false,
 				)
 				if err != nil {
