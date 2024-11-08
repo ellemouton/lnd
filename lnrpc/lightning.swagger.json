@@ -1236,6 +1236,30 @@
             }
           }
         },
+        "parameters": [
+          {
+            "name": "exclude_chans",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uint64"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "exclude_nodes",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "byte"
+            },
+            "collectionFormat": "multi"
+          }
+        ],
         "tags": [
           "Lightning"
         ]

@@ -7,12 +7,11 @@
 package graphrpc
 
 import (
-	reflect "reflect"
-	sync "sync"
-
 	lnrpc "github.com/lightningnetwork/lnd/lnrpc"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	reflect "reflect"
+	sync "sync"
 )
 
 const (

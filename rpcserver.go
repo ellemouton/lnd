@@ -6879,7 +6879,7 @@ func (r *rpcServer) QueryRoutes(ctx context.Context,
 // GetNetworkInfo returns some basic stats about the known channel graph from
 // the PoV of the node.
 func (r *rpcServer) GetNetworkInfo(ctx context.Context,
-	_ *lnrpc.NetworkInfoRequest) (*lnrpc.NetworkInfo, error) {
+	req *lnrpc.NetworkInfoRequest) (*lnrpc.NetworkInfo, error) {
 
 	graph := r.server.graphSource
 
@@ -6888,18 +6888,16 @@ func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 		excludeNodes = make(map[route.Vertex]struct{})
 	)
 
-	/*
-		for _, c := range req.ExcludeChans {
-			excludeChans[c] = struct{}{}
+	for _, c := range req.ExcludeChans {
+		excludeChans[c] = struct{}{}
+	}
+	for _, n := range req.ExcludeNodes {
+		node, err := route.NewVertexFromBytes(n)
+		if err != nil {
+			return nil, err
 		}
-		for _, n := range req.ExcludeNodes {
-			node, err := route.NewVertexFromBytes(n)
-			if err != nil {
-				return nil, err
-			}
-			excludeNodes[node] = struct{}{}
-		}
-	*/
+		excludeNodes[node] = struct{}{}
+	}
 
 	stats, err := graph.NetworkStats(ctx, excludeNodes, excludeChans)
 	if err != nil {
