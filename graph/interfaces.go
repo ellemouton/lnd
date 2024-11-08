@@ -85,9 +85,6 @@ type ChannelGraphSource interface {
 	// public key. channeldb.ErrGraphNodeNotFound is returned if the node
 	// doesn't exist within the graph.
 	FetchLightningNode(route.Vertex) (*models.LightningNode, error)
-
-	// ForEachNode is used to iterate over every node in the known graph.
-	ForEachNode(func(node *models.LightningNode) error) error
 }
 
 // DB is an interface describing a persisted Lightning Network graph.
