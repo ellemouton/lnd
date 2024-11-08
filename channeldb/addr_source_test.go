@@ -7,6 +7,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -26,6 +27,7 @@ func TestMultiAddrSource(t *testing.T) {
 		t.Parallel()
 
 		var (
+			ctx  = context.Background()
 			src1 = newMockAddrSource(t)
 			src2 = newMockAddrSource(t)
 		)
@@ -51,7 +53,7 @@ func TestMultiAddrSource(t *testing.T) {
 
 		// Query it for the addresses known for node 1. The results
 		// should contain addr 1, 2 and 3.
-		known, addrs, err := multiSrc.AddrsForNode(pk1)
+		known, addrs, err := multiSrc.AddrsForNode(ctx, pk1)
 		require.NoError(t, err)
 		require.True(t, known)
 		require.ElementsMatch(t, addrs, []net.Addr{addr1, addr2, addr3})
@@ -61,6 +63,7 @@ func TestMultiAddrSource(t *testing.T) {
 		t.Parallel()
 
 		var (
+			ctx  = context.Background()
 			src1 = newMockAddrSource(t)
 			src2 = newMockAddrSource(t)
 		)
@@ -81,7 +84,7 @@ func TestMultiAddrSource(t *testing.T) {
 
 		// Query it for the addresses known for node 1. The results
 		// should contain addr 1.
-		known, addrs, err := multiSrc.AddrsForNode(pk1)
+		known, addrs, err := multiSrc.AddrsForNode(ctx, pk1)
 		require.NoError(t, err)
 		require.True(t, known)
 		require.ElementsMatch(t, addrs, []net.Addr{addr1})
@@ -91,6 +94,7 @@ func TestMultiAddrSource(t *testing.T) {
 		t.Parallel()
 
 		var (
+			ctx  = context.Background()
 			src1 = newMockAddrSource(t)
 			src2 = newMockAddrSource(t)
 		)
@@ -109,7 +113,7 @@ func TestMultiAddrSource(t *testing.T) {
 		// Query it for the addresses known for node 1. It should return
 		// false to indicate that the node is unknown to all backing
 		// sources.
-		known, addrs, err := multiSrc.AddrsForNode(pk1)
+		known, addrs, err := multiSrc.AddrsForNode(ctx, pk1)
 		require.NoError(t, err)
 		require.False(t, known)
 		require.Empty(t, addrs)
@@ -127,10 +131,10 @@ func newMockAddrSource(t *testing.T) *mockAddrSource {
 	return &mockAddrSource{t: t}
 }
 
-func (m *mockAddrSource) AddrsForNode(pub *btcec.PublicKey) (bool, []net.Addr,
-	error) {
+func (m *mockAddrSource) AddrsForNode(ctx context.Context,
+	pub *btcec.PublicKey) (bool, []net.Addr, error) {
 
-	args := m.Called(pub)
+	args := m.Called(ctx, pub)
 	if args.Get(1) == nil {
 		return args.Bool(0), nil, args.Error(2)
 	}

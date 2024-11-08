@@ -1,6 +1,7 @@
 package chanbackup
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -62,8 +63,8 @@ func newMockChannelNotifier() *mockChannelNotifier {
 	}
 }
 
-func (m *mockChannelNotifier) SubscribeChans(chans map[wire.OutPoint]struct{}) (
-	*ChannelSubscription, error) {
+func (m *mockChannelNotifier) SubscribeChans(_ context.Context,
+	chans map[wire.OutPoint]struct{}) (*ChannelSubscription, error) {
 
 	if m.fail {
 		return nil, fmt.Errorf("fail")
@@ -88,10 +89,10 @@ func TestNewSubSwapperSubscribeFail(t *testing.T) {
 		fail: true,
 	}
 
-	_, err := NewSubSwapper(nil, &chanNotifier, keyRing, &swapper)
-	if err == nil {
-		t.Fatalf("expected fail due to lack of subscription")
-	}
+	_, err := NewSubSwapper(
+		context.Background(), nil, &chanNotifier, keyRing, &swapper,
+	)
+	require.Errorf(t, err, "expected fail due to lack of subscription")
 }
 
 func assertExpectedBackupSwap(t *testing.T, swapper *mockSwapper,
@@ -158,7 +159,9 @@ func TestSubSwapperIdempotentStartStop(t *testing.T) {
 	var chanNotifier mockChannelNotifier
 
 	swapper := newMockSwapper(keyRing)
-	subSwapper, err := NewSubSwapper(nil, &chanNotifier, keyRing, swapper)
+	subSwapper, err := NewSubSwapper(
+		context.Background(), nil, &chanNotifier, keyRing, swapper,
+	)
 	require.NoError(t, err, "unable to init subSwapper")
 
 	if err := subSwapper.Start(); err != nil {
@@ -224,7 +227,8 @@ func TestSubSwapperUpdater(t *testing.T) {
 	// With our channel set created, we'll make a fresh sub swapper
 	// instance to begin our test.
 	subSwapper, err := NewSubSwapper(
-		initialChanSet, chanNotifier, keyRing, swapper,
+		context.Background(), initialChanSet, chanNotifier, keyRing,
+		swapper,
 	)
 	require.NoError(t, err, "unable to make swapper")
 	if err := subSwapper.Start(); err != nil {

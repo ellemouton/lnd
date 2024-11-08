@@ -486,7 +486,7 @@ func noiseDial(idKey keychain.SingleKeyECDH,
 
 // newServer creates a new instance of the server which is to listen using the
 // passed listener address.
-func newServer(cfg *Config, listenAddrs []net.Addr,
+func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	dbs *DatabaseInstances, cc *chainreg.ChainControl,
 	nodeKeyDesc *keychain.KeyDescriptor,
 	chansToRestore walletunlocker.ChannelsToRecover,
@@ -1595,13 +1595,13 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	}
 	backupFile := chanbackup.NewMultiFile(cfg.BackupFilePath)
 	startingChans, err := chanbackup.FetchStaticChanBackups(
-		s.chanStateDB, s.addrSource,
+		ctx, s.chanStateDB, s.addrSource,
 	)
 	if err != nil {
 		return nil, err
 	}
 	s.chanSubSwapper, err = chanbackup.NewSubSwapper(
-		startingChans, chanNotifier, s.cc.KeyRing, backupFile,
+		ctx, startingChans, chanNotifier, s.cc.KeyRing, backupFile,
 	)
 	if err != nil {
 		return nil, err
@@ -2443,6 +2443,8 @@ func (s *server) Stop() error {
 
 		close(s.quit)
 
+		ctx := context.Background()
+
 		// Shutdown connMgr first to prevent conns during shutdown.
 		s.connMgr.Stop()
 
@@ -2505,7 +2507,7 @@ func (s *server) Stop() error {
 		// Update channel.backup file. Make sure to do it before
 		// stopping chanSubSwapper.
 		singles, err := chanbackup.FetchStaticChanBackups(
-			s.chanStateDB, s.addrSource,
+			ctx, s.chanStateDB, s.addrSource,
 		)
 		if err != nil {
 			srvrLog.Warnf("failed to fetch channel states: %v",

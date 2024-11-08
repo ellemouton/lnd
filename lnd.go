@@ -598,7 +598,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, implCfg *ImplementationCfg,
 	// Set up the core server which will listen for incoming peer
 	// connections.
 	server, err := newServer(
-		cfg, cfg.Listeners, dbs, activeChainControl, &idKeyDesc,
+		ctx, cfg, cfg.Listeners, dbs, activeChainControl, &idKeyDesc,
 		activeChainControl.Cfg.WalletUnlockParams.ChansToRestore,
 		multiAcceptor, torController, tlsManager, leaderElector,
 		implCfg,
