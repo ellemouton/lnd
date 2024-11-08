@@ -95,10 +95,10 @@ func (g *session) ForEachNodeChannel(ctx context.Context, nodePub route.Vertex,
 // unknown, assume no additional features are supported.
 //
 // NOTE: Part of the routing.Graph interface.
-func (g *session) FetchNodeFeatures(nodePub route.Vertex) (
+func (g *session) FetchNodeFeatures(ctx context.Context, nodePub route.Vertex) (
 	*lnwire.FeatureVector, error) {
 
-	return g.graph.FetchNodeFeatures(g.tx, nodePub)
+	return g.graph.FetchNodeFeatures(ctx, g.tx, nodePub)
 }
 
 // A compile-time check to ensure that *session implements the
@@ -139,8 +139,8 @@ type graph interface {
 	//
 	// NOTE: if a nil tx is provided, then it is expected that the
 	// implementation create a read only tx.
-	FetchNodeFeatures(tx graphdb.RTx, node route.Vertex) (
-		*lnwire.FeatureVector, error)
+	FetchNodeFeatures(ctx context.Context, tx graphdb.RTx,
+		node route.Vertex) (*lnwire.FeatureVector, error)
 }
 
 // A compile-time check to ensure that *channeldb.ChannelGraph implements the

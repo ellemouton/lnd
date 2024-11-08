@@ -515,7 +515,7 @@ func (c *ChannelGraph) ForEachChannel(cb func(*models.ChannelEdgeInfo,
 // Unknown policies are passed into the callback as nil values.
 //
 // NOTE: this is part of the graphsession.graph interface.
-func (c *ChannelGraph) ForEachNodeDirectedChannel(_ context.Context, tx RTx,
+func (c *ChannelGraph) ForEachNodeDirectedChannel(ctx context.Context, tx RTx,
 	node route.Vertex, cb func(channel *DirectedChannel) error) error {
 
 	if c.graphCache != nil {
@@ -526,7 +526,7 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(_ context.Context, tx RTx,
 	toNodeCallback := func() route.Vertex {
 		return node
 	}
-	toNodeFeatures, err := c.FetchNodeFeatures(tx, node)
+	toNodeFeatures, err := c.FetchNodeFeatures(ctx, tx, node)
 	if err != nil {
 		return err
 	}
@@ -581,8 +581,8 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(_ context.Context, tx RTx,
 // transaction may be provided. If none is provided, a new one will be created.
 //
 // NOTE: this is part of the graphsession.graph interface.
-func (c *ChannelGraph) FetchNodeFeatures(tx RTx, node route.Vertex) (
-	*lnwire.FeatureVector, error) {
+func (c *ChannelGraph) FetchNodeFeatures(_ context.Context, tx RTx,
+	node route.Vertex) (*lnwire.FeatureVector, error) {
 
 	if c.graphCache != nil {
 		return c.graphCache.GetFeatures(node), nil
@@ -616,8 +616,8 @@ func (c *ChannelGraph) FetchNodeFeatures(tx RTx, node route.Vertex) (
 // regular ForEachNode method does.
 //
 // NOTE: The callback contents MUST not be modified.
-func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
-	chans map[uint64]*DirectedChannel) error) error {
+func (c *ChannelGraph) ForEachNodeCached(ctx context.Context,
+	cb func(node route.Vertex, chans map[uint64]*DirectedChannel) error) error {
 
 	if c.graphCache != nil {
 		return c.graphCache.ForEachNode(cb)
@@ -641,7 +641,7 @@ func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
 					return node.PubKeyBytes
 				}
 				toNodeFeatures, err := c.FetchNodeFeatures(
-					NewKVDBRTx(tx), node.PubKeyBytes,
+					ctx, NewKVDBRTx(tx), node.PubKeyBytes,
 				)
 				if err != nil {
 					return err

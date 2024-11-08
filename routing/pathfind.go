@@ -581,7 +581,7 @@ func findPath(ctx context.Context, g *graphParams, r *RestrictParams,
 	features := r.DestFeatures
 	if features == nil {
 		var err error
-		features, err = g.graph.FetchNodeFeatures(target)
+		features, err = g.graph.FetchNodeFeatures(ctx, target)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -969,7 +969,7 @@ func findPath(ctx context.Context, g *graphParams, r *RestrictParams,
 		}
 
 		// Fetch node features fresh from the graph.
-		fromFeatures, err := g.graph.FetchNodeFeatures(node)
+		fromFeatures, err := g.graph.FetchNodeFeatures(ctx, node)
 		if err != nil {
 			return nil, err
 		}
@@ -1203,7 +1203,7 @@ func findBlindedPaths(ctx context.Context, g Graph, target route.Vertex,
 			return true, nil
 		}
 
-		features, err := g.FetchNodeFeatures(node)
+		features, err := g.FetchNodeFeatures(ctx, node)
 		if err != nil {
 			return false, err
 		}

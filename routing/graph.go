@@ -19,7 +19,8 @@ type Graph interface {
 		cb func(channel *graphdb.DirectedChannel) error) error
 
 	// FetchNodeFeatures returns the features of the given node.
-	FetchNodeFeatures(nodePub route.Vertex) (*lnwire.FeatureVector, error)
+	FetchNodeFeatures(ctx context.Context, nodePub route.Vertex) (
+		*lnwire.FeatureVector, error)
 }
 
 // GraphSessionFactory can be used to produce a new Graph instance which can
