@@ -1636,9 +1636,8 @@ func (b *Builder) FetchLightningNode(
 func (b *Builder) ForAllOutgoingChannels(cb func(*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy) error) error {
 
-	return b.cfg.Graph.ForEachNodeChannel(context.TODO(), nil, b.cfg.SelfNode,
-		func(_ graphdb.RTx, c *models.ChannelEdgeInfo,
-			e *models.ChannelEdgePolicy,
+	return b.cfg.Graph.ForEachNodeChannel(context.TODO(), b.cfg.SelfNode,
+		func(c *models.ChannelEdgeInfo, e *models.ChannelEdgePolicy,
 			_ *models.ChannelEdgePolicy) error {
 
 			if e == nil {

@@ -54,9 +54,9 @@ type GraphSource interface {
 	// to the caller. Unknown policies are passed into the callback as nil
 	// values. An optional transaction may be provided. If none is provided,
 	// then a new one will be created.
-	ForEachNodeChannel(ctx context.Context, tx graphdb.RTx,
-		nodePub route.Vertex, cb func(graphdb.RTx,
-			*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	ForEachNodeChannel(ctx context.Context,
+		nodePub route.Vertex, cb func(*models.ChannelEdgeInfo,
+			*models.ChannelEdgePolicy,
 			*models.ChannelEdgePolicy) error) error
 
 	// ForEachNode iterates through all the stored vertices/nodes in the

@@ -86,7 +86,7 @@ func (d *dbNode) Addrs() []net.Addr {
 //
 // NOTE: Part of the autopilot.Node interface.
 func (d *dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
-	return d.db.ForEachNodeChannel(context.Background(), d.tx,
+	return d.db.ForEachNodeChannelWithTx(d.tx,
 		d.node.PubKeyBytes, func(tx graphdb.RTx,
 			ei *models.ChannelEdgeInfo, ep,
 			_ *models.ChannelEdgePolicy) error {

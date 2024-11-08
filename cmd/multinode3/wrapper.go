@@ -310,8 +310,8 @@ func (r *remoteWrapper) ForEachChannel(ctx context.Context,
 }
 
 // GetNodeInfo.
-func (r *remoteWrapper) ForEachNodeChannel(ctx context.Context, tx graphdb.RTx,
-	nodePub route.Vertex, cb func(graphdb.RTx, *models.ChannelEdgeInfo,
+func (r *remoteWrapper) ForEachNodeChannel(ctx context.Context,
+	nodePub route.Vertex, cb func(*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
 
 	info, err := r.lnConn.GetNodeInfo(ctx, &lnrpc.NodeInfoRequest{
@@ -328,7 +328,7 @@ func (r *remoteWrapper) ForEachNodeChannel(ctx context.Context, tx graphdb.RTx,
 			return err
 		}
 
-		if err := cb(tx, edge, policy1, policy2); err != nil {
+		if err := cb(edge, policy1, policy2); err != nil {
 			return err
 		}
 	}

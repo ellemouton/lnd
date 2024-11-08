@@ -620,7 +620,7 @@ func (c *ChannelGraph) ForEachNodeCached(ctx context.Context,
 
 		channels := make(map[uint64]*DirectedChannel)
 
-		err := c.ForEachNodeChannel(ctx, tx, node.PubKeyBytes,
+		err := c.ForEachNodeChannelWithTx(tx, node.PubKeyBytes,
 			func(tx RTx, e *models.ChannelEdgeInfo,
 				p1 *models.ChannelEdgePolicy,
 				p2 *models.ChannelEdgePolicy) error {
@@ -2934,7 +2934,7 @@ func (c *ChannelGraph) isPublic(tx kvdb.RTx, nodePub route.Vertex,
 	// used to terminate the check early.
 	nodeIsPublic := false
 	errDone := errors.New("done")
-	err := c.ForEachNodeChannel(context.Background(), NewKVDBRTx(tx), nodePub, func(tx RTx,
+	err := c.ForEachNodeChannelWithTx(NewKVDBRTx(tx), nodePub, func(tx RTx,
 		info *models.ChannelEdgeInfo, _ *models.ChannelEdgePolicy,
 		_ *models.ChannelEdgePolicy) error {
 
@@ -3238,7 +3238,20 @@ func nodeTraversal(tx RTx, nodePub []byte, db kvdb.Backend,
 // should be passed as the first argument.  Otherwise, the first argument should
 // be nil and a fresh transaction will be created to execute the graph
 // traversal.
-func (c *ChannelGraph) ForEachNodeChannel(_ context.Context, tx RTx,
+func (c *ChannelGraph) ForEachNodeChannel(_ context.Context,
+	nodePub route.Vertex, cb func(*models.ChannelEdgeInfo,
+		*models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy) error) error {
+
+	return c.ForEachNodeChannelWithTx(nil, nodePub, func(_ RTx,
+		info *models.ChannelEdgeInfo, policy *models.ChannelEdgePolicy,
+		policy2 *models.ChannelEdgePolicy) error {
+
+		return cb(info, policy, policy2)
+	})
+}
+
+func (c *ChannelGraph) ForEachNodeChannelWithTx(tx RTx,
 	nodePub route.Vertex, cb func(RTx, *models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
 
