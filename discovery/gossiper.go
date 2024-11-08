@@ -824,13 +824,10 @@ func (d *AuthenticatedGossiper) stop() {
 // then added to a queue for batched trickled announcement to all connected
 // peers.  Remote channel announcements should contain the announcement proof
 // and be fully validated.
-func (d *AuthenticatedGossiper) ProcessRemoteAnnouncement(msg lnwire.Message,
-	peer lnpeer.Peer) chan error {
+func (d *AuthenticatedGossiper) ProcessRemoteAnnouncement(ctx context.Context,
+	msg lnwire.Message, peer lnpeer.Peer) chan error {
 
 	errChan := make(chan error, 1)
-
-	// TODO(elle): let ProcessRemoteAnnouncement take a context.
-	ctx := context.TODO()
 
 	// If gossip syncing has been disabled, we expect not to receive any
 	// gossip queries from our peer.
