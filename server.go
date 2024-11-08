@@ -3327,86 +3327,85 @@ func (s *server) establishPersistentConnections() error {
 	// TODO(roasbeef): instead iterate over link nodes and query graph for
 	// each of the nodes.
 	selfPub := s.identityECDH.PubKey().SerializeCompressed()
-	err = s.graphDB.ForEachNodeChannel(sourceNode.PubKeyBytes, func(
-		tx kvdb.RTx,
-		chanInfo *models.ChannelEdgeInfo,
-		policy, _ *models.ChannelEdgePolicy) error {
+	err = s.graphDB.ForEachNodeChannelTx(nil, sourceNode.PubKeyBytes,
+		func(tx kvdb.RTx, chanInfo *models.ChannelEdgeInfo,
+			policy, _ *models.ChannelEdgePolicy) error {
 
-		// If the remote party has announced the channel to us, but we
-		// haven't yet, then we won't have a policy. However, we don't
-		// need this to connect to the peer, so we'll log it and move on.
-		if policy == nil {
-			srvrLog.Warnf("No channel policy found for "+
-				"ChannelPoint(%v): ", chanInfo.ChannelPoint)
-		}
-
-		// We'll now fetch the peer opposite from us within this
-		// channel so we can queue up a direct connection to them.
-		channelPeer, err := s.graphDB.FetchOtherNode(
-			tx, chanInfo, selfPub,
-		)
-		if err != nil {
-			return fmt.Errorf("unable to fetch channel peer for "+
-				"ChannelPoint(%v): %v", chanInfo.ChannelPoint,
-				err)
-		}
-
-		pubStr := string(channelPeer.PubKeyBytes[:])
-
-		// Add all unique addresses from channel
-		// graph/NodeAnnouncements to the list of addresses we'll
-		// connect to for this peer.
-		addrSet := make(map[string]net.Addr)
-		for _, addr := range channelPeer.Addresses {
-			switch addr.(type) {
-			case *net.TCPAddr:
-				addrSet[addr.String()] = addr
-
-			// We'll only attempt to connect to Tor addresses if Tor
-			// outbound support is enabled.
-			case *tor.OnionAddr:
-				if s.cfg.Tor.Active {
-					addrSet[addr.String()] = addr
-				}
+			// If the remote party has announced the channel to us, but we
+			// haven't yet, then we won't have a policy. However, we don't
+			// need this to connect to the peer, so we'll log it and move on.
+			if policy == nil {
+				srvrLog.Warnf("No channel policy found for "+
+					"ChannelPoint(%v): ", chanInfo.ChannelPoint)
 			}
-		}
 
-		// If this peer is also recorded as a link node, we'll add any
-		// additional addresses that have not already been selected.
-		linkNodeAddrs, ok := nodeAddrsMap[pubStr]
-		if ok {
-			for _, lnAddress := range linkNodeAddrs.addresses {
-				switch lnAddress.(type) {
+			// We'll now fetch the peer opposite from us within this
+			// channel so we can queue up a direct connection to them.
+			channelPeer, err := s.graphDB.FetchOtherNode(
+				tx, chanInfo, selfPub,
+			)
+			if err != nil {
+				return fmt.Errorf("unable to fetch channel peer for "+
+					"ChannelPoint(%v): %v", chanInfo.ChannelPoint,
+					err)
+			}
+
+			pubStr := string(channelPeer.PubKeyBytes[:])
+
+			// Add all unique addresses from channel
+			// graph/NodeAnnouncements to the list of addresses we'll
+			// connect to for this peer.
+			addrSet := make(map[string]net.Addr)
+			for _, addr := range channelPeer.Addresses {
+				switch addr.(type) {
 				case *net.TCPAddr:
-					addrSet[lnAddress.String()] = lnAddress
+					addrSet[addr.String()] = addr
 
-				// We'll only attempt to connect to Tor
-				// addresses if Tor outbound support is enabled.
+				// We'll only attempt to connect to Tor addresses if Tor
+				// outbound support is enabled.
 				case *tor.OnionAddr:
 					if s.cfg.Tor.Active {
-						addrSet[lnAddress.String()] = lnAddress
+						addrSet[addr.String()] = addr
 					}
 				}
 			}
-		}
 
-		// Construct a slice of the deduped addresses.
-		var addrs []net.Addr
-		for _, addr := range addrSet {
-			addrs = append(addrs, addr)
-		}
+			// If this peer is also recorded as a link node, we'll add any
+			// additional addresses that have not already been selected.
+			linkNodeAddrs, ok := nodeAddrsMap[pubStr]
+			if ok {
+				for _, lnAddress := range linkNodeAddrs.addresses {
+					switch lnAddress.(type) {
+					case *net.TCPAddr:
+						addrSet[lnAddress.String()] = lnAddress
 
-		n := &nodeAddresses{
-			addresses: addrs,
-		}
-		n.pubKey, err = channelPeer.PubKey()
-		if err != nil {
-			return err
-		}
+					// We'll only attempt to connect to Tor
+					// addresses if Tor outbound support is enabled.
+					case *tor.OnionAddr:
+						if s.cfg.Tor.Active {
+							addrSet[lnAddress.String()] = lnAddress
+						}
+					}
+				}
+			}
 
-		nodeAddrsMap[pubStr] = n
-		return nil
-	})
+			// Construct a slice of the deduped addresses.
+			var addrs []net.Addr
+			for _, addr := range addrSet {
+				addrs = append(addrs, addr)
+			}
+
+			n := &nodeAddresses{
+				addresses: addrs,
+			}
+			n.pubKey, err = channelPeer.PubKey()
+			if err != nil {
+				return err
+			}
+
+			nodeAddrsMap[pubStr] = n
+			return nil
+		})
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
 		return err
 	}

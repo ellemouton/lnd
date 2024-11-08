@@ -8,7 +8,6 @@ import (
 	"github.com/lightningnetwork/lnd/batch"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -253,10 +252,10 @@ type DB interface {
 	// to the caller.
 	//
 	// Unknown policies are passed into the callback as nil values.
-	ForEachNodeChannel(nodePub route.Vertex, cb func(kvdb.RTx,
-		*models.ChannelEdgeInfo,
-		*models.ChannelEdgePolicy,
-		*models.ChannelEdgePolicy) error) error
+	ForEachNodeChannel(nodePub route.Vertex,
+		cb func(*models.ChannelEdgeInfo,
+			*models.ChannelEdgePolicy,
+			*models.ChannelEdgePolicy) error) error
 
 	// UpdateChannelEdge retrieves and update edge of the graph database.
 	// Method only reserved for updating an edge info after its already been

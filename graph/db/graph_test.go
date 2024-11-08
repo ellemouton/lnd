@@ -1046,7 +1046,7 @@ func TestGraphTraversal(t *testing.T) {
 	numNodeChans := 0
 	firstNode, secondNode := nodeList[0], nodeList[1]
 	err = graph.ForEachNodeChannel(firstNode.PubKeyBytes,
-		func(_ kvdb.RTx, _ *models.ChannelEdgeInfo, outEdge,
+		func(_ *models.ChannelEdgeInfo, outEdge,
 			inEdge *models.ChannelEdgePolicy) error {
 
 			// All channels between first and second node should
@@ -2755,7 +2755,7 @@ func TestIncompleteChannelPolicies(t *testing.T) {
 
 		calls := 0
 		err := graph.ForEachNodeChannel(node.PubKeyBytes,
-			func(_ kvdb.RTx, _ *models.ChannelEdgeInfo, outEdge,
+			func(_ *models.ChannelEdgeInfo, outEdge,
 				inEdge *models.ChannelEdgePolicy) error {
 
 				if !expectedOut && outEdge != nil {
