@@ -404,13 +404,19 @@ func initChannelGraph(db kvdb.Backend) error {
 }
 
 // NewPathFindTx returns a new read transaction that can be used for a single
-// path finding session. Will return nil if the graph cache is enabled.
-func (c *ChannelGraph) NewPathFindTx() (kvdb.RTx, error) {
+// path finding session. The underlying transaction will be nil if the graph
+// cache is enabled.
+func (c *ChannelGraph) NewPathFindTx() (RTx, error) {
 	if c.graphCache != nil {
-		return nil, nil
+		return NewKVDBRTx(nil), nil
 	}
 
-	return c.db.BeginReadTx()
+	tx, err := c.db.BeginReadTx()
+	if err != nil {
+		return nil, err
+	}
+
+	return NewKVDBRTx(tx), nil
 }
 
 // AddrsForNode returns all known addresses for the target node public key that
@@ -508,7 +514,7 @@ func (c *ChannelGraph) ForEachChannel(cb func(*models.ChannelEdgeInfo,
 // Unknown policies are passed into the callback as nil values.
 //
 // NOTE: this is part of the graphsession.graph interface.
-func (c *ChannelGraph) ForEachNodeDirectedChannel(tx kvdb.RTx,
+func (c *ChannelGraph) ForEachNodeDirectedChannel(tx RTx,
 	node route.Vertex, cb func(channel *DirectedChannel) error) error {
 
 	if c.graphCache != nil {
@@ -560,7 +566,13 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(tx kvdb.RTx,
 
 		return cb(directedChannel)
 	}
-	return nodeTraversal(tx, node[:], c.db, dbCallback)
+
+	kvdbRTx, err := extractKVDBRTx(tx)
+	if err != nil {
+		return err
+	}
+
+	return nodeTraversal(kvdbRTx, node[:], c.db, dbCallback)
 }
 
 // FetchNodeFeatures returns the features of a given node. If no features are
@@ -568,15 +580,20 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(tx kvdb.RTx,
 // transaction may be provided. If none is provided, a new one will be created.
 //
 // NOTE: this is part of the graphsession.graph interface.
-func (c *ChannelGraph) FetchNodeFeatures(tx kvdb.RTx,
-	node route.Vertex) (*lnwire.FeatureVector, error) {
+func (c *ChannelGraph) FetchNodeFeatures(tx RTx, node route.Vertex) (
+	*lnwire.FeatureVector, error) {
 
 	if c.graphCache != nil {
 		return c.graphCache.GetFeatures(node), nil
 	}
 
+	kvdbRTx, err := extractKVDBRTx(tx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Fallback that uses the database.
-	targetNode, err := c.FetchLightningNodeTx(tx, node)
+	targetNode, err := c.FetchLightningNodeTx(kvdbRTx, node)
 	switch err {
 	// If the node exists and has features, return them directly.
 	case nil:
@@ -623,7 +640,7 @@ func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
 					return node.PubKeyBytes
 				}
 				toNodeFeatures, err := c.FetchNodeFeatures(
-					tx, node.PubKeyBytes,
+					NewKVDBRTx(tx), node.PubKeyBytes,
 				)
 				if err != nil {
 					return err
