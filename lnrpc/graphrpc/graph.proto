@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package graphrpc;
+
+import "lightning.proto";
+
+option go_package = "github.com/lightningnetwork/lnd/lnrpc/graphrpc";
+
+// Graph is a service that can be used to query information about the
+// Lightning Network channel graph.
+service Graph {
+    rpc BootstrapAddrs (BootstrapAddrsReq) returns (BootstrapAddrsResp);
+    rpc BoostrapperName (BoostrapperNameReq) returns (BoostrapperNameResp);
+    rpc BetweennessCentrality (BetweennessCentralityReq)
+        returns (BetweennessCentralityResp);
+}
+
+message BetweennessCentralityReq {
+}
+
+message BetweennessCentralityResp {
+    repeated BetweenessCentrality node_betweeness = 1;
+}
+
+message BetweenessCentrality {
+    bytes node = 1;
+    float normalized = 2;
+    float non_normalized = 3;
+}
+
+message BootstrapAddrsReq {
+    uint32 num_addrs = 1;
+    repeated bytes ignore_nodes = 2;
+}
+
+message BootstrapAddrsResp {
+    repeated NetAddress addrs = 1;
+}
+
+message NetAddress {
+    bytes node_id = 1;
+    lnrpc.NodeAddress address = 2;
+}
+
+message BoostrapperNameReq {
+}
+
+message BoostrapperNameResp {
+    string name = 1;
+}

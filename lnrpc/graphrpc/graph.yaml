@@ -1,0 +1,9 @@
+type: google.api.Service
+config_version: 3
+
+http:
+  rules:
+    - selector: graphrpc.Graph.BootstrapAddrs
+      get: "/v2/graph/bootstrapaddrs"
+    - selector: graphrpc.Graph.BoostrapperName
+      get: "/v2/graph/bootstrappername"

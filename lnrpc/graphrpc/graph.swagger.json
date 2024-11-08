@@ -1,0 +1,186 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "graphrpc/graph.proto",
+    "version": "version not set"
+  },
+  "tags": [
+    {
+      "name": "Graph"
+    }
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {
+    "/v2/graph/bootstrapaddrs": {
+      "get": {
+        "operationId": "Graph_BootstrapAddrs",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/graphrpcBootstrapAddrsResp"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "num_addrs",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int64"
+          },
+          {
+            "name": "ignore_nodes",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "byte"
+            },
+            "collectionFormat": "multi"
+          }
+        ],
+        "tags": [
+          "Graph"
+        ]
+      }
+    },
+    "/v2/graph/bootstrappername": {
+      "get": {
+        "operationId": "Graph_BoostrapperName",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/graphrpcBoostrapperNameResp"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "Graph"
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "graphrpcBetweenessCentrality": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "string",
+          "format": "byte"
+        },
+        "normalized": {
+          "type": "number",
+          "format": "float"
+        },
+        "non_normalized": {
+          "type": "number",
+          "format": "float"
+        }
+      }
+    },
+    "graphrpcBetweennessCentralityResp": {
+      "type": "object",
+      "properties": {
+        "node_betweeness": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/graphrpcBetweenessCentrality"
+          }
+        }
+      }
+    },
+    "graphrpcBoostrapperNameResp": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "graphrpcBootstrapAddrsResp": {
+      "type": "object",
+      "properties": {
+        "addrs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/graphrpcNetAddress"
+          }
+        }
+      }
+    },
+    "graphrpcNetAddress": {
+      "type": "object",
+      "properties": {
+        "node_id": {
+          "type": "string",
+          "format": "byte"
+        },
+        "address": {
+          "$ref": "#/definitions/lnrpcNodeAddress"
+        }
+      }
+    },
+    "lnrpcNodeAddress": {
+      "type": "object",
+      "properties": {
+        "network": {
+          "type": "string"
+        },
+        "addr": {
+          "type": "string"
+        }
+      }
+    },
+    "protobufAny": {
+      "type": "object",
+      "properties": {
+        "type_url": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string",
+          "format": "byte"
+        }
+      }
+    },
+    "rpcStatus": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/protobufAny"
+          }
+        }
+      }
+    }
+  }
+}
