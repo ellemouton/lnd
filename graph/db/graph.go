@@ -198,8 +198,8 @@ type ChannelGraph struct {
 
 // NewChannelGraph allocates a new ChannelGraph backed by a DB instance. The
 // returned instance has its own unique reject cache and channel cache.
-func NewChannelGraph(db kvdb.Backend, options ...OptionModifier) (*ChannelGraph,
-	error) {
+func NewChannelGraph(ctx context.Context, db kvdb.Backend,
+	options ...OptionModifier) (*ChannelGraph, error) {
 
 	opts := DefaultOptions()
 	for _, o := range options {
@@ -243,7 +243,7 @@ func NewChannelGraph(db kvdb.Backend, options ...OptionModifier) (*ChannelGraph,
 			return nil, err
 		}
 
-		err = g.ForEachChannel(func(info *models.ChannelEdgeInfo,
+		err = g.ForEachChannel(ctx, func(info *models.ChannelEdgeInfo,
 			policy1, policy2 *models.ChannelEdgePolicy) error {
 
 			g.graphCache.AddChannel(info, policy1, policy2)
@@ -455,8 +455,9 @@ func (c *ChannelGraph) AddrsForNode(ctx context.Context,
 // NOTE: If an edge can't be found, or wasn't advertised, then a nil pointer
 // for that particular channel edge routing policy will be passed into the
 // callback.
-func (c *ChannelGraph) ForEachChannel(cb func(*models.ChannelEdgeInfo,
-	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
+func (c *ChannelGraph) ForEachChannel(ctx context.Context,
+	cb func(*models.ChannelEdgeInfo,
+		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
 
 	return c.db.View(func(tx kvdb.RTx) error {
 		edges := tx.ReadBucket(edgeBucket)
@@ -4761,7 +4762,7 @@ func MakeTestGraph(t testing.TB, modifiers ...OptionModifier) (*ChannelGraph,
 		return nil, err
 	}
 
-	graph, err := NewChannelGraph(backend)
+	graph, err := NewChannelGraph(context.Background(), backend)
 	if err != nil {
 		backendCleanup()
 		return nil, err

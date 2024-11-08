@@ -1033,7 +1033,7 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 	}
 
 	dbs.GraphDB, err = graphdb.NewChannelGraph(
-		databaseBackends.GraphDB, graphDBOptions...,
+		ctx, databaseBackends.GraphDB, graphDBOptions...,
 	)
 	if err != nil {
 		cleanUp()

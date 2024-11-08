@@ -612,7 +612,9 @@ func createTestPeer(t *testing.T) *peerTestCtx {
 	})
 	require.NoError(t, err)
 
-	dbAliceGraph, err := graphdb.NewChannelGraph(graphBackend)
+	dbAliceGraph, err := graphdb.NewChannelGraph(
+		context.Background(), graphBackend,
+	)
 	require.NoError(t, err)
 
 	dbAliceChannel, err := channeldb.Open(dbPath)
