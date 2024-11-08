@@ -515,7 +515,7 @@ func (c *ChannelGraph) ForEachChannel(cb func(*models.ChannelEdgeInfo,
 // Unknown policies are passed into the callback as nil values.
 //
 // NOTE: this is part of the graphsession.graph interface.
-func (c *ChannelGraph) ForEachNodeDirectedChannel(tx RTx,
+func (c *ChannelGraph) ForEachNodeDirectedChannel(_ context.Context, tx RTx,
 	node route.Vertex, cb func(channel *DirectedChannel) error) error {
 
 	if c.graphCache != nil {

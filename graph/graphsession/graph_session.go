@@ -85,10 +85,10 @@ func (g *session) close() error {
 // ForEachNodeChannel calls the callback for every channel of the given node.
 //
 // NOTE: Part of the routing.Graph interface.
-func (g *session) ForEachNodeChannel(nodePub route.Vertex,
+func (g *session) ForEachNodeChannel(ctx context.Context, nodePub route.Vertex,
 	cb func(channel *graphdb.DirectedChannel) error) error {
 
-	return g.graph.ForEachNodeDirectedChannel(g.tx, nodePub, cb)
+	return g.graph.ForEachNodeDirectedChannel(ctx, g.tx, nodePub, cb)
 }
 
 // FetchNodeFeatures returns the features of the given node. If the node is
@@ -130,7 +130,8 @@ type graph interface {
 	//
 	// NOTE: if a nil tx is provided, then it is expected that the
 	// implementation create a read only tx.
-	ForEachNodeDirectedChannel(tx graphdb.RTx, node route.Vertex,
+	ForEachNodeDirectedChannel(ctx context.Context, tx graphdb.RTx,
+		node route.Vertex,
 		cb func(channel *graphdb.DirectedChannel) error) error
 
 	// FetchNodeFeatures returns the features of a given node. If no

@@ -171,7 +171,7 @@ type paymentSession struct {
 
 	additionalEdges map[route.Vertex][]AdditionalEdge
 
-	getBandwidthHints func(Graph) (bandwidthHints, error)
+	getBandwidthHints func(context.Context, Graph) (bandwidthHints, error)
 
 	payment *LightningPayment
 
@@ -199,7 +199,7 @@ type paymentSession struct {
 
 // newPaymentSession instantiates a new payment session.
 func newPaymentSession(p *LightningPayment, selfNode route.Vertex,
-	getBandwidthHints func(Graph) (bandwidthHints, error),
+	getBandwidthHints func(context.Context, Graph) (bandwidthHints, error),
 	graphSessFactory GraphSessionFactory,
 	missionControl MissionControlQuerier,
 	pathFindingConfig PathFindingConfig) (*paymentSession, error) {
@@ -312,7 +312,7 @@ func (p *paymentSession) RequestRoute(ctx context.Context, maxAmt,
 		// don't have enough bandwidth to carry the payment. New
 		// bandwidth hints are queried for every new path finding
 		// attempt, because concurrent payments may change balances.
-		bandwidthHints, err := p.getBandwidthHints(graph)
+		bandwidthHints, err := p.getBandwidthHints(ctx, graph)
 		if err != nil {
 			// Close routing graph session.
 			if graphErr := closeGraph(); graphErr != nil {
@@ -327,7 +327,7 @@ func (p *paymentSession) RequestRoute(ctx context.Context, maxAmt,
 
 		// Find a route for the current amount.
 		path, _, err := p.pathFinder(
-			&graphParams{
+			ctx, &graphParams{
 				additionalEdges: p.additionalEdges,
 				bandwidthHints:  bandwidthHints,
 				graph:           graph,
