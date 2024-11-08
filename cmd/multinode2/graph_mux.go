@@ -193,7 +193,7 @@ func (g *GraphSourceMux) ForEachNode(ctx context.Context,
 // a new one will be created.
 //
 // NOTE: this is part of the GraphSource interface.
-func (g *GraphSourceMux) FetchLightningNode(ctx context.Context, tx graphdb.RTx,
+func (g *GraphSourceMux) FetchLightningNode(ctx context.Context,
 	nodePub route.Vertex) (*models.LightningNode, error) {
 
 	srcPub, err := g.selfNodePub()
@@ -201,16 +201,11 @@ func (g *GraphSourceMux) FetchLightningNode(ctx context.Context, tx graphdb.RTx,
 		return nil, err
 	}
 
-	lTx, rTx, err := extractRTxSet(tx)
-	if err != nil {
-		return nil, err
-	}
-
 	if bytes.Equal(srcPub[:], nodePub[:]) {
-		return g.local.FetchLightningNode(ctx, lTx, nodePub)
+		return g.local.FetchLightningNode(ctx, nodePub)
 	}
 
-	return g.remote.FetchLightningNode(ctx, rTx, nodePub)
+	return g.remote.FetchLightningNode(ctx, nodePub)
 }
 
 // ForEachNodeChannel iterates through all channels of the given node,

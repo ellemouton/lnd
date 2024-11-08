@@ -1626,7 +1626,7 @@ func (b *Builder) GetChannelByID(chanID lnwire.ShortChannelID) (
 func (b *Builder) FetchLightningNode(
 	node route.Vertex) (*models.LightningNode, error) {
 
-	return b.cfg.Graph.FetchLightningNode(context.TODO(), nil, node)
+	return b.cfg.Graph.FetchLightningNode(context.TODO(), node)
 }
 
 // ForAllOutgoingChannels is used to iterate over all outgoing channels owned by

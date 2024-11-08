@@ -350,7 +350,7 @@ func (r *remoteWrapper) FetchNodeFeatures(ctx context.Context, tx graphdb.RTx, n
 	return unmarshalFeatures(resp.Node.Features), nil
 }
 
-func (r *remoteWrapper) FetchLightningNode(ctx context.Context, tx graphdb.RTx,
+func (r *remoteWrapper) FetchLightningNode(ctx context.Context,
 	nodePub route.Vertex) (*models.LightningNode, error) {
 
 	resp, err := r.lnConn.GetNodeInfo(ctx, &lnrpc.NodeInfoRequest{

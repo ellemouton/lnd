@@ -6,7 +6,6 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/lightningnetwork/lnd/channeldb"
-	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/graph/graphsession"
 	"github.com/lightningnetwork/lnd/graph/stats"
@@ -70,8 +69,8 @@ type GraphSource interface {
 	// public key. If the node isn't found in the database, then
 	// graphdb.ErrGraphNodeNotFound is returned. An optional transaction may
 	// be provided. If none is provided, then a new one will be created.
-	FetchLightningNode(ctx context.Context, tx graphdb.RTx,
-		nodePub route.Vertex) (*models.LightningNode, error)
+	FetchLightningNode(ctx context.Context, nodePub route.Vertex) (
+		*models.LightningNode, error)
 }
 
 // Providers is an interface that LND itself can satisfy.

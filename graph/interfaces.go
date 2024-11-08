@@ -236,8 +236,8 @@ type DB interface {
 	// FetchLightningNode attempts to look up a target node by its identity
 	// public key. If the node isn't found in the database, then
 	// ErrGraphNodeNotFound is returned.
-	FetchLightningNode(ctx context.Context, tx graphdb.RTx,
-		nodePub route.Vertex) (*models.LightningNode, error)
+	FetchLightningNode(ctx context.Context, nodePub route.Vertex) (
+		*models.LightningNode, error)
 
 	// ForEachNode iterates through all the stored vertices/nodes in the
 	// graph, executing the passed callback with each node encountered. If

@@ -436,7 +436,7 @@ func (c *ChannelGraph) AddrsForNode(ctx context.Context, nodePub *btcec.PublicKe
 		return false, nil, err
 	}
 
-	node, err := c.FetchLightningNode(ctx, nil, pubKey)
+	node, err := c.FetchLightningNodeWithTx(nil, pubKey)
 	// We don't consider it an error if the graph is unaware of the node.
 	switch {
 	case err != nil && !errors.Is(err, ErrGraphNodeNotFound):
@@ -586,8 +586,13 @@ func (c *ChannelGraph) FetchNodeFeatures(ctx context.Context, tx RTx,
 		return c.graphCache.GetFeatures(node), nil
 	}
 
+	kvdbRTx, err := extractKVDBRTx(tx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Fallback that uses the database.
-	targetNode, err := c.FetchLightningNode(ctx, tx, node)
+	targetNode, err := c.FetchLightningNodeWithTx(kvdbRTx, node)
 	switch err {
 	// If the node exists and has features, return them directly.
 	case nil:
@@ -2980,19 +2985,18 @@ func (c *ChannelGraph) isPublic(tx kvdb.RTx, nodePub route.Vertex,
 
 // FetchLightningNode attempts to look up a target node by its identity public
 // key. If the node isn't found in the database, then ErrGraphNodeNotFound is
-// returned. An optional transaction may be provided. If none is provided, then
-// a new one will be created.
-func (c *ChannelGraph) FetchLightningNode(_ context.Context, tx RTx,
+// returned.
+func (c *ChannelGraph) FetchLightningNode(_ context.Context,
 	nodePub route.Vertex) (*models.LightningNode, error) {
 
-	return c.fetchLightningNode(tx, nodePub)
+	return c.FetchLightningNodeWithTx(nil, nodePub)
 }
 
-// fetchLightningNode attempts to look up a target node by its identity public
+// FetchLightningNodeWithTx attempts to look up a target node by its identity public
 // key. If the node isn't found in the database, then ErrGraphNodeNotFound is
 // returned. An optional transaction may be provided. If none is provided, then
 // a new one will be created.
-func (c *ChannelGraph) fetchLightningNode(tx RTx,
+func (c *ChannelGraph) FetchLightningNodeWithTx(tx kvdb.RTx,
 	nodePub route.Vertex) (*models.LightningNode, error) {
 
 	var node *models.LightningNode
@@ -3024,12 +3028,7 @@ func (c *ChannelGraph) fetchLightningNode(tx RTx,
 		return nil
 	}
 
-	kvdbRTx, err := extractKVDBRTx(tx)
-	if err != nil {
-		return nil, err
-	}
-
-	if kvdbRTx == nil {
+	if tx == nil {
 		err := kvdb.View(
 			c.db, fetch, func() {
 				node = nil
@@ -3042,7 +3041,7 @@ func (c *ChannelGraph) fetchLightningNode(tx RTx,
 		return node, nil
 	}
 
-	err = fetch(kvdbRTx)
+	err := fetch(tx)
 	if err != nil {
 		return nil, err
 	}

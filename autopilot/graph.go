@@ -104,10 +104,7 @@ func (d *dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 				return nil
 			}
 
-			node, err := d.db.FetchLightningNode(
-				context.TODO(), graphdb.NewKVDBRTx(tx),
-				ep.ToNode,
-			)
+			node, err := d.db.FetchLightningNodeWithTx(tx, ep.ToNode)
 			if err != nil {
 				return err
 			}
