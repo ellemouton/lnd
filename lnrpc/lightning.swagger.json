@@ -6072,6 +6072,9 @@
             "$ref": "#/definitions/lnrpcChannelEdge"
           },
           "description": "A list of all public channels for the node."
+        },
+        "is_public": {
+          "type": "boolean"
         }
       }
     },

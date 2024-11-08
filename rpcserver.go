@@ -6822,11 +6822,17 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 		return nil, err
 	}
 
+	public, err := graph.IsPublicNode(ctx, pubKey)
+	if err != nil {
+		return nil, err
+	}
+
 	return &lnrpc.NodeInfo{
 		Node:          marshalNode(node),
 		NumChannels:   numChannels,
 		TotalCapacity: int64(totalCapacity),
 		Channels:      channels,
+		IsPublic:      public,
 	}, nil
 }
 
