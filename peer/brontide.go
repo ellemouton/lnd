@@ -3,6 +3,7 @@ package peer
 import (
 	"bytes"
 	"container/list"
+	"context"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -318,8 +319,8 @@ type Config struct {
 
 	// FetchLastChanUpdate fetches our latest channel update for a target
 	// channel.
-	FetchLastChanUpdate func(lnwire.ShortChannelID) (*lnwire.ChannelUpdate1,
-		error)
+	FetchLastChanUpdate func(context.Context, lnwire.ShortChannelID) (
+		*lnwire.ChannelUpdate1, error)
 
 	// FundingManager is an implementation of the funding.Controller interface.
 	FundingManager funding.Controller
@@ -572,6 +573,7 @@ type Brontide struct {
 
 	startReady chan struct{}
 	quit       chan struct{}
+	cancel     func()
 	wg         sync.WaitGroup
 
 	// log is a peer-specific logging instance.
@@ -696,6 +698,9 @@ func (p *Brontide) Start() error {
 	if atomic.AddInt32(&p.started, 1) != 1 {
 		return nil
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	p.cancel = cancel
 
 	// Once we've finished starting up the peer, we'll signal to other
 	// goroutines that the they can move forward to tear down the peer, or
@@ -856,7 +861,7 @@ func (p *Brontide) Start() error {
 	// announcements through their timestamps.
 	p.wg.Add(2)
 	go p.maybeSendNodeAnn(activeChans)
-	go p.maybeSendChannelUpdates()
+	go p.maybeSendChannelUpdates(ctx)
 
 	return nil
 }
@@ -1369,7 +1374,7 @@ func (p *Brontide) maybeSendNodeAnn(channels []*channeldb.OpenChannel) {
 
 // maybeSendChannelUpdates sends our channel updates to the remote peer if we
 // have any active channels with them.
-func (p *Brontide) maybeSendChannelUpdates() {
+func (p *Brontide) maybeSendChannelUpdates(ctx context.Context) {
 	defer p.wg.Done()
 
 	// If we don't have any active channels, then we can exit early.
@@ -1403,7 +1408,7 @@ func (p *Brontide) maybeSendChannelUpdates() {
 		// to fetch the update to send to the remote peer. If the
 		// channel is pending, and not a zero conf channel, we'll get
 		// an error here which we'll ignore.
-		chanUpd, err := p.cfg.FetchLastChanUpdate(scid)
+		chanUpd, err := p.cfg.FetchLastChanUpdate(ctx, scid)
 		if err != nil {
 			p.log.Debugf("Unable to fetch channel update for "+
 				"ChannelPoint(%v), scid=%v: %v",
@@ -1485,6 +1490,9 @@ func (p *Brontide) Disconnect(reason error) {
 	// Ensure that the TCP connection is properly closed before continuing.
 	p.cfg.Conn.Close()
 
+	if p.cancel != nil {
+		p.cancel()
+	}
 	close(p.quit)
 
 	// If our msg router isn't global (local to this instance), then we'll

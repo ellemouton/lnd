@@ -1295,7 +1295,7 @@ func (d *AuthenticatedGossiper) splitAnnouncementBatches(
 // split size, and then sends out all items to the set of target peers. Locally
 // generated announcements are always sent before remotely generated
 // announcements.
-func (d *AuthenticatedGossiper) splitAndSendAnnBatch(
+func (d *AuthenticatedGossiper) splitAndSendAnnBatch(ctx context.Context,
 	annBatch msgsToBroadcast) {
 
 	// delayNextBatch is a helper closure that blocks for `SubBatchDelay`
@@ -1332,7 +1332,7 @@ func (d *AuthenticatedGossiper) splitAndSendAnnBatch(
 
 		// Now send the remote announcements.
 		for _, annBatch := range remoteBatches {
-			d.sendRemoteBatch(annBatch)
+			d.sendRemoteBatch(ctx, annBatch)
 			delayNextBatch()
 		}
 	}()
@@ -1356,14 +1356,16 @@ func (d *AuthenticatedGossiper) sendLocalBatch(annBatch []msgWithSenders) {
 
 // sendRemoteBatch broadcasts a list of remotely generated announcements to our
 // peers.
-func (d *AuthenticatedGossiper) sendRemoteBatch(annBatch []msgWithSenders) {
+func (d *AuthenticatedGossiper) sendRemoteBatch(ctx context.Context,
+	annBatch []msgWithSenders) {
+
 	syncerPeers := d.syncMgr.GossipSyncers()
 
 	// We'll first attempt to filter out this new message for all peers
 	// that have active gossip syncers active.
 	for pub, syncer := range syncerPeers {
 		log.Tracef("Sending messages batch to GossipSyncer(%s)", pub)
-		syncer.FilterGossipMsgs(annBatch...)
+		syncer.FilterGossipMsgs(ctx, annBatch...)
 	}
 
 	for _, msgChunk := range annBatch {
@@ -1425,7 +1427,7 @@ func (d *AuthenticatedGossiper) networkHandler(ctx context.Context) {
 			// the affected channels and also update the underlying
 			// graph with the new state.
 			newChanUpdates, err := d.processChanPolicyUpdate(
-				policyUpdate.edgesToUpdate,
+				ctx, policyUpdate.edgesToUpdate,
 			)
 			policyUpdate.errChan <- err
 			if err != nil {
@@ -1507,7 +1509,7 @@ func (d *AuthenticatedGossiper) networkHandler(ctx context.Context) {
 			// announcements, we'll blast them out w/o regard for
 			// our peer's policies so we ensure they propagate
 			// properly.
-			d.splitAndSendAnnBatch(announcementBatch)
+			d.splitAndSendAnnBatch(ctx, announcementBatch)
 
 		// The retransmission timer has ticked which indicates that we
 		// should check if we need to prune or re-broadcast any of our
@@ -1773,7 +1775,7 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 
 // processChanPolicyUpdate generates a new set of channel updates for the
 // provided list of edges and updates the backing ChannelGraphSource.
-func (d *AuthenticatedGossiper) processChanPolicyUpdate(
+func (d *AuthenticatedGossiper) processChanPolicyUpdate(ctx context.Context,
 	edgesToUpdate []EdgeWithInfo) ([]networkMsg, error) {
 
 	var chanUpdates []networkMsg
@@ -1828,7 +1830,7 @@ func (d *AuthenticatedGossiper) processChanPolicyUpdate(
 				edgeInfo.Info, chanUpdate.ChannelFlags,
 			)
 			err := d.reliableSender.sendMessage(
-				chanUpdate, remotePubKey,
+				ctx, chanUpdate, remotePubKey,
 			)
 			if err != nil {
 				log.Errorf("Unable to reliably send %v for "+
@@ -1875,14 +1877,14 @@ func remotePubFromChanInfo(chanInfo *models.ChannelEdgeInfo,
 // situation in the case where we create a channel, but for some reason fail
 // to receive the remote peer's proof, while the remote peer is able to fully
 // assemble the proof and craft the ChannelAnnouncement.
-func (d *AuthenticatedGossiper) processRejectedEdge(
+func (d *AuthenticatedGossiper) processRejectedEdge(ctx context.Context,
 	chanAnnMsg *lnwire.ChannelAnnouncement1,
 	proof *models.ChannelAuthProof) ([]networkMsg, error) {
 
 	// First, we'll fetch the state of the channel as we know if from the
 	// database.
 	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(
-		chanAnnMsg.ShortChannelID,
+		ctx, chanAnnMsg.ShortChannelID,
 	)
 	if err != nil {
 		return nil, err
@@ -1921,7 +1923,7 @@ func (d *AuthenticatedGossiper) processRejectedEdge(
 
 	// If everything checks out, then we'll add the fully assembled proof
 	// to the database.
-	err = d.cfg.Graph.AddProof(chanAnnMsg.ShortChannelID, proof)
+	err = d.cfg.Graph.AddProof(ctx, chanAnnMsg.ShortChannelID, proof)
 	if err != nil {
 		err := fmt.Errorf("unable add proof to shortChanID=%v: %w",
 			chanAnnMsg.ShortChannelID, err)
@@ -2069,19 +2071,19 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(ctx context.Context,
 	// the existence of a channel and not yet the routing policies in
 	// either direction of the channel.
 	case *lnwire.ChannelAnnouncement1:
-		return d.handleChanAnnouncement(nMsg, msg, schedulerOp)
+		return d.handleChanAnnouncement(ctx, nMsg, msg, schedulerOp)
 
 	// A new authenticated channel edge update has arrived. This indicates
 	// that the directional information for an already known channel has
 	// been updated.
 	case *lnwire.ChannelUpdate1:
-		return d.handleChanUpdate(nMsg, msg, schedulerOp)
+		return d.handleChanUpdate(ctx, nMsg, msg, schedulerOp)
 
 	// A new signature announcement has been received. This indicates
 	// willingness of nodes involved in the funding of a channel to
 	// announce this new channel to the rest of the world.
 	case *lnwire.AnnounceSignatures1:
-		return d.handleAnnSig(nMsg, msg)
+		return d.handleAnnSig(ctx, nMsg, msg)
 
 	default:
 		err := errors.New("wrong type of the announcement")
@@ -2166,11 +2168,13 @@ func (d *AuthenticatedGossiper) fetchNodeAnn(
 
 // isMsgStale determines whether a message retrieved from the backing
 // MessageStore is seen as stale by the current graph.
-func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
+func (d *AuthenticatedGossiper) isMsgStale(ctx context.Context,
+	msg lnwire.Message) bool {
+
 	switch msg := msg.(type) {
 	case *lnwire.AnnounceSignatures1:
 		chanInfo, _, _, err := d.cfg.Graph.GetChannelByID(
-			msg.ShortChannelID,
+			ctx, msg.ShortChannelID,
 		)
 
 		// If the channel cannot be found, it is most likely a leftover
@@ -2191,7 +2195,9 @@ func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
 		return chanInfo.AuthProof != nil
 
 	case *lnwire.ChannelUpdate1:
-		_, p1, p2, err := d.cfg.Graph.GetChannelByID(msg.ShortChannelID)
+		_, p1, p2, err := d.cfg.Graph.GetChannelByID(
+			ctx, msg.ShortChannelID,
+		)
 
 		// If the channel cannot be found, it is most likely a leftover
 		// message for a channel that was closed, so we can consider it
@@ -2447,8 +2453,8 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
 }
 
 // handleChanAnnouncement processes a new channel announcement.
-func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
-	ann *lnwire.ChannelAnnouncement1,
+func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
+	nMsg *networkMsg, ann *lnwire.ChannelAnnouncement1,
 	ops []batch.SchedulerOption) ([]networkMsg, bool) {
 
 	scid := ann.ShortChannelID
@@ -2648,7 +2654,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 		case graph.IsError(err, graph.ErrIgnored):
 			// Attempt to process the rejected message to see if we
 			// get any new announcements.
-			anns, rErr := d.processRejectedEdge(ann, proof)
+			anns, rErr := d.processRejectedEdge(ctx, ann, proof)
 			if rErr != nil {
 				key := newRejectCacheKey(
 					scid.ToUint64(),
@@ -2838,8 +2844,8 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 }
 
 // handleChanUpdate processes a new channel update.
-func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
-	upd *lnwire.ChannelUpdate1,
+func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
+	nMsg *networkMsg, upd *lnwire.ChannelUpdate1,
 	ops []batch.SchedulerOption) ([]networkMsg, bool) {
 
 	log.Debugf("Processing ChannelUpdate: peer=%v, short_chan_id=%v, ",
@@ -2940,7 +2946,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 	d.channelMtx.Lock(graphScid.ToUint64())
 	defer d.channelMtx.Unlock(graphScid.ToUint64())
 
-	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(graphScid)
+	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(ctx, graphScid)
 	switch {
 	// No error, break.
 	case err == nil:
@@ -3208,7 +3214,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 		// Now we'll attempt to send the channel update message
 		// reliably to the remote peer in the background, so that we
 		// don't block if the peer happens to be offline at the moment.
-		err := d.reliableSender.sendMessage(upd, remotePubKey)
+		err := d.reliableSender.sendMessage(ctx, upd, remotePubKey)
 		if err != nil {
 			err := fmt.Errorf("unable to reliably send %v for "+
 				"channel=%v to peer=%x: %v", upd.MsgType(),
@@ -3242,8 +3248,9 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 }
 
 // handleAnnSig processes a new announcement signatures message.
-func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
-	ann *lnwire.AnnounceSignatures1) ([]networkMsg, bool) {
+func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
+	nMsg *networkMsg, ann *lnwire.AnnounceSignatures1) ([]networkMsg,
+	bool) {
 
 	needBlockHeight := ann.ShortChannelID.BlockHeight +
 		d.cfg.ProofMatureDelta
@@ -3284,7 +3291,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 	defer d.channelMtx.Unlock(ann.ShortChannelID.ToUint64())
 
 	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(
-		ann.ShortChannelID,
+		ctx, ann.ShortChannelID,
 	)
 	if err != nil {
 		_, err = d.cfg.FindChannel(nMsg.source, ann.ChannelID)
@@ -3342,7 +3349,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 		// Since the remote peer might not be online we'll call a
 		// method that will attempt to deliver the proof when it comes
 		// online.
-		err := d.reliableSender.sendMessage(ann, remotePubKey)
+		err := d.reliableSender.sendMessage(ctx, ann, remotePubKey)
 		if err != nil {
 			err := fmt.Errorf("unable to reliably send %v for "+
 				"channel=%v to peer=%x: %v", ann.MsgType(),
@@ -3474,7 +3481,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 	// attest to the bitcoin keys by validating the signatures of
 	// announcement. If proof is valid then we'll populate the channel edge
 	// with it, so we can announce it on peer connect.
-	err = d.cfg.Graph.AddProof(ann.ShortChannelID, &dbProof)
+	err = d.cfg.Graph.AddProof(ctx, ann.ShortChannelID, &dbProof)
 	if err != nil {
 		err := fmt.Errorf("unable add proof to the channel chanID=%v:"+
 			" %v", ann.ChannelID, err)

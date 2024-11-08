@@ -161,8 +161,9 @@ type Builder struct {
 	// announcements over a window of defaultStatInterval.
 	stats *routerStats
 
-	quit chan struct{}
-	wg   sync.WaitGroup
+	cancel func()
+	quit   chan struct{}
+	wg     sync.WaitGroup
 }
 
 // A compile time check to ensure Builder implements the
@@ -300,8 +301,11 @@ func (b *Builder) Start() error {
 		}
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	b.cancel = cancel
+
 	b.wg.Add(1)
-	go b.networkHandler()
+	go b.networkHandler(ctx)
 
 	log.Debug("Builder started")
 
@@ -324,6 +328,10 @@ func (b *Builder) Stop() error {
 		if err := b.cfg.ChainView.Stop(); err != nil {
 			return err
 		}
+	}
+
+	if b.cancel != nil {
+		b.cancel()
 	}
 
 	close(b.quit)
@@ -669,8 +677,8 @@ func (b *Builder) pruneZombieChans() error {
 // notifies topology changes, if any.
 //
 // NOTE: must be run inside goroutine.
-func (b *Builder) handleNetworkUpdate(vb *ValidationBarrier,
-	update *routingMsg) {
+func (b *Builder) handleNetworkUpdate(ctx context.Context,
+	vb *ValidationBarrier, update *routingMsg) {
 
 	defer b.wg.Done()
 	defer vb.CompleteJob()
@@ -725,7 +733,7 @@ func (b *Builder) handleNetworkUpdate(vb *ValidationBarrier,
 	// Otherwise, we'll send off a new notification for the newly accepted
 	// update, if any.
 	topChange := &TopologyChange{}
-	err = addToTopologyChange(b.cfg.Graph, topChange, update.msg)
+	err = addToTopologyChange(ctx, b.cfg.Graph, topChange, update.msg)
 	if err != nil {
 		log.Errorf("unable to update topology change notification: %v",
 			err)
@@ -743,7 +751,7 @@ func (b *Builder) handleNetworkUpdate(vb *ValidationBarrier,
 // updates, and registering new topology clients.
 //
 // NOTE: This MUST be run as a goroutine.
-func (b *Builder) networkHandler() {
+func (b *Builder) networkHandler(ctx context.Context) {
 	defer b.wg.Done()
 
 	graphPruneTicker := time.NewTicker(b.cfg.GraphPruneInterval)
@@ -795,7 +803,7 @@ func (b *Builder) networkHandler() {
 			validationBarrier.InitJobDependencies(update.msg)
 
 			b.wg.Add(1)
-			go b.handleNetworkUpdate(validationBarrier, update)
+			go b.handleNetworkUpdate(ctx, validationBarrier, update)
 
 			// TODO(roasbeef): remove all unconnected vertexes
 			// after N blocks pass with no corresponding
@@ -1461,8 +1469,10 @@ type routingMsg struct {
 
 // ApplyChannelUpdate validates a channel update and if valid, applies it to the
 // database. It returns a bool indicating whether the updates were successful.
-func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
-	ch, _, _, err := b.GetChannelByID(msg.ShortChannelID)
+func (b *Builder) ApplyChannelUpdate(ctx context.Context,
+	msg *lnwire.ChannelUpdate1) bool {
+
+	ch, _, _, err := b.GetChannelByID(ctx, msg.ShortChannelID)
 	if err != nil {
 		log.Errorf("Unable to retrieve channel by id: %v", err)
 		return false
@@ -1610,12 +1620,11 @@ func (b *Builder) SyncedHeight() uint32 {
 // GetChannelByID return the channel by the channel id.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) GetChannelByID(chanID lnwire.ShortChannelID) (
-	*models.ChannelEdgeInfo,
-	*models.ChannelEdgePolicy,
-	*models.ChannelEdgePolicy, error) {
+func (b *Builder) GetChannelByID(ctx context.Context,
+	chanID lnwire.ShortChannelID) (*models.ChannelEdgeInfo,
+	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error) {
 
-	return b.cfg.Graph.FetchChannelEdgesByID(chanID.ToUint64())
+	return b.cfg.Graph.FetchChannelEdgesByID(ctx, chanID.ToUint64())
 }
 
 // FetchLightningNode attempts to look up a target node by its identity public
@@ -1654,10 +1663,12 @@ func (b *Builder) ForAllOutgoingChannels(cb func(*models.ChannelEdgeInfo,
 // properly announce the edge to the rest of the network.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) AddProof(chanID lnwire.ShortChannelID,
+func (b *Builder) AddProof(ctx context.Context, chanID lnwire.ShortChannelID,
 	proof *models.ChannelAuthProof) error {
 
-	info, _, _, err := b.cfg.Graph.FetchChannelEdgesByID(chanID.ToUint64())
+	info, _, _, err := b.cfg.Graph.FetchChannelEdgesByID(
+		ctx, chanID.ToUint64(),
+	)
 	if err != nil {
 		return err
 	}

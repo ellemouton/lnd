@@ -95,8 +95,8 @@ func genIDs() (lnwire.ChannelID, lnwire.ChannelID, lnwire.ShortChannelID,
 
 // mockGetChanUpdateMessage helper function which returns topology update of
 // the channel
-func mockGetChanUpdateMessage(_ lnwire.ShortChannelID) (*lnwire.ChannelUpdate1,
-	error) {
+func mockGetChanUpdateMessage(_ context.Context, _ lnwire.ShortChannelID) (
+	*lnwire.ChannelUpdate1, error) {
 
 	return &lnwire.ChannelUpdate1{
 		Signature: wireSig,
@@ -751,7 +751,8 @@ func makePayment(sendingPeer, receivingPeer lnpeer.Peer,
 	paymentErr := make(chan error, 1)
 	var rhash lntypes.Hash
 
-	invoice, payFunc, err := preparePayment(sendingPeer, receivingPeer,
+	invoice, payFunc, err := preparePayment(
+		context.Background(), sendingPeer, receivingPeer,
 		firstHop, hops, invoiceAmt, htlcAmt, timelock,
 	)
 	if err != nil {
@@ -777,7 +778,7 @@ func makePayment(sendingPeer, receivingPeer lnpeer.Peer,
 
 // preparePayment creates an invoice at the receivingPeer and returns a function
 // that, when called, launches the payment from the sendingPeer.
-func preparePayment(sendingPeer, receivingPeer lnpeer.Peer,
+func preparePayment(ctx context.Context, sendingPeer, receivingPeer lnpeer.Peer,
 	firstHop lnwire.ShortChannelID, hops []*hop.Payload,
 	invoiceAmt, htlcAmt lnwire.MilliSatoshi,
 	timelock uint32) (*invoices.Invoice, func() error, error) {
@@ -811,7 +812,7 @@ func preparePayment(sendingPeer, receivingPeer lnpeer.Peer,
 	// Send payment and expose err channel.
 	return invoice, func() error {
 		err := sender.htlcSwitch.SendHTLC(
-			firstHop, pid, htlc,
+			ctx, firstHop, pid, htlc,
 		)
 		if err != nil {
 			return err
@@ -1151,7 +1152,9 @@ func (h *hopNetwork) createChannelLink(server, peer *mockServer,
 	forwardPackets := func(linkQuit <-chan struct{}, _ bool,
 		packets ...*htlcPacket) error {
 
-		return server.htlcSwitch.ForwardPackets(linkQuit, packets...)
+		return server.htlcSwitch.ForwardPackets(
+			context.Background(), linkQuit, packets...,
+		)
 	}
 
 	link := NewChannelLink(
@@ -1375,7 +1378,7 @@ func (n *twoHopNetwork) makeHoldPayment(sendingPeer, receivingPeer lnpeer.Peer,
 	}
 
 	// Send payment and expose err channel.
-	err = sender.htlcSwitch.SendHTLC(firstHop, pid, htlc)
+	err = sender.htlcSwitch.SendHTLC(context.Background(), firstHop, pid, htlc)
 	if err != nil {
 		paymentErr <- err
 		return paymentErr

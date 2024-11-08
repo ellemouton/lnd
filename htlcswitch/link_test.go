@@ -1624,7 +1624,8 @@ func TestChannelLinkMultiHopUnknownPaymentHash(t *testing.T) {
 
 	// Send payment and expose err channel.
 	err = n.aliceServer.htlcSwitch.SendHTLC(
-		n.firstBobChannelLink.ShortChanID(), pid, htlc,
+		context.Background(), n.firstBobChannelLink.ShortChanID(), pid,
+		htlc,
 	)
 	require.NoError(t, err, "unable to get send payment")
 
@@ -6370,7 +6371,8 @@ func TestChannelLinkCanceledInvoice(t *testing.T) {
 	firstHop := n.bobChannelLink.ShortChanID()
 
 	invoice, payFunc, err := preparePayment(
-		n.aliceServer, n.bobServer, firstHop, hops, amount, htlcAmt,
+		context.Background(), n.aliceServer, n.bobServer, firstHop,
+		hops, amount, htlcAmt,
 		totalTimelock,
 	)
 	require.NoError(t, err, "unable to prepare the payment")

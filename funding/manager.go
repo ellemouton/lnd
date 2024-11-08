@@ -2,6 +2,7 @@ package funding
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -532,7 +533,7 @@ type Config struct {
 
 	// DeleteAliasEdge allows the Manager to delete an alias channel edge
 	// from the graph. It also returns our local to-be-deleted policy.
-	DeleteAliasEdge func(scid lnwire.ShortChannelID) (
+	DeleteAliasEdge func(ctx context.Context, scid lnwire.ShortChannelID) (
 		*models.ChannelEdgePolicy, error)
 
 	// AliasManager is an implementation of the aliasHandler interface that
@@ -630,8 +631,9 @@ type Manager struct {
 
 	handleChannelReadyBarriers *lnutils.SyncMap[lnwire.ChannelID, struct{}]
 
-	quit chan struct{}
-	wg   sync.WaitGroup
+	cancel func()
+	quit   chan struct{}
+	wg     sync.WaitGroup
 }
 
 // channelOpeningState represents the different states a channel can be in
@@ -724,6 +726,9 @@ func (f *Manager) start() error {
 		return err
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	f.cancel = cancel
+
 	for _, channel := range allChannels {
 		chanID := lnwire.NewChanIDFromOutPoint(channel.FundingOutpoint)
 
@@ -766,11 +771,11 @@ func (f *Manager) start() error {
 		// confirmed on the blockchain, and transmit the messages
 		// necessary for the channel to be operational.
 		f.wg.Add(1)
-		go f.advanceFundingState(channel, chanID, nil)
+		go f.advanceFundingState(ctx, channel, chanID, nil)
 	}
 
 	f.wg.Add(1) // TODO(roasbeef): tune
-	go f.reservationCoordinator()
+	go f.reservationCoordinator(ctx)
 
 	return nil
 }
@@ -782,6 +787,9 @@ func (f *Manager) Stop() error {
 		log.Info("Funding manager shutting down...")
 		defer log.Debug("Funding manager shutdown complete")
 
+		if f.cancel != nil {
+			f.cancel()
+		}
 		close(f.quit)
 		f.wg.Wait()
 	})
@@ -1017,7 +1025,7 @@ func (f *Manager) sendWarning(peer lnpeer.Peer, cid *chanIdentifier,
 // funding workflow between the wallet, and any outside peers or local callers.
 //
 // NOTE: This MUST be run as a goroutine.
-func (f *Manager) reservationCoordinator() {
+func (f *Manager) reservationCoordinator(ctx context.Context) {
 	defer f.wg.Done()
 
 	zombieSweepTicker := time.NewTicker(f.cfg.ZombieSweeperInterval)
@@ -1034,10 +1042,12 @@ func (f *Manager) reservationCoordinator() {
 				f.funderProcessAcceptChannel(fmsg.peer, msg)
 
 			case *lnwire.FundingCreated:
-				f.fundeeProcessFundingCreated(fmsg.peer, msg)
+				f.fundeeProcessFundingCreated(
+					ctx, fmsg.peer, msg,
+				)
 
 			case *lnwire.FundingSigned:
-				f.funderProcessFundingSigned(fmsg.peer, msg)
+				f.funderProcessFundingSigned(ctx, fmsg.peer, msg)
 
 			case *lnwire.ChannelReady:
 				f.wg.Add(1)
@@ -1069,8 +1079,8 @@ func (f *Manager) reservationCoordinator() {
 // OpenStatusUpdates.
 //
 // NOTE: This MUST be run as a goroutine.
-func (f *Manager) advanceFundingState(channel *channeldb.OpenChannel,
-	pendingChanID PendingChanID,
+func (f *Manager) advanceFundingState(ctx context.Context,
+	channel *channeldb.OpenChannel, pendingChanID PendingChanID,
 	updateChan chan<- *lnrpc.OpenStatusUpdate) {
 
 	defer f.wg.Done()
@@ -1135,7 +1145,7 @@ func (f *Manager) advanceFundingState(channel *channeldb.OpenChannel,
 		// are still steps left of the setup procedure. We continue the
 		// procedure where we left off.
 		err = f.stateStep(
-			channel, lnChannel, shortChanID, pendingChanID,
+			ctx, channel, lnChannel, shortChanID, pendingChanID,
 			channelState, updateChan,
 		)
 		if err != nil {
@@ -1150,8 +1160,8 @@ func (f *Manager) advanceFundingState(channel *channeldb.OpenChannel,
 // machine. This method is synchronous and the new channel opening state will
 // have been written to the database when it successfully returns. The
 // updateChan can be set non-nil to get OpenStatusUpdates.
-func (f *Manager) stateStep(channel *channeldb.OpenChannel,
-	lnChannel *lnwallet.LightningChannel,
+func (f *Manager) stateStep(ctx context.Context,
+	channel *channeldb.OpenChannel, lnChannel *lnwallet.LightningChannel,
 	shortChanID *lnwire.ShortChannelID, pendingChanID PendingChanID,
 	channelState channelOpeningState,
 	updateChan chan<- *lnrpc.OpenStatusUpdate) error {
@@ -1225,7 +1235,7 @@ func (f *Manager) stateStep(channel *channeldb.OpenChannel,
 			// If this is a zero-conf channel, then we will wait
 			// for it to be confirmed before announcing it to the
 			// greater network.
-			err := f.waitForZeroConfChannel(channel)
+			err := f.waitForZeroConfChannel(ctx, channel)
 			if err != nil {
 				return fmt.Errorf("failed waiting for zero "+
 					"channel: %v", err)
@@ -1237,7 +1247,7 @@ func (f *Manager) stateStep(channel *channeldb.OpenChannel,
 			shortChanID = &confirmedScid
 		}
 
-		err := f.annAfterSixConfs(channel, shortChanID)
+		err := f.annAfterSixConfs(ctx, channel, shortChanID)
 		if err != nil {
 			return fmt.Errorf("error sending channel "+
 				"announcement: %v", err)
@@ -2442,8 +2452,8 @@ func (f *Manager) continueFundingAccept(resCtx *reservationWithCtx,
 // stage.
 //
 //nolint:funlen
-func (f *Manager) fundeeProcessFundingCreated(peer lnpeer.Peer,
-	msg *lnwire.FundingCreated) {
+func (f *Manager) fundeeProcessFundingCreated(ctx context.Context,
+	peer lnpeer.Peer, msg *lnwire.FundingCreated) {
 
 	peerKey := peer.IdentityKey()
 	pendingChanID := msg.PendingChannelID
@@ -2672,7 +2682,7 @@ func (f *Manager) fundeeProcessFundingCreated(peer lnpeer.Peer,
 	// transaction in 288 blocks (~ 48 hrs), by canceling the reservation
 	// and canceling the wait for the funding confirmation.
 	f.wg.Add(1)
-	go f.advanceFundingState(completeChan, pendingChanID, nil)
+	go f.advanceFundingState(ctx, completeChan, pendingChanID, nil)
 }
 
 // funderProcessFundingSigned processes the final message received in a single
@@ -2680,8 +2690,8 @@ func (f *Manager) fundeeProcessFundingCreated(peer lnpeer.Peer,
 // broadcast. Once the funding transaction reaches a sufficient number of
 // confirmations, a message is sent to the responding peer along with a compact
 // encoding of the location of the channel within the blockchain.
-func (f *Manager) funderProcessFundingSigned(peer lnpeer.Peer,
-	msg *lnwire.FundingSigned) {
+func (f *Manager) funderProcessFundingSigned(ctx context.Context,
+	peer lnpeer.Peer, msg *lnwire.FundingSigned) {
 
 	// As the funding signed message will reference the reservation by its
 	// permanent channel ID, we'll need to perform an intermediate look up
@@ -2881,7 +2891,9 @@ func (f *Manager) funderProcessFundingSigned(peer lnpeer.Peer,
 	// At this point we have broadcast the funding transaction and done all
 	// necessary processing.
 	f.wg.Add(1)
-	go f.advanceFundingState(completeChan, pendingChanID, resCtx.updates)
+	go f.advanceFundingState(
+		ctx, completeChan, pendingChanID, resCtx.updates,
+	)
 }
 
 // confirmedChannel wraps a confirmed funding transaction, as well as the short
@@ -3612,7 +3624,8 @@ func (f *Manager) addToGraph(completeChan *channeldb.OpenChannel,
 // 'addedToGraph') and the channel is ready to be used. This is the last
 // step in the channel opening process, and the opening state will be deleted
 // from the database if successful.
-func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
+func (f *Manager) annAfterSixConfs(ctx context.Context,
+	completeChan *channeldb.OpenChannel,
 	shortChanID *lnwire.ShortChannelID) error {
 
 	// If this channel is not meant to be announced to the greater network,
@@ -3723,7 +3736,7 @@ func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
 			// addToGraph. This is because the peer may have
 			// sent us a ChannelUpdate with an alias and we don't
 			// want to relay this.
-			ourPolicy, err := f.cfg.DeleteAliasEdge(baseScid)
+			ourPolicy, err := f.cfg.DeleteAliasEdge(ctx, baseScid)
 			if err != nil {
 				return fmt.Errorf("failed deleting real edge "+
 					"for alias channel from graph: %v",
@@ -3762,7 +3775,9 @@ func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
 // waitForZeroConfChannel is called when the state is addedToGraph with
 // a zero-conf channel. This will wait for the real confirmation, add the
 // confirmed SCID to the router graph, and then announce after six confs.
-func (f *Manager) waitForZeroConfChannel(c *channeldb.OpenChannel) error {
+func (f *Manager) waitForZeroConfChannel(ctx context.Context,
+	c *channeldb.OpenChannel) error {
+
 	// First we'll check whether the channel is confirmed on-chain. If it
 	// is already confirmed, the chainntnfs subsystem will return with the
 	// confirmed tx. Otherwise, we'll wait here until confirmation occurs.
@@ -3809,7 +3824,7 @@ func (f *Manager) waitForZeroConfChannel(c *channeldb.OpenChannel) error {
 		}
 
 		// TODO: Make this atomic!
-		ourPolicy, err := f.cfg.DeleteAliasEdge(c.ShortChanID())
+		ourPolicy, err := f.cfg.DeleteAliasEdge(ctx, c.ShortChanID())
 		if err != nil {
 			return fmt.Errorf("unable to delete alias edge from "+
 				"graph: %v", err)

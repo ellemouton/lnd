@@ -49,7 +49,8 @@ type paymentLifecycle struct {
 	// an HTLC attempt, which is always mounted to `p.collectResultAsync`
 	// except in unit test, where we use a much simpler resultCollector to
 	// decouple the test flow for the payment lifecycle.
-	resultCollector func(attempt *channeldb.HTLCAttempt)
+	resultCollector func(ctx context.Context,
+		attempt *channeldb.HTLCAttempt)
 }
 
 // newPaymentLifecycle initiates a new payment lifecycle and returns it.
@@ -186,7 +187,7 @@ func (p *paymentLifecycle) resumePayment(ctx context.Context) ([32]byte,
 		log.Infof("Resuming HTLC attempt %v for payment %v",
 			a.AttemptID, p.identifier)
 
-		p.resultCollector(&a)
+		p.resultCollector(ctx, &a)
 	}
 
 	// exitWithErr is a helper closure that logs and returns an error.
@@ -291,7 +292,7 @@ lifecycle:
 		}
 
 		// Once the attempt is created, send it to the htlcswitch.
-		result, err := p.sendAttempt(attempt)
+		result, err := p.sendAttempt(ctx, attempt)
 		if err != nil {
 			return exitWithErr(err)
 		}
@@ -299,7 +300,7 @@ lifecycle:
 		// Now that the shard was successfully sent, launch a go
 		// routine that will handle its result when its back.
 		if result.err == nil {
-			p.resultCollector(attempt)
+			p.resultCollector(ctx, attempt)
 		}
 	}
 
@@ -436,13 +437,15 @@ type attemptResult struct {
 // given HTLC attempt to be available then handle its result. Once received, it
 // will send a nil error to channel `resultCollected` to indicate there's a
 // result.
-func (p *paymentLifecycle) collectResultAsync(attempt *channeldb.HTLCAttempt) {
+func (p *paymentLifecycle) collectResultAsync(ctx context.Context,
+	attempt *channeldb.HTLCAttempt) {
+
 	log.Debugf("Collecting result for attempt %v in payment %v",
 		attempt.AttemptID, p.identifier)
 
 	go func() {
 		// Block until the result is available.
-		_, err := p.collectResult(attempt)
+		_, err := p.collectResult(ctx, attempt)
 		if err != nil {
 			log.Errorf("Error collecting result for attempt %v "+
 				"in payment %v: %v", attempt.AttemptID,
@@ -472,8 +475,8 @@ func (p *paymentLifecycle) collectResultAsync(attempt *channeldb.HTLCAttempt) {
 // from the Switch, then records the attempt outcome with the control tower.
 // An attemptResult is returned, indicating the final outcome of this HTLC
 // attempt.
-func (p *paymentLifecycle) collectResult(attempt *channeldb.HTLCAttempt) (
-	*attemptResult, error) {
+func (p *paymentLifecycle) collectResult(ctx context.Context,
+	attempt *channeldb.HTLCAttempt) (*attemptResult, error) {
 
 	log.Tracef("Collecting result for attempt %v", spew.Sdump(attempt))
 
@@ -528,7 +531,7 @@ func (p *paymentLifecycle) collectResult(attempt *channeldb.HTLCAttempt) (
 		log.Errorf("Failed getting result for attemptID %d "+
 			"from switch: %v", attempt.AttemptID, err)
 
-		return p.handleSwitchErr(attempt, err)
+		return p.handleSwitchErr(ctx, attempt, err)
 	}
 
 	// The switch knows about this payment, we'll wait for a result to be
@@ -554,7 +557,7 @@ func (p *paymentLifecycle) collectResult(attempt *channeldb.HTLCAttempt) (
 	// In case of a payment failure, fail the attempt with the control
 	// tower and return.
 	if result.Error != nil {
-		return p.handleSwitchErr(attempt, result.Error)
+		return p.handleSwitchErr(ctx, attempt, result.Error)
 	}
 
 	// We successfully got a payment result back from the switch.
@@ -674,7 +677,7 @@ func (p *paymentLifecycle) createNewPaymentAttempt(rt *route.Route,
 // sendAttempt attempts to send the current attempt to the switch to complete
 // the payment. If this attempt fails, then we'll continue on to the next
 // available route.
-func (p *paymentLifecycle) sendAttempt(
+func (p *paymentLifecycle) sendAttempt(ctx context.Context,
 	attempt *channeldb.HTLCAttempt) (*attemptResult, error) {
 
 	log.Debugf("Sending HTLC attempt(id=%v, total_amt=%v, first_hop_amt=%d"+
@@ -717,12 +720,14 @@ func (p *paymentLifecycle) sendAttempt(
 	// the Switch successfully has persisted the payment attempt,
 	// such that we can resume waiting for the result after a
 	// restart.
-	err = p.router.cfg.Payer.SendHTLC(firstHop, attempt.AttemptID, htlcAdd)
+	err = p.router.cfg.Payer.SendHTLC(
+		ctx, firstHop, attempt.AttemptID, htlcAdd,
+	)
 	if err != nil {
 		log.Errorf("Failed sending attempt %d for payment %v to "+
 			"switch: %v", attempt.AttemptID, p.identifier, err)
 
-		return p.handleSwitchErr(attempt, err)
+		return p.handleSwitchErr(ctx, attempt, err)
 	}
 
 	log.Debugf("Attempt %v for payment %v successfully sent to switch, "+
@@ -834,8 +839,8 @@ func (p *paymentLifecycle) failPaymentAndAttempt(
 // the error type, the error is either the final outcome of the payment or we
 // need to continue with an alternative route. A final outcome is indicated by
 // a non-nil reason value.
-func (p *paymentLifecycle) handleSwitchErr(attempt *channeldb.HTLCAttempt,
-	sendErr error) (*attemptResult, error) {
+func (p *paymentLifecycle) handleSwitchErr(ctx context.Context,
+	attempt *channeldb.HTLCAttempt, sendErr error) (*attemptResult, error) {
 
 	internalErrorReason := channeldb.FailureReasonError
 	attemptID := attempt.AttemptID
@@ -920,7 +925,7 @@ func (p *paymentLifecycle) handleSwitchErr(attempt *channeldb.HTLCAttempt,
 	// route, the failure message will be nil.
 	failureMessage := rtErr.WireMessage()
 	err := p.handleFailureMessage(
-		&attempt.Route, failureSourceIdx, failureMessage,
+		ctx, &attempt.Route, failureSourceIdx, failureMessage,
 	)
 	if err != nil {
 		return p.failPaymentAndAttempt(
@@ -936,8 +941,9 @@ func (p *paymentLifecycle) handleSwitchErr(attempt *channeldb.HTLCAttempt,
 
 // handleFailureMessage tries to apply a channel update present in the failure
 // message if any.
-func (p *paymentLifecycle) handleFailureMessage(rt *route.Route,
-	errorSourceIdx int, failure lnwire.FailureMessage) error {
+func (p *paymentLifecycle) handleFailureMessage(ctx context.Context,
+	rt *route.Route, errorSourceIdx int,
+	failure lnwire.FailureMessage) error {
 
 	if failure == nil {
 		return nil
@@ -1000,7 +1006,7 @@ func (p *paymentLifecycle) handleFailureMessage(rt *route.Route,
 	}
 
 	// Apply channel update to the channel edge policy in our db.
-	if !p.router.cfg.ApplyChannelUpdate(update) {
+	if !p.router.cfg.ApplyChannelUpdate(ctx, update) {
 		log.Debugf("Invalid channel update received: node=%v",
 			errVertex)
 	}

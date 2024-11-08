@@ -859,7 +859,7 @@ func (s *Server) SendToRouteV2(ctx context.Context,
 		return nil, fmt.Errorf("unable to send, no routes provided")
 	}
 
-	route, err := s.cfg.RouterBackend.UnmarshallRoute(req.Route)
+	route, err := s.cfg.RouterBackend.UnmarshallRoute(ctx, req.Route)
 	if err != nil {
 		return nil, err
 	}
@@ -884,16 +884,16 @@ func (s *Server) SendToRouteV2(ctx context.Context,
 	// db.
 	if req.SkipTempErr {
 		attempt, err = s.cfg.Router.SendToRouteSkipTempErr(
-			hash, route, firstHopRecords,
+			ctx, hash, route, firstHopRecords,
 		)
 	} else {
 		attempt, err = s.cfg.Router.SendToRoute(
-			hash, route, firstHopRecords,
+			ctx, hash, route, firstHopRecords,
 		)
 	}
 	if attempt != nil {
 		rpcAttempt, err := s.cfg.RouterBackend.MarshalHTLCAttempt(
-			*attempt,
+			ctx, *attempt,
 		)
 		if err != nil {
 			return nil, err
@@ -1377,7 +1377,7 @@ func (s *Server) TrackPayments(request *TrackPaymentsRequest,
 }
 
 // trackPaymentStream streams payment updates to the client.
-func (s *Server) trackPaymentStream(context context.Context,
+func (s *Server) trackPaymentStream(ctx context.Context,
 	subscription routing.ControlTowerSubscriber, noInflightUpdates bool,
 	send func(*lnrpc.Payment) error) error {
 
@@ -1407,7 +1407,7 @@ func (s *Server) trackPaymentStream(context context.Context,
 			}
 
 			rpcPayment, err := s.cfg.RouterBackend.MarshallPayment(
-				result,
+				ctx, result,
 			)
 			if err != nil {
 				return err
@@ -1422,14 +1422,14 @@ func (s *Server) trackPaymentStream(context context.Context,
 		case <-s.quit:
 			return errServerShuttingDown
 
-		case <-context.Done():
-			return context.Err()
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 }
 
 // BuildRoute builds a route from a list of hop addresses.
-func (s *Server) BuildRoute(_ context.Context,
+func (s *Server) BuildRoute(ctx context.Context,
 	req *BuildRouteRequest) (*BuildRouteResponse, error) {
 
 	if len(req.HopPubkeys) == 0 {
@@ -1497,7 +1497,7 @@ func (s *Server) BuildRoute(_ context.Context,
 		return nil, err
 	}
 
-	rpcRoute, err := s.cfg.RouterBackend.MarshallRoute(route)
+	rpcRoute, err := s.cfg.RouterBackend.MarshallRoute(ctx, route)
 	if err != nil {
 		return nil, err
 	}

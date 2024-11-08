@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"context"
 	"fmt"
 	"image/color"
 	"net"
@@ -310,7 +311,7 @@ type ChannelEdgeUpdate struct {
 // constitutes. This function will also fetch any required auxiliary
 // information required to create the topology change update from the graph
 // database.
-func addToTopologyChange(graph DB, update *TopologyChange,
+func addToTopologyChange(ctx context.Context, graph DB, update *TopologyChange,
 	msg interface{}) error {
 
 	switch m := msg.(type) {
@@ -345,7 +346,9 @@ func addToTopologyChange(graph DB, update *TopologyChange,
 		// We'll need to fetch the edge's information from the database
 		// in order to get the information concerning which nodes are
 		// being connected.
-		edgeInfo, _, _, err := graph.FetchChannelEdgesByID(m.ChannelID)
+		edgeInfo, _, _, err := graph.FetchChannelEdgesByID(
+			ctx, m.ChannelID,
+		)
 		if err != nil {
 			return errors.Errorf("unable fetch channel edge: %v",
 				err)

@@ -46,7 +46,8 @@ type RouterBackend struct {
 
 	// FetchChannelCapacity is a closure that we'll use the fetch the total
 	// capacity of a channel to populate in responses.
-	FetchChannelCapacity func(chanID uint64) (btcutil.Amount, error)
+	FetchChannelCapacity func(ctx context.Context, chanID uint64) (
+		btcutil.Amount, error)
 
 	// FetchAmountPairCapacity determines the maximal channel capacity
 	// between two nodes given a certain amount.
@@ -55,8 +56,8 @@ type RouterBackend struct {
 
 	// FetchChannelEndpoints returns the pubkeys of both endpoints of the
 	// given channel id.
-	FetchChannelEndpoints func(chanID uint64) (route.Vertex,
-		route.Vertex, error)
+	FetchChannelEndpoints func(ctx context.Context, chanID uint64) (
+		route.Vertex, route.Vertex, error)
 
 	// FindRoute is a closure that abstracts away how we locate/query for
 	// routes.
@@ -157,7 +158,7 @@ type MissionControl interface {
 func (r *RouterBackend) QueryRoutes(ctx context.Context,
 	in *lnrpc.QueryRoutesRequest) (*lnrpc.QueryRoutesResponse, error) {
 
-	routeReq, err := r.parseQueryRoutesRequest(in)
+	routeReq, err := r.parseQueryRoutesRequest(ctx, in)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +173,7 @@ func (r *RouterBackend) QueryRoutes(ctx context.Context,
 
 	// For each valid route, we'll convert the result into the format
 	// required by the RPC system.
-	rpcRoute, err := r.MarshallRoute(route)
+	rpcRoute, err := r.MarshallRoute(ctx, route)
 	if err != nil {
 		return nil, err
 	}
@@ -194,9 +195,9 @@ func parsePubKey(key string) (route.Vertex, error) {
 	return route.NewVertexFromBytes(pubKeyBytes)
 }
 
-func (r *RouterBackend) parseIgnored(in *lnrpc.QueryRoutesRequest) (
-	map[route.Vertex]struct{}, map[routing.DirectedNodePair]struct{},
-	error) {
+func (r *RouterBackend) parseIgnored(ctx context.Context,
+	in *lnrpc.QueryRoutesRequest) (map[route.Vertex]struct{},
+	map[routing.DirectedNodePair]struct{}, error) {
 
 	ignoredNodes := make(map[route.Vertex]struct{})
 	for _, ignorePubKey := range in.IgnoredNodes {
@@ -211,7 +212,7 @@ func (r *RouterBackend) parseIgnored(in *lnrpc.QueryRoutesRequest) (
 
 	// Convert deprecated ignoredEdges to pairs.
 	for _, ignoredEdge := range in.IgnoredEdges {
-		pair, err := r.rpcEdgeToPair(ignoredEdge)
+		pair, err := r.rpcEdgeToPair(ctx, ignoredEdge)
 		if err != nil {
 			log.Warnf("Ignore channel %v skipped: %v",
 				ignoredEdge.ChannelId, err)
@@ -240,8 +241,8 @@ func (r *RouterBackend) parseIgnored(in *lnrpc.QueryRoutesRequest) (
 	return ignoredNodes, ignoredPairs, nil
 }
 
-func (r *RouterBackend) parseQueryRoutesRequest(in *lnrpc.QueryRoutesRequest) (
-	*routing.RouteRequest, error) {
+func (r *RouterBackend) parseQueryRoutesRequest(ctx context.Context,
+	in *lnrpc.QueryRoutesRequest) (*routing.RouteRequest, error) {
 
 	// Parse the hex-encoded source public key into a full public key that
 	// we can properly manipulate.
@@ -363,7 +364,7 @@ func (r *RouterBackend) parseQueryRoutesRequest(in *lnrpc.QueryRoutesRequest) (
 	// the path finding algorithm is unaware of this value.
 	cltvLimit -= uint32(finalCLTVDelta)
 
-	ignoredNodes, ignoredPairs, err := r.parseIgnored(in)
+	ignoredNodes, ignoredPairs, err := r.parseIgnored(ctx, in)
 	if err != nil {
 		return nil, err
 	}
@@ -563,10 +564,10 @@ func unmarshalBlindedHop(rpcHop *lnrpc.BlindedHop) (*sphinx.BlindedHopInfo,
 
 // rpcEdgeToPair looks up the provided channel and returns the channel endpoints
 // as a directed pair.
-func (r *RouterBackend) rpcEdgeToPair(e *lnrpc.EdgeLocator) (
-	routing.DirectedNodePair, error) {
+func (r *RouterBackend) rpcEdgeToPair(ctx context.Context,
+	e *lnrpc.EdgeLocator) (routing.DirectedNodePair, error) {
 
-	a, b, err := r.FetchChannelEndpoints(e.ChannelId)
+	a, b, err := r.FetchChannelEndpoints(ctx, e.ChannelId)
 	if err != nil {
 		return routing.DirectedNodePair{}, err
 	}
@@ -582,7 +583,9 @@ func (r *RouterBackend) rpcEdgeToPair(e *lnrpc.EdgeLocator) (
 }
 
 // MarshallRoute marshalls an internal route to an rpc route struct.
-func (r *RouterBackend) MarshallRoute(route *route.Route) (*lnrpc.Route, error) {
+func (r *RouterBackend) MarshallRoute(ctx context.Context, route *route.Route) (
+	*lnrpc.Route, error) {
+
 	resp := &lnrpc.Route{
 		TotalTimeLock:      route.TotalTimeLock,
 		TotalFees:          int64(route.TotalFees().ToSatoshis()),
@@ -619,7 +622,7 @@ func (r *RouterBackend) MarshallRoute(route *route.Route) (*lnrpc.Route, error) 
 		// Channel capacity is not a defining property of a route. For
 		// backwards RPC compatibility, we retrieve it here from the
 		// graph.
-		chanCapacity, err := r.FetchChannelCapacity(hop.ChannelID)
+		chanCapacity, err := r.FetchChannelCapacity(ctx, hop.ChannelID)
 		if err != nil {
 			// If capacity cannot be retrieved, this may be a
 			// not-yet-received or private channel. Then report
@@ -733,7 +736,7 @@ func UnmarshallHopWithPubkey(rpcHop *lnrpc.Hop, pubkey route.Vertex) (*route.Hop
 
 // UnmarshallHop unmarshalls an rpc hop that may or may not contain a node
 // pubkey.
-func (r *RouterBackend) UnmarshallHop(rpcHop *lnrpc.Hop,
+func (r *RouterBackend) UnmarshallHop(ctx context.Context, rpcHop *lnrpc.Hop,
 	prevNodePubKey [33]byte) (*route.Hop, error) {
 
 	var pubKeyBytes [33]byte
@@ -749,7 +752,7 @@ func (r *RouterBackend) UnmarshallHop(rpcHop *lnrpc.Hop,
 		// If no pub key is given of the hop, the local channel graph
 		// needs to be queried to complete the information necessary for
 		// routing. Discard edge policies, because they may be nil.
-		node1, node2, err := r.FetchChannelEndpoints(rpcHop.ChanId)
+		node1, node2, err := r.FetchChannelEndpoints(ctx, rpcHop.ChanId)
 		if err != nil {
 			return nil, err
 		}
@@ -770,14 +773,14 @@ func (r *RouterBackend) UnmarshallHop(rpcHop *lnrpc.Hop,
 
 // UnmarshallRoute unmarshalls an rpc route. For hops that don't specify a
 // pubkey, the channel graph is queried.
-func (r *RouterBackend) UnmarshallRoute(rpcroute *lnrpc.Route) (
-	*route.Route, error) {
+func (r *RouterBackend) UnmarshallRoute(ctx context.Context,
+	rpcroute *lnrpc.Route) (*route.Route, error) {
 
 	prevNodePubKey := r.SelfNode
 
 	hops := make([]*route.Hop, len(rpcroute.Hops))
 	for i, hop := range rpcroute.Hops {
-		routeHop, err := r.UnmarshallHop(hop, prevNodePubKey)
+		routeHop, err := r.UnmarshallHop(ctx, hop, prevNodePubKey)
 		if err != nil {
 			return nil, err
 		}
@@ -1404,10 +1407,10 @@ func UnmarshalAMP(reqAMP *lnrpc.AMPRecord) (*record.AMP, error) {
 }
 
 // MarshalHTLCAttempt constructs an RPC HTLCAttempt from the db representation.
-func (r *RouterBackend) MarshalHTLCAttempt(
+func (r *RouterBackend) MarshalHTLCAttempt(ctx context.Context,
 	htlc channeldb.HTLCAttempt) (*lnrpc.HTLCAttempt, error) {
 
-	route, err := r.MarshallRoute(&htlc.Route)
+	route, err := r.MarshallRoute(ctx, &htlc.Route)
 	if err != nil {
 		return nil, err
 	}
@@ -1660,8 +1663,8 @@ func marshallChannelUpdate(update *lnwire.ChannelUpdate1) *lnrpc.ChannelUpdate {
 }
 
 // MarshallPayment marshall a payment to its rpc representation.
-func (r *RouterBackend) MarshallPayment(payment *channeldb.MPPayment) (
-	*lnrpc.Payment, error) {
+func (r *RouterBackend) MarshallPayment(ctx context.Context,
+	payment *channeldb.MPPayment) (*lnrpc.Payment, error) {
 
 	// Fetch the payment's preimage and the total paid in fees.
 	var (
@@ -1689,7 +1692,7 @@ func (r *RouterBackend) MarshallPayment(payment *channeldb.MPPayment) (
 
 	htlcs := make([]*lnrpc.HTLCAttempt, 0, len(payment.HTLCs))
 	for _, dbHTLC := range payment.HTLCs {
-		htlc, err := r.MarshalHTLCAttempt(dbHTLC)
+		htlc, err := r.MarshalHTLCAttempt(ctx, dbHTLC)
 		if err != nil {
 			return nil, err
 		}

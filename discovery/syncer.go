@@ -1383,7 +1383,9 @@ func (g *GossipSyncer) ApplyGossipFilter(ctx context.Context,
 // FilterGossipMsgs takes a set of gossip messages, and only send it to a peer
 // iff the message is within the bounds of their set gossip filter. If the peer
 // doesn't have a gossip filter set, then no messages will be forwarded.
-func (g *GossipSyncer) FilterGossipMsgs(msgs ...msgWithSenders) {
+func (g *GossipSyncer) FilterGossipMsgs(ctx context.Context,
+	msgs ...msgWithSenders) {
+
 	// If the peer doesn't have an update horizon set, then we won't send
 	// it any new update messages.
 	if g.remoteUpdateHorizon == nil {
@@ -1460,7 +1462,7 @@ func (g *GossipSyncer) FilterGossipMsgs(msgs ...msgWithSenders) {
 				// If not, we'll attempt to query the database
 				// to see if we know of the updates.
 				chanUpdates, err = g.cfg.channelSeries.FetchChanUpdates(
-					g.cfg.chainHash, msg.ShortChannelID,
+					ctx, g.cfg.chainHash, msg.ShortChannelID,
 				)
 				if err != nil {
 					log.Warnf("no channel updates found for "+

@@ -1,6 +1,7 @@
 package htlcswitch
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -29,9 +30,11 @@ func (h *heldHtlcSet) forEach(cb func(InterceptedForward)) {
 }
 
 // popAll calls the callback for each forward and removes them from the set.
-func (h *heldHtlcSet) popAll(cb func(InterceptedForward)) {
+func (h *heldHtlcSet) popAll(ctx context.Context,
+	cb func(context.Context, InterceptedForward)) {
+
 	for _, fwd := range h.set {
-		cb(fwd)
+		cb(ctx, fwd)
 	}
 
 	h.set = make(map[models.CircuitKey]InterceptedForward)

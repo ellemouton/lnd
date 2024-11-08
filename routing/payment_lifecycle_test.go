@@ -116,7 +116,9 @@ func newTestPaymentLifecycle(t *testing.T) (*paymentLifecycle, *mockers) {
 
 	// Overwrite the collectResultAsync to focus on testing the payment
 	// lifecycle within the goroutine.
-	resultCollector := func(attempt *channeldb.HTLCAttempt) {
+	resultCollector := func(_ context.Context,
+		attempt *channeldb.HTLCAttempt) {
+
 		mockers.collectResultsCount++
 	}
 	p.resultCollector = resultCollector

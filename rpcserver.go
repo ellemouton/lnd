@@ -696,10 +696,12 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 
 	routerBackend := &routerrpc.RouterBackend{
 		SelfNode: selfNode.PubKeyBytes,
-		FetchChannelCapacity: func(chanID uint64) (btcutil.Amount,
-			error) {
+		FetchChannelCapacity: func(ctx context.Context, chanID uint64) (
+			btcutil.Amount, error) {
 
-			info, _, _, err := graph.FetchChannelEdgesByID(chanID)
+			info, _, _, err := graph.FetchChannelEdgesByID(
+				ctx, chanID,
+			)
 			if err != nil {
 				return 0, err
 			}
@@ -713,11 +715,11 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 				selfNode.PubKeyBytes, nodeFrom, nodeTo, amount,
 			)
 		},
-		FetchChannelEndpoints: func(chanID uint64) (route.Vertex,
-			route.Vertex, error) {
+		FetchChannelEndpoints: func(ctx context.Context,
+			chanID uint64) (route.Vertex, route.Vertex, error) {
 
 			info, _, _, err := graph.FetchChannelEdgesByID(
-				chanID,
+				ctx, chanID,
 			)
 			if err != nil {
 				return route.Vertex{}, route.Vertex{},
@@ -5273,7 +5275,7 @@ type rpcPaymentRequest struct {
 func (r *rpcServer) SendPayment(stream lnrpc.Lightning_SendPaymentServer) error {
 	var lock sync.Mutex
 
-	return r.sendPayment(&paymentStream{
+	return r.sendPayment(stream.Context(), &paymentStream{
 		recv: func() (*rpcPaymentRequest, error) {
 			req, err := stream.Recv()
 			if err != nil {
@@ -5301,14 +5303,16 @@ func (r *rpcServer) SendPayment(stream lnrpc.Lightning_SendPaymentServer) error 
 func (r *rpcServer) SendToRoute(stream lnrpc.Lightning_SendToRouteServer) error {
 	var lock sync.Mutex
 
-	return r.sendPayment(&paymentStream{
+	return r.sendPayment(stream.Context(), &paymentStream{
 		recv: func() (*rpcPaymentRequest, error) {
 			req, err := stream.Recv()
 			if err != nil {
 				return nil, err
 			}
 
-			return r.unmarshallSendToRouteRequest(req)
+			return r.unmarshallSendToRouteRequest(
+				stream.Context(), req,
+			)
 		},
 		send: func(r *lnrpc.SendResponse) error {
 			// Calling stream.Send concurrently is not safe.
@@ -5320,14 +5324,14 @@ func (r *rpcServer) SendToRoute(stream lnrpc.Lightning_SendToRouteServer) error 
 }
 
 // unmarshallSendToRouteRequest unmarshalls an rpc sendtoroute request
-func (r *rpcServer) unmarshallSendToRouteRequest(
+func (r *rpcServer) unmarshallSendToRouteRequest(ctx context.Context,
 	req *lnrpc.SendToRouteRequest) (*rpcPaymentRequest, error) {
 
 	if req.Route == nil {
 		return nil, fmt.Errorf("unable to send, no route provided")
 	}
 
-	route, err := r.routerBackend.UnmarshallRoute(req.Route)
+	route, err := r.routerBackend.UnmarshallRoute(ctx, req.Route)
 	if err != nil {
 		return nil, err
 	}
@@ -5644,7 +5648,7 @@ type paymentIntentResponse struct {
 // pre-built route. The first error this method returns denotes if we were
 // unable to save the payment. The second error returned denotes if the payment
 // didn't succeed.
-func (r *rpcServer) dispatchPaymentIntent(
+func (r *rpcServer) dispatchPaymentIntent(ctx context.Context,
 	payIntent *rpcPaymentIntent) (*paymentIntentResponse, error) {
 
 	// Construct a payment request to send to the channel router. If the
@@ -5691,7 +5695,7 @@ func (r *rpcServer) dispatchPaymentIntent(
 	} else {
 		var attempt *channeldb.HTLCAttempt
 		attempt, routerErr = r.server.chanRouter.SendToRoute(
-			payIntent.rHash, payIntent.route, nil,
+			ctx, payIntent.rHash, payIntent.route, nil,
 		)
 
 		if routerErr == nil {
@@ -5722,7 +5726,9 @@ func (r *rpcServer) dispatchPaymentIntent(
 // the write end of the stream. Responses will also be streamed back to the
 // client via the write end of the stream. This method is by both SendToRoute
 // and SendPayment as the logic is virtually identical.
-func (r *rpcServer) sendPayment(stream *paymentStream) error {
+func (r *rpcServer) sendPayment(ctx context.Context,
+	stream *paymentStream) error {
+
 	payChan := make(chan *rpcPaymentIntent)
 	errChan := make(chan error, 1)
 
@@ -5864,7 +5870,7 @@ sendLoop:
 				}()
 
 				resp, saveErr := r.dispatchPaymentIntent(
-					payIntent,
+					ctx, payIntent,
 				)
 
 				switch {
@@ -5904,7 +5910,7 @@ sendLoop:
 
 				backend := r.routerBackend
 				marshalledRouted, err := backend.MarshallRoute(
-					resp.Route,
+					ctx, resp.Route,
 				)
 				if err != nil {
 					errChan <- err
@@ -5942,7 +5948,7 @@ sendLoop:
 func (r *rpcServer) SendPaymentSync(ctx context.Context,
 	nextPayment *lnrpc.SendRequest) (*lnrpc.SendResponse, error) {
 
-	return r.sendPaymentSync(&rpcPaymentRequest{
+	return r.sendPaymentSync(ctx, &rpcPaymentRequest{
 		SendRequest: nextPayment,
 	})
 }
@@ -5958,17 +5964,17 @@ func (r *rpcServer) SendToRouteSync(ctx context.Context,
 		return nil, fmt.Errorf("unable to send, no routes provided")
 	}
 
-	paymentRequest, err := r.unmarshallSendToRouteRequest(req)
+	paymentRequest, err := r.unmarshallSendToRouteRequest(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 
-	return r.sendPaymentSync(paymentRequest)
+	return r.sendPaymentSync(ctx, paymentRequest)
 }
 
 // sendPaymentSync is the synchronous variant of sendPayment. It will block and
 // wait until the payment has been fully completed.
-func (r *rpcServer) sendPaymentSync(
+func (r *rpcServer) sendPaymentSync(ctx context.Context,
 	nextPayment *rpcPaymentRequest) (*lnrpc.SendResponse, error) {
 
 	// We don't allow payments to be sent while the daemon itself is still
@@ -5987,7 +5993,7 @@ func (r *rpcServer) sendPaymentSync(
 
 	// With the payment validated, we'll now attempt to dispatch the
 	// payment.
-	resp, saveErr := r.dispatchPaymentIntent(&payIntent)
+	resp, saveErr := r.dispatchPaymentIntent(ctx, &payIntent)
 	switch {
 	case saveErr != nil:
 		return nil, saveErr
@@ -5999,7 +6005,7 @@ func (r *rpcServer) sendPaymentSync(
 		}, nil
 	}
 
-	rpcRoute, err := r.routerBackend.MarshallRoute(resp.Route)
+	rpcRoute, err := r.routerBackend.MarshallRoute(ctx, resp.Route)
 	if err != nil {
 		return nil, err
 	}
@@ -6724,7 +6730,7 @@ func (r *rpcServer) GetNodeMetrics(ctx context.Context,
 // uniquely identify the location of transaction's funding output within the
 // blockchain. The former is an 8-byte integer, while the latter is a string
 // formatted as funding_txid:output_index.
-func (r *rpcServer) GetChanInfo(_ context.Context,
+func (r *rpcServer) GetChanInfo(ctx context.Context,
 	in *lnrpc.ChanInfoRequest) (*lnrpc.ChannelEdge, error) {
 
 	graph := r.server.graphDB
@@ -6738,7 +6744,7 @@ func (r *rpcServer) GetChanInfo(_ context.Context,
 	switch {
 	case in.ChanId != 0:
 		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByID(
-			in.ChanId,
+			ctx, in.ChanId,
 		)
 
 	case in.ChanPoint != "":
@@ -7258,7 +7264,7 @@ func (r *rpcServer) ListPayments(ctx context.Context,
 	for _, payment := range paymentsQuerySlice.Payments {
 		payment := payment
 
-		rpcPayment, err := r.routerBackend.MarshallPayment(payment)
+		rpcPayment, err := r.routerBackend.MarshallPayment(ctx, payment)
 		if err != nil {
 			return nil, err
 		}

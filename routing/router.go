@@ -110,7 +110,7 @@ type PaymentAttemptDispatcher interface {
 	// forward a fully encoded payment to the first hop in the route
 	// denoted by its public key. A non-nil error is to be returned if the
 	// payment was unsuccessful.
-	SendHTLC(firstHop lnwire.ShortChannelID,
+	SendHTLC(ctx context.Context, firstHop lnwire.ShortChannelID,
 		attemptID uint64,
 		htlcAdd *lnwire.UpdateAddHTLC) error
 
@@ -288,7 +288,8 @@ type Config struct {
 
 	// ApplyChannelUpdate can be called to apply a new channel update to the
 	// graph that we received from a payment failure.
-	ApplyChannelUpdate func(msg *lnwire.ChannelUpdate1) bool
+	ApplyChannelUpdate func(ctx context.Context,
+		msg *lnwire.ChannelUpdate1) bool
 
 	// ClosedSCIDs is used by the router to fetch closed channels.
 	//
@@ -1087,21 +1088,21 @@ func (r *ChannelRouter) PreparePayment(payment *LightningPayment) (
 
 // SendToRoute sends a payment using the provided route and fails the payment
 // when an error is returned from the attempt.
-func (r *ChannelRouter) SendToRoute(htlcHash lntypes.Hash, rt *route.Route,
-	firstHopCustomRecords lnwire.CustomRecords) (*channeldb.HTLCAttempt,
-	error) {
+func (r *ChannelRouter) SendToRoute(ctx context.Context, htlcHash lntypes.Hash,
+	rt *route.Route, firstHopCustomRecords lnwire.CustomRecords) (
+	*channeldb.HTLCAttempt, error) {
 
-	return r.sendToRoute(htlcHash, rt, false, firstHopCustomRecords)
+	return r.sendToRoute(ctx, htlcHash, rt, false, firstHopCustomRecords)
 }
 
 // SendToRouteSkipTempErr sends a payment using the provided route and fails
 // the payment ONLY when a terminal error is returned from the attempt.
-func (r *ChannelRouter) SendToRouteSkipTempErr(htlcHash lntypes.Hash,
-	rt *route.Route,
+func (r *ChannelRouter) SendToRouteSkipTempErr(ctx context.Context,
+	htlcHash lntypes.Hash, rt *route.Route,
 	firstHopCustomRecords lnwire.CustomRecords) (*channeldb.HTLCAttempt,
 	error) {
 
-	return r.sendToRoute(htlcHash, rt, true, firstHopCustomRecords)
+	return r.sendToRoute(ctx, htlcHash, rt, true, firstHopCustomRecords)
 }
 
 // sendToRoute attempts to send a payment with the given hash through the
@@ -1110,8 +1111,8 @@ func (r *ChannelRouter) SendToRouteSkipTempErr(htlcHash lntypes.Hash,
 // information will contain the preimage. If an error occurs after the attempt
 // was initiated, both return values will be non-nil. If skipTempErr is true,
 // the payment won't be failed unless a terminal error has occurred.
-func (r *ChannelRouter) sendToRoute(htlcHash lntypes.Hash, rt *route.Route,
-	skipTempErr bool,
+func (r *ChannelRouter) sendToRoute(ctx context.Context, htlcHash lntypes.Hash,
+	rt *route.Route, skipTempErr bool,
 	firstHopCustomRecords lnwire.CustomRecords) (*channeldb.HTLCAttempt,
 	error) {
 
@@ -1210,7 +1211,7 @@ func (r *ChannelRouter) sendToRoute(htlcHash lntypes.Hash, rt *route.Route,
 	// the `err` returned here has already been processed by
 	// `handleSwitchErr`, which means if there's a terminal failure, the
 	// payment has been failed.
-	result, err := p.sendAttempt(attempt)
+	result, err := p.sendAttempt(ctx, attempt)
 	if err != nil {
 		return nil, err
 	}
@@ -1253,7 +1254,7 @@ func (r *ChannelRouter) sendToRoute(htlcHash lntypes.Hash, rt *route.Route,
 
 	// The attempt was successfully sent, wait for the result to be
 	// available.
-	result, err = p.collectResult(attempt)
+	result, err = p.collectResult(ctx, attempt)
 	if err != nil {
 		return nil, err
 	}

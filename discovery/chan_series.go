@@ -60,7 +60,7 @@ type ChannelGraphTimeSeries interface {
 	// FetchChanUpdates returns the latest channel update messages for the
 	// specified short channel ID. If no channel updates are known for the
 	// channel, then an empty slice will be returned.
-	FetchChanUpdates(chain chainhash.Hash,
+	FetchChanUpdates(ctx context.Context, chain chainhash.Hash,
 		shortChanID lnwire.ShortChannelID) ([]*lnwire.ChannelUpdate1,
 		error)
 }
@@ -328,11 +328,11 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 // then an empty slice will be returned.
 //
 // NOTE: This is part of the ChannelGraphTimeSeries interface.
-func (c *ChanSeries) FetchChanUpdates(chain chainhash.Hash,
+func (c *ChanSeries) FetchChanUpdates(ctx context.Context, chain chainhash.Hash,
 	shortChanID lnwire.ShortChannelID) ([]*lnwire.ChannelUpdate1, error) {
 
 	chanInfo, e1, e2, err := c.graph.FetchChannelEdgesByID(
-		shortChanID.ToUint64(),
+		ctx, shortChanID.ToUint64(),
 	)
 	if err != nil {
 		return nil, err
