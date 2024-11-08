@@ -1099,13 +1099,11 @@ func TestGraphTraversalCacheable(t *testing.T) {
 	// Create a map of all nodes with the iteration we know works (because
 	// it is tested in another test).
 	nodeMap := make(map[route.Vertex]struct{})
-	err = graph.ForEachNode(
-		func(tx kvdb.RTx, n *models.LightningNode) error {
-			nodeMap[n.PubKeyBytes] = struct{}{}
+	err = graph.ForEachNode(func(n *models.LightningNode) error {
+		nodeMap[n.PubKeyBytes] = struct{}{}
 
-			return nil
-		},
-	)
+		return nil
+	})
 	require.NoError(t, err)
 	require.Len(t, nodeMap, numNodes)
 
@@ -1224,12 +1222,11 @@ func fillTestGraph(t require.TestingT, graph *ChannelGraph, numNodes,
 
 	// Iterate over each node as returned by the graph, if all nodes are
 	// reached, then the map created above should be empty.
-	err := graph.ForEachNode(
-		func(_ kvdb.RTx, node *models.LightningNode) error {
-			delete(nodeIndex, node.Alias)
-			return nil
-		},
-	)
+	err := graph.ForEachNode(func(node *models.LightningNode) error {
+		delete(nodeIndex, node.Alias)
+
+		return nil
+	})
 	require.NoError(t, err)
 	require.Len(t, nodeIndex, 0)
 
@@ -1336,12 +1333,11 @@ func assertNumChans(t *testing.T, graph *ChannelGraph, n int) {
 
 func assertNumNodes(t *testing.T, graph *ChannelGraph, n int) {
 	numNodes := 0
-	err := graph.ForEachNode(
-		func(_ kvdb.RTx, _ *models.LightningNode) error {
-			numNodes++
-			return nil
-		},
-	)
+	err := graph.ForEachNode(func(_ *models.LightningNode) error {
+		numNodes++
+
+		return nil
+	})
 	if err != nil {
 		_, _, line, _ := runtime.Caller(1)
 		t.Fatalf("line %v: unable to scan nodes: %v", line, err)

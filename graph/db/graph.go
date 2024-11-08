@@ -626,7 +626,7 @@ func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
 	// We'll iterate over each node, then the set of channels for each
 	// node, and construct a similar callback functiopn signature as the
 	// main funcotin expects.
-	return c.ForEachNode(func(tx kvdb.RTx,
+	return c.ForEachNodeWithCBTx(func(tx kvdb.RTx,
 		node *models.LightningNode) error {
 
 		channels := make(map[uint64]*DirectedChannel)
@@ -739,10 +739,24 @@ func (c *ChannelGraph) DisabledChannelIDs() ([]uint64, error) {
 // executing the passed callback with each node encountered. If the callback
 // returns an error, then the transaction is aborted and the iteration stops
 // early.
+func (c *ChannelGraph) ForEachNode(cb func(*models.LightningNode) error) error {
+	return c.ForEachNodeWithCBTx(func(_ kvdb.RTx,
+		node *models.LightningNode) error {
+
+		return cb(node)
+	})
+}
+
+// ForEachNodeWithCBTx iterates through all the stored vertices/nodes in the
+// graph, executing the passed callback with each node encountered. If the
+// callback returns an error, then the transaction is aborted and the iteration
+// stops early. The call-back takes an optional DB read transaction that may
+// by used for other read calls. Use ForEachNode instead if no transaction is
+// required for the call-back.
 //
 // TODO(roasbeef): add iterator interface to allow for memory efficient graph
 // traversal when graph gets mega
-func (c *ChannelGraph) ForEachNode(
+func (c *ChannelGraph) ForEachNodeWithCBTx(
 	cb func(kvdb.RTx, *models.LightningNode) error) error {
 
 	traversal := func(tx kvdb.RTx) error {

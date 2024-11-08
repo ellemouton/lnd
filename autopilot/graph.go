@@ -135,7 +135,7 @@ func (d *dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 //
 // NOTE: Part of the autopilot.ChannelGraph interface.
 func (d *databaseChannelGraph) ForEachNode(cb func(Node) error) error {
-	return d.db.ForEachNode(func(tx kvdb.RTx,
+	return d.db.ForEachNodeWithCBTx(func(tx kvdb.RTx,
 		n *models.LightningNode) error {
 
 		// We'll skip over any node that doesn't have any advertised
