@@ -3361,8 +3361,8 @@ func computeEdgePolicyKeys(info *models.ChannelEdgeInfo) ([]byte, []byte) {
 // found, then ErrEdgeNotFound is returned. A struct which houses the general
 // information for the channel itself is returned as well as two structs that
 // contain the routing policies for the channel in either direction.
-func (c *ChannelGraph) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
-	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+func (c *ChannelGraph) FetchChannelEdgesByOutpoint(_ context.Context,
+	op *wire.OutPoint) (*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
 	var (

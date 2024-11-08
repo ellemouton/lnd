@@ -810,7 +810,7 @@ func (p *Brontide) Start() error {
 		router.Start()
 	})
 
-	msgs, err := p.loadActiveChannels(activeChans)
+	msgs, err := p.loadActiveChannels(ctx, activeChans)
 	if err != nil {
 		return fmt.Errorf("unable to load channels: %w", err)
 	}
@@ -942,8 +942,8 @@ func (p *Brontide) addrWithInternalKey(
 // channels returned by the database. It returns a slice of channel reestablish
 // messages that should be sent to the peer immediately, in case we have borked
 // channels that haven't been closed yet.
-func (p *Brontide) loadActiveChannels(chans []*channeldb.OpenChannel) (
-	[]lnwire.Message, error) {
+func (p *Brontide) loadActiveChannels(ctx context.Context,
+	chans []*channeldb.OpenChannel) ([]lnwire.Message, error) {
 
 	// Return a slice of messages to send to the peers in case the channel
 	// cannot be loaded normally.
@@ -1095,7 +1095,7 @@ func (p *Brontide) loadActiveChannels(chans []*channeldb.OpenChannel) (
 		// the database.
 		graph := p.cfg.ChannelGraph
 		info, p1, p2, err := graph.FetchChannelEdgesByOutpoint(
-			&chanPoint,
+			ctx, &chanPoint,
 		)
 		if err != nil && !errors.Is(err, graphdb.ErrEdgeNotFound) {
 			return nil, err
