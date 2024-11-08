@@ -1,6 +1,7 @@
 package graphsession
 
 import (
+	"context"
 	"fmt"
 
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
@@ -29,8 +30,10 @@ func NewGraphSessionFactory(graph ReadOnlyGraph) routing.GraphSessionFactory {
 // was created at Graph construction time.
 //
 // NOTE: This is part of the routing.GraphSessionFactory interface.
-func (g *Factory) NewGraphSession() (routing.Graph, func() error, error) {
-	tx, err := g.graph.NewPathFindTx()
+func (g *Factory) NewGraphSession(ctx context.Context) (routing.Graph,
+	func() error, error) {
+
+	tx, err := g.graph.NewPathFindTx(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -108,7 +111,7 @@ type ReadOnlyGraph interface {
 	// NewPathFindTx returns a new read transaction that can be used for a
 	// single path finding session. Will return nil if the graph cache is
 	// enabled.
-	NewPathFindTx() (graphdb.RTx, error)
+	NewPathFindTx(ctx context.Context) (graphdb.RTx, error)
 
 	graph
 }

@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -138,7 +139,7 @@ type PaymentSession interface {
 	//
 	// A noRouteError is returned if a non-critical error is encountered
 	// during path finding.
-	RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
+	RequestRoute(ctx context.Context, maxAmt, feeLimit lnwire.MilliSatoshi,
 		activeShards, height uint32,
 		firstHopCustomRecords lnwire.CustomRecords) (*route.Route,
 		error)
@@ -245,8 +246,8 @@ func newPaymentSession(p *LightningPayment, selfNode route.Vertex,
 //
 // NOTE: This function is safe for concurrent access.
 // NOTE: Part of the PaymentSession interface.
-func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
-	activeShards, height uint32,
+func (p *paymentSession) RequestRoute(ctx context.Context, maxAmt,
+	feeLimit lnwire.MilliSatoshi, activeShards, height uint32,
 	firstHopCustomRecords lnwire.CustomRecords) (*route.Route, error) {
 
 	if p.empty {
@@ -298,7 +299,9 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 
 	for {
 		// Get a routing graph session.
-		graph, closeGraph, err := p.graphSessFactory.NewGraphSession()
+		graph, closeGraph, err := p.graphSessFactory.NewGraphSession(
+			ctx,
+		)
 		if err != nil {
 			return nil, err
 		}

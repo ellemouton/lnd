@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"os"
@@ -235,7 +236,8 @@ func (c *integratedRoutingContext) testPayment(maxParts uint32,
 
 		// Find a route.
 		route, err := session.RequestRoute(
-			amtRemaining, lnwire.MaxMilliSatoshi, inFlightHtlcs, 0,
+			context.Background(), amtRemaining,
+			lnwire.MaxMilliSatoshi, inFlightHtlcs, 0,
 			lnwire.CustomRecords{
 				lnwire.MinCustomRecordsTlvType: []byte{1, 2, 3},
 			},
@@ -326,8 +328,8 @@ func newMockGraphSessionFactory(graph Graph) GraphSessionFactory {
 	return &mockGraphSessionFactory{Graph: graph}
 }
 
-func (m *mockGraphSessionFactory) NewGraphSession() (Graph, func() error,
-	error) {
+func (m *mockGraphSessionFactory) NewGraphSession(ctx context.Context) (Graph,
+	func() error, error) {
 
 	return m, func() error {
 		return nil
@@ -349,10 +351,10 @@ func newMockGraphSessionFactoryFromChanDB(
 	}
 }
 
-func (g *mockGraphSessionFactoryChanDB) NewGraphSession() (Graph, func() error,
-	error) {
+func (g *mockGraphSessionFactoryChanDB) NewGraphSession(ctx context.Context) (
+	Graph, func() error, error) {
 
-	tx, err := g.graph.NewPathFindTx()
+	tx, err := g.graph.NewPathFindTx(ctx)
 	if err != nil {
 		return nil, nil, err
 	}

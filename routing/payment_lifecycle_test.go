@@ -383,7 +383,7 @@ func TestRequestRouteSucceed(t *testing.T) {
 		mock.Anything,
 	).Return(dummyRoute, nil)
 
-	result, err := p.requestRoute(ps)
+	result, err := p.requestRoute(context.Background(), ps)
 	require.NoError(t, err, "expect no error")
 	require.Equal(t, dummyRoute, result, "returned route not matched")
 
@@ -420,7 +420,7 @@ func TestRequestRouteHandleCriticalErr(t *testing.T) {
 		mock.Anything,
 	).Return(nil, errDummy)
 
-	result, err := p.requestRoute(ps)
+	result, err := p.requestRoute(context.Background(), ps)
 
 	// Expect an error is returned since it's critical.
 	require.ErrorIs(t, err, errDummy, "error not matched")
@@ -460,7 +460,7 @@ func TestRequestRouteHandleNoRouteErr(t *testing.T) {
 		p.identifier, channeldb.FailureReasonNoRoute,
 	).Return(nil).Once()
 
-	result, err := p.requestRoute(ps)
+	result, err := p.requestRoute(context.Background(), ps)
 
 	// Expect no error is returned since it's not critical.
 	require.NoError(t, err, "expected no error")
@@ -503,7 +503,7 @@ func TestRequestRouteFailPaymentError(t *testing.T) {
 		mock.Anything,
 	).Return(nil, errNoTlvPayload)
 
-	result, err := p.requestRoute(ps)
+	result, err := p.requestRoute(context.Background(), ps)
 
 	// Expect an error is returned.
 	require.ErrorIs(t, err, errDummy, "error not matched")

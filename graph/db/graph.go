@@ -2,6 +2,7 @@ package graphdb
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -406,7 +407,7 @@ func initChannelGraph(db kvdb.Backend) error {
 // NewPathFindTx returns a new read transaction that can be used for a single
 // path finding session. The underlying transaction will be nil if the graph
 // cache is enabled.
-func (c *ChannelGraph) NewPathFindTx() (RTx, error) {
+func (c *ChannelGraph) NewPathFindTx(_ context.Context) (RTx, error) {
 	if c.graphCache != nil {
 		return NewKVDBRTx(nil), nil
 	}

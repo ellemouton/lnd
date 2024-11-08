@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcutil"
@@ -30,7 +31,7 @@ type GraphSessionFactory interface {
 	// session. It returns the Graph along with a call-back that must be
 	// called once Graph access is complete. This call-back will close any
 	// read-only transaction that was created at Graph construction time.
-	NewGraphSession() (Graph, func() error, error)
+	NewGraphSession(ctx context.Context) (Graph, func() error, error)
 }
 
 // FetchAmountPairCapacity determines the maximal public capacity between two
