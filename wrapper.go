@@ -1,4 +1,4 @@
-package main
+package lnd
 
 import (
 	"bytes"
@@ -11,7 +11,6 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/lightningnetwork/lnd"
 	"github.com/lightningnetwork/lnd/autopilot"
 	"github.com/lightningnetwork/lnd/discovery"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
@@ -72,7 +71,7 @@ type bootstrapper struct {
 	*remoteWrapper
 }
 
-func (r *bootstrapper) SampleNodeAddrs(numAddrs uint32,
+func (r *bootstrapper) SampleNodeAddrs(ctx context.Context, numAddrs uint32,
 	ignore map[autopilot.NodeID]struct{}) ([]*lnwire.NetAddress, error) {
 
 	var toIgnore [][]byte
@@ -81,7 +80,7 @@ func (r *bootstrapper) SampleNodeAddrs(numAddrs uint32,
 	}
 
 	resp, err := r.graphConn.BootstrapAddrs(
-		context.Background(), &graphrpc.BootstrapAddrsReq{
+		ctx, &graphrpc.BootstrapAddrsReq{
 			NumAddrs:    numAddrs,
 			IgnoreNodes: toIgnore,
 		},
@@ -110,7 +109,7 @@ func (r *bootstrapper) SampleNodeAddrs(numAddrs uint32,
 
 }
 
-func (r *bootstrapper) Name() string {
+func (r *bootstrapper) Name(_ context.Context) string {
 	return r.name
 }
 
@@ -588,4 +587,4 @@ func (r *remoteWrapper) LookupAlias(ctx context.Context, pub *btcec.PublicKey) (
 	return resp.Node.Alias, nil
 }
 
-var _ lnd.GraphSource = (*remoteWrapper)(nil)
+var _ GraphSource = (*remoteWrapper)(nil)

@@ -112,7 +112,6 @@ build:
 	@$(call print, "Building debug lnd and lncli.")
 	$(GOBUILD) -tags="$(DEV_TAGS)" -o lnd-debug $(DEV_GCFLAGS) $(DEV_LDFLAGS) $(PKG)/cmd/lnd
 	$(GOBUILD) -tags="$(DEV_TAGS)" -o lncli-debug $(DEV_GCFLAGS) $(DEV_LDFLAGS) $(PKG)/cmd/lncli
-	$(GOBUILD) -tags="$(DEV_TAGS)" -o multinode-debug $(DEV_GCFLAGS) $(DEV_LDFLAGS) $(PKG)/cmd/multinode
 
 #? build-itest: Build integration test binaries, place them in itest directory
 build-itest:
@@ -137,7 +136,6 @@ install-binaries:
 	@$(call print, "Installing lnd and lncli.")
 	$(GOINSTALL) -tags="${tags}" -ldflags="$(RELEASE_LDFLAGS)" $(PKG)/cmd/lnd
 	$(GOINSTALL) -tags="${tags}" -ldflags="$(RELEASE_LDFLAGS)" $(PKG)/cmd/lncli
-	$(GOINSTALL) -tags="${tags}" -ldflags="$(RELEASE_LDFLAGS)" $(PKG)/cmd/multinode
 
 #? manpages: generate and install man pages
 manpages:

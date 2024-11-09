@@ -209,7 +209,7 @@ func (s *Server) BoostrapperName(ctx context.Context, req *BoostrapperNameReq) (
 	*BoostrapperNameResp, error) {
 
 	return &BoostrapperNameResp{
-		Name: s.bootstrapper.Name(),
+		Name: s.bootstrapper.Name(ctx),
 	}, nil
 }
 
@@ -224,7 +224,7 @@ func (s *Server) BootstrapAddrs(ctx context.Context, req *BootstrapAddrsReq) (
 		ignore[id] = struct{}{}
 	}
 
-	addrs, err := s.bootstrapper.SampleNodeAddrs(req.NumAddrs, ignore)
+	addrs, err := s.bootstrapper.SampleNodeAddrs(ctx, req.NumAddrs, ignore)
 	if err != nil {
 		return nil, err
 	}

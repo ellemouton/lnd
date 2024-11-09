@@ -1,4 +1,4 @@
-package main
+package lnd
 
 import (
 	"bytes"
@@ -11,7 +11,6 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/go-errors/errors"
-	"github.com/lightningnetwork/lnd"
 	"github.com/lightningnetwork/lnd/autopilot"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/discovery"
@@ -23,7 +22,7 @@ import (
 )
 
 type GraphSourceMux struct {
-	remote lnd.GraphSource
+	remote GraphSource
 	local  *graphdb.ChannelGraph
 
 	// srcPub is a cached version of the local nodes own pub key bytes.
@@ -46,10 +45,10 @@ func (g *GraphSourceMux) BetweenessCentrality(ctx context.Context) (map[autopilo
 }
 
 // A compile-time check to ensure that GraphSourceMux implements GraphSource.
-var _ lnd.GraphSource = (*GraphSourceMux)(nil)
+var _ GraphSource = (*GraphSourceMux)(nil)
 
 func NewGraphBackend(local *graphdb.ChannelGraph,
-	remote lnd.GraphSource) *GraphSourceMux {
+	remote GraphSource) *GraphSourceMux {
 
 	return &GraphSourceMux{
 		local:  local,
