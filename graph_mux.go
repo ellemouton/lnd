@@ -162,22 +162,22 @@ func (g *GraphSourceMux) FetchNodeFeatures(ctx context.Context, tx graphdb.RTx,
 func (g *GraphSourceMux) ForEachNode(ctx context.Context,
 	cb func(*models.LightningNode) error) error {
 
-	source, err := g.local.SourceNode()
-	if err != nil {
-		return err
-	}
+	handled := make(map[route.Vertex]struct{})
 
-	err = cb(source)
+	// First cover all the nodes we do know about. We might know of some the
+	// remote node does not.
+	err := g.local.ForEachNode(ctx, func(node *models.LightningNode) error {
+		handled[node.PubKeyBytes] = struct{}{}
+
+		return cb(node)
+	})
 	if err != nil {
 		return err
 	}
 
 	return g.remote.ForEachNode(ctx,
 		func(node *models.LightningNode) error {
-
-			if bytes.Equal(
-				node.PubKeyBytes[:], source.PubKeyBytes[:],
-			) {
+			if _, ok := handled[node.PubKeyBytes]; ok {
 				return nil
 			}
 
