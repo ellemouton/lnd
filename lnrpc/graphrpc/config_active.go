@@ -3,7 +3,11 @@
 
 package graphrpc
 
-import graphdb "github.com/lightningnetwork/lnd/graph/db"
+import (
+	"context"
+
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
+)
 
 // Config is the primary configuration struct for the graph RPC subserver.
 // It contains all the items required for the server to carry out its duties.
@@ -11,5 +15,6 @@ import graphdb "github.com/lightningnetwork/lnd/graph/db"
 // options, while if able to be populated, the latter fields MUST also be
 // specified.
 type Config struct {
-	GraphDB *graphdb.ChannelGraph
+	GraphDB  *graphdb.ChannelGraph
+	IsSynced func(ctx context.Context) (bool, error)
 }

@@ -30,6 +30,10 @@ type GraphSourceMux struct {
 	mu     sync.Mutex
 }
 
+func (g *GraphSourceMux) IsSynced(ctx context.Context) (bool, error) {
+	return g.remote.IsSynced(ctx)
+}
+
 func (g *GraphSourceMux) NetworkStats(ctx context.Context, excludeNodes map[route.Vertex]struct{}, excludeChannels map[uint64]struct{}) (*models.NetworkStats, error) {
 	// TODO(elle): need to call local first & build exclude lists to send to
 	// remote.

@@ -37,13 +37,11 @@ import (
 	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/funding"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
-	"github.com/lightningnetwork/lnd/graph/stats"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnrpc"
-	"github.com/lightningnetwork/lnd/lnrpc/graphrpc"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwallet/btcwallet"
 	"github.com/lightningnetwork/lnd/lnwallet/chancloser"
@@ -168,10 +166,6 @@ type ImplementationCfg struct {
 	// AuxComponents is a set of auxiliary components that can be used by
 	// lnd for certain custom channel types.
 	AuxComponents
-
-	// GraphProvider is a type that can provide a custom GraphSource for LND
-	// to use for read-only graph calls.
-	GraphProvider
 }
 
 // AuxComponents is a set of auxiliary components that can be used by lnd for
@@ -226,6 +220,12 @@ type DefaultWalletImpl struct {
 	watchOnly        bool
 	migrateWatchOnly bool
 	pwService        *walletunlocker.UnlockerService
+
+	isSynced fn.Option[func() bool]
+}
+
+func (d *DefaultWalletImpl) setIsSyncedCallBack(f func() bool) {
+	d.isSynced = fn.Some(f)
 }
 
 // NewDefaultWalletImpl creates a new default wallet implementation.
@@ -264,36 +264,6 @@ func (d *DefaultWalletImpl) RegisterGrpcSubserver(s *grpc.Server) error {
 	lnrpc.RegisterWalletUnlockerServer(s, d.pwService)
 
 	return nil
-}
-
-// Graph returns the GraphSource that LND will use for read-only graph related
-// queries. By default, the GraphSource implementation is this LND node's
-// backing graphdb.ChannelGraph.
-//
-// note: this is part of the GraphProvider interface.
-func (d *DefaultWalletImpl) Graph(_ context.Context,
-	dbs *DatabaseInstances) (GraphSource, error) {
-
-	if d.cfg.RemoteGraph == nil || !d.cfg.RemoteGraph.Enable {
-		return &stats.ChanGraphStatsCollector{
-			ChannelGraph: dbs.GraphDB,
-		}, nil
-	}
-
-	cfg := d.cfg.RemoteGraph
-	conn, err := connectRPC(
-		cfg.RPCHost, cfg.TLSCertPath, cfg.MacaroonPath, cfg.Timeout,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return NewGraphBackend(dbs.GraphDB, &remoteWrapper{
-		graphConn: graphrpc.NewGraphClient(conn),
-		lnConn:    lnrpc.NewLightningClient(conn),
-		local:     dbs.GraphDB,
-		net:       d.cfg.net,
-	}), nil
 }
 
 // connectRPC tries to establish an RPC connection to the given host:port with

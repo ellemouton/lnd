@@ -498,8 +498,8 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	chansToRestore walletunlocker.ChannelsToRecover,
 	chanPredicate chanacceptor.ChannelAcceptor,
 	torController *tor.Controller, tlsManager *TLSManager,
-	leaderElector cluster.LeaderElector, graphSource GraphSource,
-	implCfg *ImplementationCfg) (*server, error) {
+	leaderElector cluster.LeaderElector, implCfg *ImplementationCfg) (
+	*server, error) {
 
 	var (
 		err         error
@@ -597,15 +597,11 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		HtlcInterceptor:             invoiceHtlcModifier,
 	}
 
-	addrSource := channeldb.NewMultiAddrSource(dbs.ChanStateDB, graphSource)
-
 	s := &server{
 		cfg:            cfg,
 		implCfg:        implCfg,
 		graphDB:        dbs.GraphDB,
-		graphSource:    graphSource,
 		chanStateDB:    dbs.ChanStateDB.ChannelStateDB(),
-		addrSource:     addrSource,
 		miscDB:         dbs.ChanStateDB,
 		invoicesDB:     dbs.InvoiceDB,
 		cc:             cc,
@@ -655,6 +651,14 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		featureMgr: featureMgr,
 		quit:       make(chan struct{}),
 	}
+
+	graphSource, err := s.GetGraphSource()
+	if err != nil {
+		return nil, err
+	}
+	addrSource := channeldb.NewMultiAddrSource(dbs.ChanStateDB, graphSource)
+	s.addrSource = addrSource
+	s.graphSource = graphSource
 
 	currentHash, currentHeight, err := s.cc.ChainIO.GetBestBlock()
 	if err != nil {

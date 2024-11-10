@@ -129,6 +129,14 @@
         }
       }
     },
+    "graphrpcIsSyncedResp": {
+      "type": "object",
+      "properties": {
+        "graph_synced": {
+          "type": "boolean"
+        }
+      }
+    },
     "graphrpcNetAddress": {
       "type": "object",
       "properties": {

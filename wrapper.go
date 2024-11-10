@@ -35,6 +35,15 @@ type remoteWrapper struct {
 	local *graphdb.ChannelGraph
 }
 
+func (r *remoteWrapper) IsSynced(ctx context.Context) (bool, error) {
+	resp, err := r.graphConn.IsSynced(ctx, &graphrpc.IsSyncedReq{})
+	if err != nil {
+		return false, err
+	}
+
+	return resp.GraphSynced, nil
+}
+
 func (r *remoteWrapper) BetweenessCentrality(ctx context.Context) (map[autopilot.NodeID]*stats.BetweenessCentrality, error) {
 	resp, err := r.graphConn.BetweennessCentrality(ctx, &graphrpc.BetweennessCentralityReq{})
 	if err != nil {

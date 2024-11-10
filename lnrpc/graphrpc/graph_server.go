@@ -39,6 +39,10 @@ var (
 			Entity: "graph",
 			Action: "read",
 		}},
+		"/graphrpc.Graph/IsSynced": {{
+			Entity: "graph",
+			Action: "read",
+		}},
 	}
 )
 
@@ -184,7 +188,7 @@ func (r *ServerShell) CreateSubServer(
 func (s *Server) BetweennessCentrality(ctx context.Context,
 	req *BetweennessCentralityReq) (*BetweennessCentralityResp, error) {
 
-	g := &stats.ChanGraphStatsCollector{ChannelGraph: s.cfg.GraphDB}
+	g := &stats.ChanGraphStatsCollector{DB: s.cfg.GraphDB}
 
 	res, err := g.BetweenessCentrality(ctx)
 	if err != nil {
@@ -241,4 +245,15 @@ func (s *Server) BootstrapAddrs(ctx context.Context, req *BootstrapAddrsReq) (
 	}
 
 	return &BootstrapAddrsResp{Addrs: netAddrs}, nil
+}
+
+func (s *Server) IsSynced(ctx context.Context, req *IsSyncedReq) (*IsSyncedResp,
+	error) {
+
+	synced, err := s.cfg.IsSynced(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &IsSyncedResp{GraphSynced: synced}, nil
 }

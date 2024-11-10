@@ -9,6 +9,8 @@ import (
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/graph/graphsession"
 	"github.com/lightningnetwork/lnd/graph/stats"
+	"github.com/lightningnetwork/lnd/lnrpc"
+	"github.com/lightningnetwork/lnd/lnrpc/graphrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/invoicesrpc"
 	"github.com/lightningnetwork/lnd/netann"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -22,6 +24,8 @@ type GraphSource interface {
 	netann.ChannelGraph
 	channeldb.AddrSource
 	stats.StatsCollector
+
+	IsSynced(ctx context.Context) (bool, error)
 
 	// ForEachChannel iterates through all the channel edges stored within
 	// the graph and invokes the passed callback for each edge. If the
@@ -73,20 +77,35 @@ type GraphSource interface {
 		*models.LightningNode, error)
 }
 
-// Providers is an interface that LND itself can satisfy.
-type Providers interface {
-	// GraphSource can be used to obtain the graph source that this LND node
-	// provides.
-	GraphSource() (GraphSource, error)
-}
+func (s *server) GetGraphSource() (GraphSource, error) {
+	if s.cfg.RemoteGraph == nil || !s.cfg.RemoteGraph.Enable {
+		return &stats.GraphSource{
+			DB: s.graphDB,
+			ChanGraphStatsCollector: &stats.ChanGraphStatsCollector{
+				DB: s.graphDB,
+			},
+			IsGraphSynced: func() (bool, error) {
+				if s.authGossiper == nil {
+					return false, nil
+				}
+				return s.authGossiper.SyncManager().IsGraphSynced(), nil
+			},
+		}, nil
+	}
 
-// A compile-time check to ensure that LND's main server struct satisfies the
-// Provider interface.
-var _ Providers = (*server)(nil)
+	cfg := s.cfg.RemoteGraph
+	conn, err := connectRPC(
+		cfg.RPCHost, cfg.TLSCertPath,
+		cfg.MacaroonPath, cfg.Timeout,
+	)
+	if err != nil {
+		return nil, err
+	}
 
-// GraphSource returns this LND nodes graph DB as a GraphSource.
-//
-// NOTE: this method is part of the Providers interface.
-func (s *server) GraphSource() (GraphSource, error) {
-	return &stats.ChanGraphStatsCollector{ChannelGraph: s.graphDB}, nil
+	return NewGraphBackend(s.graphDB, &remoteWrapper{
+		graphConn: graphrpc.NewGraphClient(conn),
+		lnConn:    lnrpc.NewLightningClient(conn),
+		local:     s.graphDB,
+		net:       s.cfg.net,
+	}), nil
 }

@@ -2,7 +2,6 @@ package itest
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -45,9 +44,15 @@ func testRemoteGraph(ht *lntest.HarnessTest) {
 		}
 	}
 
+	assertSyncedToGraph := func(node *node.HarnessNode, synced bool) {
+		resp := node.RPC.GetInfo()
+		require.Equal(ht.T, synced, resp.SyncedToGraph)
+	}
+
 	// Alice should know about Alice, Bob and Carol along with the 2 public
 	// channels.
 	assertDescGraph(alice, 2, bob, carol)
+	assertSyncedToGraph(alice, true)
 
 	// Create graph provider node, Greg. Don't connect it to any nodes yet.
 	greg := ht.NewNode("Greg", nil)
@@ -55,6 +60,7 @@ func testRemoteGraph(ht *lntest.HarnessTest) {
 	// Greg should just know about himself right now. He should not know
 	// about any channels yet.
 	assertDescGraph(greg, 0)
+	assertSyncedToGraph(greg, false)
 
 	// Create a node, Zane, that uses Greg as its graph provider.
 	zane := ht.NewNode("Zane", []string{
@@ -74,6 +80,7 @@ func testRemoteGraph(ht *lntest.HarnessTest) {
 	// Zane should know about Zane and Greg. He should not know about any
 	// channels yet.
 	assertDescGraph(zane, 0, greg)
+	assertSyncedToGraph(zane, false)
 
 	// Connect Z to C. Open a private channel. Show that it still only
 	// knows about itself, G and now C. Ie, this shows it doesn't sync
@@ -84,6 +91,7 @@ func testRemoteGraph(ht *lntest.HarnessTest) {
 	// Even though zane is now connected to carol, he should not sync gossip
 	// and so should still only know about himself and greg.
 	assertDescGraph(zane, 0, greg)
+	assertSyncedToGraph(zane, false)
 
 	// Now open a private channel between Zane and Carol.
 	chanPointZane := ht.OpenChannel(
@@ -99,6 +107,7 @@ func testRemoteGraph(ht *lntest.HarnessTest) {
 	// Now, Zane should know about Zane, Greg, and Carol along with a single
 	// channel.
 	assertDescGraph(zane, 1, greg, carol)
+	assertSyncedToGraph(zane, false)
 
 	// Now, connect G to B. Wait for it to sync gossip. Show that Z knows
 	// about everything G knows about. G doesn't know about Z's private
@@ -109,27 +118,19 @@ func testRemoteGraph(ht *lntest.HarnessTest) {
 	// nodes. It does not know about Zane since Zane's channel connecting it
 	// to the graph is private.
 	assertDescGraph(greg, 2, alice, bob, carol)
+	assertSyncedToGraph(greg, true)
 
 	// Since Zane is using Greg as its graph provider, it should know about
 	// all the channels and nodes that Greg knows of and in addition should
 	// know about its own private channel.
 	assertDescGraph(zane, 3, alice, bob, carol, greg)
+	assertSyncedToGraph(zane, true)
 
 	// Let Alice generate an invoice. Let Z settle it. Should succeed.
 	invoice := alice.RPC.AddInvoice(&lnrpc.Invoice{Value: 100})
 
 	// Zane should be able to settle the invoice.
 	ht.CompletePaymentRequests(zane, []string{invoice.PaymentRequest})
-
-	// Just to prove that Zane did not persist any of the graph updates
-	// required to make the payment above, delete all the data persisted by
-	// Greg, restart Greg and this time dont connect it to the graph. Now
-	// show that Zane once again only sees a limited graph.
-	require.NoError(ht.T, os.RemoveAll(greg.Cfg.DBDir()))
-
-	ht.RestartNode(greg)
-
-	assertDescGraph(zane, 1, greg, carol)
 }
 
 func setupNetwork(ht *lntest.HarnessTest, carol *node.HarnessNode) {

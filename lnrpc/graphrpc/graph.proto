@@ -13,6 +13,13 @@ service Graph {
     rpc BoostrapperName (BoostrapperNameReq) returns (BoostrapperNameResp);
     rpc BetweennessCentrality (BetweennessCentralityReq)
         returns (BetweennessCentralityResp);
+    rpc IsSynced (IsSyncedReq) returns (IsSyncedResp);
+}
+
+message IsSyncedReq {
+}
+message IsSyncedResp {
+    bool graph_synced = 1;
 }
 
 message BetweennessCentralityReq {

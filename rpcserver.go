@@ -137,6 +137,10 @@ var (
 			Entity: "macaroon",
 			Action: "read",
 		},
+		{
+			Entity: "graph",
+			Action: "read",
+		},
 	}
 
 	// writePermissions is a slice of all entities that allow write
@@ -3177,7 +3181,7 @@ func (r *rpcServer) AbandonChannel(_ context.Context,
 // GetInfo returns general information concerning the lightning node including
 // its identity pubkey, alias, the chains it is connected to, and information
 // concerning the number of open+pending channels.
-func (r *rpcServer) GetInfo(_ context.Context,
+func (r *rpcServer) GetInfo(ctx context.Context,
 	_ *lnrpc.GetInfoRequest) (*lnrpc.GetInfoResponse, error) {
 
 	serverPeers := r.server.Peers()
@@ -3249,7 +3253,10 @@ func (r *rpcServer) GetInfo(_ context.Context,
 		uris[i] = fmt.Sprintf("%s@%s", encodedIDPub, addr.String())
 	}
 
-	isGraphSynced := r.server.authGossiper.SyncManager().IsGraphSynced()
+	isGraphSynced, err := r.server.graphSource.IsSynced(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	features := make(map[uint32]*lnrpc.Feature)
 	sets := r.server.featureMgr.ListSets()

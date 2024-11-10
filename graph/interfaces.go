@@ -190,7 +190,7 @@ type DB interface {
 	// zombie within the database. In this case, the ChannelEdgePolicy's
 	// will be nil, and the ChannelEdgeInfo will only include the public
 	// keys of each node.
-	FetchChannelEdgesByID(ctx context.Context, chanID uint64) (
+	FetchChannelEdgesByID(chanID uint64) (
 		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy, error)
 

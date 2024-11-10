@@ -243,6 +243,9 @@ func (s *subRPCServerConfigs) PopulateDependencies(cfg *Config,
 			subCfgValue.FieldByName("GraphDB").Set(
 				reflect.ValueOf(graphDB),
 			)
+			subCfgValue.FieldByName("IsSynced").Set(
+				reflect.ValueOf(graphSource.IsSynced),
+			)
 
 		case *invoicesrpc.Config:
 			subCfgValue := extractReflectValue(subCfg)

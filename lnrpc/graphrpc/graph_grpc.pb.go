@@ -21,6 +21,7 @@ type GraphClient interface {
 	BootstrapAddrs(ctx context.Context, in *BootstrapAddrsReq, opts ...grpc.CallOption) (*BootstrapAddrsResp, error)
 	BoostrapperName(ctx context.Context, in *BoostrapperNameReq, opts ...grpc.CallOption) (*BoostrapperNameResp, error)
 	BetweennessCentrality(ctx context.Context, in *BetweennessCentralityReq, opts ...grpc.CallOption) (*BetweennessCentralityResp, error)
+	IsSynced(ctx context.Context, in *IsSyncedReq, opts ...grpc.CallOption) (*IsSyncedResp, error)
 }
 
 type graphClient struct {
@@ -58,6 +59,15 @@ func (c *graphClient) BetweennessCentrality(ctx context.Context, in *Betweenness
 	return out, nil
 }
 
+func (c *graphClient) IsSynced(ctx context.Context, in *IsSyncedReq, opts ...grpc.CallOption) (*IsSyncedResp, error) {
+	out := new(IsSyncedResp)
+	err := c.cc.Invoke(ctx, "/graphrpc.Graph/IsSynced", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GraphServer is the server API for Graph service.
 // All implementations must embed UnimplementedGraphServer
 // for forward compatibility
@@ -65,6 +75,7 @@ type GraphServer interface {
 	BootstrapAddrs(context.Context, *BootstrapAddrsReq) (*BootstrapAddrsResp, error)
 	BoostrapperName(context.Context, *BoostrapperNameReq) (*BoostrapperNameResp, error)
 	BetweennessCentrality(context.Context, *BetweennessCentralityReq) (*BetweennessCentralityResp, error)
+	IsSynced(context.Context, *IsSyncedReq) (*IsSyncedResp, error)
 	mustEmbedUnimplementedGraphServer()
 }
 
@@ -80,6 +91,9 @@ func (UnimplementedGraphServer) BoostrapperName(context.Context, *BoostrapperNam
 }
 func (UnimplementedGraphServer) BetweennessCentrality(context.Context, *BetweennessCentralityReq) (*BetweennessCentralityResp, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BetweennessCentrality not implemented")
+}
+func (UnimplementedGraphServer) IsSynced(context.Context, *IsSyncedReq) (*IsSyncedResp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method IsSynced not implemented")
 }
 func (UnimplementedGraphServer) mustEmbedUnimplementedGraphServer() {}
 
@@ -148,6 +162,24 @@ func _Graph_BetweennessCentrality_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Graph_IsSynced_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IsSyncedReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GraphServer).IsSynced(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/graphrpc.Graph/IsSynced",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GraphServer).IsSynced(ctx, req.(*IsSyncedReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Graph_ServiceDesc is the grpc.ServiceDesc for Graph service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -166,6 +198,10 @@ var Graph_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BetweennessCentrality",
 			Handler:    _Graph_BetweennessCentrality_Handler,
+		},
+		{
+			MethodName: "IsSynced",
+			Handler:    _Graph_IsSynced_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
