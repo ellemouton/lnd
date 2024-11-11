@@ -1,6 +1,7 @@
 package sources
 
 import (
+	"context"
 	"fmt"
 
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
@@ -29,7 +30,9 @@ func NewChanGraphSource(db *graphdb.ChannelGraph) *ChanGraphSource {
 // underlying graphdb.ChannelGraph.
 //
 // NOTE: this is part of the graphsession.ReadOnlyGraph interface.
-func (s *ChanGraphSource) NewPathFindTx() (graphsession.RTx, error) {
+func (s *ChanGraphSource) NewPathFindTx(_ context.Context) (graphsession.RTx,
+	error) {
+
 	tx, err := s.db.NewPathFindTx()
 	if err != nil {
 		return nil, err
@@ -48,8 +51,9 @@ func (s *ChanGraphSource) NewPathFindTx() (graphsession.RTx, error) {
 // Unknown policies are passed into the callback as nil values.
 //
 // NOTE: this is part of the graphsession.ReadOnlyGraph interface.
-func (s *ChanGraphSource) ForEachNodeDirectedChannel(tx graphsession.RTx,
-	node route.Vertex, cb func(channel *graphdb.DirectedChannel) error) error {
+func (s *ChanGraphSource) ForEachNodeDirectedChannel(_ context.Context,
+	tx graphsession.RTx, node route.Vertex,
+	cb func(channel *graphdb.DirectedChannel) error) error {
 
 	kvdbTx, err := extractKVDBRTx(tx)
 	if err != nil {
@@ -65,8 +69,8 @@ func (s *ChanGraphSource) ForEachNodeDirectedChannel(tx graphsession.RTx,
 // and passed into the callback.
 //
 // NOTE: this is part of the graphsession.ReadOnlyGraph interface.
-func (s *ChanGraphSource) FetchNodeFeatures(tx graphsession.RTx,
-	node route.Vertex) (*lnwire.FeatureVector, error) {
+func (s *ChanGraphSource) FetchNodeFeatures(_ context.Context,
+	tx graphsession.RTx, node route.Vertex) (*lnwire.FeatureVector, error) {
 
 	kvdbTx, err := extractKVDBRTx(tx)
 	if err != nil {
