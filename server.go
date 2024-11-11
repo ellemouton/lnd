@@ -247,6 +247,10 @@ type server struct {
 
 	graphDB *graphdb.ChannelGraph
 
+	// graphSource can be used for any read only graph queries. This may be
+	// implemented by this LND node or some other external source.
+	graphSource GraphSource
+
 	chanStateDB *channeldb.ChannelStateDB
 
 	addrSource channeldb.AddrSource
@@ -492,7 +496,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	chansToRestore walletunlocker.ChannelsToRecover,
 	chanPredicate chanacceptor.ChannelAcceptor,
 	torController *tor.Controller, tlsManager *TLSManager,
-	leaderElector cluster.LeaderElector,
+	leaderElector cluster.LeaderElector, graphSource GraphSource,
 	implCfg *ImplementationCfg) (*server, error) {
 
 	var (
@@ -596,6 +600,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		cfg:            cfg,
 		implCfg:        implCfg,
 		graphDB:        dbs.GraphDB,
+		graphSource:    graphSource,
 		chanStateDB:    dbs.ChanStateDB.ChannelStateDB(),
 		addrSource:     addrSource,
 		miscDB:         dbs.ChanStateDB,
