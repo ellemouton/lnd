@@ -45,6 +45,7 @@ import (
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	graphsession "github.com/lightningnetwork/lnd/graph/session"
+	"github.com/lightningnetwork/lnd/graph/sources"
 	"github.com/lightningnetwork/lnd/healthcheck"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
@@ -246,6 +247,10 @@ type server struct {
 	fundingMgr *funding.Manager
 
 	graphDB *graphdb.ChannelGraph
+
+	// graphSource can be used for any read only graph queries. This may be
+	// implemented by this LND node or some other external source.
+	graphSource sources.GraphSource
 
 	chanStateDB *channeldb.ChannelStateDB
 
@@ -493,7 +498,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	chansToRestore walletunlocker.ChannelsToRecover,
 	chanPredicate chanacceptor.ChannelAcceptor,
 	torController *tor.Controller, tlsManager *TLSManager,
-	leaderElector cluster.LeaderElector,
+	leaderElector cluster.LeaderElector, graphSource sources.GraphSource,
 	implCfg *ImplementationCfg) (*server, error) {
 
 	var (
@@ -597,6 +602,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		cfg:            cfg,
 		implCfg:        implCfg,
 		graphDB:        dbs.GraphDB,
+		graphSource:    graphSource,
 		chanStateDB:    dbs.ChanStateDB.ChannelStateDB(),
 		addrSource:     addrSource,
 		miscDB:         dbs.ChanStateDB,

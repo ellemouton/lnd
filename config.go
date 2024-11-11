@@ -1799,6 +1799,7 @@ func (c *Config) ImplementationConfig(
 			),
 			WalletConfigBuilder: rpcImpl,
 			ChainControlBuilder: rpcImpl,
+			GraphProvider:       rpcImpl,
 		}
 	}
 
@@ -1810,6 +1811,7 @@ func (c *Config) ImplementationConfig(
 		DatabaseBuilder:     NewDefaultDatabaseBuilder(c, ltndLog),
 		WalletConfigBuilder: defaultImpl,
 		ChainControlBuilder: defaultImpl,
+		GraphProvider:       defaultImpl,
 	}
 }
 
