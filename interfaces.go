@@ -4,6 +4,7 @@ import (
 	"github.com/lightningnetwork/lnd/graph/graphsession"
 	"github.com/lightningnetwork/lnd/graph/sources"
 	"github.com/lightningnetwork/lnd/lnrpc/invoicesrpc"
+	"github.com/lightningnetwork/lnd/netann"
 )
 
 // GraphSource defines the read-only graph interface required by LND for graph
@@ -11,6 +12,7 @@ import (
 type GraphSource interface {
 	graphsession.ReadOnlyGraph
 	invoicesrpc.GraphSource
+	netann.ChannelGraph
 }
 
 // A compile-time check to ensure that sources.ChanGraphSource implements the

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/btcsuite/btcd/wire"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/graph/graphsession"
@@ -101,6 +102,17 @@ func (s *ChanGraphSource) IsPublicNode(_ context.Context,
 	pubKey [33]byte) (bool, error) {
 
 	return s.db.IsPublicNode(pubKey)
+}
+
+// FetchChannelEdgesByOutpoint returns the channel edge info and most recent
+// channel edge policies for a given outpoint.
+//
+// NOTE: this is part of the netann.ChannelGraph interface.
+func (s *ChanGraphSource) FetchChannelEdgesByOutpoint(_ context.Context,
+	point *wire.OutPoint) (*models.ChannelEdgeInfo,
+	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error) {
+
+	return s.db.FetchChannelEdgesByOutpoint(point)
 }
 
 // kvdbRTx is an implementation of graphdb.RTx backed by a KVDB database read
