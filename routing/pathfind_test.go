@@ -2,6 +2,7 @@ package routing
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -2325,7 +2326,7 @@ func TestPathFindSpecExample(t *testing.T) {
 	)
 	require.NoError(t, err, "invalid route request")
 
-	route, _, err := ctx.router.FindRoute(req)
+	route, _, err := ctx.router.FindRoute(context.Background(), req)
 	require.NoError(t, err, "unable to find route")
 
 	// Now we'll examine the route returned for correctness.
@@ -2352,7 +2353,7 @@ func TestPathFindSpecExample(t *testing.T) {
 	)
 	require.NoError(t, err, "invalid route request")
 
-	route, _, err = ctx.router.FindRoute(req)
+	route, _, err = ctx.router.FindRoute(context.Background(), req)
 	require.NoError(t, err, "unable to find routes")
 
 	// The route should be two hops.
@@ -3216,6 +3217,8 @@ func dbFindPath(graph *graphdb.ChannelGraph,
 	source, target route.Vertex, amt lnwire.MilliSatoshi, timePref float64,
 	finalHtlcExpiry int32) ([]*unifiedEdge, error) {
 
+	ctx := context.Background()
+
 	sourceNode, err := graph.SourceNode()
 	if err != nil {
 		return nil, err
@@ -3223,7 +3226,7 @@ func dbFindPath(graph *graphdb.ChannelGraph,
 
 	graphSessFactory := newMockGraphSessionFactoryFromChanDB(graph)
 
-	graphSess, closeGraphSess, err := graphSessFactory.NewGraphSession()
+	graphSess, closeGraphSess, err := graphSessFactory.NewGraphSession(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -3235,7 +3238,7 @@ func dbFindPath(graph *graphdb.ChannelGraph,
 	}()
 
 	route, _, err := findPath(
-		&graphParams{
+		ctx, &graphParams{
 			additionalEdges: additionalEdges,
 			bandwidthHints:  bandwidthHints,
 			graph:           graphSess,
@@ -3258,8 +3261,8 @@ func dbFindBlindedPaths(graph *graphdb.ChannelGraph,
 	}
 
 	return findBlindedPaths(
-		newMockGraphSessionChanDB(graph), sourceNode.PubKeyBytes,
-		restrictions,
+		context.Background(), newMockGraphSessionChanDB(graph),
+		sourceNode.PubKeyBytes, restrictions,
 	)
 }
 
