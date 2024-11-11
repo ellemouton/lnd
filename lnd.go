@@ -510,6 +510,11 @@ func Main(cfg *Config, lisCfg ListenerCfg, implCfg *ImplementationCfg,
 		return mkErr("error deriving node key", err)
 	}
 
+	graphSource, err := implCfg.Graph(ctx, dbs)
+	if err != nil {
+		return mkErr("error obtaining graph source: %v", err)
+	}
+
 	if cfg.Tor.StreamIsolation && cfg.Tor.SkipProxyForClearNetTargets {
 		return errStreamIsolationWithProxySkip
 	}
@@ -626,7 +631,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, implCfg *ImplementationCfg,
 		cfg, cfg.Listeners, dbs, activeChainControl, &idKeyDesc,
 		activeChainControl.Cfg.WalletUnlockParams.ChansToRestore,
 		multiAcceptor, torController, tlsManager, leaderElector,
-		implCfg,
+		graphSource, implCfg,
 	)
 	if err != nil {
 		return mkErr("unable to create server", err)
