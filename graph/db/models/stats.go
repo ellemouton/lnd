@@ -35,3 +35,8 @@ type NetworkStats struct {
 	// NumZombies is the number of zombie channels in the graph.
 	NumZombies uint64
 }
+
+type BetweennessCentrality struct {
+	Normalized    float64
+	NonNormalized float64
+}
