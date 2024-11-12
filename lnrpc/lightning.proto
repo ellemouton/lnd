@@ -3528,7 +3528,17 @@ message ChanInfoRequest {
 }
 
 message NetworkInfoRequest {
+    // A list of channel IDs to exclude when calculating the network info.
+    repeated uint64 exclude_chans = 1;
+
+    /*
+    A list of nodes to exclude when calculating the network info. Note
+    that excluding a node won't automatically result in its channels being
+    excluded as well. Those must be explicitly listed in exclude_chans.
+    */
+    repeated bytes exclude_nodes = 2;
 }
+
 message NetworkInfo {
     uint32 graph_diameter = 1;
     double avg_out_degree = 2;

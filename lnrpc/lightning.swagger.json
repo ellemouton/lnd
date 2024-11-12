@@ -1236,6 +1236,32 @@
             }
           }
         },
+        "parameters": [
+          {
+            "name": "exclude_chans",
+            "description": "A list of channel IDs to exclude when calculating the network info.",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uint64"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "exclude_nodes",
+            "description": "A list of nodes to exclude when calculating the network info. Note\nthat excluding a node won't automatically result in its channels being\nexcluded as well. Those must be explicitly listed in exclude_chans.",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "byte"
+            },
+            "collectionFormat": "multi"
+          }
+        ],
         "tags": [
           "Lightning"
         ]
