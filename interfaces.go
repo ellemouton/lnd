@@ -1,6 +1,7 @@
 package lnd
 
 import (
+	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/graph/graphsession"
 	"github.com/lightningnetwork/lnd/graph/sources"
 	"github.com/lightningnetwork/lnd/lnrpc/invoicesrpc"
@@ -13,6 +14,7 @@ type GraphSource interface {
 	graphsession.ReadOnlyGraph
 	invoicesrpc.GraphSource
 	netann.ChannelGraph
+	channeldb.AddrSource
 }
 
 // A compile-time check to ensure that sources.ChanGraphSource implements the
