@@ -1748,8 +1748,8 @@ func (r *rpcServer) VerifyMessage(ctx context.Context,
 	// channels signed the message.
 	//
 	// TODO(phlip9): Require valid nodes to have capital in active channels.
-	graph := r.server.graphDB
-	_, active, err := graph.HasLightningNode(pub)
+	graph := r.server.graphSource
+	_, active, err := graph.HasLightningNode(ctx, pub)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query graph: %w", err)
 	}
@@ -4641,6 +4641,7 @@ func encodeCustomChanData(lnChan *channeldb.OpenChannel) ([]byte, error) {
 func createRPCOpenChannel(r *rpcServer, dbChannel *channeldb.OpenChannel,
 	isActive, peerAliasLookup bool) (*lnrpc.Channel, error) {
 
+	ctx := context.TODO()
 	nodePub := dbChannel.IdentityPub
 	nodeID := hex.EncodeToString(nodePub.SerializeCompressed())
 	chanPoint := dbChannel.FundingOutpoint
@@ -4740,7 +4741,7 @@ func createRPCOpenChannel(r *rpcServer, dbChannel *channeldb.OpenChannel,
 
 	// Look up our channel peer's node alias if the caller requests it.
 	if peerAliasLookup {
-		peerAlias, err := r.server.graphDB.LookupAlias(nodePub)
+		peerAlias, err := r.server.graphSource.LookupAlias(ctx, nodePub)
 		if err != nil {
 			peerAlias = fmt.Sprintf("unable to lookup "+
 				"peer alias: %v", err)
@@ -6507,20 +6508,13 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 		}
 	}
 
-	// Obtain the pointer to the global singleton channel graph, this will
-	// provide a consistent view of the graph due to bolt db's
-	// transactional model.
-	graph := r.server.graphDB
+	graph := r.server.graphSource
 
 	// First iterate through all the known nodes (connected or unconnected
 	// within the graph), collating their current state into the RPC
 	// response.
-	err := graph.ForEachNode(func(_ kvdb.RTx,
-		node *models.LightningNode) error {
-
-		lnNode := marshalNode(node)
-
-		resp.Nodes = append(resp.Nodes, lnNode)
+	err := graph.ForEachNode(ctx, func(node *models.LightningNode) error {
+		resp.Nodes = append(resp.Nodes, marshalNode(node))
 
 		return nil
 	})
@@ -6531,19 +6525,18 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// Next, for each active channel we know of within the graph, create a
 	// similar response which details both the edge information as well as
 	// the routing policies of th nodes connecting the two edges.
-	err = graph.ForEachChannel(func(edgeInfo *models.ChannelEdgeInfo,
+	err = graph.ForEachChannel(ctx, func(edgeInfo *models.ChannelEdgeInfo,
 		c1, c2 *models.ChannelEdgePolicy) error {
 
 		// Do not include unannounced channels unless specifically
-		// requested. Unannounced channels include both private channels as
-		// well as public channels whose authentication proof were not
-		// confirmed yet, hence were not announced.
+		// requested. Unannounced channels include both private channels
+		// as well as public channels whose authentication proof were
+		// not confirmed yet, hence were not announced.
 		if !includeUnannounced && edgeInfo.AuthProof == nil {
 			return nil
 		}
 
-		edge := marshalDBEdge(edgeInfo, c1, c2)
-		resp.Edges = append(resp.Edges, edge)
+		resp.Edges = append(resp.Edges, marshalDBEdge(edgeInfo, c1, c2))
 
 		return nil
 	})
@@ -6732,10 +6725,10 @@ func (r *rpcServer) GetNodeMetrics(ctx context.Context,
 // uniquely identify the location of transaction's funding output within the
 // blockchain. The former is an 8-byte integer, while the latter is a string
 // formatted as funding_txid:output_index.
-func (r *rpcServer) GetChanInfo(_ context.Context,
+func (r *rpcServer) GetChanInfo(ctx context.Context,
 	in *lnrpc.ChanInfoRequest) (*lnrpc.ChannelEdge, error) {
 
-	graph := r.server.graphDB
+	graph := r.server.graphSource
 
 	var (
 		edgeInfo     *models.ChannelEdgeInfo
@@ -6746,7 +6739,7 @@ func (r *rpcServer) GetChanInfo(_ context.Context,
 	switch {
 	case in.ChanId != 0:
 		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByID(
-			in.ChanId,
+			ctx, in.ChanId,
 		)
 
 	case in.ChanPoint != "":
@@ -6756,7 +6749,7 @@ func (r *rpcServer) GetChanInfo(_ context.Context,
 			return nil, err
 		}
 		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByOutpoint(
-			chanPoint,
+			ctx, chanPoint,
 		)
 
 	default:
@@ -6779,7 +6772,7 @@ func (r *rpcServer) GetChanInfo(_ context.Context,
 func (r *rpcServer) GetNodeInfo(ctx context.Context,
 	in *lnrpc.NodeInfoRequest) (*lnrpc.NodeInfo, error) {
 
-	graph := r.server.graphDB
+	graph := r.server.graphSource
 
 	// First, parse the hex-encoded public key into a full in-memory public
 	// key object we can work with for querying.
@@ -6791,7 +6784,7 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 	// With the public key decoded, attempt to fetch the node corresponding
 	// to this public key. If the node cannot be found, then an error will
 	// be returned.
-	node, err := graph.FetchLightningNode(pubKey)
+	node, err := graph.FetchLightningNode(ctx, pubKey)
 	switch {
 	case errors.Is(err, graphdb.ErrGraphNodeNotFound):
 		return nil, status.Error(codes.NotFound, err.Error())
@@ -6807,9 +6800,9 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 		channels      []*lnrpc.ChannelEdge
 	)
 
-	err = graph.ForEachNodeChannel(node.PubKeyBytes,
-		func(_ kvdb.RTx, edge *models.ChannelEdgeInfo,
-			c1, c2 *models.ChannelEdgePolicy) error {
+	err = graph.ForEachNodeChannel(ctx, node.PubKeyBytes,
+		func(edge *models.ChannelEdgeInfo, c1,
+			c2 *models.ChannelEdgePolicy) error {
 
 			numChannels++
 			totalCapacity += edge.Capacity
@@ -7868,7 +7861,9 @@ func (r *rpcServer) ForwardingHistory(ctx context.Context,
 			return "", err
 		}
 
-		peer, err := r.server.graphDB.FetchLightningNode(vertex)
+		peer, err := r.server.graphSource.FetchLightningNode(
+			ctx, vertex,
+		)
 		if err != nil {
 			return "", err
 		}
