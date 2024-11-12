@@ -6629,6 +6629,7 @@ func marshalDBEdge(edgeInfo *models.ChannelEdgeInfo,
 		Node2Pub:      hex.EncodeToString(edgeInfo.NodeKey2Bytes[:]),
 		Capacity:      int64(edgeInfo.Capacity),
 		CustomRecords: customRecords,
+		Announced:     edgeInfo.AuthProof != nil,
 	}
 
 	if c1 != nil {
