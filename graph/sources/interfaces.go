@@ -1,4 +1,4 @@
-package lnd
+package sources
 
 import (
 	"context"
@@ -10,7 +10,6 @@ import (
 	"github.com/lightningnetwork/lnd/discovery"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/graph/graphsession"
-	"github.com/lightningnetwork/lnd/graph/sources"
 	"github.com/lightningnetwork/lnd/lnrpc/invoicesrpc"
 	"github.com/lightningnetwork/lnd/netann"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -93,7 +92,3 @@ type GraphSource interface {
 	BetweennessCentrality(ctx context.Context) (
 		map[autopilot.NodeID]*models.BetweennessCentrality, error)
 }
-
-// A compile-time check to ensure that sources.ChanGraphSource implements the
-// GraphSource interface.
-var _ GraphSource = (*sources.ChanGraphSource)(nil)

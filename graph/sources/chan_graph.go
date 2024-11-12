@@ -27,6 +27,10 @@ type ChanGraphSource struct {
 	db *graphdb.ChannelGraph
 }
 
+// A compile-time check to ensure that sources.ChanGraphSource implements the
+// GraphSource interface.
+var _ GraphSource = (*ChanGraphSource)(nil)
+
 // NewChanGraphSource returns a new instance of the ChanGraphSource backed by
 // a graphdb.ChannelGraph instance.
 func NewChanGraphSource(db *graphdb.ChannelGraph) *ChanGraphSource {

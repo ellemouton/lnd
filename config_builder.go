@@ -131,7 +131,7 @@ type ChainControlBuilder interface {
 type GraphProvider interface {
 	// Graph returns the GraphSource that LND will use for read-only graph
 	// related queries.
-	Graph(context.Context, *DatabaseInstances) (GraphSource, error)
+	Graph(context.Context, *DatabaseInstances) (sources.GraphSource, error)
 }
 
 // ImplementationCfg is a struct that holds all configuration items for
@@ -268,7 +268,7 @@ func (d *DefaultWalletImpl) RegisterGrpcSubserver(s *grpc.Server) error {
 //
 // NOTE: this is part of the GraphProvider interface.
 func (d *DefaultWalletImpl) Graph(_ context.Context,
-	dbs *DatabaseInstances) (GraphSource, error) {
+	dbs *DatabaseInstances) (sources.GraphSource, error) {
 
 	return sources.NewChanGraphSource(dbs.GraphDB), nil
 }
