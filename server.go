@@ -2776,6 +2776,7 @@ out:
 // based on the server, and currently active bootstrap mechanisms as defined
 // within the current configuration.
 func initNetworkBootstrappers(s *server) ([]discovery.NetworkPeerBootstrapper, error) {
+	ctx := context.TODO()
 	srvrLog.Infof("Initializing peer network bootstrappers!")
 
 	var bootStrappers []discovery.NetworkPeerBootstrapper
@@ -2783,8 +2784,7 @@ func initNetworkBootstrappers(s *server) ([]discovery.NetworkPeerBootstrapper, e
 	// First, we'll create an instance of the ChannelGraphBootstrapper as
 	// this can be used by default if we've already partially seeded the
 	// network.
-	chanGraph := autopilot.ChannelGraphFromDatabase(s.graphDB)
-	graphBootstrapper, err := discovery.NewGraphBootstrapper(chanGraph)
+	graphBootstrapper, err := s.graphSource.GraphBootstrapper(ctx)
 	if err != nil {
 		return nil, err
 	}
