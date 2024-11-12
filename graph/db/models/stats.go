@@ -36,7 +36,12 @@ type NetworkStats struct {
 	NumZombies uint64
 }
 
+// BetweennessCentrality represents the betweenness centrality of a node in the
+// graph.
 type BetweennessCentrality struct {
-	Normalized    float64
+	// Normalized is the normalized betweenness centrality of a node.
+	Normalized float64
+
+	// NonNormalized is the non-normalized betweenness centrality of a node.
 	NonNormalized float64
 }
