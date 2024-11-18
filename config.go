@@ -563,8 +563,6 @@ func DefaultConfig() Config {
 		LetsEncryptDir:    defaultLetsEncryptDir,
 		LetsEncryptListen: defaultLetsEncryptListen,
 		LogDir:            defaultLogDir,
-		MaxLogFiles:       build.DefaultMaxLogFiles,
-		MaxLogFileSize:    build.DefaultMaxLogFileSize,
 		AcceptorTimeout:   defaultAcceptorTimeout,
 		WSPingInterval:    lnrpc.DefaultPingInterval,
 		WSPongWait:        lnrpc.DefaultPongWait,
