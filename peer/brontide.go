@@ -863,7 +863,7 @@ func (p *Brontide) Start(ctx context.Context) error {
 
 // initGossipSync initializes either a gossip syncer or an initial routing
 // dump, depending on the negotiated synchronization method.
-func (p *Brontide) initGossipSync() {
+func (p *Brontide) initGossipSync(ctx context.Context) {
 	// If the remote peer knows of the new gossip queries feature, then
 	// we'll create a new gossipSyncer in the AuthenticatedGossiper for it.
 	if p.remoteFeatures.HasFeature(lnwire.GossipQueriesOptional) {
@@ -885,7 +885,7 @@ func (p *Brontide) initGossipSync() {
 		// requires an improved version of the current network
 		// bootstrapper to ensure we can find and connect to non-channel
 		// peers.
-		p.cfg.AuthGossiper.InitSyncState(p)
+		p.cfg.AuthGossiper.InitSyncState(ctx, p)
 	}
 }
 
@@ -1886,7 +1886,7 @@ func (p *Brontide) readHandler(ctx context.Context) {
 	//
 	// TODO(conner): have peer store gossip syncer directly and bypass
 	// gossiper?
-	p.initGossipSync()
+	p.initGossipSync(ctx)
 
 	discStream := newDiscMsgStream(p)
 	discStream.Start(ctx)

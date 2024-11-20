@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -168,13 +169,11 @@ type SyncManager struct {
 	// queries.
 	gossipFilterSema chan struct{}
 
-	wg   sync.WaitGroup
-	quit chan struct{}
+	wg sync.WaitGroup
 }
 
 // newSyncManager constructs a new SyncManager backed by the given config.
 func newSyncManager(cfg *SyncManagerCfg) *SyncManager {
-
 	filterSema := make(chan struct{}, filterSemaSize)
 	for i := 0; i < filterSemaSize; i++ {
 		filterSema <- struct{}{}
@@ -192,15 +191,14 @@ func newSyncManager(cfg *SyncManagerCfg) *SyncManager {
 			map[route.Vertex]*GossipSyncer, len(cfg.PinnedSyncers),
 		),
 		gossipFilterSema: filterSema,
-		quit:             make(chan struct{}),
 	}
 }
 
 // Start starts the SyncManager in order to properly carry out its duties.
-func (m *SyncManager) Start() {
+func (m *SyncManager) Start(ctx context.Context) {
 	m.start.Do(func() {
 		m.wg.Add(1)
-		go m.syncerHandler()
+		go m.syncerHandler(ctx)
 	})
 }
 
@@ -210,7 +208,6 @@ func (m *SyncManager) Stop() {
 		log.Debugf("SyncManager is stopping")
 		defer log.Debugf("SyncManager stopped")
 
-		close(m.quit)
 		m.wg.Wait()
 
 		for _, syncer := range m.inactiveSyncers {
@@ -233,7 +230,7 @@ func (m *SyncManager) Stop() {
 //     much of the public network as possible.
 //
 // NOTE: This must be run as a goroutine.
-func (m *SyncManager) syncerHandler() {
+func (m *SyncManager) syncerHandler(ctx context.Context) {
 	defer m.wg.Done()
 
 	m.cfg.RotateTicker.Resume()
@@ -481,7 +478,7 @@ func (m *SyncManager) syncerHandler() {
 			// much of the graph as we should.
 			setInitialHistoricalSyncer(s)
 
-		case <-m.quit:
+		case <-ctx.Done():
 			return
 		}
 	}
@@ -706,7 +703,9 @@ func chooseRandomSyncer(syncers map[route.Vertex]*GossipSyncer,
 // public channel graph as possible.
 //
 // TODO(wilmer): Only mark as ActiveSync if this isn't a channel peer.
-func (m *SyncManager) InitSyncState(peer lnpeer.Peer) error {
+func (m *SyncManager) InitSyncState(ctx context.Context,
+	peer lnpeer.Peer) error {
+
 	done := make(chan struct{})
 
 	select {
@@ -714,14 +713,14 @@ func (m *SyncManager) InitSyncState(peer lnpeer.Peer) error {
 		peer:     peer,
 		doneChan: done,
 	}:
-	case <-m.quit:
+	case <-ctx.Done():
 		return ErrSyncManagerExiting
 	}
 
 	select {
 	case <-done:
 		return nil
-	case <-m.quit:
+	case <-ctx.Done():
 		return ErrSyncManagerExiting
 	}
 }
@@ -729,7 +728,7 @@ func (m *SyncManager) InitSyncState(peer lnpeer.Peer) error {
 // PruneSyncState is called by outside sub-systems once a peer that we were
 // previously connected to has been disconnected. In this case we can stop the
 // existing GossipSyncer assigned to the peer and free up resources.
-func (m *SyncManager) PruneSyncState(peer route.Vertex) {
+func (m *SyncManager) PruneSyncState(ctx context.Context, peer route.Vertex) {
 	done := make(chan struct{})
 
 	// We avoid returning an error when the SyncManager is stopped since the
@@ -739,13 +738,13 @@ func (m *SyncManager) PruneSyncState(peer route.Vertex) {
 		peer:     peer,
 		doneChan: done,
 	}:
-	case <-m.quit:
+	case <-ctx.Done():
 		return
 	}
 
 	select {
 	case <-done:
-	case <-m.quit:
+	case <-ctx.Done():
 	}
 }
 

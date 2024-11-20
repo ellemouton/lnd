@@ -626,7 +626,7 @@ func (d *AuthenticatedGossiper) start(ctx context.Context) error {
 		return err
 	}
 
-	d.syncMgr.Start()
+	d.syncMgr.Start(ctx)
 
 	d.banman.start()
 
@@ -1590,15 +1590,19 @@ func (d *AuthenticatedGossiper) handleNetworkMessages(ctx context.Context,
 // established to a new peer that understands how to perform channel range
 // queries. We'll allocate a new gossip syncer for it, and start any goroutines
 // needed to handle new queries.
-func (d *AuthenticatedGossiper) InitSyncState(syncPeer lnpeer.Peer) {
-	d.syncMgr.InitSyncState(syncPeer)
+func (d *AuthenticatedGossiper) InitSyncState(ctx context.Context,
+	syncPeer lnpeer.Peer) {
+
+	d.syncMgr.InitSyncState(ctx, syncPeer)
 }
 
 // PruneSyncState is called by outside sub-systems once a peer that we were
 // previously connected to has been disconnected. In this case we can stop the
 // existing GossipSyncer assigned to the peer and free up resources.
-func (d *AuthenticatedGossiper) PruneSyncState(peer route.Vertex) {
-	d.syncMgr.PruneSyncState(peer)
+func (d *AuthenticatedGossiper) PruneSyncState(ctx context.Context,
+	peer route.Vertex) {
+
+	d.syncMgr.PruneSyncState(ctx, peer)
 }
 
 // isRecentlyRejectedMsg returns true if we recently rejected a message, and

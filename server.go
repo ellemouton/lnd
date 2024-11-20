@@ -4301,7 +4301,7 @@ func (s *server) peerInitializer(ctx context.Context, p *peer.Brontide) {
 	// the peer is ever added to the ignorePeerTermination map, indicating
 	// that the server has already handled the removal of this peer.
 	s.wg.Add(1)
-	go s.peerTerminationWatcher(p, ready)
+	go s.peerTerminationWatcher(ctx, p, ready)
 
 	// Start the peer! If an error occurs, we Disconnect the peer, which
 	// will unblock the peerTerminationWatcher.
@@ -4346,7 +4346,9 @@ func (s *server) peerInitializer(ctx context.Context, p *peer.Brontide) {
 // successfully, otherwise the peer should be disconnected instead.
 //
 // NOTE: This MUST be launched as a goroutine.
-func (s *server) peerTerminationWatcher(p *peer.Brontide, ready chan struct{}) {
+func (s *server) peerTerminationWatcher(ctx context.Context, p *peer.Brontide,
+	ready chan struct{}) {
+
 	defer s.wg.Done()
 
 	p.WaitForDisconnect(ready)
@@ -4370,7 +4372,7 @@ func (s *server) peerTerminationWatcher(p *peer.Brontide, ready chan struct{}) {
 
 	// We'll also inform the gossiper that this peer is no longer active,
 	// so we don't need to maintain sync state for it any longer.
-	s.authGossiper.PruneSyncState(p.PubKey())
+	s.authGossiper.PruneSyncState(ctx, p.PubKey())
 
 	// Tell the switch to remove all links associated with this peer.
 	// Passing nil as the target link indicates that all links associated
