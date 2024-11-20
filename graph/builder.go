@@ -2,6 +2,7 @@ package graph
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"runtime"
 	"strings"
@@ -185,7 +186,7 @@ func NewBuilder(cfg *Config) (*Builder, error) {
 
 // Start launches all the goroutines the Builder requires to carry out its
 // duties. If the builder has already been started, then this method is a noop.
-func (b *Builder) Start() error {
+func (b *Builder) Start(ctx context.Context) error {
 	if !b.started.CompareAndSwap(false, true) {
 		return nil
 	}
@@ -301,7 +302,7 @@ func (b *Builder) Start() error {
 	}
 
 	b.wg.Add(1)
-	go b.networkHandler()
+	go b.networkHandler(ctx)
 
 	log.Debug("Builder started")
 
@@ -669,15 +670,15 @@ func (b *Builder) pruneZombieChans() error {
 // notifies topology changes, if any.
 //
 // NOTE: must be run inside goroutine.
-func (b *Builder) handleNetworkUpdate(vb *ValidationBarrier,
+func (b *Builder) handleNetworkUpdate(ctx context.Context, vb *ValidationBarrier,
 	update *routingMsg) {
 
 	defer b.wg.Done()
-	defer vb.CompleteJob()
+	defer vb.CompleteJob(ctx)
 
 	// If this message has an existing dependency, then we'll wait until
 	// that has been fully validated before we proceed.
-	err := vb.WaitForDependants(update.msg)
+	err := vb.WaitForDependants(ctx, update.msg)
 	if err != nil {
 		switch {
 		case IsError(err, ErrVBarrierShuttingDown):
@@ -698,7 +699,7 @@ func (b *Builder) handleNetworkUpdate(vb *ValidationBarrier,
 	// Process the routing update to determine if this is either a new
 	// update from our PoV or an update to a prior vertex/edge we
 	// previously accepted.
-	err = b.processUpdate(update.msg, update.op...)
+	err = b.processUpdate(ctx, update.msg, update.op...)
 	update.err <- err
 
 	// If this message had any dependencies, then we can now signal them to
@@ -743,7 +744,7 @@ func (b *Builder) handleNetworkUpdate(vb *ValidationBarrier,
 // updates, and registering new topology clients.
 //
 // NOTE: This MUST be run as a goroutine.
-func (b *Builder) networkHandler() {
+func (b *Builder) networkHandler(ctx context.Context) {
 	defer b.wg.Done()
 
 	graphPruneTicker := time.NewTicker(b.cfg.GraphPruneInterval)
@@ -771,11 +772,9 @@ func (b *Builder) networkHandler() {
 	// See https://github.com/lightningnetwork/lnd/issues/4892.
 	var validationBarrier *ValidationBarrier
 	if b.cfg.AssumeChannelValid {
-		validationBarrier = NewValidationBarrier(1000, b.quit)
+		validationBarrier = NewValidationBarrier(1000)
 	} else {
-		validationBarrier = NewValidationBarrier(
-			4*runtime.NumCPU(), b.quit,
-		)
+		validationBarrier = NewValidationBarrier(4 * runtime.NumCPU())
 	}
 
 	for {
@@ -792,10 +791,10 @@ func (b *Builder) networkHandler() {
 			// We'll set up any dependants, and wait until a free
 			// slot for this job opens up, this allows us to not
 			// have thousands of goroutines active.
-			validationBarrier.InitJobDependencies(update.msg)
+			validationBarrier.InitJobDependencies(ctx, update.msg)
 
 			b.wg.Add(1)
-			go b.handleNetworkUpdate(validationBarrier, update)
+			go b.handleNetworkUpdate(ctx, validationBarrier, update)
 
 			// TODO(roasbeef): remove all unconnected vertexes
 			// after N blocks pass with no corresponding
@@ -1161,7 +1160,7 @@ func makeFundingScript(bitcoinKey1, bitcoinKey2 []byte, chanFeatures []byte,
 // then error is returned.
 //
 //nolint:funlen
-func (b *Builder) processUpdate(msg interface{},
+func (b *Builder) processUpdate(ctx context.Context, msg interface{},
 	op ...batch.SchedulerOption) error {
 
 	switch msg := msg.(type) {
@@ -1233,7 +1232,7 @@ func (b *Builder) processUpdate(msg interface{},
 		// the channel ID.
 		channelID := lnwire.NewShortChanIDFromInt(msg.ChannelID)
 		fundingTx, err := lnwallet.FetchFundingTxWrapper(
-			b.cfg.Chain, &channelID, b.quit,
+			ctx, b.cfg.Chain, &channelID,
 		)
 		if err != nil {
 			//nolint:lll

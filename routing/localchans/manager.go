@@ -1,6 +1,7 @@
 package localchans
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -26,7 +27,7 @@ type Manager struct {
 
 	// PropagateChanPolicyUpdate is called to persist a new policy to disk
 	// and broadcast it to the network.
-	PropagateChanPolicyUpdate func(
+	PropagateChanPolicyUpdate func(ctx context.Context,
 		edgesToUpdate []discovery.EdgeWithInfo) error
 
 	// ForAllOutgoingChannels is required to iterate over all our local
@@ -50,7 +51,8 @@ type Manager struct {
 
 // UpdatePolicy updates the policy for the specified channels on disk and in
 // the active links.
-func (r *Manager) UpdatePolicy(newSchema routing.ChannelPolicy,
+func (r *Manager) UpdatePolicy(ctx context.Context,
+	newSchema routing.ChannelPolicy,
 	chanPoints ...wire.OutPoint) ([]*lnrpc.FailedUpdate, error) {
 
 	r.policyUpdateLock.Lock()
@@ -169,7 +171,7 @@ func (r *Manager) UpdatePolicy(newSchema routing.ChannelPolicy,
 	// this would happen because of a bug, the link policy will be
 	// desynchronized. It is currently not possible to atomically commit
 	// multiple edge updates.
-	err = r.PropagateChanPolicyUpdate(edgesToUpdate)
+	err = r.PropagateChanPolicyUpdate(ctx, edgesToUpdate)
 	if err != nil {
 		return nil, err
 	}

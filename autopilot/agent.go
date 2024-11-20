@@ -2,6 +2,7 @@ package autopilot
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math/rand"
 	"net"
@@ -39,7 +40,8 @@ type Config struct {
 	// ConnectToPeer attempts to connect to the peer using one of its
 	// advertised addresses. The boolean returned signals whether the peer
 	// was already connected.
-	ConnectToPeer func(*btcec.PublicKey, []net.Addr) (bool, error)
+	ConnectToPeer func(context.Context, *btcec.PublicKey, []net.Addr) (bool,
+		error)
 
 	// DisconnectPeer attempts to disconnect the peer with the given public
 	// key.
@@ -199,20 +201,20 @@ func New(cfg Config, initialState []LocalChannel) (*Agent, error) {
 
 // Start starts the agent along with any goroutines it needs to perform its
 // normal duties.
-func (a *Agent) Start() error {
+func (a *Agent) Start(ctx context.Context) error {
 	var err error
 	a.started.Do(func() {
-		err = a.start()
+		err = a.start(ctx)
 	})
 	return err
 }
 
-func (a *Agent) start() error {
+func (a *Agent) start(ctx context.Context) error {
 	rand.Seed(time.Now().Unix())
 	log.Infof("Autopilot Agent starting")
 
 	a.wg.Add(1)
-	go a.controller()
+	go a.controller(ctx)
 
 	return nil
 }
@@ -401,7 +403,7 @@ func mergeChanState(pendingChans map[NodeID]LocalChannel,
 // and external state changes as a result of decisions it makes w.r.t channel
 // allocation, or attributes affecting its control loop being updated by the
 // backing Lightning Node.
-func (a *Agent) controller() {
+func (a *Agent) controller(ctx context.Context) {
 	defer a.wg.Done()
 
 	// We'll start off by assigning our starting balance, and injecting
@@ -539,7 +541,7 @@ func (a *Agent) controller() {
 		log.Infof("Triggering attachment directive dispatch, "+
 			"total_funds=%v", a.totalBalance)
 
-		err := a.openChans(availableFunds, numChans, totalChans)
+		err := a.openChans(ctx, availableFunds, numChans, totalChans)
 		if err != nil {
 			log.Errorf("Unable to open channels: %v", err)
 		}
@@ -548,8 +550,8 @@ func (a *Agent) controller() {
 
 // openChans queries the agent's heuristic for a set of channel candidates, and
 // attempts to open channels to them.
-func (a *Agent) openChans(availableFunds btcutil.Amount, numChans uint32,
-	totalChans []LocalChannel) error {
+func (a *Agent) openChans(ctx context.Context, availableFunds btcutil.Amount,
+	numChans uint32, totalChans []LocalChannel) error {
 
 	// As channel size we'll use the maximum channel size available.
 	chanSize := a.cfg.Constraints.MaxChanSize()
@@ -716,7 +718,7 @@ func (a *Agent) openChans(availableFunds btcutil.Amount, numChans uint32,
 		a.pendingConns[nodeID] = struct{}{}
 
 		a.wg.Add(1)
-		go a.executeDirective(*chanCandidate)
+		go a.executeDirective(ctx, *chanCandidate)
 	}
 	return nil
 }
@@ -725,7 +727,9 @@ func (a *Agent) openChans(availableFunds btcutil.Amount, numChans uint32,
 // the given attachment directive, and open a channel of the given size.
 //
 // NOTE: MUST be run as a goroutine.
-func (a *Agent) executeDirective(directive AttachmentDirective) {
+func (a *Agent) executeDirective(ctx context.Context,
+	directive AttachmentDirective) {
+
 	defer a.wg.Done()
 
 	// We'll start out by attempting to connect to the peer in order to
@@ -746,7 +750,7 @@ func (a *Agent) executeDirective(directive AttachmentDirective) {
 	// TODO(halseth): use DialContext to cancel on transport level.
 	go func() {
 		alreadyConnected, err := a.cfg.ConnectToPeer(
-			pub, directive.Addrs,
+			ctx, pub, directive.Addrs,
 		)
 		if err != nil {
 			select {

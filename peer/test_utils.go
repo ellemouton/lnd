@@ -2,6 +2,7 @@ package peer
 
 import (
 	"bytes"
+	"context"
 	crand "crypto/rand"
 	"encoding/binary"
 	"io"
@@ -87,7 +88,7 @@ func createTestPeerWithChannel(t *testing.T, updateChan func(a,
 		chanStatusMgr = params.chanStatusMgr
 	)
 
-	err := chanStatusMgr.Start()
+	err := chanStatusMgr.Start(context.Background())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, chanStatusMgr.Stop())
@@ -619,7 +620,8 @@ func createTestPeer(t *testing.T) *peerTestCtx {
 		IsChannelActive: func(lnwire.ChannelID) bool {
 			return true
 		},
-		ApplyChannelUpdate: func(*lnwire.ChannelUpdate1,
+		ApplyChannelUpdate: func(context.Context,
+			*lnwire.ChannelUpdate1,
 			*wire.OutPoint, bool) error {
 
 			return nil
@@ -758,7 +760,7 @@ func startPeer(t *testing.T, mockConn *mockMessageConn,
 	// indicates a successful startup.
 	done := make(chan struct{})
 	go func() {
-		require.NoError(t, peer.Start())
+		require.NoError(t, peer.Start(context.Background()))
 		close(done)
 	}()
 

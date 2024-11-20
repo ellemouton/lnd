@@ -2,6 +2,7 @@ package funding
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -405,7 +406,7 @@ type Config struct {
 	// network. A set of optional message fields can be provided to populate
 	// any information within the graph that is not included in the gossip
 	// message.
-	SendAnnouncement func(msg lnwire.Message,
+	SendAnnouncement func(ctx context.Context, msg lnwire.Message,
 		optionalFields ...discovery.OptionalMsgField) chan error
 
 	// NotifyWhenOnline allows the FundingManager to register with a
@@ -703,16 +704,16 @@ func NewFundingManager(cfg Config) (*Manager, error) {
 
 // Start launches all helper goroutines required for handling requests sent
 // to the funding manager.
-func (f *Manager) Start() error {
+func (f *Manager) Start(ctx context.Context) error {
 	var err error
 	f.started.Do(func() {
 		log.Info("Funding manager starting")
-		err = f.start()
+		err = f.start(ctx)
 	})
 	return err
 }
 
-func (f *Manager) start() error {
+func (f *Manager) start(ctx context.Context) error {
 	// Upon restart, the Funding Manager will check the database to load any
 	// channels that were  waiting for their funding transactions to be
 	// confirmed on the blockchain at the time when the daemon last went
@@ -766,11 +767,11 @@ func (f *Manager) start() error {
 		// confirmed on the blockchain, and transmit the messages
 		// necessary for the channel to be operational.
 		f.wg.Add(1)
-		go f.advanceFundingState(channel, chanID, nil)
+		go f.advanceFundingState(ctx, channel, chanID, nil)
 	}
 
 	f.wg.Add(1) // TODO(roasbeef): tune
-	go f.reservationCoordinator()
+	go f.reservationCoordinator(ctx)
 
 	return nil
 }
@@ -1017,7 +1018,7 @@ func (f *Manager) sendWarning(peer lnpeer.Peer, cid *chanIdentifier,
 // funding workflow between the wallet, and any outside peers or local callers.
 //
 // NOTE: This MUST be run as a goroutine.
-func (f *Manager) reservationCoordinator() {
+func (f *Manager) reservationCoordinator(ctx context.Context) {
 	defer f.wg.Done()
 
 	zombieSweepTicker := time.NewTicker(f.cfg.ZombieSweeperInterval)
@@ -1034,10 +1035,10 @@ func (f *Manager) reservationCoordinator() {
 				f.funderProcessAcceptChannel(fmsg.peer, msg)
 
 			case *lnwire.FundingCreated:
-				f.fundeeProcessFundingCreated(fmsg.peer, msg)
+				f.fundeeProcessFundingCreated(ctx, fmsg.peer, msg)
 
 			case *lnwire.FundingSigned:
-				f.funderProcessFundingSigned(fmsg.peer, msg)
+				f.funderProcessFundingSigned(ctx, fmsg.peer, msg)
 
 			case *lnwire.ChannelReady:
 				f.wg.Add(1)
@@ -1069,7 +1070,8 @@ func (f *Manager) reservationCoordinator() {
 // OpenStatusUpdates.
 //
 // NOTE: This MUST be run as a goroutine.
-func (f *Manager) advanceFundingState(channel *channeldb.OpenChannel,
+func (f *Manager) advanceFundingState(ctx context.Context,
+	channel *channeldb.OpenChannel,
 	pendingChanID PendingChanID,
 	updateChan chan<- *lnrpc.OpenStatusUpdate) {
 
@@ -1135,7 +1137,7 @@ func (f *Manager) advanceFundingState(channel *channeldb.OpenChannel,
 		// are still steps left of the setup procedure. We continue the
 		// procedure where we left off.
 		err = f.stateStep(
-			channel, lnChannel, shortChanID, pendingChanID,
+			ctx, channel, lnChannel, shortChanID, pendingChanID,
 			channelState, updateChan,
 		)
 		if err != nil {
@@ -1150,7 +1152,7 @@ func (f *Manager) advanceFundingState(channel *channeldb.OpenChannel,
 // machine. This method is synchronous and the new channel opening state will
 // have been written to the database when it successfully returns. The
 // updateChan can be set non-nil to get OpenStatusUpdates.
-func (f *Manager) stateStep(channel *channeldb.OpenChannel,
+func (f *Manager) stateStep(ctx context.Context, channel *channeldb.OpenChannel,
 	lnChannel *lnwallet.LightningChannel,
 	shortChanID *lnwire.ShortChannelID, pendingChanID PendingChanID,
 	channelState channelOpeningState,
@@ -1215,7 +1217,7 @@ func (f *Manager) stateStep(channel *channeldb.OpenChannel,
 		}
 
 		return f.handleChannelReadyReceived(
-			channel, shortChanID, pendingChanID, updateChan,
+			ctx, channel, shortChanID, pendingChanID, updateChan,
 		)
 
 	// The channel was added to the Router's topology, but the channel
@@ -1225,7 +1227,7 @@ func (f *Manager) stateStep(channel *channeldb.OpenChannel,
 			// If this is a zero-conf channel, then we will wait
 			// for it to be confirmed before announcing it to the
 			// greater network.
-			err := f.waitForZeroConfChannel(channel)
+			err := f.waitForZeroConfChannel(ctx, channel)
 			if err != nil {
 				return fmt.Errorf("failed waiting for zero "+
 					"channel: %v", err)
@@ -1237,7 +1239,7 @@ func (f *Manager) stateStep(channel *channeldb.OpenChannel,
 			shortChanID = &confirmedScid
 		}
 
-		err := f.annAfterSixConfs(channel, shortChanID)
+		err := f.annAfterSixConfs(ctx, channel, shortChanID)
 		if err != nil {
 			return fmt.Errorf("error sending channel "+
 				"announcement: %v", err)
@@ -2442,8 +2444,8 @@ func (f *Manager) continueFundingAccept(resCtx *reservationWithCtx,
 // stage.
 //
 //nolint:funlen
-func (f *Manager) fundeeProcessFundingCreated(peer lnpeer.Peer,
-	msg *lnwire.FundingCreated) {
+func (f *Manager) fundeeProcessFundingCreated(ctx context.Context,
+	peer lnpeer.Peer, msg *lnwire.FundingCreated) {
 
 	peerKey := peer.IdentityKey()
 	pendingChanID := msg.PendingChannelID
@@ -2672,7 +2674,7 @@ func (f *Manager) fundeeProcessFundingCreated(peer lnpeer.Peer,
 	// transaction in 288 blocks (~ 48 hrs), by canceling the reservation
 	// and canceling the wait for the funding confirmation.
 	f.wg.Add(1)
-	go f.advanceFundingState(completeChan, pendingChanID, nil)
+	go f.advanceFundingState(ctx, completeChan, pendingChanID, nil)
 }
 
 // funderProcessFundingSigned processes the final message received in a single
@@ -2680,8 +2682,8 @@ func (f *Manager) fundeeProcessFundingCreated(peer lnpeer.Peer,
 // broadcast. Once the funding transaction reaches a sufficient number of
 // confirmations, a message is sent to the responding peer along with a compact
 // encoding of the location of the channel within the blockchain.
-func (f *Manager) funderProcessFundingSigned(peer lnpeer.Peer,
-	msg *lnwire.FundingSigned) {
+func (f *Manager) funderProcessFundingSigned(ctx context.Context,
+	peer lnpeer.Peer, msg *lnwire.FundingSigned) {
 
 	// As the funding signed message will reference the reservation by its
 	// permanent channel ID, we'll need to perform an intermediate look up
@@ -2881,7 +2883,7 @@ func (f *Manager) funderProcessFundingSigned(peer lnpeer.Peer,
 	// At this point we have broadcast the funding transaction and done all
 	// necessary processing.
 	f.wg.Add(1)
-	go f.advanceFundingState(completeChan, pendingChanID, resCtx.updates)
+	go f.advanceFundingState(ctx, completeChan, pendingChanID, resCtx.updates)
 }
 
 // confirmedChannel wraps a confirmed funding transaction, as well as the short
@@ -3538,7 +3540,8 @@ func (f *Manager) extractAnnounceParams(c *channeldb.OpenChannel) (
 // The peerAlias is used for zero-conf channels to give the counter-party a
 // ChannelUpdate they understand. ourPolicy may be set for various
 // option-scid-alias channels to re-use the same policy.
-func (f *Manager) addToGraph(completeChan *channeldb.OpenChannel,
+func (f *Manager) addToGraph(ctx context.Context,
+	completeChan *channeldb.OpenChannel,
 	shortChanID *lnwire.ShortChannelID,
 	peerAlias *lnwire.ShortChannelID,
 	ourPolicy *models.ChannelEdgePolicy) error {
@@ -3562,7 +3565,7 @@ func (f *Manager) addToGraph(completeChan *channeldb.OpenChannel,
 	// Send ChannelAnnouncement and ChannelUpdate to the gossiper to add
 	// to the Router's topology.
 	errChan := f.cfg.SendAnnouncement(
-		ann.chanAnn, discovery.ChannelCapacity(completeChan.Capacity),
+		ctx, ann.chanAnn, discovery.ChannelCapacity(completeChan.Capacity),
 		discovery.ChannelPoint(completeChan.FundingOutpoint),
 		discovery.TapscriptRoot(completeChan.TapscriptRoot),
 	)
@@ -3584,7 +3587,7 @@ func (f *Manager) addToGraph(completeChan *channeldb.OpenChannel,
 	}
 
 	errChan = f.cfg.SendAnnouncement(
-		ann.chanUpdateAnn, discovery.RemoteAlias(peerAlias),
+		ctx, ann.chanUpdateAnn, discovery.RemoteAlias(peerAlias),
 	)
 	select {
 	case err := <-errChan:
@@ -3612,7 +3615,8 @@ func (f *Manager) addToGraph(completeChan *channeldb.OpenChannel,
 // 'addedToGraph') and the channel is ready to be used. This is the last
 // step in the channel opening process, and the opening state will be deleted
 // from the database if successful.
-func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
+func (f *Manager) annAfterSixConfs(ctx context.Context,
+	completeChan *channeldb.OpenChannel,
 	shortChanID *lnwire.ShortChannelID) error {
 
 	// If this channel is not meant to be announced to the greater network,
@@ -3731,7 +3735,7 @@ func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
 			}
 
 			err = f.addToGraph(
-				completeChan, &baseScid, nil, ourPolicy,
+				ctx, completeChan, &baseScid, nil, ourPolicy,
 			)
 			if err != nil {
 				return fmt.Errorf("failed to re-add to "+
@@ -3742,7 +3746,7 @@ func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
 		// Create and broadcast the proofs required to make this channel
 		// public and usable for other nodes for routing.
 		err = f.announceChannel(
-			f.cfg.IDKey, completeChan.IdentityPub,
+			ctx, f.cfg.IDKey, completeChan.IdentityPub,
 			&completeChan.LocalChanCfg.MultiSigKey,
 			completeChan.RemoteChanCfg.MultiSigKey.PubKey,
 			*shortChanID, chanID, completeChan.ChanType,
@@ -3762,7 +3766,8 @@ func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
 // waitForZeroConfChannel is called when the state is addedToGraph with
 // a zero-conf channel. This will wait for the real confirmation, add the
 // confirmed SCID to the router graph, and then announce after six confs.
-func (f *Manager) waitForZeroConfChannel(c *channeldb.OpenChannel) error {
+func (f *Manager) waitForZeroConfChannel(ctx context.Context,
+	c *channeldb.OpenChannel) error {
 	// First we'll check whether the channel is confirmed on-chain. If it
 	// is already confirmed, the chainntnfs subsystem will return with the
 	// confirmed tx. Otherwise, we'll wait here until confirmation occurs.
@@ -3820,7 +3825,7 @@ func (f *Manager) waitForZeroConfChannel(c *channeldb.OpenChannel) error {
 		// alias since we'll be using the confirmed SCID from now on
 		// regardless if it's public or not.
 		err = f.addToGraph(
-			c, &confChan.shortChanID, nil, ourPolicy,
+			ctx, c, &confChan.shortChanID, nil, ourPolicy,
 		)
 		if err != nil {
 			return fmt.Errorf("failed adding confirmed zero-conf "+
@@ -4148,7 +4153,8 @@ func (f *Manager) handleChannelReady(peer lnpeer.Peer, //nolint:funlen
 // channelReady message, once the remote's channelReady is processed, the
 // channel is now active, thus we change its state to `addedToGraph` to
 // let the channel start handling routing.
-func (f *Manager) handleChannelReadyReceived(channel *channeldb.OpenChannel,
+func (f *Manager) handleChannelReadyReceived(ctx context.Context,
+	channel *channeldb.OpenChannel,
 	scid *lnwire.ShortChannelID, pendingChanID PendingChanID,
 	updateChan chan<- *lnrpc.OpenStatusUpdate) error {
 
@@ -4178,7 +4184,7 @@ func (f *Manager) handleChannelReadyReceived(channel *channeldb.OpenChannel,
 		peerAlias = &foundAlias
 	}
 
-	err := f.addToGraph(channel, scid, peerAlias, nil)
+	err := f.addToGraph(ctx, channel, scid, peerAlias, nil)
 	if err != nil {
 		return fmt.Errorf("failed adding to graph: %w", err)
 	}
@@ -4512,7 +4518,8 @@ func (f *Manager) newChanAnnouncement(localPubKey,
 // the network during its next trickle.
 // This method is synchronous and will return when all the network requests
 // finish, either successfully or with an error.
-func (f *Manager) announceChannel(localIDKey, remoteIDKey *btcec.PublicKey,
+func (f *Manager) announceChannel(ctx context.Context, localIDKey,
+	remoteIDKey *btcec.PublicKey,
 	localFundingKey *keychain.KeyDescriptor,
 	remoteFundingKey *btcec.PublicKey, shortChanID lnwire.ShortChannelID,
 	chanID lnwire.ChannelID, chanType channeldb.ChannelType) error {
@@ -4537,7 +4544,7 @@ func (f *Manager) announceChannel(localIDKey, remoteIDKey *btcec.PublicKey,
 	// because addToGraph previously sent the ChannelAnnouncement and
 	// the ChannelUpdate announcement messages. The channel proof and node
 	// announcements are broadcast to the greater network.
-	errChan := f.cfg.SendAnnouncement(ann.chanProof)
+	errChan := f.cfg.SendAnnouncement(ctx, ann.chanProof)
 	select {
 	case err := <-errChan:
 		if err != nil {
@@ -4567,7 +4574,7 @@ func (f *Manager) announceChannel(localIDKey, remoteIDKey *btcec.PublicKey,
 		return err
 	}
 
-	errChan = f.cfg.SendAnnouncement(&nodeAnn)
+	errChan = f.cfg.SendAnnouncement(ctx, &nodeAnn)
 	select {
 	case err := <-errChan:
 		if err != nil {

@@ -1,6 +1,7 @@
 package lnd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -187,7 +188,9 @@ func initAutoPilot(svr *server, cfg *lncfg.AutoPilot,
 		},
 		Graph:       autopilot.ChannelGraphFromDatabase(svr.graphDB),
 		Constraints: atplConstraints,
-		ConnectToPeer: func(target *btcec.PublicKey, addrs []net.Addr) (bool, error) {
+		ConnectToPeer: func(ctx context.Context,
+			target *btcec.PublicKey, addrs []net.Addr) (bool, error) {
+
 			// First, we'll check if we're already connected to the
 			// target peer. If we are, we can exit early. Otherwise,
 			// we'll need to establish a connection.
@@ -224,7 +227,8 @@ func initAutoPilot(svr *server, cfg *lncfg.AutoPilot,
 				}
 
 				err := svr.ConnectToPeer(
-					lnAddr, false, svr.cfg.ConnectionTimeout,
+					ctx, lnAddr, false,
+					svr.cfg.ConnectionTimeout,
 				)
 				if err != nil {
 					// If we weren't able to connect to the

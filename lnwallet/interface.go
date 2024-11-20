@@ -1,6 +1,7 @@
 package lnwallet
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -750,10 +751,9 @@ func SupportedWallets() []string {
 	return supportedWallets
 }
 
-// FetchFundingTxWrapper is a wrapper around FetchFundingTx, except that it will
-// exit when the supplied quit channel is closed.
-func FetchFundingTxWrapper(chain BlockChainIO, chanID *lnwire.ShortChannelID,
-	quit chan struct{}) (*wire.MsgTx, error) {
+// FetchFundingTxWrapper is a wrapper around FetchFundingTx.
+func FetchFundingTxWrapper(ctx context.Context, chain BlockChainIO,
+	chanID *lnwire.ShortChannelID) (*wire.MsgTx, error) {
 
 	txChan := make(chan *wire.MsgTx, 1)
 	errChan := make(chan error, 1)
@@ -775,9 +775,8 @@ func FetchFundingTxWrapper(chain BlockChainIO, chanID *lnwire.ShortChannelID,
 	case err := <-errChan:
 		return nil, err
 
-	case <-quit:
-		return nil, fmt.Errorf("quit channel passed to " +
-			"lnwallet.FetchFundingTxWrapper has been closed")
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 
@@ -815,13 +814,11 @@ func FetchFundingTx(chain BlockChainIO,
 	return fundingBlock.Transactions[chanID.TxIndex].Copy(), nil
 }
 
-// FetchPKScriptWithQuit fetches the output script for the given SCID and exits
-// early with an error if the provided quit channel is closed before
-// completion.
-func FetchPKScriptWithQuit(chain BlockChainIO, chanID *lnwire.ShortChannelID,
-	quit chan struct{}) ([]byte, error) {
+// FetchPKScript fetches the output script for the given SCID.
+func FetchPKScript(ctx context.Context, chain BlockChainIO,
+	chanID *lnwire.ShortChannelID) ([]byte, error) {
 
-	tx, err := FetchFundingTxWrapper(chain, chanID, quit)
+	tx, err := FetchFundingTxWrapper(ctx, chain, chanID)
 	if err != nil {
 		return nil, err
 	}

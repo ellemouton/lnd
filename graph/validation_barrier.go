@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -53,21 +54,17 @@ type ValidationBarrier struct {
 	// ChannelAnnouncement before proceeding.
 	nodeAnnDependencies map[route.Vertex]*validationSignals
 
-	quit chan struct{}
 	sync.Mutex
 }
 
 // NewValidationBarrier creates a new instance of a validation barrier given
 // the total number of active requests, and a quit channel which will be used
 // to know when to kill pending, but unfilled jobs.
-func NewValidationBarrier(numActiveReqs int,
-	quitChan chan struct{}) *ValidationBarrier {
-
+func NewValidationBarrier(numActiveReqs int) *ValidationBarrier {
 	v := &ValidationBarrier{
 		chanAnnFinSignal:     make(map[lnwire.ShortChannelID]*validationSignals),
 		chanEdgeDependencies: make(map[lnwire.ShortChannelID]*validationSignals),
 		nodeAnnDependencies:  make(map[route.Vertex]*validationSignals),
-		quit:                 quitChan,
 	}
 
 	// We'll first initialize a set of semaphores to limit our concurrency
@@ -82,12 +79,14 @@ func NewValidationBarrier(numActiveReqs int,
 
 // InitJobDependencies will wait for a new job slot to become open, and then
 // sets up any dependent signals/trigger for the new job
-func (v *ValidationBarrier) InitJobDependencies(job interface{}) {
+func (v *ValidationBarrier) InitJobDependencies(ctx context.Context,
+	job interface{}) {
+
 	// We'll wait for either a new slot to become open, or for the quit
 	// channel to be closed.
 	select {
 	case <-v.validationSemaphore:
-	case <-v.quit:
+	case <-ctx.Done():
 	}
 
 	v.Lock()
@@ -163,10 +162,10 @@ func (v *ValidationBarrier) InitJobDependencies(job interface{}) {
 // should be called once a job has been fully completed. Otherwise, slots may
 // not be returned to the internal scheduling, causing a deadlock when a new
 // overflow job is attempted.
-func (v *ValidationBarrier) CompleteJob() {
+func (v *ValidationBarrier) CompleteJob(ctx context.Context) {
 	select {
 	case v.validationSemaphore <- struct{}{}:
-	case <-v.quit:
+	case <-ctx.Done():
 	}
 }
 
@@ -174,7 +173,8 @@ func (v *ValidationBarrier) CompleteJob() {
 // finished executing. This allows us a graceful way to schedule goroutines
 // based on any pending uncompleted dependent jobs. If this job doesn't have an
 // active dependent, then this function will return immediately.
-func (v *ValidationBarrier) WaitForDependants(job interface{}) error {
+func (v *ValidationBarrier) WaitForDependants(ctx context.Context,
+	job interface{}) error {
 
 	var (
 		signals *validationSignals
@@ -237,7 +237,7 @@ func (v *ValidationBarrier) WaitForDependants(job interface{}) error {
 	// If we do have an active job, then we'll wait until either the signal
 	// is closed, or the set of jobs exits.
 	select {
-	case <-v.quit:
+	case <-ctx.Done():
 		return NewErrf(ErrVBarrierShuttingDown,
 			"validation barrier shutting down")
 

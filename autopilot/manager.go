@@ -1,6 +1,7 @@
 package autopilot
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -96,7 +97,7 @@ func (m *Manager) IsActive() bool {
 
 // StartAgent creates and starts an autopilot agent from the Manager's
 // config.
-func (m *Manager) StartAgent() error {
+func (m *Manager) StartAgent(ctx context.Context) error {
 	m.Lock()
 	defer m.Unlock()
 
@@ -119,7 +120,7 @@ func (m *Manager) StartAgent() error {
 		return err
 	}
 
-	if err := pilot.Start(); err != nil {
+	if err := pilot.Start(ctx); err != nil {
 		return err
 	}
 

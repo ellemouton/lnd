@@ -1,6 +1,7 @@
 package netann
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
@@ -60,8 +61,8 @@ type ChanStatusConfig struct {
 	// ApplyChannelUpdate processes new ChannelUpdates signed by our node by
 	// updating our local routing table and broadcasting the update to our
 	// peers.
-	ApplyChannelUpdate func(*lnwire.ChannelUpdate1, *wire.OutPoint,
-		bool) error
+	ApplyChannelUpdate func(context.Context, *lnwire.ChannelUpdate1,
+		*wire.OutPoint, bool) error
 
 	// DB stores the set of channels that are to be monitored.
 	DB DB
@@ -171,16 +172,16 @@ func NewChanStatusManager(cfg *ChanStatusConfig) (*ChanStatusManager, error) {
 }
 
 // Start safely starts the ChanStatusManager.
-func (m *ChanStatusManager) Start() error {
+func (m *ChanStatusManager) Start(ctx context.Context) error {
 	var err error
 	m.started.Do(func() {
 		log.Info("Channel Status Manager starting")
-		err = m.start()
+		err = m.start(ctx)
 	})
 	return err
 }
 
-func (m *ChanStatusManager) start() error {
+func (m *ChanStatusManager) start(ctx context.Context) error {
 	channels, err := m.fetchChannels()
 	if err != nil {
 		return err
@@ -217,7 +218,7 @@ func (m *ChanStatusManager) start() error {
 	}
 
 	m.wg.Add(1)
-	go m.statusManager()
+	go m.statusManager(ctx)
 
 	return nil
 }
@@ -331,7 +332,7 @@ func (m *ChanStatusManager) submitRequest(reqChan chan statusRequest,
 // should be scheduled or broadcast.
 //
 // NOTE: This method MUST be run as a goroutine.
-func (m *ChanStatusManager) statusManager() {
+func (m *ChanStatusManager) statusManager(ctx context.Context) {
 	defer m.wg.Done()
 
 	for {
@@ -339,11 +340,15 @@ func (m *ChanStatusManager) statusManager() {
 
 		// Process any requests to mark channel as enabled.
 		case req := <-m.enableRequests:
-			req.errChan <- m.processEnableRequest(req.outpoint, req.manual)
+			req.errChan <- m.processEnableRequest(
+				ctx, req.outpoint, req.manual,
+			)
 
 		// Process any requests to mark channel as disabled.
 		case req := <-m.disableRequests:
-			req.errChan <- m.processDisableRequest(req.outpoint, req.manual)
+			req.errChan <- m.processDisableRequest(
+				ctx, req.outpoint, req.manual,
+			)
 
 		// Process any requests to restore automatic channel state management.
 		case req := <-m.autoRequests:
@@ -361,7 +366,7 @@ func (m *ChanStatusManager) statusManager() {
 			// Now, do another sweep to disable any channels that
 			// were marked in a prior iteration as pending inactive
 			// if the inactive chan timeout has elapsed.
-			m.disableInactiveChannels()
+			m.disableInactiveChannels(ctx)
 
 		case <-m.quit:
 			return
@@ -381,8 +386,8 @@ func (m *ChanStatusManager) statusManager() {
 //
 // An update will be broadcast only if the channel is currently disabled,
 // otherwise no update will be sent on the network.
-func (m *ChanStatusManager) processEnableRequest(outpoint wire.OutPoint,
-	manual bool) error {
+func (m *ChanStatusManager) processEnableRequest(ctx context.Context,
+	outpoint wire.OutPoint, manual bool) error {
 
 	curState, err := m.getOrInitChanStatus(outpoint)
 	if err != nil {
@@ -421,7 +426,7 @@ func (m *ChanStatusManager) processEnableRequest(outpoint wire.OutPoint,
 	case ChanStatusDisabled:
 		log.Infof("Announcing channel(%v) enabled", outpoint)
 
-		err := m.signAndSendNextUpdate(outpoint, false)
+		err := m.signAndSendNextUpdate(ctx, outpoint, false)
 		if err != nil {
 			return err
 		}
@@ -439,8 +444,8 @@ func (m *ChanStatusManager) processEnableRequest(outpoint wire.OutPoint,
 //
 // An update will only be sent if the channel has a status other than
 // ChanStatusEnabled, otherwise no update will be sent on the network.
-func (m *ChanStatusManager) processDisableRequest(outpoint wire.OutPoint,
-	manual bool) error {
+func (m *ChanStatusManager) processDisableRequest(ctx context.Context,
+	outpoint wire.OutPoint, manual bool) error {
 
 	curState, err := m.getOrInitChanStatus(outpoint)
 	if err != nil {
@@ -452,7 +457,7 @@ func (m *ChanStatusManager) processDisableRequest(outpoint wire.OutPoint,
 		log.Infof("Announcing channel(%v) disabled [requested]",
 			outpoint)
 
-		err := m.signAndSendNextUpdate(outpoint, true)
+		err := m.signAndSendNextUpdate(ctx, outpoint, true)
 		if err != nil {
 			return err
 		}
@@ -552,7 +557,7 @@ func (m *ChanStatusManager) markPendingInactiveChannels() {
 // disableInactiveChannels scans through the set of monitored channels, and
 // broadcast a disable update for any pending inactive channels whose
 // SendDisableTime has been superseded by the current time.
-func (m *ChanStatusManager) disableInactiveChannels() {
+func (m *ChanStatusManager) disableInactiveChannels(ctx context.Context) {
 	// Now, disable any channels whose inactive chan timeout has elapsed.
 	now := time.Now()
 	for outpoint, state := range m.chanStates {
@@ -571,7 +576,7 @@ func (m *ChanStatusManager) disableInactiveChannels() {
 			"[detected]", outpoint)
 
 		// Sign an update disabling the channel.
-		err := m.signAndSendNextUpdate(outpoint, true)
+		err := m.signAndSendNextUpdate(ctx, outpoint, true)
 		if err != nil {
 			log.Errorf("Unable to sign update disabling "+
 				"channel(%v): %v", outpoint, err)
@@ -624,8 +629,8 @@ func (m *ChanStatusManager) fetchChannels() ([]*channeldb.OpenChannel, error) {
 // use the current time as the update's timestamp, or increment the old
 // timestamp by 1 to ensure the update can propagate. If signing is successful,
 // the new update will be sent out on the network.
-func (m *ChanStatusManager) signAndSendNextUpdate(outpoint wire.OutPoint,
-	disabled bool) error {
+func (m *ChanStatusManager) signAndSendNextUpdate(ctx context.Context,
+	outpoint wire.OutPoint, disabled bool) error {
 
 	// Retrieve the latest update for this channel. We'll use this
 	// as our starting point to send the new update.
@@ -642,7 +647,7 @@ func (m *ChanStatusManager) signAndSendNextUpdate(outpoint wire.OutPoint,
 		return err
 	}
 
-	return m.cfg.ApplyChannelUpdate(chanUpdate, &outpoint, private)
+	return m.cfg.ApplyChannelUpdate(ctx, chanUpdate, &outpoint, private)
 }
 
 // fetchLastChanUpdateByOutPoint fetches the latest policy for our direction of

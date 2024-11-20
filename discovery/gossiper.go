@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -436,8 +437,7 @@ type AuthenticatedGossiper struct {
 	// held.
 	bestHeight uint32
 
-	quit chan struct{}
-	wg   sync.WaitGroup
+	wg sync.WaitGroup
 
 	// cfg is a copy of the configuration struct that the gossiper service
 	// was initialized with.
@@ -524,7 +524,6 @@ func New(cfg Config, selfKeyDesc *keychain.KeyDescriptor) *AuthenticatedGossiper
 		cfg:               &cfg,
 		networkMsgs:       make(chan *networkMsg),
 		futureMsgs:        newFutureMsgCache(maxFutureMessages),
-		quit:              make(chan struct{}),
 		chanPolicyUpdates: make(chan *chanPolicyUpdateRequest),
 		prematureChannelUpdates: lru.NewCache[uint64, *cachedNetworkMsg]( //nolint: lll
 			maxPrematureUpdates,
@@ -575,7 +574,7 @@ type EdgeWithInfo struct {
 // sub-systems, then it signs and broadcasts new updates to the network. A
 // mapping between outpoints and updated channel policies is returned, which is
 // used to update the forwarding policies of the underlying links.
-func (d *AuthenticatedGossiper) PropagateChanPolicyUpdate(
+func (d *AuthenticatedGossiper) PropagateChanPolicyUpdate(ctx context.Context,
 	edgesToUpdate []EdgeWithInfo) error {
 
 	errChan := make(chan error, 1)
@@ -588,23 +587,23 @@ func (d *AuthenticatedGossiper) PropagateChanPolicyUpdate(
 	case d.chanPolicyUpdates <- policyUpdate:
 		err := <-errChan
 		return err
-	case <-d.quit:
+	case <-ctx.Done():
 		return fmt.Errorf("AuthenticatedGossiper shutting down")
 	}
 }
 
 // Start spawns network messages handler goroutine and registers on new block
 // notifications in order to properly handle the premature announcements.
-func (d *AuthenticatedGossiper) Start() error {
+func (d *AuthenticatedGossiper) Start(ctx context.Context) error {
 	var err error
 	d.started.Do(func() {
 		log.Info("Authenticated Gossiper starting")
-		err = d.start()
+		err = d.start(ctx)
 	})
 	return err
 }
 
-func (d *AuthenticatedGossiper) start() error {
+func (d *AuthenticatedGossiper) start(ctx context.Context) error {
 	// First we register for new notifications of newly discovered blocks.
 	// We do this immediately so we'll later be able to consume any/all
 	// blocks which were discovered.
@@ -633,8 +632,8 @@ func (d *AuthenticatedGossiper) start() error {
 
 	// Start receiving blocks in its dedicated goroutine.
 	d.wg.Add(2)
-	go d.syncBlockHeight()
-	go d.networkHandler()
+	go d.syncBlockHeight(ctx)
+	go d.networkHandler(ctx)
 
 	return nil
 }
@@ -643,7 +642,7 @@ func (d *AuthenticatedGossiper) start() error {
 // blockEpochs.
 //
 // NOTE: must be run as a goroutine.
-func (d *AuthenticatedGossiper) syncBlockHeight() {
+func (d *AuthenticatedGossiper) syncBlockHeight(ctx context.Context) {
 	defer d.wg.Done()
 
 	for {
@@ -668,9 +667,9 @@ func (d *AuthenticatedGossiper) syncBlockHeight() {
 				newBlock.Hash)
 
 			// Resend future messages, if any.
-			d.resendFutureMessages(blockHeight)
+			d.resendFutureMessages(ctx, blockHeight)
 
-		case <-d.quit:
+		case <-ctx.Done():
 			return
 		}
 	}
@@ -719,7 +718,9 @@ func (c *cachedFutureMsg) Size() (uint64, error) {
 // resendFutureMessages takes a block height, resends all the future messages
 // found below and equal to that height and deletes those messages found in the
 // gossiper's futureMsgs.
-func (d *AuthenticatedGossiper) resendFutureMessages(height uint32) {
+func (d *AuthenticatedGossiper) resendFutureMessages(ctx context.Context,
+	height uint32) {
+
 	var (
 		// msgs are the target messages.
 		msgs []*networkMsg
@@ -757,7 +758,7 @@ func (d *AuthenticatedGossiper) resendFutureMessages(height uint32) {
 	for _, msg := range msgs {
 		select {
 		case d.networkMsgs <- msg:
-		case <-d.quit:
+		case <-ctx.Done():
 			msg.err <- ErrGossiperShuttingDown
 		}
 	}
@@ -789,7 +790,6 @@ func (d *AuthenticatedGossiper) stop() {
 
 	d.banman.stop()
 
-	close(d.quit)
 	d.wg.Wait()
 
 	// We'll stop our reliable sender after all of the gossiper's goroutines
@@ -805,8 +805,8 @@ func (d *AuthenticatedGossiper) stop() {
 // then added to a queue for batched trickled announcement to all connected
 // peers.  Remote channel announcements should contain the announcement proof
 // and be fully validated.
-func (d *AuthenticatedGossiper) ProcessRemoteAnnouncement(msg lnwire.Message,
-	peer lnpeer.Peer) chan error {
+func (d *AuthenticatedGossiper) ProcessRemoteAnnouncement(ctx context.Context,
+	msg lnwire.Message, peer lnpeer.Peer) chan error {
 
 	errChan := make(chan error, 1)
 
@@ -892,7 +892,7 @@ func (d *AuthenticatedGossiper) ProcessRemoteAnnouncement(msg lnwire.Message,
 	// to send back an error and can return immediately.
 	case <-peer.QuitSignal():
 		return nil
-	case <-d.quit:
+	case <-ctx.Done():
 		nMsg.err <- ErrGossiperShuttingDown
 	}
 
@@ -906,8 +906,8 @@ func (d *AuthenticatedGossiper) ProcessRemoteAnnouncement(msg lnwire.Message,
 // will not be fully validated. Once the channel proofs are received, the
 // entire channel announcement and update messages will be re-constructed and
 // broadcast to the rest of the network.
-func (d *AuthenticatedGossiper) ProcessLocalAnnouncement(msg lnwire.Message,
-	optionalFields ...OptionalMsgField) chan error {
+func (d *AuthenticatedGossiper) ProcessLocalAnnouncement(ctx context.Context,
+	msg lnwire.Message, optionalFields ...OptionalMsgField) chan error {
 
 	optionalMsgFields := &optionalMsgFields{}
 	optionalMsgFields.apply(optionalFields...)
@@ -922,7 +922,7 @@ func (d *AuthenticatedGossiper) ProcessLocalAnnouncement(msg lnwire.Message,
 
 	select {
 	case d.networkMsgs <- nMsg:
-	case <-d.quit:
+	case <-ctx.Done():
 		nMsg.err <- ErrGossiperShuttingDown
 	}
 
@@ -1285,7 +1285,7 @@ func (d *AuthenticatedGossiper) splitAnnouncementBatches(
 // split size, and then sends out all items to the set of target peers. Locally
 // generated announcements are always sent before remotely generated
 // announcements.
-func (d *AuthenticatedGossiper) splitAndSendAnnBatch(
+func (d *AuthenticatedGossiper) splitAndSendAnnBatch(ctx context.Context,
 	annBatch msgsToBroadcast) {
 
 	// delayNextBatch is a helper closure that blocks for `SubBatchDelay`
@@ -1293,7 +1293,7 @@ func (d *AuthenticatedGossiper) splitAndSendAnnBatch(
 	delayNextBatch := func() {
 		select {
 		case <-time.After(d.cfg.SubBatchDelay):
-		case <-d.quit:
+		case <-ctx.Done():
 			return
 		}
 	}
@@ -1379,7 +1379,7 @@ func (d *AuthenticatedGossiper) sendRemoteBatch(annBatch []msgWithSenders) {
 // broadcasting our latest topology state to all connected peers.
 //
 // NOTE: This MUST be run as a goroutine.
-func (d *AuthenticatedGossiper) networkHandler() {
+func (d *AuthenticatedGossiper) networkHandler(ctx context.Context) {
 	defer d.wg.Done()
 
 	// Initialize empty deDupedAnnouncements to store announcement batch.
@@ -1400,7 +1400,7 @@ func (d *AuthenticatedGossiper) networkHandler() {
 
 	// We'll use this validation to ensure that we process jobs in their
 	// dependency order during parallel validation.
-	validationBarrier := graph.NewValidationBarrier(1000, d.quit)
+	validationBarrier := graph.NewValidationBarrier(1000)
 
 	for {
 		select {
@@ -1440,7 +1440,7 @@ func (d *AuthenticatedGossiper) networkHandler() {
 			// messages that we'll process serially.
 			case *lnwire.AnnounceSignatures1:
 				emittedAnnouncements, _ := d.processNetworkAnnouncement(
-					announcement,
+					ctx, announcement,
 				)
 				log.Debugf("Processed network message %s, "+
 					"returned len(announcements)=%v",
@@ -1470,11 +1470,14 @@ func (d *AuthenticatedGossiper) networkHandler() {
 			// We'll set up any dependent, and wait until a free
 			// slot for this job opens up, this allow us to not
 			// have thousands of goroutines active.
-			validationBarrier.InitJobDependencies(announcement.msg)
+			validationBarrier.InitJobDependencies(
+				ctx, announcement.msg,
+			)
 
 			d.wg.Add(1)
 			go d.handleNetworkMessages(
-				announcement, &announcements, validationBarrier,
+				ctx, announcement, &announcements,
+				validationBarrier,
 			)
 
 		// The trickle timer has ticked, which indicates we should
@@ -1497,7 +1500,7 @@ func (d *AuthenticatedGossiper) networkHandler() {
 			// announcements, we'll blast them out w/o regard for
 			// our peer's policies so we ensure they propagate
 			// properly.
-			d.splitAndSendAnnBatch(announcementBatch)
+			d.splitAndSendAnnBatch(ctx, announcementBatch)
 
 		// The retransmission timer has ticked which indicates that we
 		// should check if we need to prune or re-broadcast any of our
@@ -1513,7 +1516,7 @@ func (d *AuthenticatedGossiper) networkHandler() {
 
 		// The gossiper has been signalled to exit, to we exit our
 		// main loop so the wait group can be decremented.
-		case <-d.quit:
+		case <-ctx.Done():
 			return
 		}
 	}
@@ -1524,11 +1527,12 @@ func (d *AuthenticatedGossiper) networkHandler() {
 // signal its dependants and add the new announcements to the announce batch.
 //
 // NOTE: must be run as a goroutine.
-func (d *AuthenticatedGossiper) handleNetworkMessages(nMsg *networkMsg,
-	deDuped *deDupedAnnouncements, vb *graph.ValidationBarrier) {
+func (d *AuthenticatedGossiper) handleNetworkMessages(ctx context.Context,
+	nMsg *networkMsg, deDuped *deDupedAnnouncements,
+	vb *graph.ValidationBarrier) {
 
 	defer d.wg.Done()
-	defer vb.CompleteJob()
+	defer vb.CompleteJob(ctx)
 
 	// We should only broadcast this message forward if it originated from
 	// us or it wasn't received as part of our initial historical sync.
@@ -1536,7 +1540,7 @@ func (d *AuthenticatedGossiper) handleNetworkMessages(nMsg *networkMsg,
 
 	// If this message has an existing dependency, then we'll wait until
 	// that has been fully validated before we proceed.
-	err := vb.WaitForDependants(nMsg.msg)
+	err := vb.WaitForDependants(ctx, nMsg.msg)
 	if err != nil {
 		log.Debugf("Validating network message %s got err: %v",
 			nMsg.msg.MsgType(), err)
@@ -1558,7 +1562,7 @@ func (d *AuthenticatedGossiper) handleNetworkMessages(nMsg *networkMsg,
 	// Process the network announcement to determine if this is either a
 	// new announcement from our PoV or an edges to a prior vertex/edge we
 	// previously proceeded.
-	newAnns, allow := d.processNetworkAnnouncement(nMsg)
+	newAnns, allow := d.processNetworkAnnouncement(ctx, nMsg)
 
 	log.Tracef("Processed network message %s, returned "+
 		"len(announcements)=%v, allowDependents=%v",
@@ -1865,7 +1869,7 @@ func remotePubFromChanInfo(chanInfo *models.ChannelEdgeInfo,
 // situation in the case where we create a channel, but for some reason fail
 // to receive the remote peer's proof, while the remote peer is able to fully
 // assemble the proof and craft the ChannelAnnouncement.
-func (d *AuthenticatedGossiper) processRejectedEdge(
+func (d *AuthenticatedGossiper) processRejectedEdge(ctx context.Context,
 	chanAnnMsg *lnwire.ChannelAnnouncement1,
 	proof *models.ChannelAuthProof) ([]networkMsg, error) {
 
@@ -1900,7 +1904,7 @@ func (d *AuthenticatedGossiper) processRejectedEdge(
 	if err != nil {
 		return nil, err
 	}
-	err = netann.ValidateChannelAnn(chanAnn, d.fetchPKScript)
+	err = netann.ValidateChannelAnn(ctx, chanAnn, d.fetchPKScript)
 	if err != nil {
 		err := fmt.Errorf("assembled channel announcement proof "+
 			"for shortChanID=%v isn't valid: %v",
@@ -1945,10 +1949,10 @@ func (d *AuthenticatedGossiper) processRejectedEdge(
 }
 
 // fetchPKScript fetches the output script for the given SCID.
-func (d *AuthenticatedGossiper) fetchPKScript(chanID *lnwire.ShortChannelID) (
-	[]byte, error) {
+func (d *AuthenticatedGossiper) fetchPKScript(ctx context.Context,
+	chanID *lnwire.ShortChannelID) ([]byte, error) {
 
-	return lnwallet.FetchPKScriptWithQuit(d.cfg.ChainIO, chanID, d.quit)
+	return lnwallet.FetchPKScript(ctx, d.cfg.ChainIO, chanID)
 }
 
 // addNode processes the given node announcement, and adds it to our channel
@@ -2037,7 +2041,7 @@ func (d *AuthenticatedGossiper) isPremature(chanID lnwire.ShortChannelID,
 // be returned which should be broadcasted to the rest of the network. The
 // boolean returned indicates whether any dependents of the announcement should
 // attempt to be processed as well.
-func (d *AuthenticatedGossiper) processNetworkAnnouncement(
+func (d *AuthenticatedGossiper) processNetworkAnnouncement(ctx context.Context,
 	nMsg *networkMsg) ([]networkMsg, bool) {
 
 	// If this is a remote update, we set the scheduler option to lazily
@@ -2059,7 +2063,7 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(
 	// the existence of a channel and not yet the routing policies in
 	// either direction of the channel.
 	case *lnwire.ChannelAnnouncement1:
-		return d.handleChanAnnouncement(nMsg, msg, schedulerOp)
+		return d.handleChanAnnouncement(ctx, nMsg, msg, schedulerOp)
 
 	// A new authenticated channel edge update has arrived. This indicates
 	// that the directional information for an already known channel has
@@ -2071,7 +2075,7 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(
 	// willingness of nodes involved in the funding of a channel to
 	// announce this new channel to the rest of the world.
 	case *lnwire.AnnounceSignatures1:
-		return d.handleAnnSig(nMsg, msg)
+		return d.handleAnnSig(ctx, nMsg, msg)
 
 	default:
 		err := errors.New("wrong type of the announcement")
@@ -2437,8 +2441,8 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(nMsg *networkMsg,
 }
 
 // handleChanAnnouncement processes a new channel announcement.
-func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
-	ann *lnwire.ChannelAnnouncement1,
+func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
+	nMsg *networkMsg, ann *lnwire.ChannelAnnouncement1,
 	ops []batch.SchedulerOption) ([]networkMsg, bool) {
 
 	scid := ann.ShortChannelID
@@ -2550,7 +2554,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 	// the signatures within the proof as it should be well formed.
 	var proof *models.ChannelAuthProof
 	if nMsg.isRemote {
-		err := netann.ValidateChannelAnn(ann, d.fetchPKScript)
+		err := netann.ValidateChannelAnn(ctx, ann, d.fetchPKScript)
 		if err != nil {
 			err := fmt.Errorf("unable to validate announcement: "+
 				"%v", err)
@@ -2638,7 +2642,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 		case graph.IsError(err, graph.ErrIgnored):
 			// Attempt to process the rejected message to see if we
 			// get any new announcements.
-			anns, rErr := d.processRejectedEdge(ann, proof)
+			anns, rErr := d.processRejectedEdge(ctx, ann, proof)
 			if rErr != nil {
 				key := newRejectCacheKey(
 					scid.ToUint64(),
@@ -2792,7 +2796,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(nMsg *networkMsg,
 
 				select {
 				case d.networkMsgs <- updMsg:
-				case <-d.quit:
+				case <-ctx.Done():
 					updMsg.err <- ErrGossiperShuttingDown
 				}
 
@@ -3232,7 +3236,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 }
 
 // handleAnnSig processes a new announcement signatures message.
-func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
+func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context, nMsg *networkMsg,
 	ann *lnwire.AnnounceSignatures1) ([]networkMsg, bool) {
 
 	needBlockHeight := ann.ShortChannelID.BlockHeight +
@@ -3448,7 +3452,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 
 	// With all the necessary components assembled validate the full
 	// channel announcement proof.
-	err = netann.ValidateChannelAnn(chanAnn, d.fetchPKScript)
+	err = netann.ValidateChannelAnn(ctx, chanAnn, d.fetchPKScript)
 	if err != nil {
 		err := fmt.Errorf("channel announcement proof for "+
 			"short_chan_id=%v isn't valid: %v", shortChanID, err)

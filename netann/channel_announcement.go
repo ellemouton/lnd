@@ -2,6 +2,7 @@ package netann
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 
@@ -108,17 +109,17 @@ func CreateChanAnnouncement(chanProof *models.ChannelAuthProof,
 
 // FetchPkScript defines a function that can be used to fetch the output script
 // for the transaction with the given SCID.
-type FetchPkScript func(*lnwire.ShortChannelID) ([]byte, error)
+type FetchPkScript func(context.Context, *lnwire.ShortChannelID) ([]byte, error)
 
 // ValidateChannelAnn validates the channel announcement.
-func ValidateChannelAnn(a lnwire.ChannelAnnouncement,
+func ValidateChannelAnn(ctx context.Context, a lnwire.ChannelAnnouncement,
 	fetchPkScript FetchPkScript) error {
 
 	switch ann := a.(type) {
 	case *lnwire.ChannelAnnouncement1:
 		return validateChannelAnn1(ann)
 	case *lnwire.ChannelAnnouncement2:
-		return validateChannelAnn2(ann, fetchPkScript)
+		return validateChannelAnn2(ctx, ann, fetchPkScript)
 	default:
 		return fmt.Errorf("unhandled implementation of "+
 			"lnwire.ChannelAnnouncement: %T", a)
@@ -199,7 +200,7 @@ func validateChannelAnn1(a *lnwire.ChannelAnnouncement1) error {
 
 // validateChannelAnn2 validates the channel announcement message and checks
 // that message signature covers the announcement message.
-func validateChannelAnn2(a *lnwire.ChannelAnnouncement2,
+func validateChannelAnn2(ctx context.Context, a *lnwire.ChannelAnnouncement2,
 	fetchPkScript FetchPkScript) error {
 
 	dataHash, err := ChanAnn2DigestToSign(a)
@@ -253,7 +254,7 @@ func validateChannelAnn2(a *lnwire.ChannelAnnouncement2,
 		// If bitcoin keys are not provided, then we need to get the
 		// on-chain output key since this will be the 3rd key in the
 		// 3-of-3 MuSig2 signature.
-		pkScript, err := fetchPkScript(&a.ShortChannelID.Val)
+		pkScript, err := fetchPkScript(ctx, &a.ShortChannelID.Val)
 		if err != nil {
 			return err
 		}
