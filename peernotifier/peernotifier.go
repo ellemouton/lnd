@@ -1,8 +1,10 @@
 package peernotifier
 
 import (
+	"context"
 	"sync"
 
+	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/subscribe"
 )
 
@@ -14,6 +16,8 @@ type PeerNotifier struct {
 	stopped sync.Once
 
 	ntfnServer *subscribe.Server
+
+	cancel fn.Option[context.CancelFunc]
 }
 
 // PeerOnlineEvent represents a new event where a peer comes online.
@@ -37,12 +41,15 @@ func New() *PeerNotifier {
 }
 
 // Start starts the PeerNotifier's subscription server.
-func (p *PeerNotifier) Start() error {
+func (p *PeerNotifier) Start(ctx context.Context) error {
 	var err error
 
 	p.started.Do(func() {
+		ctx, cancel := context.WithCancel(ctx)
+		p.cancel = fn.Some(cancel)
+
 		log.Info("PeerNotifier starting")
-		err = p.ntfnServer.Start()
+		err = p.ntfnServer.Start(ctx)
 	})
 
 	return err
@@ -54,6 +61,8 @@ func (p *PeerNotifier) Stop() error {
 	p.stopped.Do(func() {
 		log.Info("PeerNotifier shutting down...")
 		defer log.Debug("PeerNotifier shutdown complete")
+
+		p.cancel.WhenSome(func(fn context.CancelFunc) { fn() })
 
 		err = p.ntfnServer.Stop()
 	})

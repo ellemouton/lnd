@@ -2059,7 +2059,7 @@ func (s *server) Start(ctx context.Context) error {
 
 	s.start.Do(func() {
 		cleanup = cleanup.add(s.customMessageServer.Stop)
-		if err := s.customMessageServer.Start(); err != nil {
+		if err := s.customMessageServer.Start(ctx); err != nil {
 			startErr = err
 			return
 		}
@@ -2116,7 +2116,7 @@ func (s *server) Start(ctx context.Context) error {
 		}
 
 		cleanup = cleanup.add(s.channelNotifier.Stop)
-		if err := s.channelNotifier.Start(); err != nil {
+		if err := s.channelNotifier.Start(ctx); err != nil {
 			startErr = err
 			return
 		}
@@ -2124,13 +2124,13 @@ func (s *server) Start(ctx context.Context) error {
 		cleanup = cleanup.add(func() error {
 			return s.peerNotifier.Stop()
 		})
-		if err := s.peerNotifier.Start(); err != nil {
+		if err := s.peerNotifier.Start(ctx); err != nil {
 			startErr = err
 			return
 		}
 
 		cleanup = cleanup.add(s.htlcNotifier.Stop)
-		if err := s.htlcNotifier.Start(); err != nil {
+		if err := s.htlcNotifier.Start(ctx); err != nil {
 			startErr = err
 			return
 		}

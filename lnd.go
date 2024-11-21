@@ -322,7 +322,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, implCfg *ImplementationCfg,
 	interceptorChain := rpcperms.NewInterceptorChain(
 		rpcsLog, cfg.NoMacaroons, cfg.RPCMiddleware.Mandatory,
 	)
-	if err := interceptorChain.Start(); err != nil {
+	if err := interceptorChain.Start(ctx); err != nil {
 		return mkErr("error starting interceptor chain: %v", err)
 	}
 	defer func() {

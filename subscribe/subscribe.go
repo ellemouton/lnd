@@ -91,9 +91,7 @@ func NewServer() *Server {
 
 // Start starts the Server, making it ready to accept subscriptions and
 // updates.
-func (s *Server) Start() error {
-	ctx := context.TODO()
-
+func (s *Server) Start(ctx context.Context) error {
 	if !atomic.CompareAndSwapUint32(&s.started, 0, 1) {
 		return nil
 	}
