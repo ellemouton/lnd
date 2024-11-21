@@ -735,6 +735,8 @@ func Main(cfg *Config, lisCfg ListenerCfg, implCfg *ImplementationCfg,
 	}()
 
 	defer func() {
+		grpcServer.Stop()
+
 		err := server.Stop()
 		if err != nil {
 			ltndLog.Warnf("Stopping the server including all "+
