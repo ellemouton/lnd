@@ -1,10 +1,12 @@
 package subscribe
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"sync/atomic"
 
+	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/queue"
 )
 
@@ -53,8 +55,9 @@ type Server struct {
 
 	updates chan interface{}
 
-	quit chan struct{}
-	wg   sync.WaitGroup
+	quit   chan struct{}
+	cancel fn.Option[context.CancelFunc]
+	wg     sync.WaitGroup
 }
 
 // clientUpdate is an internal message sent to the subscriptionHandler to
@@ -89,9 +92,14 @@ func NewServer() *Server {
 // Start starts the Server, making it ready to accept subscriptions and
 // updates.
 func (s *Server) Start() error {
+	ctx := context.TODO()
+
 	if !atomic.CompareAndSwapUint32(&s.started, 0, 1) {
 		return nil
 	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	s.cancel = fn.Some(cancel)
 
 	s.wg.Add(1)
 	go s.subscriptionHandler()
@@ -106,6 +114,7 @@ func (s *Server) Stop() error {
 	}
 
 	close(s.quit)
+	s.cancel.WhenSome(func(fn context.CancelFunc) { fn() })
 	s.wg.Wait()
 
 	return nil
@@ -152,7 +161,6 @@ func (s *Server) Subscribe() (*Client, error) {
 // SendUpdate is called to send the passed update to all currently active
 // subscription clients.
 func (s *Server) SendUpdate(update interface{}) error {
-
 	select {
 	case s.updates <- update:
 		return nil
