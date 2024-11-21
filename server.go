@@ -349,9 +349,9 @@ type server struct {
 	// txPublisher is a publisher with fee-bumping capability.
 	txPublisher *sweep.TxPublisher
 
-	quit chan struct{}
-
-	wg sync.WaitGroup
+	quit   chan struct{}
+	cancel fn.Option[context.CancelFunc]
+	wg     sync.WaitGroup
 }
 
 // updatePersistentPeerAddrs subscribes to topology changes and stores
@@ -2046,7 +2046,10 @@ func (c cleaner) run() {
 // NOTE: This function is safe for concurrent access.
 //
 //nolint:funlen
-func (s *server) Start() error {
+func (s *server) Start(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	s.cancel = fn.Some(cancel)
+
 	var startErr error
 
 	// If one sub system fails to start, the following code ensures that the
@@ -2453,6 +2456,7 @@ func (s *server) Stop() error {
 		atomic.StoreInt32(&s.stopping, 1)
 
 		close(s.quit)
+		s.cancel.WhenSome(func(fn context.CancelFunc) { fn() })
 
 		// Shutdown connMgr first to prevent conns during shutdown.
 		s.connMgr.Stop()
