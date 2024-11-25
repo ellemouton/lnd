@@ -213,4 +213,4 @@ go 1.22.6
 
 retract v0.0.2
 
-replace github.com/btcsuite/btclog/v2 => github.com/ellemouton/btclog/v2 v2.0.0-20241121150841-e3d3184f121e
+replace github.com/btcsuite/btclog/v2 => github.com/ellemouton/btclog/v2 v2.0.0-20241125095340-913b97d2e104

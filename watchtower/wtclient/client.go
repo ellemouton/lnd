@@ -12,7 +12,6 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btclog/v2"
-	"github.com/lightningnetwork/lnd/build"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/lnwallet"
@@ -212,7 +211,7 @@ func newClient(cfg *clientCfg) (*client, error) {
 	}
 	prefix := fmt.Sprintf("(%s)", identifier)
 
-	plog := build.NewPrefixLog(prefix, log)
+	plog := log.WithPrefix(prefix)
 
 	queueDB := cfg.DB.GetDBQueue([]byte(identifier))
 	queue, err := NewDiskOverflowQueue[*wtdb.BackupID](

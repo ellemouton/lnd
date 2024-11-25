@@ -67,11 +67,11 @@ func DefaultLogConfig() *LogConfig {
 // config struct translates to.
 func (cfg *LoggerConfig) HandlerOptions() []btclog.HandlerOption {
 	opts := []btclog.HandlerOption{
-		// The default skip depth used by the logging library is 6 but
+		// The default skip depth used by the logging library is 5 but
 		// since we wrap the logging handlers with another level of
 		// abstraction with the handlerSet, we increase the skip depth
-		// to 7 here.
-		btclog.WithCallSiteSkipDepth(7),
+		// to 6 here.
+		btclog.WithCallSiteSkipDepth(6),
 	}
 
 	if cfg.NoTimestamps {
