@@ -394,7 +394,6 @@ func (s *StateMachine[Event, Env]) executeDaemonEvent(
 
 						err := sendAndCleanUp()
 						if err != nil {
-							//nolint:lll
 							log.Errorf("FSM(%v): unable to send message: %v", err)
 						}
 
