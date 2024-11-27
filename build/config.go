@@ -11,6 +11,9 @@ const (
 	callSiteShort = "short"
 	callSiteLong  = "long"
 
+	buildInfoOn  = "on"
+	buildInfoOff = "off"
+
 	defaultLogCompressor = Gzip
 
 	// DefaultMaxLogFiles is the default maximum number of log files to
@@ -25,8 +28,9 @@ const (
 //
 //nolint:lll
 type LogConfig struct {
-	Console *consoleLoggerCfg `group:"console" namespace:"console" description:"The logger writing to stdout and stderr."`
-	File    *FileLoggerConfig `group:"file" namespace:"file" description:"The logger writing to LND's standard log file."`
+	Console   *consoleLoggerCfg `group:"console" namespace:"console" description:"The logger writing to stdout and stderr."`
+	File      *FileLoggerConfig `group:"file" namespace:"file" description:"The logger writing to LND's standard log file."`
+	BuildInfo string            `long:"build-info" description:"Whether or not to include build info in log lines." choice:"on" choice:"off"`
 }
 
 // Validate validates the LogConfig struct values.
@@ -60,6 +64,7 @@ func DefaultLogConfig() *LogConfig {
 				CallSite: callSiteOff,
 			},
 		},
+		BuildInfo: defaultBuildInfo,
 	}
 }
 

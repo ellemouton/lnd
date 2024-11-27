@@ -3,6 +3,8 @@
 
 package build
 
+const defaultBuildInfo = buildInfoOn
+
 // consoleLoggerCfg embeds the LoggerConfig struct along with any extensions
 // specific to a production deployment.
 //

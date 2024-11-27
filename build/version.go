@@ -6,9 +6,13 @@
 package build
 
 import (
+	"context"
+	"encoding/hex"
 	"fmt"
 	"runtime/debug"
 	"strings"
+
+	"github.com/btcsuite/btclog/v2"
 )
 
 var (
@@ -100,4 +104,25 @@ func Tags() []string {
 	}
 
 	return strings.Split(RawTags, ",")
+}
+
+// WithBuildInfo derives a child context with the build information attached as
+// attributes. If the BuildInfo field in the LogConfig is set to "off", then the
+// context will be returned as is.
+func WithBuildInfo(ctx context.Context, cfg *LogConfig) (context.Context,
+	error) {
+
+	if cfg.BuildInfo == buildInfoOff {
+		return ctx, nil
+	}
+
+	// Convert the commit hash to a byte slice.
+	commitHash, err := hex.DecodeString(CommitHash)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decode commit hash: %w", err)
+	}
+
+	// Include the first 6 bytes of the commit hash in the context as an
+	// slog attribute.
+	return btclog.WithCtx(ctx, btclog.Hex6("commit_hash", commitHash)), nil
 }

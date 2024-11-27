@@ -17,6 +17,8 @@ const (
 	faintSeq = "2"
 	esc      = '\x1b'
 	csi      = string(esc) + "["
+
+	defaultBuildInfo = buildInfoOff
 )
 
 // consoleLoggerCfg extends the LoggerConfig struct by adding a Color option
