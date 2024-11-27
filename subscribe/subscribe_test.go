@@ -1,6 +1,7 @@
 package subscribe_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -12,9 +13,10 @@ import (
 // updates.
 func TestSubscribe(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	server := subscribe.NewServer()
-	if err := server.Start(); err != nil {
+	if err := server.Start(ctx); err != nil {
 		t.Fatalf("unable to start server")
 	}
 

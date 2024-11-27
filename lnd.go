@@ -322,7 +322,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, implCfg *ImplementationCfg,
 	interceptorChain := rpcperms.NewInterceptorChain(
 		rpcsLog, cfg.NoMacaroons, cfg.RPCMiddleware.Mandatory,
 	)
-	if err := interceptorChain.Start(); err != nil {
+	if err := interceptorChain.Start(ctx); err != nil {
 		return mkErr("error starting interceptor chain: %v", err)
 	}
 	defer func() {
@@ -379,7 +379,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, implCfg *ImplementationCfg,
 	// wildcard to prevent certificate issues when accessing the proxy
 	// externally.
 	stopProxy, err := startRestProxy(
-		cfg, rpcServer, restDialOpts, restListen,
+		ctx, cfg, rpcServer, restDialOpts, restListen,
 	)
 	if err != nil {
 		return mkErr("error starting REST proxy: %v", err)
@@ -731,10 +731,12 @@ func Main(cfg *Config, lisCfg ListenerCfg, implCfg *ImplementationCfg,
 	// case the startup of the subservers do not behave as expected.
 	errChan := make(chan error)
 	go func() {
-		errChan <- server.Start()
+		errChan <- server.Start(ctx)
 	}()
 
 	defer func() {
+		grpcServer.Stop()
+
 		err := server.Stop()
 		if err != nil {
 			ltndLog.Warnf("Stopping the server including all "+
@@ -921,7 +923,8 @@ func startGrpcListen(cfg *Config, grpcServer *grpc.Server,
 
 // startRestProxy starts the given REST proxy on the listeners found in the
 // config.
-func startRestProxy(cfg *Config, rpcServer *rpcServer, restDialOpts []grpc.DialOption,
+func startRestProxy(ctx context.Context, cfg *Config, rpcServer *rpcServer,
+	restDialOpts []grpc.DialOption,
 	restListen func(net.Addr) (net.Listener, error)) (func(), error) {
 
 	// We use the first RPC listener as the destination for our REST proxy.
@@ -948,7 +951,6 @@ func startRestProxy(cfg *Config, rpcServer *rpcServer, restDialOpts []grpc.DialO
 	}
 
 	// Start a REST proxy for our gRPC server.
-	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
 	shutdownFuncs = append(shutdownFuncs, cancel)
 

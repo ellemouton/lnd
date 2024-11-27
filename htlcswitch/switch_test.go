@@ -3410,6 +3410,7 @@ func testHtcNotifier(t *testing.T, testOpts []serverOption, iterations int,
 	getEvents htlcNotifierEvents) {
 
 	t.Parallel()
+	ctx := context.Background()
 
 	// First, we'll create our traditional three hop
 	// network.
@@ -3427,7 +3428,7 @@ func testHtcNotifier(t *testing.T, testOpts []serverOption, iterations int,
 	// Create htlc notifiers for each server in the three hop network and
 	// start them.
 	aliceNotifier := NewHtlcNotifier(mockTime)
-	if err := aliceNotifier.Start(); err != nil {
+	if err := aliceNotifier.Start(ctx); err != nil {
 		t.Fatalf("could not start alice notifier")
 	}
 	t.Cleanup(func() {
@@ -3437,7 +3438,7 @@ func testHtcNotifier(t *testing.T, testOpts []serverOption, iterations int,
 	})
 
 	bobNotifier := NewHtlcNotifier(mockTime)
-	if err := bobNotifier.Start(); err != nil {
+	if err := bobNotifier.Start(ctx); err != nil {
 		t.Fatalf("could not start bob notifier")
 	}
 	t.Cleanup(func() {
@@ -3447,7 +3448,7 @@ func testHtcNotifier(t *testing.T, testOpts []serverOption, iterations int,
 	})
 
 	carolNotifier := NewHtlcNotifier(mockTime)
-	if err := carolNotifier.Start(); err != nil {
+	if err := carolNotifier.Start(ctx); err != nil {
 		t.Fatalf("could not start carol notifier")
 	}
 	t.Cleanup(func() {

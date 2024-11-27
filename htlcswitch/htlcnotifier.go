@@ -1,6 +1,7 @@
 package htlcswitch
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channeldb/models"
+	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -65,6 +67,8 @@ type HtlcNotifier struct {
 	now func() time.Time
 
 	ntfnServer *subscribe.Server
+
+	cancel fn.Option[context.CancelFunc]
 }
 
 // NewHtlcNotifier creates a new HtlcNotifier which gets htlc forwarded,
@@ -79,11 +83,15 @@ func NewHtlcNotifier(now func() time.Time) *HtlcNotifier {
 
 // Start starts the HtlcNotifier and all goroutines it needs to consume
 // events and provide subscriptions to clients.
-func (h *HtlcNotifier) Start() error {
+func (h *HtlcNotifier) Start(ctx context.Context) error {
 	var err error
 	h.started.Do(func() {
+		ctx, cancel := context.WithCancel(ctx)
+		h.cancel = fn.Some(cancel)
+
 		log.Info("HtlcNotifier starting")
-		err = h.ntfnServer.Start()
+
+		err = h.ntfnServer.Start(ctx)
 	})
 	return err
 }
@@ -94,6 +102,8 @@ func (h *HtlcNotifier) Stop() error {
 	h.stopped.Do(func() {
 		log.Info("HtlcNotifier shutting down...")
 		defer log.Debug("HtlcNotifier shutdown complete")
+
+		h.cancel.WhenSome(func(fn context.CancelFunc) { fn() })
 
 		if err = h.ntfnServer.Stop(); err != nil {
 			log.Warnf("error stopping htlc notifier: %v", err)

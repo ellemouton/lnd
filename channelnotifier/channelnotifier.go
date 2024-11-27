@@ -1,10 +1,12 @@
 package channelnotifier
 
 import (
+	"context"
 	"sync"
 
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/subscribe"
 )
 
@@ -18,6 +20,8 @@ type ChannelNotifier struct {
 	ntfnServer *subscribe.Server
 
 	chanDB *channeldb.ChannelStateDB
+
+	cancel fn.Option[context.CancelFunc]
 }
 
 // PendingOpenChannelEvent represents a new event where a new channel has
@@ -91,11 +95,14 @@ func New(chanDB *channeldb.ChannelStateDB) *ChannelNotifier {
 }
 
 // Start starts the ChannelNotifier and all goroutines it needs to carry out its task.
-func (c *ChannelNotifier) Start() error {
+func (c *ChannelNotifier) Start(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	c.cancel = fn.Some(cancel)
+
 	var err error
 	c.started.Do(func() {
 		log.Info("ChannelNotifier starting")
-		err = c.ntfnServer.Start()
+		err = c.ntfnServer.Start(ctx)
 	})
 	return err
 }
@@ -106,6 +113,8 @@ func (c *ChannelNotifier) Stop() error {
 	c.stopped.Do(func() {
 		log.Info("ChannelNotifier shutting down...")
 		defer log.Debug("ChannelNotifier shutdown complete")
+
+		c.cancel.WhenSome(func(fn context.CancelFunc) { fn() })
 
 		err = c.ntfnServer.Stop()
 	})

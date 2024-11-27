@@ -2,6 +2,7 @@ package peer
 
 import (
 	"bytes"
+	"context"
 	crand "crypto/rand"
 	"encoding/binary"
 	"io"
@@ -559,6 +560,8 @@ func (m *mockMessageConn) Close() error {
 // containing necessary handles and mock objects for conducting tests on peer
 // functionalities.
 func createTestPeer(t *testing.T) *peerTestCtx {
+	ctx := context.Background()
+
 	nodeKeyLocator := keychain.KeyLocator{
 		Family: keychain.KeyFamilyNodeKey,
 	}
@@ -655,7 +658,7 @@ func createTestPeer(t *testing.T) *peerTestCtx {
 
 	// TODO(yy): change ChannelNotifier to be an interface.
 	channelNotifier := channelnotifier.New(dbAlice.ChannelStateDB())
-	require.NoError(t, channelNotifier.Start())
+	require.NoError(t, channelNotifier.Start(ctx))
 	t.Cleanup(func() {
 		require.NoError(t, channelNotifier.Stop(),
 			"stop channel notifier failed")

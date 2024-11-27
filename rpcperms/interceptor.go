@@ -9,6 +9,7 @@ import (
 
 	"github.com/btcsuite/btclog/v2"
 	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
+	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/macaroons"
 	"github.com/lightningnetwork/lnd/monitoring"
@@ -189,7 +190,8 @@ type InterceptorChain struct {
 	// middleware crashes.
 	mandatoryMiddleware []string
 
-	quit chan struct{}
+	quit   chan struct{}
+	cancel fn.Option[context.CancelFunc]
 	sync.RWMutex
 }
 
@@ -215,10 +217,13 @@ func NewInterceptorChain(log btclog.Logger, noMacaroons bool,
 
 // Start starts the InterceptorChain, which is needed to start the state
 // subscription server it powers.
-func (r *InterceptorChain) Start() error {
+func (r *InterceptorChain) Start(ctx context.Context) error {
 	var err error
 	r.started.Do(func() {
-		err = r.ntfnServer.Start()
+		ctx, cancel := context.WithCancel(ctx)
+		r.cancel = fn.Some(cancel)
+
+		err = r.ntfnServer.Start(ctx)
 	})
 
 	return err
@@ -229,6 +234,8 @@ func (r *InterceptorChain) Stop() error {
 	var err error
 	r.stopped.Do(func() {
 		close(r.quit)
+		r.cancel.WhenSome(func(fn context.CancelFunc) { fn() })
+
 		err = r.ntfnServer.Stop()
 	})
 
