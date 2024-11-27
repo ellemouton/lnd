@@ -1546,7 +1546,9 @@ func (g *GossipSyncer) FilterGossipMsgs(ctx context.Context,
 
 // ProcessQueryMsg is used by outside callers to pass new channel time series
 // queries to the internal processing goroutine.
-func (g *GossipSyncer) ProcessQueryMsg(msg lnwire.Message, peerQuit <-chan struct{}) error {
+func (g *GossipSyncer) ProcessQueryMsg(ctx context.Context,
+	msg lnwire.Message) error {
+
 	var msgChan chan lnwire.Message
 	switch msg.(type) {
 	case *lnwire.QueryChannelRange, *lnwire.QueryShortChanIDs:
@@ -1570,7 +1572,7 @@ func (g *GossipSyncer) ProcessQueryMsg(msg lnwire.Message, peerQuit <-chan struc
 
 	select {
 	case msgChan <- msg:
-	case <-peerQuit:
+	case <-ctx.Done():
 	case <-g.quit:
 	}
 

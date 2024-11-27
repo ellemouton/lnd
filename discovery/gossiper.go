@@ -842,7 +842,7 @@ func (d *AuthenticatedGossiper) ProcessRemoteAnnouncement(ctx context.Context,
 
 		// If we've found the message target, then we'll dispatch the
 		// message directly to it.
-		syncer.ProcessQueryMsg(m, peer.QuitSignal())
+		syncer.ProcessQueryMsg(ctx, m)
 
 		errChan <- nil
 		return errChan

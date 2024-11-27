@@ -905,11 +905,7 @@ func (p *Brontide) taprootShutdownAllowed() bool {
 }
 
 // QuitSignal is a method that should return a channel which will be sent upon
-// or closed once the backing peer exits. This allows callers using the
-// interface to cancel any processing in the event the backing implementation
-// exits.
-//
-// NOTE: Part of the lnpeer.Peer interface.
+// or closed once the backing peer exits.
 func (p *Brontide) QuitSignal() <-chan struct{} {
 	return p.quit
 }

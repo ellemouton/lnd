@@ -65,11 +65,6 @@ func (m *MockPeer) Address() net.Addr {
 	return args.Get(0).(net.Addr)
 }
 
-func (m *MockPeer) QuitSignal() <-chan struct{} {
-	args := m.Called()
-	return args.Get(0).(<-chan struct{})
-}
-
 func (m *MockPeer) LocalFeatures() *lnwire.FeatureVector {
 	args := m.Called()
 	return args.Get(0).(*lnwire.FeatureVector)
