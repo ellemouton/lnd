@@ -308,10 +308,6 @@ func (n *testNode) SendMessageLazy(sync bool, msgs ...lnwire.Message) error {
 
 func (n *testNode) WipeChannel(_ *wire.OutPoint) {}
 
-func (n *testNode) QuitSignal() <-chan struct{} {
-	return n.shutdownChannel
-}
-
 func (n *testNode) LocalFeatures() *lnwire.FeatureVector {
 	return lnwire.NewFeatureVector(
 		lnwire.NewRawFeatureVector(n.localFeatures...), nil,

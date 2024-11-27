@@ -56,9 +56,6 @@ func (p *mockPeer) PubKey() [33]byte {
 	return pubkey
 }
 func (p *mockPeer) Address() net.Addr { return nil }
-func (p *mockPeer) QuitSignal() <-chan struct{} {
-	return p.quit
-}
 func (p *mockPeer) LocalFeatures() *lnwire.FeatureVector {
 	return nil
 }

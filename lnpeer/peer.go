@@ -58,12 +58,6 @@ type Peer interface {
 	// Address returns the network address of the remote peer.
 	Address() net.Addr
 
-	// QuitSignal is a method that should return a channel which will be
-	// sent upon or closed once the backing peer exits. This allows callers
-	// using the interface to cancel any processing in the event the backing
-	// implementation exits.
-	QuitSignal() <-chan struct{}
-
 	// LocalFeatures returns the set of features that has been advertised by
 	// the us to the remote peer. This allows sub-systems that use this
 	// interface to gate their behavior off the set of negotiated feature

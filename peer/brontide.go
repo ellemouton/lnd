@@ -3,6 +3,7 @@ package peer
 import (
 	"bytes"
 	"container/list"
+	"context"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -575,6 +576,7 @@ type Brontide struct {
 
 	startReady chan struct{}
 	quit       chan struct{}
+	cancel     fn.Option[context.CancelFunc]
 	wg         sync.WaitGroup
 
 	// log is a peer-specific logging instance.
@@ -699,6 +701,9 @@ func (p *Brontide) Start() error {
 	if atomic.AddInt32(&p.started, 1) != 1 {
 		return nil
 	}
+
+	ctx, cancel := context.WithCancel(context.TODO())
+	p.cancel = fn.Some(cancel)
 
 	// Once we've finished starting up the peer, we'll signal to other
 	// goroutines that the they can move forward to tear down the peer, or
@@ -841,7 +846,7 @@ func (p *Brontide) Start() error {
 	go p.queueHandler()
 	go p.writeHandler()
 	go p.channelManager()
-	go p.readHandler()
+	go p.readHandler(ctx)
 
 	// Signal to any external processes that the peer is now active.
 	close(p.activeSignal)
@@ -900,11 +905,7 @@ func (p *Brontide) taprootShutdownAllowed() bool {
 }
 
 // QuitSignal is a method that should return a channel which will be sent upon
-// or closed once the backing peer exits. This allows callers using the
-// interface to cancel any processing in the event the backing implementation
-// exits.
-//
-// NOTE: Part of the lnpeer.Peer interface.
+// or closed once the backing peer exits.
 func (p *Brontide) QuitSignal() <-chan struct{} {
 	return p.quit
 }
@@ -1498,6 +1499,7 @@ func (p *Brontide) Disconnect(reason error) {
 	p.cfg.Conn.Close()
 
 	close(p.quit)
+	p.cancel.WhenSome(func(fn context.CancelFunc) { fn() })
 
 	// If our msg router isn't global (local to this instance), then we'll
 	// stop it. Otherwise, we'll leave it running.
@@ -1591,7 +1593,7 @@ type msgStream struct {
 
 	peer *Brontide
 
-	apply func(lnwire.Message)
+	apply func(context.Context, lnwire.Message)
 
 	startMsg string
 	stopMsg  string
@@ -1603,8 +1605,9 @@ type msgStream struct {
 
 	producerSema chan struct{}
 
-	wg   sync.WaitGroup
-	quit chan struct{}
+	wg     sync.WaitGroup
+	quit   chan struct{}
+	cancel fn.Option[context.CancelFunc]
 }
 
 // newMsgStream creates a new instance of a chanMsgStream for a particular
@@ -1613,7 +1616,7 @@ type msgStream struct {
 // sane value that avoids blocking unnecessarily, but doesn't allow an
 // unbounded amount of memory to be allocated to buffer incoming messages.
 func newMsgStream(p *Brontide, startMsg, stopMsg string, bufSize uint32,
-	apply func(lnwire.Message)) *msgStream {
+	apply func(context.Context, lnwire.Message)) *msgStream {
 
 	stream := &msgStream{
 		peer:         p,
@@ -1637,9 +1640,12 @@ func newMsgStream(p *Brontide, startMsg, stopMsg string, bufSize uint32,
 }
 
 // Start starts the chanMsgStream.
-func (ms *msgStream) Start() {
+func (ms *msgStream) Start(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	ms.cancel = fn.Some(cancel)
+
 	ms.wg.Add(1)
-	go ms.msgConsumer()
+	go ms.msgConsumer(ctx)
 }
 
 // Stop stops the chanMsgStream.
@@ -1647,6 +1653,7 @@ func (ms *msgStream) Stop() {
 	// TODO(roasbeef): signal too?
 
 	close(ms.quit)
+	ms.cancel.WhenSome(func(fn context.CancelFunc) { fn() })
 
 	// Now that we've closed the channel, we'll repeatedly signal the msg
 	// consumer until we've detected that it has exited.
@@ -1660,7 +1667,7 @@ func (ms *msgStream) Stop() {
 
 // msgConsumer is the main goroutine that streams messages from the peer's
 // readHandler directly to the target channel.
-func (ms *msgStream) msgConsumer() {
+func (ms *msgStream) msgConsumer(ctx context.Context) {
 	defer ms.wg.Done()
 	defer peerLog.Tracef(ms.stopMsg)
 	defer atomic.StoreInt32(&ms.streamShutdown, 1)
@@ -1697,7 +1704,7 @@ func (ms *msgStream) msgConsumer() {
 
 		ms.msgCond.L.Unlock()
 
-		ms.apply(msg)
+		ms.apply(ctx, msg)
 
 		// We've just successfully processed an item, so we'll signal
 		// to the producer that a new slot in the buffer. We'll use
@@ -1815,7 +1822,7 @@ func waitUntilLinkActive(p *Brontide,
 func newChanMsgStream(p *Brontide, cid lnwire.ChannelID) *msgStream {
 	var chanLink htlcswitch.ChannelUpdateHandler
 
-	apply := func(msg lnwire.Message) {
+	apply := func(_ context.Context, msg lnwire.Message) {
 		// This check is fine because if the link no longer exists, it will
 		// be removed from the activeChannels map and subsequent messages
 		// shouldn't reach the chan msg stream.
@@ -1854,10 +1861,10 @@ func newChanMsgStream(p *Brontide, cid lnwire.ChannelID) *msgStream {
 // authenticated gossiper. This stream should be used to forward all remote
 // channel announcements.
 func newDiscMsgStream(p *Brontide) *msgStream {
-	apply := func(msg lnwire.Message) {
+	apply := func(ctx context.Context, msg lnwire.Message) {
 		// TODO(yy): `ProcessRemoteAnnouncement` returns an error chan
 		// and we need to process it.
-		p.cfg.AuthGossiper.ProcessRemoteAnnouncement(msg, p)
+		p.cfg.AuthGossiper.ProcessRemoteAnnouncement(ctx, msg, p)
 	}
 
 	return newMsgStream(
@@ -1873,7 +1880,7 @@ func newDiscMsgStream(p *Brontide) *msgStream {
 // properly dispatching the handling of the message to the proper subsystem.
 //
 // NOTE: This method MUST be run as a goroutine.
-func (p *Brontide) readHandler() {
+func (p *Brontide) readHandler(ctx context.Context) {
 	defer p.wg.Done()
 
 	// We'll stop the timer after a new messages is received, and also
@@ -1893,7 +1900,7 @@ func (p *Brontide) readHandler() {
 	p.initGossipSync()
 
 	discStream := newDiscMsgStream(p)
-	discStream.Start()
+	discStream.Start(ctx)
 	defer discStream.Stop()
 out:
 	for atomic.LoadInt32(&p.disconnect) == 0 {
@@ -2081,7 +2088,7 @@ out:
 		if isLinkUpdate {
 			// If this is a channel update, then we need to feed it
 			// into the channel's in-order message stream.
-			p.sendLinkUpdateMsg(targetChan, nextMsg)
+			p.sendLinkUpdateMsg(ctx, targetChan, nextMsg)
 		}
 
 		idleTimer.Reset(idleTimeout)
@@ -4430,7 +4437,9 @@ func (p *Brontide) handleRemovePendingChannel(req *newChannelMsg) {
 
 // sendLinkUpdateMsg sends a message that updates the channel to the
 // channel's message stream.
-func (p *Brontide) sendLinkUpdateMsg(cid lnwire.ChannelID, msg lnwire.Message) {
+func (p *Brontide) sendLinkUpdateMsg(ctx context.Context, cid lnwire.ChannelID,
+	msg lnwire.Message) {
+
 	p.log.Tracef("Sending link update msg=%v", msg.MsgType())
 
 	chanStream, ok := p.activeMsgStreams[cid]
@@ -4439,7 +4448,7 @@ func (p *Brontide) sendLinkUpdateMsg(cid lnwire.ChannelID, msg lnwire.Message) {
 		// it to the map, and finally start it.
 		chanStream = newChanMsgStream(p, cid)
 		p.activeMsgStreams[cid] = chanStream
-		chanStream.Start()
+		chanStream.Start(ctx)
 
 		// Stop the stream when quit.
 		go func() {

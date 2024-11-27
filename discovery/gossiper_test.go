@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"fmt"
 	prand "math/rand"
@@ -848,9 +849,10 @@ func createTestCtx(t *testing.T, startHeight uint32, isChanPeer bool) (
 // the router subsystem.
 func TestProcessAnnouncement(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	timestamp := testTimestamp
-	ctx, err := createTestCtx(t, 0, false)
+	testCtx, err := createTestCtx(t, 0, false)
 	require.NoError(t, err, "can't create context")
 
 	assertSenderExistence := func(sender *btcec.PublicKey, msg msgWithSenders) {
@@ -870,7 +872,9 @@ func TestProcessAnnouncement(t *testing.T) {
 	require.NoError(t, err, "can't create channel announcement")
 
 	select {
-	case err = <-ctx.gossiper.ProcessRemoteAnnouncement(ca, nodePeer):
+	case err = <-testCtx.gossiper.ProcessRemoteAnnouncement(
+		ctx, ca, nodePeer,
+	):
 	case <-time.After(2 * time.Second):
 		t.Fatal("remote announcement not processed")
 	}
@@ -879,13 +883,13 @@ func TestProcessAnnouncement(t *testing.T) {
 	// The announcement should be broadcast and included in our local view
 	// of the graph.
 	select {
-	case msg := <-ctx.broadcastedMessage:
+	case msg := <-testCtx.broadcastedMessage:
 		assertSenderExistence(nodePeer.IdentityKey(), msg)
 	case <-time.After(2 * trickleDelay):
 		t.Fatal("announcement wasn't proceeded")
 	}
 
-	if len(ctx.router.infos) != 1 {
+	if len(testCtx.router.infos) != 1 {
 		t.Fatalf("edge wasn't added to router: %v", err)
 	}
 
@@ -896,7 +900,9 @@ func TestProcessAnnouncement(t *testing.T) {
 
 	// We send an invalid channel update and expect it to fail.
 	select {
-	case err = <-ctx.gossiper.ProcessRemoteAnnouncement(ua, nodePeer):
+	case err = <-testCtx.gossiper.ProcessRemoteAnnouncement(
+		ctx, ua, nodePeer,
+	):
 	case <-time.After(2 * time.Second):
 		t.Fatal("remote announcement not processed")
 	}
@@ -905,7 +911,7 @@ func TestProcessAnnouncement(t *testing.T) {
 
 	// We should not broadcast the channel update.
 	select {
-	case <-ctx.broadcastedMessage:
+	case <-testCtx.broadcastedMessage:
 		t.Fatal("gossiper should not have broadcast channel update")
 	case <-time.After(2 * trickleDelay):
 	}
@@ -916,7 +922,9 @@ func TestProcessAnnouncement(t *testing.T) {
 	require.NoError(t, err, "can't create update announcement")
 
 	select {
-	case err = <-ctx.gossiper.ProcessRemoteAnnouncement(ua, nodePeer):
+	case err = <-testCtx.gossiper.ProcessRemoteAnnouncement(
+		ctx, ua, nodePeer,
+	):
 	case <-time.After(2 * time.Second):
 		t.Fatal("remote announcement not processed")
 	}
@@ -924,13 +932,13 @@ func TestProcessAnnouncement(t *testing.T) {
 
 	// The channel policy should be broadcast to the rest of the network.
 	select {
-	case msg := <-ctx.broadcastedMessage:
+	case msg := <-testCtx.broadcastedMessage:
 		assertSenderExistence(nodePeer.IdentityKey(), msg)
 	case <-time.After(2 * trickleDelay):
 		t.Fatal("announcement wasn't proceeded")
 	}
 
-	if len(ctx.router.edges) != 1 {
+	if len(testCtx.router.edges) != 1 {
 		t.Fatalf("edge update wasn't added to router: %v", err)
 	}
 
@@ -939,7 +947,9 @@ func TestProcessAnnouncement(t *testing.T) {
 	require.NoError(t, err, "can't create node announcement")
 
 	select {
-	case err = <-ctx.gossiper.ProcessRemoteAnnouncement(na, nodePeer):
+	case err = <-testCtx.gossiper.ProcessRemoteAnnouncement(
+		ctx, na, nodePeer,
+	):
 	case <-time.After(2 * time.Second):
 		t.Fatal("remote announcement not processed")
 	}
@@ -948,13 +958,13 @@ func TestProcessAnnouncement(t *testing.T) {
 	// It should also be broadcast to the network and included in our local
 	// view of the graph.
 	select {
-	case msg := <-ctx.broadcastedMessage:
+	case msg := <-testCtx.broadcastedMessage:
 		assertSenderExistence(nodePeer.IdentityKey(), msg)
 	case <-time.After(2 * trickleDelay):
 		t.Fatal("announcement wasn't proceeded")
 	}
 
-	if len(ctx.router.nodes) != 1 {
+	if len(testCtx.router.nodes) != 1 {
 		t.Fatalf("node wasn't added to router: %v", err)
 	}
 }
@@ -963,10 +973,11 @@ func TestProcessAnnouncement(t *testing.T) {
 // propagated to the router subsystem.
 func TestPrematureAnnouncement(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	timestamp := testTimestamp
 
-	ctx, err := createTestCtx(t, 0, false)
+	tCtx, err := createTestCtx(t, 0, false)
 	require.NoError(t, err, "can't create context")
 
 	_, err = createNodeAnnouncement(remoteKeyPriv1, timestamp)
@@ -982,12 +993,12 @@ func TestPrematureAnnouncement(t *testing.T) {
 	require.NoError(t, err, "can't create channel announcement")
 
 	select {
-	case <-ctx.gossiper.ProcessRemoteAnnouncement(ca, nodePeer):
+	case <-tCtx.gossiper.ProcessRemoteAnnouncement(ctx, ca, nodePeer):
 	case <-time.After(time.Second):
 		t.Fatal("announcement was not processed")
 	}
 
-	if len(ctx.router.infos) != 0 {
+	if len(tCtx.router.infos) != 0 {
 		t.Fatal("edge was added to router")
 	}
 }
@@ -2132,10 +2143,11 @@ func TestForwardPrivateNodeAnnouncement(t *testing.T) {
 // zombie edges.
 func TestRejectZombieEdge(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	// We'll start by creating our test context with a batch of
 	// announcements.
-	ctx, err := createTestCtx(t, 0, false)
+	tCtx, err := createTestCtx(t, 0, false)
 	require.NoError(t, err, "unable to create test context")
 
 	batch, err := createRemoteAnnouncements(0)
@@ -2148,8 +2160,8 @@ func TestRejectZombieEdge(t *testing.T) {
 	processAnnouncements := func(isZombie bool) {
 		t.Helper()
 
-		errChan := ctx.gossiper.ProcessRemoteAnnouncement(
-			batch.chanAnn, remotePeer,
+		errChan := tCtx.gossiper.ProcessRemoteAnnouncement(
+			ctx, batch.chanAnn, remotePeer,
 		)
 		select {
 		case err := <-errChan:
@@ -2165,7 +2177,7 @@ func TestRejectZombieEdge(t *testing.T) {
 			t.Fatal("expected to process channel announcement")
 		}
 		select {
-		case <-ctx.broadcastedMessage:
+		case <-tCtx.broadcastedMessage:
 			if isZombie {
 				t.Fatal("expected to not broadcast zombie " +
 					"channel announcement")
@@ -2177,7 +2189,7 @@ func TestRejectZombieEdge(t *testing.T) {
 			}
 		}
 
-		errChan = ctx.gossiper.ProcessRemoteAnnouncement(
+		errChan = tCtx.gossiper.ProcessRemoteAnnouncement(
 			batch.chanUpdAnn2, remotePeer,
 		)
 		select {
@@ -2194,7 +2206,7 @@ func TestRejectZombieEdge(t *testing.T) {
 			t.Fatal("expected to process channel update")
 		}
 		select {
-		case <-ctx.broadcastedMessage:
+		case <-tCtx.broadcastedMessage:
 			if isZombie {
 				t.Fatal("expected to not broadcast zombie " +
 					"channel update")
@@ -2211,7 +2223,7 @@ func TestRejectZombieEdge(t *testing.T) {
 	// zombie within the router. This should reject any announcements for
 	// this edge while it remains as a zombie.
 	chanID := batch.chanAnn.ShortChannelID
-	err = ctx.router.MarkEdgeZombie(
+	err = tCtx.router.MarkEdgeZombie(
 		chanID, batch.chanAnn.NodeID1, batch.chanAnn.NodeID2,
 	)
 	if err != nil {
@@ -2222,7 +2234,7 @@ func TestRejectZombieEdge(t *testing.T) {
 
 	// If we then mark the edge as live, the edge's zombie status should be
 	// overridden and the announcements should be processed.
-	if err := ctx.router.MarkEdgeLive(chanID); err != nil {
+	if err := tCtx.router.MarkEdgeLive(chanID); err != nil {
 		t.Fatalf("unable mark channel %v as zombie: %v", chanID, err)
 	}
 

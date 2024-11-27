@@ -287,3 +287,8 @@ issues:
         # if the returned value doesn't match the type, so there's no need to
         # check the convert.
         - forcetypeassert
+
+    # Allow longer log lines.
+    - linters:
+        - lll
+      source: "^log\\."
