@@ -817,10 +817,8 @@ func (d *AuthenticatedGossiper) stop() {
 // then added to a queue for batched trickled announcement to all connected
 // peers.  Remote channel announcements should contain the announcement proof
 // and be fully validated.
-func (d *AuthenticatedGossiper) ProcessRemoteAnnouncement(msg lnwire.Message,
-	peer lnpeer.Peer) chan error {
-
-	ctx := context.TODO()
+func (d *AuthenticatedGossiper) ProcessRemoteAnnouncement(ctx context.Context,
+	msg lnwire.Message, peer lnpeer.Peer) chan error {
 
 	errChan := make(chan error, 1)
 
@@ -904,7 +902,7 @@ func (d *AuthenticatedGossiper) ProcessRemoteAnnouncement(msg lnwire.Message,
 
 	// If the peer that sent us this error is quitting, then we don't need
 	// to send back an error and can return immediately.
-	case <-peer.QuitSignal():
+	case <-ctx.Done():
 		return nil
 	case <-d.quit:
 		nMsg.err <- ErrGossiperShuttingDown
