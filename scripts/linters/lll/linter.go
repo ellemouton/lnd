@@ -11,6 +11,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -26,6 +27,14 @@ const (
 	linterName               = "lll"
 	goCommentDirectivePrefix = "//go:"
 )
+
+// Simplified regex for log detection
+var logRegex = regexp.MustCompile(`^\s*.*(L|l)og\.`)
+
+func isLogLine(line string, inLogCall *bool) bool {
+
+	return false
+}
 
 // New creates a new lll linter from the given settings. It satisfies the
 // signature required by the golangci-lint linter for plugins.
@@ -104,6 +113,7 @@ func getLLLIssuesForFile(filename string, maxLineLen int, tabSpaces string) (
 		res                []result.Issue
 		lineNumber         int
 		multiImportEnabled bool
+		multiLinedLog      bool
 	)
 
 	// Scan over each line.
@@ -140,6 +150,21 @@ func getLLLIssuesForFile(filename string, maxLineLen int, tabSpaces string) (
 		if multiImportEnabled {
 			if line == ")" {
 				multiImportEnabled = false
+			}
+
+			continue
+		}
+
+		// Check if the line matches the log pattern.
+		if logRegex.MatchString(line) {
+			multiLinedLog = !strings.HasSuffix(line, ")")
+			continue
+		}
+
+		if multiLinedLog {
+			// Check for the end of a multiline log call
+			if strings.HasSuffix(line, ")") {
+				multiLinedLog = false
 			}
 
 			continue
