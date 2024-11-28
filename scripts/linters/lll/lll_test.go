@@ -2,15 +2,11 @@ package main
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-)
-
-const (
-	defaultMaxLineLen       = 80
-	defaultTabWidthInSpaces = 8
 )
 
 // TestGetLLLIssuesForFile tests the line-too-long linter.
@@ -36,9 +32,8 @@ func TestGetLLLIssuesForFile(t *testing.T) {
 				fmt.Println("Short line")`,
 		},
 		{
-			name: "Directive ignored",
-			content: ` 
-				//go:generate something	very very very very very very very very very long and complex here wowowow`,
+			name:    "Directive ignored",
+			content: `//go:generate something very very very very very very very very very long and complex here wowowow`,
 		},
 		{
 			name:    "Long single line import",
@@ -68,7 +63,7 @@ func TestGetLLLIssuesForFile(t *testing.T) {
 			content: `
 				log.Infof("This is a very long log line but since it is a log line, it should be skipped by the linter.")
 				fmt.Println("This is a very long line that exceeds the maximum length and should be flagged by the linter.")`,
-			expectedIssue: "the line is 124 characters long, which exceeds the maximum of 80 characters.",
+			expectedIssue: "the line is 140 characters long, which exceeds the maximum of 80 characters.",
 		},
 		{
 			name: "Multi-line log",
@@ -92,6 +87,7 @@ func TestGetLLLIssuesForFile(t *testing.T) {
 	}
 
 	tabSpaces := strings.Repeat(" ", defaultTabWidthInSpaces)
+	logRegex := regexp.MustCompile(defaultLogRegex)
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -102,7 +98,7 @@ func TestGetLLLIssuesForFile(t *testing.T) {
 
 			// Run the linter on the file.
 			issues, err := getLLLIssuesForFile(
-				tmpFile, defaultMaxLineLen, tabSpaces,
+				tmpFile, defaultMaxLineLen, tabSpaces, logRegex,
 			)
 			require.NoError(t, err)
 

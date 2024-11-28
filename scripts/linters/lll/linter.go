@@ -16,7 +16,6 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/golangci/golangci-lint/pkg/config"
 	"github.com/golangci/golangci-lint/pkg/goanalysis"
 	"github.com/golangci/golangci-lint/pkg/lint/linter"
 	"github.com/golangci/golangci-lint/pkg/result"
@@ -24,21 +23,34 @@ import (
 )
 
 const (
-	linterName               = "lll"
+	linterName               = "ll"
 	goCommentDirectivePrefix = "//go:"
+
+	defaultMaxLineLen       = 80
+	defaultTabWidthInSpaces = 8
+	defaultLogRegex         = `^\s*.*(L|l)og\.`
 )
 
-// Simplified regex for log detection
-var logRegex = regexp.MustCompile(`^\s*.*(L|l)og\.`)
-
-func isLogLine(line string, inLogCall *bool) bool {
-
-	return false
+type Config struct {
+	LineLength int    `mapstructure:"line-length"`
+	TabWidth   int    `mapstructure:"tab-width"`
+	LogRegex   string `mapstructure:"log-regex"`
 }
 
 // New creates a new lll linter from the given settings. It satisfies the
 // signature required by the golangci-lint linter for plugins.
-func New(settings *config.LllSettings) *goanalysis.Linter {
+func New(cfg *Config) *goanalysis.Linter {
+	// Fill in default config values if they are not set.
+	if cfg.LineLength == 0 {
+		cfg.LineLength = defaultMaxLineLen
+	}
+	if cfg.TabWidth == 0 {
+		cfg.TabWidth = defaultTabWidthInSpaces
+	}
+	if cfg.LogRegex == "" {
+		cfg.LogRegex = defaultLogRegex
+	}
+
 	var (
 		mu        sync.Mutex
 		resIssues []goanalysis.Issue
@@ -48,7 +60,7 @@ func New(settings *config.LllSettings) *goanalysis.Linter {
 		Name: linterName,
 		Doc:  goanalysis.TheOnlyanalyzerDoc,
 		Run: func(pass *analysis.Pass) (any, error) {
-			issues, err := runLll(pass, settings)
+			issues, err := runLll(pass, cfg)
 			if err != nil {
 				return nil, err
 			}
@@ -73,18 +85,19 @@ func New(settings *config.LllSettings) *goanalysis.Linter {
 	}).WithLoadMode(goanalysis.LoadModeSyntax)
 }
 
-func runLll(pass *analysis.Pass, settings *config.LllSettings) (
-	[]goanalysis.Issue, error) {
+func runLll(pass *analysis.Pass, cfg *Config) ([]goanalysis.Issue,
+	error) {
 
 	var (
+		logRegex  = regexp.MustCompile(cfg.LogRegex)
 		fileNames = getFileNames(pass)
-		spaces    = strings.Repeat(" ", settings.TabWidth)
+		spaces    = strings.Repeat(" ", cfg.TabWidth)
 		issues    []goanalysis.Issue
 	)
 
 	for _, f := range fileNames {
 		lintIssues, err := getLLLIssuesForFile(
-			f, settings.LineLength, spaces,
+			f, cfg.LineLength, spaces, logRegex,
 		)
 		if err != nil {
 			return nil, err
@@ -100,8 +113,8 @@ func runLll(pass *analysis.Pass, settings *config.LllSettings) (
 	return issues, nil
 }
 
-func getLLLIssuesForFile(filename string, maxLineLen int, tabSpaces string) (
-	[]result.Issue, error) {
+func getLLLIssuesForFile(filename string, maxLineLen int, tabSpaces string,
+	logRegex *regexp.Regexp) ([]result.Issue, error) {
 
 	f, err := os.Open(filename)
 	if err != nil {
