@@ -125,7 +125,12 @@ func getLLLIssuesForFile(filename string, maxLineLen int, tabSpaces string) (
 		// be wrapped onto a new line. If this is a single line import
 		// we can skip the line entirely. If this is a multi-line import
 		// skip until the closing bracket.
-		if strings.HasPrefix(line, "import") {
+		//
+		// NOTE: We trim the line space around the line here purely for
+		// the purpose of being able to test this part of the linter
+		// without the risk of the `gosimports` tool reformatting the
+		// test case and removing the import.
+		if strings.HasPrefix(strings.TrimSpace(line), "import") {
 			multiImportEnabled = strings.HasSuffix(line, "(")
 			continue
 		}
