@@ -449,3 +449,12 @@ func extractKVDBRTx(tx session.RTx) (kvdb.RTx, error) {
 
 	return kvdbTx, nil
 }
+
+func (s *DBSource) SelfNode() (route.Vertex, error) {
+	node, err := s.db.SourceNode()
+	if err != nil {
+		return route.Vertex{}, err
+	}
+
+	return route.NewVertexFromBytes(node.PubKeyBytes[:])
+}

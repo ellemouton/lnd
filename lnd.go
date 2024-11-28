@@ -144,8 +144,10 @@ var errStreamIsolationWithProxySkip = errors.New(
 // validated main configuration struct and an optional listener config struct.
 // This function starts all main system components then blocks until a signal
 // is received on the shutdownChan at which point everything is shut down again.
+// If a providers channel is provided, LND will send back a result on it once
+// all the necessary providers are ready.
 func Main(cfg *Config, lisCfg ListenerCfg, implCfg *ImplementationCfg,
-	interceptor signal.Interceptor) error {
+	interceptor signal.Interceptor, providers chan<- Providers) error {
 
 	defer func() {
 		ltndLog.Info("Shutdown complete\n")
@@ -610,6 +612,11 @@ func Main(cfg *Config, lisCfg ListenerCfg, implCfg *ImplementationCfg,
 	)
 	if err != nil {
 		return mkErr("unable to create server: %v", err)
+	}
+
+	select {
+	case providers <- server:
+	default:
 	}
 
 	// Set up an autopilot manager from the current config. This will be
