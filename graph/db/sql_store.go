@@ -23,6 +23,9 @@ type GossipV2Store interface {
 	HasNode(ctx context.Context, pubKey route.Vertex) (uint32, bool, error)
 	LookupAlias(ctx context.Context, pubKey route.Vertex) (string, error)
 	DeleteNode(ctx context.Context, pubKey route.Vertex) error
+
+	SetSourceNode(ctx context.Context, node *models.Node2) error
+	GetSourceNode(ctx context.Context) (*models.Node2, error)
 }
 
 // SQLQueries is a subset of the sqlc.Querier interface containing all the
@@ -45,6 +48,9 @@ type SQLQueries interface {
 	InsertIPV6NodeAddress(ctx context.Context, arg sqlc.InsertIPV6NodeAddressParams) error
 	InsertTorV3NodeAddress(ctx context.Context, arg sqlc.InsertTorV3NodeAddressParams) error
 	DeleteNodeAddress(ctx context.Context, arg sqlc.DeleteNodeAddressParams) error
+
+	GetSourceNode(ctx context.Context) (int64, error)
+	SetSourceNode(ctx context.Context, nodeID int64) error
 }
 
 // BatchedSQLQueries is a version of the SQLQueries that's capable of batched
@@ -71,30 +77,10 @@ func NewSQLStore(db BatchedSQLQueries, clock clock.Clock) *SQLStore {
 }
 
 func (s *SQLStore) AddNode(ctx context.Context, node *models.Node2) error {
-
 	var writeTxOpts SQLQueriesTxOptions
 	err := s.db.ExecTx(ctx, &writeTxOpts, func(db SQLQueries) error {
-		// First, check if this node already exists.
-		dbNode, err := db.GetNodeByPubKey(ctx, node.PubKey[:])
-		switch {
-		// The node does not yet exist in the DB, so we insert a fresh
-		// record.
-		case errors.Is(err, sql.ErrNoRows):
-			_, err = insertNode(ctx, db, node)
-			if err != nil {
-				return fmt.Errorf("unable to insert new "+
-					"node: %w", err)
-			}
-
-			return nil
-
-		case err != nil:
-			return fmt.Errorf("unable to fetch node: %w", err)
-
-		// The node already exists, so we update the existing node info.
-		default:
-			return updateNode(ctx, db, dbNode.ID, node)
-		}
+		_, err := upsertNode(ctx, db, node)
+		return err
 	}, func() {})
 	if err != nil {
 		return fmt.Errorf("unable to insert node: %w", err)
@@ -190,45 +176,137 @@ func (s *SQLStore) GetNode(ctx context.Context, pubKey route.Vertex) (
 		node   *models.Node2
 	)
 	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
-		dbNode, err := db.GetNodeByPubKey(ctx, pubKey[:])
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrGraphNodeNotFound
-		} else if err != nil {
-			return fmt.Errorf("unable to fetch node: %w", err)
-		}
-
-		var pub [33]byte
-		copy(pub[:], dbNode.PubKey)
-
-		node = &models.Node2{
-			PubKey:                     pub,
-			Alias:                      dbNode.Alias.String,
-			BlockHeight:                uint32(dbNode.BlockHeight.Int32),
-			SerialisedWireAnnouncement: dbNode.SerialisedAnnouncement,
-		}
-
-		// Fetch the node's features.
-		node.Features, err = getNodeFeatures(ctx, db, dbNode.ID)
-		if err != nil {
-			return fmt.Errorf("unable to fetch node(%d) "+
-				"features: %w", dbNode.ID, err)
-		}
-
-		// Fetch the node's addresses.
-		node.Addresses, err = getNodeAddresses(ctx, db, dbNode.ID)
-		if err != nil {
-			return fmt.Errorf("unable to fetch node(%d) "+
-				"addresses: %w", dbNode.ID, err)
-		}
-
-		return nil
-
+		var err error
+		node, err = fetchNodeByPubKey(ctx, db, pubKey)
+		return err
 	}, func() {})
 	if err != nil {
 		return nil, fmt.Errorf("unable to fetch node: %w", err)
 	}
 
 	return node, nil
+}
+
+func (s *SQLStore) SetSourceNode(ctx context.Context, node *models.Node2) error {
+	var writeTxOpts SQLQueriesTxOptions
+	err := s.db.ExecTx(ctx, &writeTxOpts, func(db SQLQueries) error {
+		id, err := upsertNode(ctx, db, node)
+		if err != nil {
+			return err
+		}
+
+		return db.SetSourceNode(ctx, id)
+	}, func() {})
+	if err != nil {
+		return fmt.Errorf("unable to set source node: %w", err)
+	}
+
+	return nil
+}
+
+func (s *SQLStore) GetSourceNode(ctx context.Context) (*models.Node2, error) {
+	var (
+		readTx = NewSQLQueryReadTx()
+		node   *models.Node2
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+		id, err := db.GetSourceNode(ctx)
+		if err != nil {
+			return err
+		}
+
+		node, err = fetchNodeByID(ctx, db, id)
+		return err
+	}, func() {})
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch node: %w", err)
+	}
+
+	return node, nil
+
+}
+
+func fetchNodeByID(ctx context.Context, db SQLQueries, id int64) (*models.Node2,
+	error) {
+
+	dbNode, err := db.GetNode(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrGraphNodeNotFound
+	} else if err != nil {
+		return nil, fmt.Errorf("unable to fetch node: %w", err)
+	}
+
+	return buildNode(ctx, db, &dbNode)
+}
+
+func fetchNodeByPubKey(ctx context.Context, db SQLQueries,
+	pubKey route.Vertex) (*models.Node2, error) {
+
+	dbNode, err := db.GetNodeByPubKey(ctx, pubKey[:])
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrGraphNodeNotFound
+	} else if err != nil {
+		return nil, fmt.Errorf("unable to fetch node: %w", err)
+	}
+
+	return buildNode(ctx, db, &dbNode)
+}
+
+func buildNode(ctx context.Context, db SQLQueries, dbNode *sqlc.Node) (
+	*models.Node2, error) {
+
+	var pub [33]byte
+	copy(pub[:], dbNode.PubKey)
+
+	node := &models.Node2{
+		PubKey:                     pub,
+		Alias:                      dbNode.Alias.String,
+		BlockHeight:                uint32(dbNode.BlockHeight.Int32),
+		SerialisedWireAnnouncement: dbNode.SerialisedAnnouncement,
+	}
+
+	// Fetch the node's features.
+	var err error
+	node.Features, err = getNodeFeatures(ctx, db, dbNode.ID)
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch node(%d) "+
+			"features: %w", dbNode.ID, err)
+	}
+
+	// Fetch the node's addresses.
+	node.Addresses, err = getNodeAddresses(ctx, db, dbNode.ID)
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch node(%d) "+
+			"addresses: %w", dbNode.ID, err)
+	}
+
+	return node, nil
+}
+
+func upsertNode(ctx context.Context, db SQLQueries, node *models.Node2) (int64,
+	error) {
+
+	// First, check if this node already exists.
+	dbNode, err := db.GetNodeByPubKey(ctx, node.PubKey[:])
+	switch {
+	// The node does not yet exist in the DB, so we insert a fresh
+	// record.
+	case errors.Is(err, sql.ErrNoRows):
+		id, err := insertNode(ctx, db, node)
+		if err != nil {
+			return 0, fmt.Errorf("unable to insert new "+
+				"node: %w", err)
+		}
+
+		return id, nil
+
+	case err != nil:
+		return 0, fmt.Errorf("unable to fetch node: %w", err)
+
+	// The node already exists, so we update the existing node info.
+	default:
+		return dbNode.ID, updateNode(ctx, db, dbNode.ID, node)
+	}
 }
 
 func getNodeFeatures(ctx context.Context, db SQLQueries,

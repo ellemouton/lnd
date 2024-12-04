@@ -115,3 +115,7 @@ type NodeFeature struct {
 	NodeID  int64
 	Feature int32
 }
+
+type SourceNode struct {
+	NodeID int64
+}

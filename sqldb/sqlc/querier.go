@@ -34,6 +34,7 @@ type Querier interface {
 	GetNodeByPubKey(ctx context.Context, pubKey []byte) (Node, error)
 	GetNodeFeatures(ctx context.Context, nodeID int64) ([]NodeFeature, error)
 	GetNodeIDByPubKey(ctx context.Context, pubKey []byte) (int64, error)
+	GetSourceNode(ctx context.Context) (int64, error)
 	InsertAMPSubInvoiceHTLC(ctx context.Context, arg InsertAMPSubInvoiceHTLCParams) error
 	InsertIPV4NodeAddress(ctx context.Context, arg InsertIPV4NodeAddressParams) error
 	InsertIPV6NodeAddress(ctx context.Context, arg InsertIPV6NodeAddressParams) error
@@ -51,6 +52,7 @@ type Querier interface {
 	OnInvoiceCanceled(ctx context.Context, arg OnInvoiceCanceledParams) error
 	OnInvoiceCreated(ctx context.Context, arg OnInvoiceCreatedParams) error
 	OnInvoiceSettled(ctx context.Context, arg OnInvoiceSettledParams) error
+	SetSourceNode(ctx context.Context, nodeID int64) error
 	UpdateAMPSubInvoiceHTLCPreimage(ctx context.Context, arg UpdateAMPSubInvoiceHTLCPreimageParams) (sql.Result, error)
 	UpdateAMPSubInvoiceState(ctx context.Context, arg UpdateAMPSubInvoiceStateParams) error
 	UpdateInvoiceAmountPaid(ctx context.Context, arg UpdateInvoiceAmountPaidParams) (sql.Result, error)

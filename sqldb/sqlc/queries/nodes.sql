@@ -84,3 +84,11 @@ DELETE FROM node_addresses
 WHERE node_id = $1
   AND address = $2;
 
+-- name: SetSourceNode :exec
+INSERT INTO source_node (node_id)
+VALUES ($1)
+ON CONFLICT (node_id) DO NOTHING;
+
+-- name: GetSourceNode :one
+SELECT node_id
+FROM source_node;

@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS nodes (
     serialised_announcement BYTEA
 );
 
+CREATE INDEX IF NOT EXISTS nodes_block_height_idx ON nodes(block_height);
+
 -- node_features contains the feature bits of a node.
 CREATE TABLE IF NOT EXISTS node_features (
     -- The node id this feature belongs to.
@@ -49,4 +51,8 @@ CREATE TABLE IF NOT EXISTS node_addresses(
     address_type INTEGER NOT NULL REFERENCES node_address_types(id) ON DELETE CASCADE,
 
     address TEXT NOT NULL
+);
+
+CREATE TABLE source_node (
+    node_id BIGINT PRIMARY KEY REFERENCES nodes(id)
 );

@@ -174,6 +174,18 @@ func (q *Queries) GetNodeIDByPubKey(ctx context.Context, pubKey []byte) (int64, 
 	return id, err
 }
 
+const getSourceNode = `-- name: GetSourceNode :one
+SELECT node_id
+FROM source_node
+`
+
+func (q *Queries) GetSourceNode(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getSourceNode)
+	var node_id int64
+	err := row.Scan(&node_id)
+	return node_id, err
+}
+
 const insertIPV4NodeAddress = `-- name: InsertIPV4NodeAddress :exec
 INSERT INTO node_addresses (
     node_id, address_type, address
@@ -270,6 +282,17 @@ type InsertTorV3NodeAddressParams struct {
 
 func (q *Queries) InsertTorV3NodeAddress(ctx context.Context, arg InsertTorV3NodeAddressParams) error {
 	_, err := q.db.ExecContext(ctx, insertTorV3NodeAddress, arg.NodeID, arg.Address)
+	return err
+}
+
+const setSourceNode = `-- name: SetSourceNode :exec
+INSERT INTO source_node (node_id)
+VALUES ($1)
+ON CONFLICT (node_id) DO NOTHING
+`
+
+func (q *Queries) SetSourceNode(ctx context.Context, nodeID int64) error {
+	_, err := q.db.ExecContext(ctx, setSourceNode, nodeID)
 	return err
 }
 

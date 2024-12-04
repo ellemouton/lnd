@@ -175,6 +175,27 @@ func testNodeCRUD(t *testing.T, makeDB func(t *testing.T) GossipV2Store) {
 	fetchedNode, err = db.GetNode(ctx, testPub)
 	require.NoError(t, err)
 	assertNodesEqual(t, shellNode, fetchedNode)
+
+	// Delete the node once more and ensure that it's no longer found.
+	require.NoError(t, db.DeleteNode(ctx, testPub))
+	err = db.DeleteNode(ctx, testPub)
+	require.ErrorIs(t, err, ErrGraphNodeNotFound)
+
+	// We'll also test the setting of the source node.
+	require.NoError(t, db.SetSourceNode(ctx, node))
+	sourceNode, err := db.GetSourceNode(ctx)
+	require.NoError(t, err)
+	assertNodesEqual(t, node, sourceNode)
+
+	// Setting the source node again should be ok as long as the public
+	// key of the node is the same. We'll update some node fields to
+	// ensure that the rest works as expected.
+	node.Addresses = []net.Addr{testTorAddr}
+	require.NoError(t, db.SetSourceNode(ctx, node))
+
+	sourceNode, err = db.GetSourceNode(ctx)
+	require.NoError(t, err)
+	assertNodesEqual(t, node, sourceNode)
 }
 
 func assertNodesEqual(t *testing.T, n1, n2 *models.Node2) {
