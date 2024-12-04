@@ -12,6 +12,9 @@ import (
 type Querier interface {
 	DeleteCanceledInvoices(ctx context.Context) (sql.Result, error)
 	DeleteInvoice(ctx context.Context, arg DeleteInvoiceParams) (sql.Result, error)
+	DeleteNode(ctx context.Context, id int64) error
+	DeleteNodeAddress(ctx context.Context, arg DeleteNodeAddressParams) error
+	DeleteNodeFeature(ctx context.Context, arg DeleteNodeFeatureParams) error
 	FetchAMPSubInvoiceHTLCs(ctx context.Context, arg FetchAMPSubInvoiceHTLCsParams) ([]FetchAMPSubInvoiceHTLCsRow, error)
 	FetchAMPSubInvoices(ctx context.Context, arg FetchAMPSubInvoicesParams) ([]AmpSubInvoice, error)
 	FetchSettledAMPSubInvoices(ctx context.Context, arg FetchSettledAMPSubInvoicesParams) ([]FetchSettledAMPSubInvoicesRow, error)
@@ -25,11 +28,22 @@ type Querier interface {
 	GetInvoiceFeatures(ctx context.Context, invoiceID int64) ([]InvoiceFeature, error)
 	GetInvoiceHTLCCustomRecords(ctx context.Context, invoiceID int64) ([]GetInvoiceHTLCCustomRecordsRow, error)
 	GetInvoiceHTLCs(ctx context.Context, invoiceID int64) ([]InvoiceHtlc, error)
+	GetNode(ctx context.Context, id int64) (Node, error)
+	GetNodeAddresses(ctx context.Context, nodeID int64) ([]NodeAddress, error)
+	GetNodeAliasByPubKey(ctx context.Context, pubKey []byte) (sql.NullString, error)
+	GetNodeByPubKey(ctx context.Context, pubKey []byte) (Node, error)
+	GetNodeFeatures(ctx context.Context, nodeID int64) ([]NodeFeature, error)
+	GetNodeIDByPubKey(ctx context.Context, pubKey []byte) (int64, error)
 	InsertAMPSubInvoiceHTLC(ctx context.Context, arg InsertAMPSubInvoiceHTLCParams) error
+	InsertIPV4NodeAddress(ctx context.Context, arg InsertIPV4NodeAddressParams) error
+	InsertIPV6NodeAddress(ctx context.Context, arg InsertIPV6NodeAddressParams) error
 	InsertInvoice(ctx context.Context, arg InsertInvoiceParams) (int64, error)
 	InsertInvoiceFeature(ctx context.Context, arg InsertInvoiceFeatureParams) error
 	InsertInvoiceHTLC(ctx context.Context, arg InsertInvoiceHTLCParams) (int64, error)
 	InsertInvoiceHTLCCustomRecord(ctx context.Context, arg InsertInvoiceHTLCCustomRecordParams) error
+	InsertNode(ctx context.Context, arg InsertNodeParams) (int64, error)
+	InsertNodeFeature(ctx context.Context, arg InsertNodeFeatureParams) error
+	InsertTorV3NodeAddress(ctx context.Context, arg InsertTorV3NodeAddressParams) error
 	NextInvoiceSettleIndex(ctx context.Context) (int64, error)
 	OnAMPSubInvoiceCanceled(ctx context.Context, arg OnAMPSubInvoiceCanceledParams) error
 	OnAMPSubInvoiceCreated(ctx context.Context, arg OnAMPSubInvoiceCreatedParams) error
@@ -43,6 +57,7 @@ type Querier interface {
 	UpdateInvoiceHTLC(ctx context.Context, arg UpdateInvoiceHTLCParams) error
 	UpdateInvoiceHTLCs(ctx context.Context, arg UpdateInvoiceHTLCsParams) error
 	UpdateInvoiceState(ctx context.Context, arg UpdateInvoiceStateParams) (sql.Result, error)
+	UpdateNode(ctx context.Context, arg UpdateNodeParams) error
 	UpsertAMPSubInvoice(ctx context.Context, arg UpsertAMPSubInvoiceParams) (sql.Result, error)
 }
 

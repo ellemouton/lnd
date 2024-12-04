@@ -91,3 +91,27 @@ type InvoiceSequence struct {
 	Name         string
 	CurrentValue int64
 }
+
+type Node struct {
+	ID                     int64
+	PubKey                 []byte
+	BlockHeight            sql.NullInt32
+	Alias                  sql.NullString
+	SerialisedAnnouncement []byte
+}
+
+type NodeAddress struct {
+	NodeID      int64
+	AddressType int32
+	Address     string
+}
+
+type NodeAddressType struct {
+	ID          int32
+	Description string
+}
+
+type NodeFeature struct {
+	NodeID  int64
+	Feature int32
+}

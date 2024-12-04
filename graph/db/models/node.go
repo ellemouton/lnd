@@ -131,3 +131,17 @@ func (l *LightningNode) NodeAnnouncement(signed bool) (*lnwire.NodeAnnouncement,
 
 	return nodeAnn, nil
 }
+
+type Node2 struct {
+	PubKey [33]byte
+
+	Features *lnwire.FeatureVector
+
+	Alias string
+
+	BlockHeight uint32
+
+	Addresses []net.Addr
+
+	SerialisedWireAnnouncement []byte
+}

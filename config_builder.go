@@ -901,7 +901,8 @@ func (d *RPCSignerWalletImpl) BuildChainControl(
 type DatabaseInstances struct {
 	// GraphDB is the database that stores the channel graph used for path
 	// finding.
-	GraphDB *graphdb.ChannelGraph
+	GraphDB   *graphdb.ChannelGraph
+	GraphV2DB *graphdb.SQLStore
 
 	// ChanStateDB is the database that stores all of our node's channel
 	// state.
@@ -933,8 +934,8 @@ type DatabaseInstances struct {
 	WalletDB btcwallet.LoaderOption
 
 	// NativeSQLStore is a pointer to a native SQL store that can be used
-	// for native SQL queries for tables that already support it. This may
-	// be nil if the use-native-sql flag was not set.
+	// for native SQL queries for tables that already support it or for any
+	// brand-new tables that are native SQL from the start.
 	NativeSQLStore *sqldb.BaseDB
 }
 
@@ -1076,6 +1077,15 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		d.logger.Error(err)
 		return nil, nil, err
 	}
+
+	graphDBExecutor := sqldb.NewTransactionExecutor(
+		dbs.NativeSQLStore, func(tx *sql.Tx) graphdb.SQLQueries {
+			return dbs.NativeSQLStore.WithTx(tx)
+		},
+	)
+	dbs.GraphV2DB = graphdb.NewSQLStore(
+		graphDBExecutor, clock.NewDefaultClock(),
+	)
 
 	// Instantiate a native SQL invoice store if the flag is set.
 	if d.cfg.DB.UseNativeSQL {

@@ -117,9 +117,7 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 
 	// First, insert the node into the graph DB. This should succeed
 	// without any errors.
-	if err := graph.AddLightningNode(node); err != nil {
-		t.Fatalf("unable to add node: %v", err)
-	}
+	require.NoError(t, graph.AddLightningNode(node))
 	assertNodeInCache(t, graph, node, testFeatures)
 
 	// Next, fetch the node from the database to ensure everything was
@@ -128,16 +126,11 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 	require.NoError(t, err, "unable to locate node")
 
 	_, exists, err := graph.HasLightningNode(dbNode.PubKeyBytes)
-	if err != nil {
-		t.Fatalf("unable to query for node: %v", err)
-	} else if !exists {
-		t.Fatalf("node should be found but wasn't")
-	}
+	require.NoError(t, err)
+	require.True(t, exists)
 
 	// The two nodes should match exactly!
-	if err := compareNodes(node, dbNode); err != nil {
-		t.Fatalf("nodes don't match: %v", err)
-	}
+	require.NoError(t, compareNodes(node, dbNode))
 
 	// Next, delete the node from the graph, this should purge all data
 	// related to the node.
