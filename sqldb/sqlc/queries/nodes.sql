@@ -26,6 +26,11 @@ SELECT *
 FROM nodes
 WHERE pub_key = $1;
 
+-- name: GetNodePubKeyByDBID :one
+SELECT pub_key
+FROM nodes
+WHERE id = $1;
+
 -- name: GetNodeIDByPubKey :one
 SELECT id
 FROM nodes

@@ -11,6 +11,7 @@ import (
 
 type Querier interface {
 	DeleteCanceledInvoices(ctx context.Context) (sql.Result, error)
+	DeleteChannelByChanID(ctx context.Context, channelID int64) error
 	DeleteInvoice(ctx context.Context, arg DeleteInvoiceParams) (sql.Result, error)
 	DeleteNode(ctx context.Context, id int64) error
 	DeleteNodeAddress(ctx context.Context, arg DeleteNodeAddressParams) error
@@ -20,6 +21,11 @@ type Querier interface {
 	FetchSettledAMPSubInvoices(ctx context.Context, arg FetchSettledAMPSubInvoicesParams) ([]FetchSettledAMPSubInvoicesRow, error)
 	FilterInvoices(ctx context.Context, arg FilterInvoicesParams) ([]Invoice, error)
 	GetAMPInvoiceID(ctx context.Context, setID []byte) (int64, error)
+	GetChanDBIDBYChanID(ctx context.Context, channelID int64) (int64, error)
+	GetChanDBIDByChanID(ctx context.Context, channelID int64) (int64, error)
+	GetChanDBIDByOutpoint(ctx context.Context, outpoint string) (int64, error)
+	GetChannel(ctx context.Context, id int64) (GetChannelRow, error)
+	GetChannelFeatures(ctx context.Context, channelID int64) ([]ChannelFeature, error)
 	// This method may return more than one invoice if filter using multiple fields
 	// from different invoices. It is the caller's responsibility to ensure that
 	// we bubble up an error in those cases.
@@ -34,8 +40,11 @@ type Querier interface {
 	GetNodeByPubKey(ctx context.Context, pubKey []byte) (Node, error)
 	GetNodeFeatures(ctx context.Context, nodeID int64) ([]NodeFeature, error)
 	GetNodeIDByPubKey(ctx context.Context, pubKey []byte) (int64, error)
+	GetNodePubKeyByDBID(ctx context.Context, id int64) ([]byte, error)
 	GetSourceNode(ctx context.Context) (int64, error)
 	InsertAMPSubInvoiceHTLC(ctx context.Context, arg InsertAMPSubInvoiceHTLCParams) error
+	InsertChannel(ctx context.Context, arg InsertChannelParams) (int64, error)
+	InsertChannelFeature(ctx context.Context, arg InsertChannelFeatureParams) error
 	InsertIPV4NodeAddress(ctx context.Context, arg InsertIPV4NodeAddressParams) error
 	InsertIPV6NodeAddress(ctx context.Context, arg InsertIPV6NodeAddressParams) error
 	InsertInvoice(ctx context.Context, arg InsertInvoiceParams) (int64, error)
@@ -44,6 +53,7 @@ type Querier interface {
 	InsertInvoiceHTLCCustomRecord(ctx context.Context, arg InsertInvoiceHTLCCustomRecordParams) error
 	InsertNode(ctx context.Context, arg InsertNodeParams) (int64, error)
 	InsertNodeFeature(ctx context.Context, arg InsertNodeFeatureParams) error
+	InsertSourceChannel(ctx context.Context, arg InsertSourceChannelParams) error
 	InsertTorV3NodeAddress(ctx context.Context, arg InsertTorV3NodeAddressParams) error
 	NextInvoiceSettleIndex(ctx context.Context) (int64, error)
 	OnAMPSubInvoiceCanceled(ctx context.Context, arg OnAMPSubInvoiceCanceledParams) error
@@ -52,9 +62,11 @@ type Querier interface {
 	OnInvoiceCanceled(ctx context.Context, arg OnInvoiceCanceledParams) error
 	OnInvoiceCreated(ctx context.Context, arg OnInvoiceCreatedParams) error
 	OnInvoiceSettled(ctx context.Context, arg OnInvoiceSettledParams) error
+	SetSourceChannelAnnounced(ctx context.Context, arg SetSourceChannelAnnouncedParams) (sql.Result, error)
 	SetSourceNode(ctx context.Context, nodeID int64) error
 	UpdateAMPSubInvoiceHTLCPreimage(ctx context.Context, arg UpdateAMPSubInvoiceHTLCPreimageParams) (sql.Result, error)
 	UpdateAMPSubInvoiceState(ctx context.Context, arg UpdateAMPSubInvoiceStateParams) error
+	UpdateChannel(ctx context.Context, arg UpdateChannelParams) error
 	UpdateInvoiceAmountPaid(ctx context.Context, arg UpdateInvoiceAmountPaidParams) (sql.Result, error)
 	UpdateInvoiceHTLC(ctx context.Context, arg UpdateInvoiceHTLCParams) error
 	UpdateInvoiceHTLCs(ctx context.Context, arg UpdateInvoiceHTLCsParams) error

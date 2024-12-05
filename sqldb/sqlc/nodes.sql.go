@@ -174,6 +174,19 @@ func (q *Queries) GetNodeIDByPubKey(ctx context.Context, pubKey []byte) (int64, 
 	return id, err
 }
 
+const getNodePubKeyByDBID = `-- name: GetNodePubKeyByDBID :one
+SELECT pub_key
+FROM nodes
+WHERE id = $1
+`
+
+func (q *Queries) GetNodePubKeyByDBID(ctx context.Context, id int64) ([]byte, error) {
+	row := q.db.QueryRowContext(ctx, getNodePubKeyByDBID, id)
+	var pub_key []byte
+	err := row.Scan(&pub_key)
+	return pub_key, err
+}
+
 const getSourceNode = `-- name: GetSourceNode :one
 SELECT node_id
 FROM source_node

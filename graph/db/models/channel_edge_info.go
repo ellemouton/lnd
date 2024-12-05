@@ -9,7 +9,20 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/fn"
+	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing/route"
 )
+
+type Channel2 struct {
+	ChannelID                  uint64
+	Outpoint                   wire.OutPoint
+	Node1Key                   route.Vertex
+	Node2Key                   route.Vertex
+	Capacity                   fn.Option[btcutil.Amount]
+	Features                   *lnwire.FeatureVector
+	Announced                  bool
+	SerialisedWireAnnouncement []byte
+}
 
 // ChannelEdgeInfo represents a fully authenticated channel along with all its
 // unique attributes. Once an authenticated channel announcement has been

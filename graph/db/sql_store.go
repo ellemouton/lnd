@@ -8,7 +8,10 @@ import (
 	"net"
 	"strconv"
 
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/clock"
+	"github.com/lightningnetwork/lnd/fn"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -26,6 +29,11 @@ type GossipV2Store interface {
 
 	SetSourceNode(ctx context.Context, node *models.Node2) error
 	GetSourceNode(ctx context.Context) (*models.Node2, error)
+
+	AddChannel(ctx context.Context, edge *models.Channel2) error
+	GetChannelByChanID(ctx context.Context, chanID uint64) (*models.Channel2, error)
+	GetChannelByOutpoint(ctx context.Context, outpoint wire.OutPoint) (*models.Channel2, error)
+	DeleteChannels(ctx context.Context, chanID ...uint64) error
 }
 
 // SQLQueries is a subset of the sqlc.Querier interface containing all the
@@ -37,6 +45,7 @@ type SQLQueries interface {
 	GetNodeIDByPubKey(ctx context.Context, pubKey []byte) (int64, error)
 	UpdateNode(ctx context.Context, arg sqlc.UpdateNodeParams) error
 	DeleteNode(ctx context.Context, id int64) error
+	GetNodePubKeyByDBID(ctx context.Context, id int64) ([]byte, error)
 	GetNodeAliasByPubKey(ctx context.Context, pubKey []byte) (sql.NullString, error)
 
 	InsertNodeFeature(ctx context.Context, arg sqlc.InsertNodeFeatureParams) error
@@ -51,6 +60,17 @@ type SQLQueries interface {
 
 	GetSourceNode(ctx context.Context) (int64, error)
 	SetSourceNode(ctx context.Context, nodeID int64) error
+
+	InsertChannel(ctx context.Context, arg sqlc.InsertChannelParams) (int64, error)
+	UpdateChannel(ctx context.Context, arg sqlc.UpdateChannelParams) error
+	InsertSourceChannel(ctx context.Context, arg sqlc.InsertSourceChannelParams) error
+	SetSourceChannelAnnounced(ctx context.Context, arg sqlc.SetSourceChannelAnnouncedParams) (sql.Result, error)
+	GetChannel(ctx context.Context, id int64) (sqlc.GetChannelRow, error)
+	GetChanDBIDByChanID(ctx context.Context, channelID int64) (int64, error)
+	GetChanDBIDByOutpoint(ctx context.Context, outpoint string) (int64, error)
+	GetChannelFeatures(ctx context.Context, channelID int64) ([]sqlc.ChannelFeature, error)
+	DeleteChannelByChanID(ctx context.Context, channelID int64) error
+	InsertChannelFeature(ctx context.Context, arg sqlc.InsertChannelFeatureParams) error
 }
 
 // BatchedSQLQueries is a version of the SQLQueries that's capable of batched
@@ -224,6 +244,330 @@ func (s *SQLStore) GetSourceNode(ctx context.Context) (*models.Node2, error) {
 
 	return node, nil
 
+}
+
+func (s *SQLStore) AddChannel(ctx context.Context,
+	edge *models.Channel2) error {
+
+	var writeTxOpts SQLQueriesTxOptions
+	err := s.db.ExecTx(ctx, &writeTxOpts, func(db SQLQueries) error {
+		// First, check if this channel already exists.
+		dbChanID, err := db.GetChanDBIDByChanID(
+			ctx, int64(edge.ChannelID),
+		)
+		switch {
+		// The channel does not yet exist in the DB, so we insert a
+		// fresh record.
+		case errors.Is(err, sql.ErrNoRows):
+			err := insertChannel(ctx, db, edge)
+			if err != nil {
+				return fmt.Errorf("unable to insert new "+
+					"node: %w", err)
+			}
+
+			return nil
+
+		case err != nil:
+			return fmt.Errorf("unable to fetch channel: %w", err)
+
+		// The channel already exists, so we update the existing channel
+		// info.
+		default:
+			return updateChannel(ctx, db, dbChanID, edge)
+		}
+
+	}, func() {})
+	if err != nil {
+		return fmt.Errorf("unable to add channel: %w", err)
+	}
+
+	return nil
+}
+
+func (s *SQLStore) GetChannelByChanID(ctx context.Context, chanID uint64) (
+	*models.Channel2, error) {
+
+	var (
+		readTx  = NewSQLQueryReadTx()
+		channel *models.Channel2
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+		dbChanID, err := db.GetChanDBIDByChanID(ctx, int64(chanID))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrEdgeNotFound
+		} else if err != nil {
+			return fmt.Errorf("could not fetch channel DB ID "+
+				"using channel ID(%d): %w", chanID, err)
+		}
+
+		channel, err = fetchChannel(ctx, db, dbChanID)
+		if err != nil {
+			return fmt.Errorf("could not fetch channel(%d): %w",
+				dbChanID, err)
+		}
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch channel: %w", err)
+	}
+
+	return channel, nil
+}
+
+func (s *SQLStore) GetChannelByOutpoint(ctx context.Context,
+	outpoint wire.OutPoint) (*models.Channel2, error) {
+
+	var (
+		readTx  = NewSQLQueryReadTx()
+		channel *models.Channel2
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+		dbChanID, err := db.GetChanDBIDByOutpoint(
+			ctx, outpoint.String(),
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrEdgeNotFound
+		} else if err != nil {
+			return fmt.Errorf("could not fetch channel DB ID "+
+				"using outpoint(%s): %w", outpoint, err)
+		}
+
+		channel, err = fetchChannel(ctx, db, dbChanID)
+
+		return err
+	}, func() {})
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch node: %w", err)
+	}
+
+	return channel, nil
+}
+
+func (s *SQLStore) DeleteChannels(ctx context.Context, chanIDs ...uint64) error {
+	var writeTxOpts SQLQueriesTxOptions
+	err := s.db.ExecTx(ctx, &writeTxOpts, func(db SQLQueries) error {
+		for _, chanID := range chanIDs {
+			err := db.DeleteChannelByChanID(ctx, int64(chanID))
+			if err != nil {
+				return fmt.Errorf("could not delete "+
+					"channel %d: %w", chanID, err)
+			}
+		}
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return fmt.Errorf("unable to delete channel: %w", err)
+	}
+
+	return nil
+}
+
+func fetchChannel(ctx context.Context, db SQLQueries, dbChanID int64) (
+	*models.Channel2, error) {
+
+	dbChannel, err := db.GetChannel(ctx, dbChanID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrEdgeNotFound
+	} else if err != nil {
+		return nil, fmt.Errorf("unable to fetch channel: %w", err)
+	}
+
+	op, err := wire.NewOutPointFromString(dbChannel.Outpoint)
+	if err != nil {
+		return nil, err
+	}
+
+	node1Pub, err := db.GetNodePubKeyByDBID(ctx, dbChannel.NodeID1)
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch node(%d) pub key: %w",
+			dbChannel.NodeID1, err)
+	}
+	node1Vertex, err := route.NewVertexFromBytes(node1Pub)
+	if err != nil {
+		return nil, err
+	}
+
+	node2Pub, err := db.GetNodePubKeyByDBID(ctx, dbChannel.NodeID2)
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch node(%d) pub key: %w",
+			dbChannel.NodeID2, err)
+	}
+	node2Vertex, err := route.NewVertexFromBytes(node2Pub)
+	if err != nil {
+		return nil, err
+	}
+
+	features, err := getChanFeatures(ctx, db, dbChanID)
+	if err != nil {
+		return nil, err
+	}
+
+	c := &models.Channel2{
+		ChannelID:                  uint64(dbChannel.ChannelID),
+		Outpoint:                   *op,
+		Node1Key:                   node1Vertex,
+		Node2Key:                   node2Vertex,
+		Capacity:                   fn.Option[btcutil.Amount]{},
+		Features:                   features,
+		Announced:                  dbChannel.Announced,
+		SerialisedWireAnnouncement: dbChannel.SerialisedAnnouncement,
+	}
+
+	if dbChannel.Capacity.Valid {
+		c.Capacity = fn.Some(btcutil.Amount(dbChannel.Capacity.Int64))
+	}
+
+	return c, nil
+}
+
+func getChanFeatures(ctx context.Context, db SQLQueries,
+	chanDBID int64) (*lnwire.FeatureVector, error) {
+
+	rows, err := db.GetChannelFeatures(ctx, chanDBID)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get channel(%d) features: %w",
+			chanDBID, err)
+	}
+
+	features := lnwire.EmptyFeatureVector()
+	for _, feature := range rows {
+		features.Set(lnwire.FeatureBit(feature.Feature))
+	}
+
+	return features, nil
+}
+
+func insertChannel(ctx context.Context, db SQLQueries,
+	edge *models.Channel2) error {
+
+	// Get the source node so that we can check if the channel is one of
+	// our own channels.
+	sourceDBNodeID, err := db.GetSourceNode(ctx)
+	if err != nil {
+		return fmt.Errorf("unable to fetch source node: %w", err)
+	}
+
+	// Make sure that at least a "shell" entry for each node is present in
+	// the nodes table.
+	node1DBID, err := db.GetNodeIDByPubKey(ctx, edge.Node1Key[:])
+	if errors.Is(err, sql.ErrNoRows) {
+		node1DBID, err = db.InsertNode(ctx, sqlc.InsertNodeParams{
+			PubKey: edge.Node1Key[:],
+		})
+		if err != nil {
+			return fmt.Errorf("unable to insert node: %w", err)
+		}
+	} else if err != nil {
+		return err
+	}
+
+	node2DBID, err := db.GetNodeIDByPubKey(ctx, edge.Node2Key[:])
+	if errors.Is(err, sql.ErrNoRows) {
+		node2DBID, err = db.InsertNode(ctx, sqlc.InsertNodeParams{
+			PubKey: edge.Node2Key[:],
+		})
+		if err != nil {
+			return fmt.Errorf("unable to insert node: %w", err)
+		}
+	} else if err != nil {
+		return err
+	}
+
+	var capacity sql.NullInt64
+	edge.Capacity.WhenSome(func(amt btcutil.Amount) {
+		capacity = sql.NullInt64{
+			Valid: true,
+			Int64: int64(amt),
+		}
+	})
+
+	dbChanID, err := db.InsertChannel(ctx, sqlc.InsertChannelParams{
+		ChannelID:              int64(edge.ChannelID),
+		Outpoint:               edge.Outpoint.String(),
+		NodeID1:                node1DBID,
+		NodeID2:                node2DBID,
+		Capacity:               capacity,
+		SerialisedAnnouncement: edge.SerialisedWireAnnouncement,
+	})
+	if err != nil {
+		return fmt.Errorf("unable to insert channel: %w", err)
+	}
+
+	// If this channel belongs to the source node, add an entry in the
+	// source_channels table.
+	if sourceDBNodeID == node1DBID || sourceDBNodeID == node2DBID {
+		err = db.InsertSourceChannel(
+			ctx, sqlc.InsertSourceChannelParams{
+				ChannelID: dbChanID,
+				Announced: edge.Announced,
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("unable to insert source "+
+				"channel: %w", err)
+		}
+	}
+
+	if edge.Features != nil {
+		for feature := range edge.Features.Features() {
+			err := db.InsertChannelFeature(
+				ctx, sqlc.InsertChannelFeatureParams{
+					ChannelID: dbChanID,
+					Feature:   int32(feature),
+				})
+			if err != nil {
+				return fmt.Errorf("unable to insert "+
+					"channel(%d) feature(%v): %w", dbChanID,
+					feature, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func updateChannel(ctx context.Context, db SQLQueries, dbChanID int64,
+	edge *models.Channel2) error {
+
+	// This should only ever add a new proof to the channel (which is part
+	// of the serialised announcement) and/or update the "announced" field
+	// in the source_channels table. It will only ever be for our own
+	// channels that we have a channel in the DB that does not yet have
+	// a proof or where announced is switched from false to true.
+
+	// We first update the source_channel table with the updated "announced"
+	// value. If the channel is not in the source_channels table, we want
+	// to fail the operation.
+	result, err := db.SetSourceChannelAnnounced(
+		ctx, sqlc.SetSourceChannelAnnouncedParams{
+			ChannelID: dbChanID,
+			Announced: edge.Announced,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("unable to update source channel: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("unable to update source channel: %w", err)
+	}
+
+	if n == 0 {
+		return fmt.Errorf("channel updates only allowed for channels " +
+			"owned by the source node")
+	}
+
+	err = db.UpdateChannel(ctx, sqlc.UpdateChannelParams{
+		ID:                     dbChanID,
+		SerialisedAnnouncement: edge.SerialisedWireAnnouncement,
+	})
+	if err != nil {
+		return fmt.Errorf("unable to update channel: %w", err)
+	}
+
+	return nil
 }
 
 func fetchNodeByID(ctx context.Context, db SQLQueries, id int64) (*models.Node2,

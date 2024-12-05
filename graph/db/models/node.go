@@ -9,6 +9,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing/route"
 )
 
 // LightningNode represents an individual vertex/node within the channel graph.
@@ -133,7 +134,7 @@ func (l *LightningNode) NodeAnnouncement(signed bool) (*lnwire.NodeAnnouncement,
 }
 
 type Node2 struct {
-	PubKey [33]byte
+	PubKey route.Vertex
 
 	Features *lnwire.FeatureVector
 

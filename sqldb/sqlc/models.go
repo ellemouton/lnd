@@ -28,6 +28,21 @@ type AmpSubInvoiceHtlc struct {
 	Preimage   []byte
 }
 
+type Channel struct {
+	ID                     int64
+	ChannelID              int64
+	Outpoint               string
+	NodeID1                int64
+	NodeID2                int64
+	Capacity               sql.NullInt64
+	SerialisedAnnouncement []byte
+}
+
+type ChannelFeature struct {
+	ChannelID int64
+	Feature   int32
+}
+
 type Invoice struct {
 	ID                 int64
 	Hash               []byte
@@ -114,6 +129,11 @@ type NodeAddressType struct {
 type NodeFeature struct {
 	NodeID  int64
 	Feature int32
+}
+
+type SourceChannel struct {
+	ChannelID int64
+	Announced bool
 }
 
 type SourceNode struct {
