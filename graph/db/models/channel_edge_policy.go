@@ -5,7 +5,27 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing/route"
 )
+
+type ChannelPolicy2 struct {
+	ChannelID   uint64
+	BlockHeight uint32
+
+	TimeLockDelta             uint16
+	MinHTLC                   lnwire.MilliSatoshi
+	MaxHTLC                   lnwire.MilliSatoshi
+	FeeBaseMSat               lnwire.MilliSatoshi
+	FeeProportionalMillionths lnwire.MilliSatoshi
+
+	SecondPeer bool
+
+	ToNode route.Vertex
+
+	Flags lnwire.ChanUpdateDisableFlags
+
+	SerialisedWireAnnouncement []byte
+}
 
 // ChannelEdgePolicy represents a *directed* edge within the channel graph. For
 // each channel in the database, there are two distinct edges: one for each

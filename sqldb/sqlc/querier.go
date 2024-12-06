@@ -26,6 +26,7 @@ type Querier interface {
 	GetChanDBIDByOutpoint(ctx context.Context, outpoint string) (int64, error)
 	GetChannel(ctx context.Context, id int64) (GetChannelRow, error)
 	GetChannelFeatures(ctx context.Context, channelID int64) ([]ChannelFeature, error)
+	GetChannelPolicy(ctx context.Context, arg GetChannelPolicyParams) (ChannelPolicy, error)
 	// This method may return more than one invoice if filter using multiple fields
 	// from different invoices. It is the caller's responsibility to ensure that
 	// we bubble up an error in those cases.
@@ -45,6 +46,7 @@ type Querier interface {
 	InsertAMPSubInvoiceHTLC(ctx context.Context, arg InsertAMPSubInvoiceHTLCParams) error
 	InsertChannel(ctx context.Context, arg InsertChannelParams) (int64, error)
 	InsertChannelFeature(ctx context.Context, arg InsertChannelFeatureParams) error
+	InsertChannelUpdate(ctx context.Context, arg InsertChannelUpdateParams) (int64, error)
 	InsertIPV4NodeAddress(ctx context.Context, arg InsertIPV4NodeAddressParams) error
 	InsertIPV6NodeAddress(ctx context.Context, arg InsertIPV6NodeAddressParams) error
 	InsertInvoice(ctx context.Context, arg InsertInvoiceParams) (int64, error)
@@ -67,6 +69,7 @@ type Querier interface {
 	UpdateAMPSubInvoiceHTLCPreimage(ctx context.Context, arg UpdateAMPSubInvoiceHTLCPreimageParams) (sql.Result, error)
 	UpdateAMPSubInvoiceState(ctx context.Context, arg UpdateAMPSubInvoiceStateParams) error
 	UpdateChannel(ctx context.Context, arg UpdateChannelParams) error
+	UpdateChannelPolicy(ctx context.Context, arg UpdateChannelPolicyParams) error
 	UpdateInvoiceAmountPaid(ctx context.Context, arg UpdateInvoiceAmountPaidParams) (sql.Result, error)
 	UpdateInvoiceHTLC(ctx context.Context, arg UpdateInvoiceHTLCParams) error
 	UpdateInvoiceHTLCs(ctx context.Context, arg UpdateInvoiceHTLCsParams) error

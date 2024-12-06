@@ -62,6 +62,10 @@ func TestV2DB(t *testing.T) {
 			name: "Channel CRUD",
 			test: testChannelCRUD,
 		},
+		{
+			name: "Channel Policy CRUD",
+			test: testChannelPolicyCRUD,
+		},
 	}
 
 	// First create a shared Postgres instance so we don't spawn a new
@@ -107,6 +111,103 @@ func TestV2DB(t *testing.T) {
 	}
 }
 
+func testChannelPolicyCRUD(t *testing.T,
+	makeDB func(t *testing.T) GossipV2Store) {
+
+	t.Parallel()
+
+	var (
+		ctx = context.Background()
+		db  = makeDB(t)
+	)
+	// Make sure to set the source node.
+	sourceNode := &models.Node2{
+		PubKey: testSourceNode,
+	}
+	require.NoError(t, db.SetSourceNode(ctx, sourceNode))
+
+	// Prepare a channel and channel policies for it. Don't insert them yet.
+	chanID1 := uint64(1234)
+	channel1 := &models.Channel2{
+		ChannelID:                  chanID1,
+		Outpoint:                   testChanPoint1,
+		Node1Key:                   testPub,
+		Node2Key:                   testPub2,
+		Features:                   testFeatures,
+		Announced:                  true,
+		SerialisedWireAnnouncement: []byte{1, 2, 3},
+	}
+	chan1P1 := &models.ChannelPolicy2{
+		ChannelID:                  chanID1,
+		BlockHeight:                22222,
+		TimeLockDelta:              20,
+		MinHTLC:                    1,
+		MaxHTLC:                    3,
+		FeeBaseMSat:                56,
+		FeeProportionalMillionths:  66,
+		SecondPeer:                 false,
+		ToNode:                     testPub2,
+		Flags:                      lnwire.ChanUpdateDisableIncoming,
+		SerialisedWireAnnouncement: []byte{1, 3, 4},
+	}
+	chan1P2 := &models.ChannelPolicy2{
+		ChannelID:                  chanID1,
+		BlockHeight:                6633,
+		TimeLockDelta:              1,
+		MinHTLC:                    1,
+		MaxHTLC:                    5,
+		FeeBaseMSat:                66,
+		FeeProportionalMillionths:  99,
+		SecondPeer:                 true,
+		ToNode:                     testPub,
+		Flags:                      lnwire.ChanUpdateDisableIncoming,
+		SerialisedWireAnnouncement: []byte{1, 3, 4},
+	}
+
+	// Attempting to insert a channel policy for a channel that doesn't
+	// exist should fail.
+	err := db.UpdateChannelPolicy(ctx, chan1P1)
+	require.ErrorIs(t, err, ErrEdgeNotFound)
+
+	// Now insert the channel and the first channel policy.
+	require.NoError(t, db.AddChannel(ctx, channel1))
+	require.NoError(t, db.UpdateChannelPolicy(ctx, chan1P1))
+
+	// Fetching the channel info should return the channel, the first
+	// channel policy and nil for the second channel policy.
+	fetchedChannel, p1, p2, err := db.GetChannelByChanID(ctx, chanID1)
+	require.NoError(t, err)
+	require.Equal(t, channel1, fetchedChannel)
+	require.Equal(t, chan1P1, p1)
+	require.Nil(t, p2)
+
+	// Now insert the second channel policy.
+	require.NoError(t, db.UpdateChannelPolicy(ctx, chan1P2))
+
+	// Fetching the channel info should return the channel, the first
+	// channel policy and the second channel policy.
+	fetchedChannel, p1, p2, err = db.GetChannelByChanID(ctx, chanID1)
+	require.NoError(t, err)
+	require.Equal(t, channel1, fetchedChannel)
+	require.Equal(t, chan1P1, p1)
+	require.Equal(t, chan1P2, p2)
+
+	// Now, update the first channel policy.
+	chan1P1.TimeLockDelta = 30
+	chan1P1.MinHTLC = 2
+	chan1P1.MaxHTLC = 4
+	chan1P1.Flags = 0
+	chan1P1.SerialisedWireAnnouncement = []byte{5, 4, 2, 1}
+
+	require.NoError(t, db.UpdateChannelPolicy(ctx, chan1P1))
+
+	fetchedChannel, p1, p2, err = db.GetChannelByChanID(ctx, chanID1)
+	require.NoError(t, err)
+	require.Equal(t, channel1, fetchedChannel)
+	require.Equal(t, chan1P1, p1)
+	require.Equal(t, chan1P2, p2)
+}
+
 func testChannelCRUD(t *testing.T, makeDB func(t *testing.T) GossipV2Store) {
 	t.Parallel()
 
@@ -137,9 +238,9 @@ func testChannelCRUD(t *testing.T, makeDB func(t *testing.T) GossipV2Store) {
 
 	// Show at the correct error is returned if we query for the channel
 	// before it exists in the DB.
-	_, err := db.GetChannelByChanID(ctx, chanID1)
+	_, _, _, err := db.GetChannelByChanID(ctx, chanID1)
 	require.ErrorIs(t, err, ErrEdgeNotFound)
-	_, err = db.GetChannelByOutpoint(ctx, testChanPoint1)
+	_, _, _, err = db.GetChannelByOutpoint(ctx, testChanPoint1)
 	require.ErrorIs(t, err, ErrEdgeNotFound)
 
 	// Also show that a node record for node 1 exists but not yet for node
@@ -167,10 +268,12 @@ func testChannelCRUD(t *testing.T, makeDB func(t *testing.T) GossipV2Store) {
 	require.NoError(t, err)
 
 	// Now, fetch the channel and ensure that it matches the one we
-	// inserted.
-	fetchedChannel, err := db.GetChannelByChanID(ctx, chanID1)
+	// inserted. At this point, both policies should be unknown.
+	fetchedChannel, p1, p2, err := db.GetChannelByChanID(ctx, chanID1)
 	require.NoError(t, err)
 	require.Equal(t, channel1, fetchedChannel)
+	require.Nil(t, p1)
+	require.Nil(t, p2)
 
 	// Trying to update this channel (where neither node is the source node)
 	// should not be allowed.
@@ -191,7 +294,7 @@ func testChannelCRUD(t *testing.T, makeDB func(t *testing.T) GossipV2Store) {
 	require.NoError(t, db.AddChannel(ctx, channel2))
 
 	// Fetch the channel and check that it matches the one we inserted.
-	fetchedChannel, err = db.GetChannelByChanID(ctx, chanID2)
+	fetchedChannel, _, _, err = db.GetChannelByChanID(ctx, chanID2)
 	require.NoError(t, err)
 	require.Equal(t, channel2, fetchedChannel)
 
@@ -202,7 +305,7 @@ func testChannelCRUD(t *testing.T, makeDB func(t *testing.T) GossipV2Store) {
 	require.NoError(t, db.AddChannel(ctx, channel2))
 
 	// Check that the channel was updated as expected.
-	fetchedChannel, err = db.GetChannelByChanID(ctx, chanID2)
+	fetchedChannel, _, _, err = db.GetChannelByChanID(ctx, chanID2)
 	require.NoError(t, err)
 	require.Equal(t, channel2, fetchedChannel)
 
@@ -210,9 +313,9 @@ func testChannelCRUD(t *testing.T, makeDB func(t *testing.T) GossipV2Store) {
 	// found.
 	require.NoError(t, db.DeleteChannels(ctx, chanID1, chanID2))
 
-	_, err = db.GetChannelByChanID(ctx, chanID1)
+	_, _, _, err = db.GetChannelByChanID(ctx, chanID1)
 	require.ErrorIs(t, err, ErrEdgeNotFound)
-	_, err = db.GetChannelByChanID(ctx, chanID2)
+	_, _, _, err = db.GetChannelByChanID(ctx, chanID2)
 	require.ErrorIs(t, err, ErrEdgeNotFound)
 }
 

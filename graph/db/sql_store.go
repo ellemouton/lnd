@@ -31,9 +31,11 @@ type GossipV2Store interface {
 	GetSourceNode(ctx context.Context) (*models.Node2, error)
 
 	AddChannel(ctx context.Context, edge *models.Channel2) error
-	GetChannelByChanID(ctx context.Context, chanID uint64) (*models.Channel2, error)
-	GetChannelByOutpoint(ctx context.Context, outpoint wire.OutPoint) (*models.Channel2, error)
+	GetChannelByChanID(ctx context.Context, chanID uint64) (*models.Channel2, *models.ChannelPolicy2, *models.ChannelPolicy2, error)
+	GetChannelByOutpoint(ctx context.Context, outpoint wire.OutPoint) (*models.Channel2, *models.ChannelPolicy2, *models.ChannelPolicy2, error)
 	DeleteChannels(ctx context.Context, chanID ...uint64) error
+
+	UpdateChannelPolicy(ctx context.Context, policy *models.ChannelPolicy2) error
 }
 
 // SQLQueries is a subset of the sqlc.Querier interface containing all the
@@ -71,6 +73,10 @@ type SQLQueries interface {
 	GetChannelFeatures(ctx context.Context, channelID int64) ([]sqlc.ChannelFeature, error)
 	DeleteChannelByChanID(ctx context.Context, channelID int64) error
 	InsertChannelFeature(ctx context.Context, arg sqlc.InsertChannelFeatureParams) error
+
+	InsertChannelUpdate(ctx context.Context, arg sqlc.InsertChannelUpdateParams) (int64, error)
+	GetChannelPolicy(ctx context.Context, arg sqlc.GetChannelPolicyParams) (sqlc.ChannelPolicy, error)
+	UpdateChannelPolicy(ctx context.Context, arg sqlc.UpdateChannelPolicyParams) error
 }
 
 // BatchedSQLQueries is a version of the SQLQueries that's capable of batched
@@ -284,12 +290,15 @@ func (s *SQLStore) AddChannel(ctx context.Context,
 	return nil
 }
 
-func (s *SQLStore) GetChannelByChanID(ctx context.Context, chanID uint64) (
-	*models.Channel2, error) {
+func (s *SQLStore) GetChannelByChanID(ctx context.Context,
+	chanID uint64) (*models.Channel2, *models.ChannelPolicy2,
+	*models.ChannelPolicy2, error) {
 
 	var (
 		readTx  = NewSQLQueryReadTx()
 		channel *models.Channel2
+		p1      *models.ChannelPolicy2
+		p2      *models.ChannelPolicy2
 	)
 	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
 		dbChanID, err := db.GetChanDBIDByChanID(ctx, int64(chanID))
@@ -300,7 +309,7 @@ func (s *SQLStore) GetChannelByChanID(ctx context.Context, chanID uint64) (
 				"using channel ID(%d): %w", chanID, err)
 		}
 
-		channel, err = fetchChannel(ctx, db, dbChanID)
+		channel, p1, p2, err = fetchChannel(ctx, db, dbChanID)
 		if err != nil {
 			return fmt.Errorf("could not fetch channel(%d): %w",
 				dbChanID, err)
@@ -309,18 +318,21 @@ func (s *SQLStore) GetChannelByChanID(ctx context.Context, chanID uint64) (
 		return nil
 	}, func() {})
 	if err != nil {
-		return nil, fmt.Errorf("unable to fetch channel: %w", err)
+		return nil, nil, nil, fmt.Errorf("unable to fetch channel: %w", err)
 	}
 
-	return channel, nil
+	return channel, p1, p2, nil
 }
 
 func (s *SQLStore) GetChannelByOutpoint(ctx context.Context,
-	outpoint wire.OutPoint) (*models.Channel2, error) {
+	outpoint wire.OutPoint) (*models.Channel2, *models.ChannelPolicy2,
+	*models.ChannelPolicy2, error) {
 
 	var (
 		readTx  = NewSQLQueryReadTx()
 		channel *models.Channel2
+		p1      *models.ChannelPolicy2
+		p2      *models.ChannelPolicy2
 	)
 	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
 		dbChanID, err := db.GetChanDBIDByOutpoint(
@@ -333,15 +345,15 @@ func (s *SQLStore) GetChannelByOutpoint(ctx context.Context,
 				"using outpoint(%s): %w", outpoint, err)
 		}
 
-		channel, err = fetchChannel(ctx, db, dbChanID)
+		channel, p1, p2, err = fetchChannel(ctx, db, dbChanID)
 
 		return err
 	}, func() {})
 	if err != nil {
-		return nil, fmt.Errorf("unable to fetch node: %w", err)
+		return nil, nil, nil, fmt.Errorf("unable to fetch node: %w", err)
 	}
 
-	return channel, nil
+	return channel, p1, p2, nil
 }
 
 func (s *SQLStore) DeleteChannels(ctx context.Context, chanIDs ...uint64) error {
@@ -364,44 +376,138 @@ func (s *SQLStore) DeleteChannels(ctx context.Context, chanIDs ...uint64) error 
 	return nil
 }
 
+func (s *SQLStore) UpdateChannelPolicy(ctx context.Context,
+	policy *models.ChannelPolicy2) error {
+
+	var writeTxOpts SQLQueriesTxOptions
+	err := s.db.ExecTx(ctx, &writeTxOpts, func(db SQLQueries) error {
+		// First, check if a record for this policy already exists.
+		dbPolicy, err := db.GetChannelPolicy(
+			ctx, sqlc.GetChannelPolicyParams{
+				ChannelID:  int64(policy.ChannelID),
+				SecondPeer: policy.SecondPeer,
+			},
+		)
+		switch {
+		// The policy does not yet exist in the DB, so we insert a
+		// fresh record.
+		case errors.Is(err, sql.ErrNoRows):
+			err := insertChanPolicy(ctx, db, policy)
+			if err != nil {
+				return fmt.Errorf("unable to insert new "+
+					"policy: %w", err)
+			}
+
+			return nil
+
+		case err != nil:
+			return fmt.Errorf("unable to fetch channel "+
+				"policy: %w", err)
+
+		// The policy already exists, so we update the existing policy
+		// info.
+		default:
+			return updateChanPolicy(ctx, db, dbPolicy.ID, policy)
+		}
+	}, func() {})
+	if err != nil {
+		return fmt.Errorf("unable to update channel policy: %w", err)
+	}
+
+	return nil
+}
+
+func updateChanPolicy(ctx context.Context, db SQLQueries, dbID int64,
+	policy *models.ChannelPolicy2) error {
+
+	err := db.UpdateChannelPolicy(ctx, sqlc.UpdateChannelPolicyParams{
+		ID:                     dbID,
+		BlockHeight:            int32(policy.BlockHeight),
+		DisableFlags:           int32(policy.Flags),
+		Timelock:               int32(policy.TimeLockDelta),
+		FeePpm:                 int64(policy.FeeProportionalMillionths),
+		BaseFeeMsat:            int64(policy.FeeBaseMSat),
+		MaxHtlcMsat:            int64(policy.MaxHTLC),
+		MinHtlcMsat:            int64(policy.MinHTLC),
+		SerialisedAnnouncement: policy.SerialisedWireAnnouncement,
+	})
+	if err != nil {
+		return fmt.Errorf("unable to update channel policy: %w", err)
+	}
+
+	return nil
+}
+
+func insertChanPolicy(ctx context.Context, db SQLQueries,
+	policy *models.ChannelPolicy2) error {
+
+	// First, check if the channel exists.
+	dbChanID, err := db.GetChanDBIDByChanID(ctx, int64(policy.ChannelID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrEdgeNotFound
+	} else if err != nil {
+		return fmt.Errorf("unable to fetch channel: %w", err)
+	}
+
+	_, err = db.InsertChannelUpdate(ctx, sqlc.InsertChannelUpdateParams{
+		ChannelID:              dbChanID,
+		BlockHeight:            int32(policy.BlockHeight),
+		SecondPeer:             policy.SecondPeer,
+		Timelock:               int32(policy.TimeLockDelta),
+		DisableFlags:           int32(policy.Flags),
+		FeePpm:                 int64(policy.FeeProportionalMillionths),
+		BaseFeeMsat:            int64(policy.FeeBaseMSat),
+		MaxHtlcMsat:            int64(policy.MaxHTLC),
+		MinHtlcMsat:            int64(policy.MinHTLC),
+		SerialisedAnnouncement: policy.SerialisedWireAnnouncement,
+	})
+	if err != nil {
+		return fmt.Errorf("unable to insert channel update: %w", err)
+	}
+
+	return nil
+}
+
 func fetchChannel(ctx context.Context, db SQLQueries, dbChanID int64) (
-	*models.Channel2, error) {
+	*models.Channel2, *models.ChannelPolicy2, *models.ChannelPolicy2,
+	error) {
 
 	dbChannel, err := db.GetChannel(ctx, dbChanID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrEdgeNotFound
+		return nil, nil, nil, ErrEdgeNotFound
 	} else if err != nil {
-		return nil, fmt.Errorf("unable to fetch channel: %w", err)
+		return nil, nil, nil, fmt.Errorf("unable to fetch channel: %w",
+			err)
 	}
 
 	op, err := wire.NewOutPointFromString(dbChannel.Outpoint)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
 	node1Pub, err := db.GetNodePubKeyByDBID(ctx, dbChannel.NodeID1)
 	if err != nil {
-		return nil, fmt.Errorf("unable to fetch node(%d) pub key: %w",
-			dbChannel.NodeID1, err)
+		return nil, nil, nil, fmt.Errorf("unable to fetch node(%d) "+
+			"pub key: %w", dbChannel.NodeID1, err)
 	}
 	node1Vertex, err := route.NewVertexFromBytes(node1Pub)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
 	node2Pub, err := db.GetNodePubKeyByDBID(ctx, dbChannel.NodeID2)
 	if err != nil {
-		return nil, fmt.Errorf("unable to fetch node(%d) pub key: %w",
-			dbChannel.NodeID2, err)
+		return nil, nil, nil, fmt.Errorf("unable to fetch node(%d) "+
+			"pub key: %w", dbChannel.NodeID2, err)
 	}
 	node2Vertex, err := route.NewVertexFromBytes(node2Pub)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
 	features, err := getChanFeatures(ctx, db, dbChanID)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
 	c := &models.Channel2{
@@ -419,7 +525,63 @@ func fetchChannel(ctx context.Context, db SQLQueries, dbChanID int64) (
 		c.Capacity = fn.Some(btcutil.Amount(dbChannel.Capacity.Int64))
 	}
 
-	return c, nil
+	var (
+		node1Policy *models.ChannelPolicy2
+		node2Policy *models.ChannelPolicy2
+	)
+	node1DBPolicy, err := db.GetChannelPolicy(
+		ctx, sqlc.GetChannelPolicyParams{
+			ChannelID:  dbChannel.ChannelID,
+			SecondPeer: false,
+		},
+	)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, nil, fmt.Errorf("unable to fetch node "+
+			"1 policy: %w", err)
+	}
+	if err == nil {
+		node1Policy = &models.ChannelPolicy2{
+			ChannelID:                  c.ChannelID,
+			BlockHeight:                uint32(node1DBPolicy.BlockHeight),
+			TimeLockDelta:              uint16(node1DBPolicy.Timelock),
+			MinHTLC:                    lnwire.MilliSatoshi(node1DBPolicy.MinHtlcMsat),
+			MaxHTLC:                    lnwire.MilliSatoshi(node1DBPolicy.MaxHtlcMsat),
+			FeeBaseMSat:                lnwire.MilliSatoshi(node1DBPolicy.BaseFeeMsat),
+			FeeProportionalMillionths:  lnwire.MilliSatoshi(node1DBPolicy.FeePpm),
+			SecondPeer:                 node1DBPolicy.SecondPeer,
+			ToNode:                     c.Node2Key,
+			Flags:                      lnwire.ChanUpdateDisableFlags(node1DBPolicy.DisableFlags),
+			SerialisedWireAnnouncement: node1DBPolicy.SerialisedAnnouncement,
+		}
+	}
+
+	node2DBPolicy, err := db.GetChannelPolicy(
+		ctx, sqlc.GetChannelPolicyParams{
+			ChannelID:  dbChannel.ChannelID,
+			SecondPeer: true,
+		},
+	)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, nil, fmt.Errorf("unable to fetch node 2 "+
+			"policy: %w", err)
+	}
+	if err == nil {
+		node2Policy = &models.ChannelPolicy2{
+			ChannelID:                  c.ChannelID,
+			BlockHeight:                uint32(node2DBPolicy.BlockHeight),
+			TimeLockDelta:              uint16(node2DBPolicy.Timelock),
+			MinHTLC:                    lnwire.MilliSatoshi(node2DBPolicy.MinHtlcMsat),
+			MaxHTLC:                    lnwire.MilliSatoshi(node2DBPolicy.MaxHtlcMsat),
+			FeeBaseMSat:                lnwire.MilliSatoshi(node2DBPolicy.BaseFeeMsat),
+			FeeProportionalMillionths:  lnwire.MilliSatoshi(node2DBPolicy.FeePpm),
+			SecondPeer:                 node2DBPolicy.SecondPeer,
+			ToNode:                     c.Node1Key,
+			Flags:                      lnwire.ChanUpdateDisableFlags(node2DBPolicy.DisableFlags),
+			SerialisedWireAnnouncement: node2DBPolicy.SerialisedAnnouncement,
+		}
+	}
+
+	return c, node1Policy, node2Policy, nil
 }
 
 func getChanFeatures(ctx context.Context, db SQLQueries,

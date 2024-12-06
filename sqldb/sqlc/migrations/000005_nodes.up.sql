@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS node_features (
     UNIQUE (feature, node_id)
 );
 
+CREATE INDEX IF NOT EXISTS node_feature_node_id_idx ON node_features(node_id);
+
 CREATE TABLE IF NOT EXISTS node_address_types(
     id INTEGER PRIMARY KEY,
     description TEXT NOT NULL
@@ -52,6 +54,8 @@ CREATE TABLE IF NOT EXISTS node_addresses(
 
     address TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS node_address_node_id_idx ON node_addresses(node_id);
 
 CREATE TABLE source_node (
     node_id BIGINT PRIMARY KEY REFERENCES nodes(id)

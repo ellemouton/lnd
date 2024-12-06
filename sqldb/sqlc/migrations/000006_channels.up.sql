@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS channels (
     serialised_announcement BYTEA
 );
 
+CREATE INDEX IF NOT EXISTS channels_node_id_1_idx ON channels(node_id_1);
+CREATE INDEX IF NOT EXISTS channels_node_id_2_idx ON channels(node_id_2);
+
 -- channel_features contains the feature bits of a channel.
 CREATE TABLE IF NOT EXISTS channel_features (
     -- The channel id (DB ID) this feature belongs to.
@@ -27,6 +30,8 @@ CREATE TABLE IF NOT EXISTS channel_features (
     -- The feature bit is unique per channe.
     UNIQUE (feature, channel_id)
 );
+
+CREATE INDEX IF NOT EXISTS channel_feature_channel_id_idx ON channel_features(channel_id);
 
 CREATE TABLE IF NOT EXISTS source_channels (
     channel_id BIGINT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,
