@@ -215,3 +215,5 @@ go 1.22.6
 retract v0.0.2
 
 replace github.com/btcsuite/btclog/v2 => github.com/ellemouton/btclog/v2 v2.0.0-20241210110018-997ee6596623
+
+replace github.com/lightningnetwork/lnd/fn/v2 => github.com/ellemouton/lnd/fn/v2 v2.0.0-20241210050749-8c19ec06a189
