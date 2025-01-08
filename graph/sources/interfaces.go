@@ -79,10 +79,6 @@ type GraphSource interface {
 	GraphBootstrapper(ctx context.Context) (
 		discovery.NetworkPeerBootstrapper, error)
 
-	// NetworkStats returns statistics concerning the current state of the
-	// known channel graph within the network.
-	NetworkStats(ctx context.Context) (*models.NetworkStats, error)
-
 	// BetweennessCentrality computes the normalised and non-normalised
 	// betweenness centrality for each node in the graph.
 	BetweennessCentrality(ctx context.Context) (
