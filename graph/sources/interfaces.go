@@ -9,9 +9,9 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
-	"github.com/lightningnetwork/lnd/graph/session"
 	"github.com/lightningnetwork/lnd/lnrpc/invoicesrpc"
 	"github.com/lightningnetwork/lnd/netann"
+	"github.com/lightningnetwork/lnd/routing"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
 
@@ -20,9 +20,11 @@ import (
 //
 //nolint:interfacebloat
 type GraphSource interface {
-	session.ReadOnlyGraph
+	routing.GraphSessionFactory
 	invoicesrpc.GraphSource
 	netann.ChannelGraph
+
+	NewGraph() routing.Graph
 
 	// ForEachChannel iterates through all the channel edges stored within
 	// the graph and invokes the passed callback for each edge. If the

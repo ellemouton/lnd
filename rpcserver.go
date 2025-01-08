@@ -51,7 +51,6 @@ import (
 	"github.com/lightningnetwork/lnd/graph"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
-	graphsession "github.com/lightningnetwork/lnd/graph/session"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
 	"github.com/lightningnetwork/lnd/input"
@@ -713,7 +712,7 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 			amount lnwire.MilliSatoshi) (btcutil.Amount, error) {
 
 			return routing.FetchAmountPairCapacity(
-				ctx, graphsession.NewRoutingGraph(graphSource),
+				ctx, graphSource.NewGraph(),
 				selfNode.PubKeyBytes, nodeFrom, nodeTo, amount,
 			)
 		},

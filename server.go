@@ -45,7 +45,6 @@ import (
 	"github.com/lightningnetwork/lnd/graph"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
-	graphsession "github.com/lightningnetwork/lnd/graph/session"
 	"github.com/lightningnetwork/lnd/graph/sources"
 	"github.com/lightningnetwork/lnd/healthcheck"
 	"github.com/lightningnetwork/lnd/htlcswitch"
@@ -1048,13 +1047,11 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		return nil, fmt.Errorf("error getting source node: %w", err)
 	}
 	paymentSessionSource := &routing.SessionSource{
-		GraphSessionFactory: graphsession.NewGraphSessionFactory(
-			graphSource,
-		),
-		SourceNode:        sourceNode,
-		MissionControl:    s.defaultMC,
-		GetLink:           s.htlcSwitch.GetLinkByShortID,
-		PathFindingConfig: pathFindingConfig,
+		GraphSessionFactory: graphSource,
+		SourceNode:          sourceNode,
+		MissionControl:      s.defaultMC,
+		GetLink:             s.htlcSwitch.GetLinkByShortID,
+		PathFindingConfig:   pathFindingConfig,
 	}
 
 	paymentControl := channeldb.NewPaymentControl(dbs.ChanStateDB)
@@ -1083,7 +1080,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 
 	s.chanRouter, err = routing.New(routing.Config{
 		SelfNode:           selfNode.PubKeyBytes,
-		RoutingGraph:       graphsession.NewRoutingGraph(graphSource),
+		RoutingGraph:       graphSource.NewGraph(),
 		Chain:              cc.ChainIO,
 		Payer:              s.htlcSwitch,
 		Control:            s.controlTower,
