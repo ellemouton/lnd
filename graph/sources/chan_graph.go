@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"net"
 	"runtime"
 	"time"
 
@@ -123,17 +122,6 @@ func (s *DBSource) FetchChannelEdgesByOutpoint(_ context.Context,
 	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error) {
 
 	return s.db.FetchChannelEdgesByOutpoint(point)
-}
-
-// AddrsForNode returns all known addresses for the target node public key. The
-// returned boolean indicatex if the given node is unknown to the backing
-// source.
-//
-// NOTE: this is part of the channeldb.AddrSource interface.
-func (s *DBSource) AddrsForNode(ctx context.Context,
-	nodePub *btcec.PublicKey) (bool, []net.Addr, error) {
-
-	return s.db.AddrsForNode(ctx, nodePub)
 }
 
 // ForEachChannel iterates through all the channel edges stored within the graph

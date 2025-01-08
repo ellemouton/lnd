@@ -2,7 +2,6 @@ package graphdb
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -412,32 +411,6 @@ func (c *ChannelGraph) NewPathFindTx() (kvdb.RTx, error) {
 	}
 
 	return c.db.BeginReadTx()
-}
-
-// AddrsForNode returns all known addresses for the target node public key that
-// the graph DB is aware of. The returned boolean indicates if the given node is
-// unknown to the graph DB or not.
-//
-// NOTE: this is part of the channeldb.AddrSource interface.
-func (c *ChannelGraph) AddrsForNode(_ context.Context,
-	nodePub *btcec.PublicKey) (bool, []net.Addr, error) {
-
-	pubKey, err := route.NewVertexFromBytes(nodePub.SerializeCompressed())
-	if err != nil {
-		return false, nil, err
-	}
-
-	node, err := c.FetchLightningNode(pubKey)
-	// We don't consider it an error if the graph is unaware of the node.
-	switch {
-	case err != nil && !errors.Is(err, ErrGraphNodeNotFound):
-		return false, nil, err
-
-	case errors.Is(err, ErrGraphNodeNotFound):
-		return false, nil, nil
-	}
-
-	return true, node.Addresses, nil
 }
 
 // ForEachChannel iterates through all the channel edges stored within the

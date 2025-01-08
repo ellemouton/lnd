@@ -617,7 +617,11 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		HtlcInterceptor:             invoiceHtlcModifier,
 	}
 
-	addrSource := channeldb.NewMultiAddrSource(dbs.ChanStateDB, graphSource)
+	graphSourceUtils := sources.NewGraphUtils(graphSource)
+
+	addrSource := channeldb.NewMultiAddrSource(
+		dbs.ChanStateDB, graphSourceUtils,
+	)
 
 	s := &server{
 		cfg:            cfg,

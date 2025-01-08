@@ -2,12 +2,14 @@ package sources
 
 import (
 	"context"
+	"errors"
+	"net"
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/lightningnetwork/lnd/autopilot"
-	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/discovery"
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/graph/session"
 	"github.com/lightningnetwork/lnd/lnrpc/invoicesrpc"
@@ -23,7 +25,6 @@ type GraphSource interface {
 	session.ReadOnlyGraph
 	invoicesrpc.GraphSource
 	netann.ChannelGraph
-	channeldb.AddrSource
 
 	// ForEachChannel iterates through all the channel edges stored within
 	// the graph and invokes the passed callback for each edge. If the
@@ -86,4 +87,35 @@ type GraphSource interface {
 	// betweenness centrality for each node in the graph.
 	BetweennessCentrality(ctx context.Context) (
 		map[autopilot.NodeID]*models.BetweennessCentrality, error)
+}
+
+type GraphUtils struct {
+	gs GraphSource
+}
+
+// NewGraphUtils creates a new instance of the GraphUtils.
+func NewGraphUtils(gs GraphSource) *GraphUtils {
+	return &GraphUtils{gs: gs}
+}
+
+func (u *GraphUtils) AddrsForNode(ctx context.Context,
+	nodePub *btcec.PublicKey) (bool, []net.Addr, error) {
+
+	pubKey, err := route.NewVertexFromBytes(nodePub.SerializeCompressed())
+	if err != nil {
+		return false, nil, err
+	}
+
+	node, err := u.gs.FetchLightningNode(ctx, pubKey)
+	// We don't consider it an error if the graph is unaware of the node.
+	switch {
+	case err != nil && !errors.Is(err, graphdb.ErrGraphNodeNotFound):
+		return false, nil, err
+
+	case errors.Is(err, graphdb.ErrGraphNodeNotFound):
+		return false, nil, nil
+	}
+
+	return true, node.Addresses, nil
+
 }
