@@ -90,7 +90,7 @@ func (p *PrefAttachment) NodeScores(ctx context.Context, g ChannelGraph,
 		seenChans = make(map[uint64]struct{})
 	)
 	if err := g.ForEachNode(ctx, func(n Node) error {
-		err := n.ForEachChannel(func(e ChannelEdge) error {
+		err := n.ForEachChannel(ctx, func(e ChannelEdge) error {
 			if _, ok := seenChans[e.ChanID.ToUint64()]; ok {
 				return nil
 			}
@@ -117,7 +117,7 @@ func (p *PrefAttachment) NodeScores(ctx context.Context, g ChannelGraph,
 	nodeChanNum := make(map[NodeID]int)
 	if err := g.ForEachNode(ctx, func(n Node) error {
 		var nodeChans int
-		err := n.ForEachChannel(func(e ChannelEdge) error {
+		err := n.ForEachChannel(ctx, func(e ChannelEdge) error {
 			// Since connecting to nodes with a lot of small
 			// channels actually worsens our connectivity in the
 			// graph (we will potentially waste time trying to use

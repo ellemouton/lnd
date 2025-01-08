@@ -49,7 +49,7 @@ func NewSimpleGraph(ctx context.Context, g ChannelGraph) (*SimpleGraph, error) {
 	err := g.ForEachNode(ctx, func(node Node) error {
 		u := getNodeIndex(node)
 
-		return node.ForEachChannel(func(edge ChannelEdge) error {
+		return node.ForEachChannel(ctx, func(edge ChannelEdge) error {
 			v := getNodeIndex(edge.Peer)
 
 			adj[u] = append(adj[u], v)

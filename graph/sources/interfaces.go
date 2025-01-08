@@ -40,6 +40,8 @@ type GraphSource interface {
 	ForEachNode(ctx context.Context,
 		cb func(*models.LightningNode) error) error
 
+	ForEachNodeWithTx(ctx context.Context, cb func(NodeTx) error) error
+
 	// HasLightningNode determines if the graph has a vertex identified by
 	// the target node identity public key. If the node exists in the
 	// database, a timestamp of when the data for the node was lasted
@@ -76,6 +78,18 @@ type GraphSource interface {
 
 	ForEachNodeCached(ctx context.Context, cb func(node route.Vertex,
 		chans map[uint64]*graphdb.DirectedChannel) error) error
+}
+
+type NodeTx interface {
+	ForEachNodeChannel(ctx context.Context,
+		nodePub route.Vertex, cb func(*models.ChannelEdgeInfo,
+			*models.ChannelEdgePolicy,
+			*models.ChannelEdgePolicy) error) error
+
+	FetchLightningNode(ctx context.Context, nodePub route.Vertex) (NodeTx,
+		error)
+
+	Node() *models.LightningNode
 }
 
 type GraphUtils struct {

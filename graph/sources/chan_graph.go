@@ -69,6 +69,60 @@ func (s *DBSource) ForEachNodeDirectedChannel(_ context.Context, tx session.RTx,
 	return s.db.ForEachNodeDirectedChannel(kvdbTx, node, cb)
 }
 
+func (s *DBSource) ForEachNodeWithTx(_ context.Context,
+	cb func(NodeTx) error) error {
+
+	return s.db.ForEachNode(func(tx kvdb.RTx,
+		node *models.LightningNode) error {
+
+		return cb(newDBNodeWithTx(s.db, node, tx))
+	})
+}
+
+type dbNodeWithTx struct {
+	db   *graphdb.ChannelGraph
+	node *models.LightningNode
+	tx   kvdb.RTx
+}
+
+func newDBNodeWithTx(db *graphdb.ChannelGraph, node *models.LightningNode,
+	tx kvdb.RTx) *dbNodeWithTx {
+
+	return &dbNodeWithTx{
+		db:   db,
+		node: node,
+		tx:   tx,
+	}
+}
+
+func (n *dbNodeWithTx) Node() *models.LightningNode {
+	return n.node
+}
+
+func (n *dbNodeWithTx) ForEachNodeChannel(_ context.Context,
+	nodePub route.Vertex, cb func(*models.ChannelEdgeInfo,
+		*models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy) error) error {
+
+	return n.db.ForEachNodeChannelTx(n.tx, nodePub, func(tx kvdb.RTx,
+		info *models.ChannelEdgeInfo, policy *models.ChannelEdgePolicy,
+		policy2 *models.ChannelEdgePolicy) error {
+
+		return cb(info, policy, policy2)
+	})
+}
+
+func (n *dbNodeWithTx) FetchLightningNode(_ context.Context,
+	nodePub route.Vertex) (NodeTx, error) {
+
+	node, err := n.db.FetchLightningNodeTx(n.tx, nodePub)
+	if err != nil {
+		return nil, err
+	}
+
+	return newDBNodeWithTx(n.db, node, n.tx), nil
+}
+
 // FetchNodeFeatures returns the features of a given node. If no features are
 // known for the node, an empty feature vector is returned. An optional read
 // transaction may be provided. If it is, then it will be cast into a kvdb.RTx

@@ -34,7 +34,7 @@ type Node interface {
 	// iterate through all edges emanating from/to the target node. For
 	// each active channel, this function should be called with the
 	// populated ChannelEdge that describes the active channel.
-	ForEachChannel(func(ChannelEdge) error) error
+	ForEachChannel(context.Context, func(ChannelEdge) error) error
 }
 
 // LocalChannel is a simple struct which contains relevant details of a
