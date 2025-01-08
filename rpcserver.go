@@ -6720,7 +6720,7 @@ func (r *rpcServer) GetNodeMetrics(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	if err := centralityMetric.Refresh(channelGraph); err != nil {
+	if err := centralityMetric.Refresh(ctx, channelGraph); err != nil {
 		return nil, err
 	}
 
@@ -6904,7 +6904,7 @@ func (r *rpcServer) QueryRoutes(ctx context.Context,
 func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 	_ *lnrpc.NetworkInfoRequest) (*lnrpc.NetworkInfo, error) {
 
-	graph := r.server.graphDB
+	graph := r.server.graphSource
 
 	var (
 		numNodes             uint32
@@ -6929,7 +6929,7 @@ func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 	// network, tallying up the total number of nodes, and also gathering
 	// each node so we can measure the graph diameter and degree stats
 	// below.
-	err := graph.ForEachNodeCached(func(node route.Vertex,
+	err := graph.ForEachNodeCached(ctx, func(node route.Vertex,
 		edges map[uint64]*graphdb.DirectedChannel) error {
 
 		// Increment the total number of nodes with each iteration.
@@ -6987,7 +6987,7 @@ func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 	}
 
 	// Query the graph for the current number of zombie channels.
-	numZombies, err := graph.NumZombies()
+	numZombies, err := graph.NumZombies(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -7003,7 +7003,7 @@ func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 
 	// Graph diameter.
 	channelGraph := autopilot.ChannelGraphFromCachedDatabase(graph)
-	simpleGraph, err := autopilot.NewSimpleGraph(channelGraph)
+	simpleGraph, err := autopilot.NewSimpleGraph(ctx, channelGraph)
 	if err != nil {
 		return nil, err
 	}

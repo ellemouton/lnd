@@ -2,6 +2,7 @@ package autopilot
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"errors"
 	"net"
@@ -14,6 +15,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
+	graphsources "github.com/lightningnetwork/lnd/graph/sources"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -134,7 +136,9 @@ func (d *dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 // error, then execution should be terminated.
 //
 // NOTE: Part of the autopilot.ChannelGraph interface.
-func (d *databaseChannelGraph) ForEachNode(cb func(Node) error) error {
+func (d *databaseChannelGraph) ForEachNode(ctx context.Context,
+	cb func(Node) error) error {
+
 	return d.db.ForEachNode(func(tx kvdb.RTx,
 		n *models.LightningNode) error {
 
@@ -349,7 +353,9 @@ func newMemChannelGraph() *memChannelGraph {
 // error, then execution should be terminated.
 //
 // NOTE: Part of the autopilot.ChannelGraph interface.
-func (m memChannelGraph) ForEachNode(cb func(Node) error) error {
+func (m memChannelGraph) ForEachNode(_ context.Context,
+	cb func(Node) error) error {
+
 	for _, node := range m.graph {
 		if err := cb(node); err != nil {
 			return err
@@ -481,7 +487,7 @@ func (m *memChannelGraph) addRandNode() (*btcec.PublicKey, error) {
 // databaseChannelGraphCached wraps a channeldb.ChannelGraph instance with the
 // necessary API to properly implement the autopilot.ChannelGraph interface.
 type databaseChannelGraphCached struct {
-	db *graphdb.ChannelGraph
+	db graphsources.GraphSource
 }
 
 // A compile time assertion to ensure databaseChannelGraphCached meets the
@@ -490,7 +496,7 @@ var _ ChannelGraph = (*databaseChannelGraphCached)(nil)
 
 // ChannelGraphFromCachedDatabase returns an instance of the
 // autopilot.ChannelGraph backed by a live, open channeldb instance.
-func ChannelGraphFromCachedDatabase(db *graphdb.ChannelGraph) ChannelGraph {
+func ChannelGraphFromCachedDatabase(db graphsources.GraphSource) ChannelGraph {
 	return &databaseChannelGraphCached{
 		db: db,
 	}
@@ -553,8 +559,10 @@ func (nc dbNodeCached) ForEachChannel(cb func(ChannelEdge) error) error {
 // error, then execution should be terminated.
 //
 // NOTE: Part of the autopilot.ChannelGraph interface.
-func (dc *databaseChannelGraphCached) ForEachNode(cb func(Node) error) error {
-	return dc.db.ForEachNodeCached(func(n route.Vertex,
+func (dc *databaseChannelGraphCached) ForEachNode(ctx context.Context,
+	cb func(Node) error) error {
+
+	return dc.db.ForEachNodeCached(ctx, func(n route.Vertex,
 		channels map[uint64]*graphdb.DirectedChannel) error {
 
 		if len(channels) > 0 {

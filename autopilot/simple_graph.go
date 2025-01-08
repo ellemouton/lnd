@@ -1,5 +1,7 @@
 package autopilot
 
+import "context"
+
 // diameterCutoff is used to discard nodes in the diameter calculation.
 // It is the multiplier for the eccentricity of the highest-degree node,
 // serving as a cutoff to discard all nodes with a smaller hop distance. This
@@ -20,7 +22,7 @@ type SimpleGraph struct {
 // NewSimpleGraph creates a simplified graph from the current channel graph.
 // Returns an error if the channel graph iteration fails due to underlying
 // failure.
-func NewSimpleGraph(g ChannelGraph) (*SimpleGraph, error) {
+func NewSimpleGraph(ctx context.Context, g ChannelGraph) (*SimpleGraph, error) {
 	nodes := make(map[NodeID]int)
 	adj := make(map[int][]int)
 	nextIndex := 0
@@ -44,7 +46,7 @@ func NewSimpleGraph(g ChannelGraph) (*SimpleGraph, error) {
 
 	// Iterate over each node and each channel and update the adj and the node
 	// index.
-	err := g.ForEachNode(func(node Node) error {
+	err := g.ForEachNode(ctx, func(node Node) error {
 		u := getNodeIndex(node)
 
 		return node.ForEachChannel(func(edge ChannelEdge) error {

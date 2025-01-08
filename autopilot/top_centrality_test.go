@@ -1,6 +1,7 @@
 package autopilot
 
 import (
+	"context"
 	"testing"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -14,6 +15,7 @@ import (
 func testTopCentrality(t *testing.T, graph testGraph,
 	graphNodes map[int]*btcec.PublicKey, channelsWith []int) {
 
+	ctx := context.Background()
 	topCentrality := NewTopCentrality()
 
 	var channels []LocalChannel
@@ -58,7 +60,7 @@ func testTopCentrality(t *testing.T, graph testGraph,
 		// Attempt to get centrality scores and expect
 		// that the result equals with the expected set.
 		scores, err := topCentrality.NodeScores(
-			graph, channels, chanSize, nodes,
+			ctx, graph, channels, chanSize, nodes,
 		)
 
 		require.NoError(t, err)

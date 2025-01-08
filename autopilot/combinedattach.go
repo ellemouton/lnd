@@ -1,6 +1,7 @@
 package autopilot
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcutil"
@@ -70,7 +71,8 @@ func (c *WeightedCombAttachment) Name() string {
 // is the maximum possible improvement in connectivity.
 //
 // NOTE: This is a part of the AttachmentHeuristic interface.
-func (c *WeightedCombAttachment) NodeScores(g ChannelGraph, chans []LocalChannel,
+func (c *WeightedCombAttachment) NodeScores(ctx context.Context,
+	g ChannelGraph, chans []LocalChannel,
 	chanSize btcutil.Amount, nodes map[NodeID]struct{}) (
 	map[NodeID]*NodeScore, error) {
 
@@ -81,7 +83,7 @@ func (c *WeightedCombAttachment) NodeScores(g ChannelGraph, chans []LocalChannel
 		log.Tracef("Getting scores from sub heuristic %v", h.Name())
 
 		s, err := h.NodeScores(
-			g, chans, chanSize, nodes,
+			ctx, g, chans, chanSize, nodes,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("unable to get sub score: %w",

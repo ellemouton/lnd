@@ -159,7 +159,7 @@ func NewGraphBootstrapper(cg autopilot.ChannelGraph) (NetworkPeerBootstrapper, e
 // many valid peer addresses to return.
 //
 // NOTE: Part of the NetworkPeerBootstrapper interface.
-func (c *ChannelGraphBootstrapper) SampleNodeAddrs(_ context.Context,
+func (c *ChannelGraphBootstrapper) SampleNodeAddrs(ctx context.Context,
 	numAddrs uint32, ignore map[autopilot.NodeID]struct{}) (
 	[]*lnwire.NetAddress, error) {
 
@@ -185,7 +185,7 @@ func (c *ChannelGraphBootstrapper) SampleNodeAddrs(_ context.Context,
 			errFound = fmt.Errorf("found node")
 		)
 
-		err := c.chanGraph.ForEachNode(func(node autopilot.Node) error {
+		err := c.chanGraph.ForEachNode(ctx, func(node autopilot.Node) error {
 			nID := autopilot.NodeID(node.PubKey())
 			if _, ok := c.tried[nID]; ok {
 				return nil
