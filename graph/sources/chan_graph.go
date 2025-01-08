@@ -3,13 +3,10 @@ package sources
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/lightningnetwork/lnd/autopilot"
-	"github.com/lightningnetwork/lnd/discovery"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/graph/session"
@@ -208,57 +205,15 @@ func (s *DBSource) FetchLightningNode(_ context.Context,
 	return s.db.FetchLightningNode(nodePub)
 }
 
-// GraphBootstrapper returns a NetworkPeerBootstrapper instance backed by the
-// ChannelGraph instance.
-//
-// NOTE: this is part of the GraphSource interface.
-func (s *DBSource) GraphBootstrapper(_ context.Context) (
-	discovery.NetworkPeerBootstrapper, error) {
-
-	chanGraph := autopilot.ChannelGraphFromDatabase(s.db)
-
-	return discovery.NewGraphBootstrapper(chanGraph)
+func (s *DBSource) NumZombies(_ context.Context) (uint64, error) {
+	return s.db.NumZombies()
 }
 
-// BetweennessCentrality computes the normalised and non-normalised betweenness
-// centrality for each node in the graph.
-//
-// NOTE: this is part of the GraphSource interface.
-func (s *DBSource) BetweennessCentrality(_ context.Context) (
-	map[autopilot.NodeID]*models.BetweennessCentrality, error) {
+func (s *DBSource) ForEachNodeCached(_ context.Context,
+	cb func(node route.Vertex,
+		chans map[uint64]*graphdb.DirectedChannel) error) error {
 
-	channelGraph := autopilot.ChannelGraphFromDatabase(s.db)
-	centralityMetric, err := autopilot.NewBetweennessCentralityMetric(
-		runtime.NumCPU(),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := centralityMetric.Refresh(channelGraph); err != nil {
-		return nil, err
-	}
-
-	centrality := make(map[autopilot.NodeID]*models.BetweennessCentrality)
-
-	for nodeID, val := range centralityMetric.GetMetric(true) {
-		centrality[nodeID] = &models.BetweennessCentrality{
-			Normalized: val,
-		}
-	}
-
-	for nodeID, val := range centralityMetric.GetMetric(false) {
-		if _, ok := centrality[nodeID]; !ok {
-			centrality[nodeID] = &models.BetweennessCentrality{
-				Normalized: val,
-			}
-
-			continue
-		}
-		centrality[nodeID].NonNormalized = val
-	}
-
-	return centrality, nil
+	return s.db.ForEachNodeCached(cb)
 }
 
 // kvdbRTx is an implementation of graphdb.RTx backed by a KVDB database read

@@ -2914,7 +2914,8 @@ func initNetworkBootstrappers(ctx context.Context,
 	// First, we'll create an instance of the ChannelGraphBootstrapper as
 	// this can be used by default if we've already partially seeded the
 	// network.
-	graphBootstrapper, err := s.graphSource.GraphBootstrapper(ctx)
+	chanGraph := autopilot.ChannelGraphFromDatabase(s.graphDB)
+	graphBootstrapper, err := discovery.NewGraphBootstrapper(chanGraph)
 	if err != nil {
 		return nil, err
 	}

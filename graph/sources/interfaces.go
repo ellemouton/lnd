@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/lightningnetwork/lnd/autopilot"
-	"github.com/lightningnetwork/lnd/discovery"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/graph/session"
@@ -74,15 +72,10 @@ type GraphSource interface {
 	FetchLightningNode(ctx context.Context, nodePub route.Vertex) (
 		*models.LightningNode, error)
 
-	// GraphBootstrapper returns a network peer bootstrapper that can be
-	// used to discover new peers to connect to.
-	GraphBootstrapper(ctx context.Context) (
-		discovery.NetworkPeerBootstrapper, error)
+	NumZombies(ctx context.Context) (uint64, error)
 
-	// BetweennessCentrality computes the normalised and non-normalised
-	// betweenness centrality for each node in the graph.
-	BetweennessCentrality(ctx context.Context) (
-		map[autopilot.NodeID]*models.BetweennessCentrality, error)
+	ForEachNodeCached(ctx context.Context, cb func(node route.Vertex,
+		chans map[uint64]*graphdb.DirectedChannel) error) error
 }
 
 type GraphUtils struct {
