@@ -2,9 +2,7 @@ package sources
 
 import (
 	"context"
-	"time"
 
-	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/wire"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
@@ -32,7 +30,13 @@ func NewDBGSource(db *graphdb.ChannelGraph) *DBSource {
 	}
 }
 
-func (s *DBSource) ForEachNodeWithTx(_ context.Context,
+// ForEachNode iterates through all the stored vertices/nodes in the graph,
+// executing the passed callback with each node encountered. If the callback
+// returns an error, then the transaction is aborted and the iteration stops
+// early.
+//
+// NOTE: this is part of the GraphSource interface.
+func (s *DBSource) ForEachNode(_ context.Context,
 	cb func(NodeTx) error) error {
 
 	return s.db.ForEachNode(func(tx kvdb.RTx,
@@ -91,10 +95,21 @@ type dbSrcSession struct {
 	tx kvdb.RTx
 }
 
+// NewGraph creates a new Graph instance without any underlying read-lock. This
+// method should be used when the caller does not need to hold a read-lock
+// across multiple calls to the Graph.
+//
+// NOTE: this is part of the GraphSessionFactory interface.
 func (s *DBSource) NewGraph() routing.Graph {
 	return &dbSrcSession{db: s.db}
 }
 
+// NewGraphSession will produce a new Graph to use for a path-finding
+// session. It returns the Graph along with a call-back that must be
+// called once Graph access is complete. This call-back will close any
+// read-only transaction that was created at Graph construction time.
+//
+// NOTE: this is part of the GraphSessionFactory interface.
 func (s *DBSource) NewGraphSession(_ context.Context) (routing.Graph,
 	func() error, error) {
 
@@ -111,18 +126,25 @@ func (s *DBSource) NewGraphSession(_ context.Context) (routing.Graph,
 	return session, session.close, nil
 }
 
+// FetchNodeFeatures returns the features of the given node.
+//
+// NOTE: this is part of the Graph interface.
 func (s *dbSrcSession) FetchNodeFeatures(_ context.Context,
 	nodePub route.Vertex) (*lnwire.FeatureVector, error) {
 
 	return s.db.FetchNodeFeatures(s.tx, nodePub)
 }
 
+// ForEachNodeChannel calls the callback for every channel of the given node.
+//
+// NOTE: this is part of the Graph interface.
 func (s *dbSrcSession) ForEachNodeChannel(_ context.Context, node route.Vertex,
 	cb func(channel *graphdb.DirectedChannel) error) error {
 
 	return s.db.ForEachNodeDirectedChannel(s.tx, node, cb)
 }
 
+// close closes the underlying transaction if there is one.
 func (s *dbSrcSession) close() error {
 	if s.tx == nil {
 		return nil
@@ -178,45 +200,6 @@ func (s *DBSource) ForEachChannel(_ context.Context,
 	return s.db.ForEachChannel(cb)
 }
 
-// ForEachNode iterates through all the stored vertices/nodes in the graph,
-// executing the passed callback with each node encountered. If the callback
-// returns an error, then the transaction is aborted and the iteration stops
-// early.
-//
-// NOTE: this is part of the GraphSource interface.
-func (s *DBSource) ForEachNode(_ context.Context,
-	cb func(*models.LightningNode) error) error {
-
-	return s.db.ForEachNode(func(_ kvdb.RTx,
-		node *models.LightningNode) error {
-
-		return cb(node)
-	})
-}
-
-// HasLightningNode determines if the graph has a vertex identified by the
-// target node identity public key. If the node exists in the database, a
-// timestamp of when the data for the node was lasted updated is returned along
-// with a true boolean. Otherwise, an empty time.Time is returned with a false
-// boolean.
-//
-// NOTE: this is part of the GraphSource interface.
-func (s *DBSource) HasLightningNode(_ context.Context,
-	nodePub [33]byte) (time.Time, bool, error) {
-
-	return s.db.HasLightningNode(nodePub)
-}
-
-// LookupAlias attempts to return the alias as advertised by the target node.
-// graphdb.ErrNodeAliasNotFound is returned if the alias is not found.
-//
-// NOTE: this is part of the GraphSource interface.
-func (s *DBSource) LookupAlias(_ context.Context,
-	pub *btcec.PublicKey) (string, error) {
-
-	return s.db.LookupAlias(pub)
-}
-
 // ForEachNodeChannel iterates through all channels of the given node, executing
 // the passed callback with an edge info structure and the policies of each end
 // of the channel. The first edge policy is the outgoing edge *to* the
@@ -250,10 +233,19 @@ func (s *DBSource) FetchLightningNode(_ context.Context,
 	return s.db.FetchLightningNode(nodePub)
 }
 
+// NumZombies returns the number of channels that the GraphSource considers to
+// be zombies.
+//
+// NOTE: this is part of the GraphSource interface.
 func (s *DBSource) NumZombies(_ context.Context) (uint64, error) {
 	return s.db.NumZombies()
 }
 
+// ForEachNodeCached is similar to ForEachNode, but it utilizes the channel
+// graph cache instead. Note that this doesn't return all the information the
+// regular ForEachNode method does.
+//
+// NOTE: this is part of the GraphSource interface.
 func (s *DBSource) ForEachNodeCached(_ context.Context,
 	cb func(node route.Vertex,
 		chans map[uint64]*graphdb.DirectedChannel) error) error {

@@ -51,6 +51,7 @@ import (
 	"github.com/lightningnetwork/lnd/graph"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
+	"github.com/lightningnetwork/lnd/graph/sources"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
 	"github.com/lightningnetwork/lnd/input"
@@ -1758,7 +1759,7 @@ func (r *rpcServer) VerifyMessage(ctx context.Context,
 	// channels signed the message.
 	//
 	// TODO(phlip9): Require valid nodes to have capital in active channels.
-	graph := r.server.graphSource
+	graph := sources.NewGraphUtils(r.server.graphSource)
 	_, active, err := graph.HasLightningNode(ctx, pub)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query graph: %w", err)
@@ -4758,7 +4759,8 @@ func createRPCOpenChannel(ctx context.Context, r *rpcServer,
 
 	// Look up our channel peer's node alias if the caller requests it.
 	if peerAliasLookup {
-		peerAlias, err := r.server.graphSource.LookupAlias(ctx, nodePub)
+		graph := sources.NewGraphUtils(r.server.graphSource)
+		peerAlias, err := graph.LookupAlias(ctx, nodePub)
 		if err != nil {
 			peerAlias = fmt.Sprintf("unable to lookup "+
 				"peer alias: %v", err)
@@ -6533,8 +6535,8 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// First iterate through all the known nodes (connected or unconnected
 	// within the graph), collating their current state into the RPC
 	// response.
-	err := graph.ForEachNode(ctx, func(node *models.LightningNode) error {
-		resp.Nodes = append(resp.Nodes, marshalNode(node))
+	err := graph.ForEachNode(ctx, func(node sources.NodeTx) error {
+		resp.Nodes = append(resp.Nodes, marshalNode(node.Node()))
 
 		return nil
 	})

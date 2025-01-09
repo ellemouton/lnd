@@ -129,7 +129,7 @@ func (d *dbNode) ForEachChannel(ctx context.Context,
 func (d *databaseChannelGraph) ForEachNode(ctx context.Context,
 	cb func(Node) error) error {
 
-	return d.db.ForEachNodeWithTx(ctx, func(n graphsources.NodeTx) error {
+	return d.db.ForEachNode(ctx, func(n graphsources.NodeTx) error {
 		// We'll skip over any node that doesn't have any advertised
 		// addresses. As we won't be able to reach them to actually
 		// open any channels.
