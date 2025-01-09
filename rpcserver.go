@@ -1759,8 +1759,7 @@ func (r *rpcServer) VerifyMessage(ctx context.Context,
 	// channels signed the message.
 	//
 	// TODO(phlip9): Require valid nodes to have capital in active channels.
-	graph := sources.NewGraphUtils(r.server.graphSource)
-	_, active, err := graph.HasLightningNode(ctx, pub)
+	_, active, err := r.server.graphSource.HasLightningNode(ctx, pub)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query graph: %w", err)
 	}
@@ -4759,8 +4758,7 @@ func createRPCOpenChannel(ctx context.Context, r *rpcServer,
 
 	// Look up our channel peer's node alias if the caller requests it.
 	if peerAliasLookup {
-		graph := sources.NewGraphUtils(r.server.graphSource)
-		peerAlias, err := graph.LookupAlias(ctx, nodePub)
+		peerAlias, err := r.server.graphSource.LookupAlias(ctx, nodePub)
 		if err != nil {
 			peerAlias = fmt.Sprintf("unable to lookup "+
 				"peer alias: %v", err)

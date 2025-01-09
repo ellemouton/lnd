@@ -339,6 +339,10 @@ func (m *mockGraphSessionFactory) NewGraphSession(_ context.Context) (Graph,
 	}, nil
 }
 
+func (m *mockGraphSessionFactory) NewGraph() Graph {
+	return m
+}
+
 var _ GraphSessionFactory = (*mockGraphSessionFactory)(nil)
 var _ Graph = (*mockGraphSessionFactory)(nil)
 
@@ -368,6 +372,10 @@ func (g *mockGraphSessionFactoryChanDB) NewGraphSession(_ context.Context) (
 	}
 
 	return session, session.close, nil
+}
+
+func (g *mockGraphSessionFactoryChanDB) NewGraph() Graph {
+	return newMockGraphSessionChanDB(g.graph)
 }
 
 var _ GraphSessionFactory = (*mockGraphSessionFactoryChanDB)(nil)

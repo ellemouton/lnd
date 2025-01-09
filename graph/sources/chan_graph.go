@@ -165,14 +165,10 @@ func (s *DBSource) FetchChannelEdgesByID(_ context.Context,
 	return s.db.FetchChannelEdgesByID(chanID)
 }
 
-// IsPublicNode determines whether the node with the given public key is seen as
-// a public node in the graph from the graph's source node's point of view.
-//
-// NOTE: this is part of the invoicesrpc.GraphSource interface.
-func (s *DBSource) IsPublicNode(_ context.Context,
-	pubKey [33]byte) (bool, error) {
+func (s *DBSource) SourceNode(_ context.Context) (*models.LightningNode,
+	error) {
 
-	return s.db.IsPublicNode(pubKey)
+	return s.db.SourceNode()
 }
 
 // FetchChannelEdgesByOutpoint returns the channel edge info and most recent

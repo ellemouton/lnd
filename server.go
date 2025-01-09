@@ -264,7 +264,7 @@ type server struct {
 
 	// graphSource can be used for any read only graph queries. This may be
 	// implemented by this LND node or some other external source.
-	graphSource sources.GraphSource
+	graphSource sources.GraphUtils
 
 	chanStateDB *channeldb.ChannelStateDB
 
@@ -626,7 +626,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		cfg:            cfg,
 		implCfg:        implCfg,
 		graphDB:        dbs.GraphDB,
-		graphSource:    graphSource,
+		graphSource:    graphSourceUtils,
 		chanStateDB:    dbs.ChanStateDB.ChannelStateDB(),
 		addrSource:     addrSource,
 		miscDB:         dbs.ChanStateDB,
