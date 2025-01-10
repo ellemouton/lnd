@@ -2326,7 +2326,7 @@ func TestPathFindSpecExample(t *testing.T) {
 	)
 	require.NoError(t, err, "invalid route request")
 
-	route, _, err := ctx.router.FindRoute(req)
+	route, _, err := ctx.router.FindRoute(context.Background(), req)
 	require.NoError(t, err, "unable to find route")
 
 	// Now we'll examine the route returned for correctness.
@@ -2353,7 +2353,7 @@ func TestPathFindSpecExample(t *testing.T) {
 	)
 	require.NoError(t, err, "invalid route request")
 
-	route, _, err = ctx.router.FindRoute(req)
+	route, _, err = ctx.router.FindRoute(context.Background(), req)
 	require.NoError(t, err, "unable to find routes")
 
 	// The route should be two hops.
@@ -3236,7 +3236,7 @@ func dbFindPath(graph *graphdb.ChannelGraph,
 	}()
 
 	route, _, err := findPath(
-		&graphParams{
+		context.Background(), &graphParams{
 			additionalEdges: additionalEdges,
 			bandwidthHints:  bandwidthHints,
 			graph:           graphSess,

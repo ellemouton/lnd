@@ -120,8 +120,8 @@ func testQueryRoutes(t *testing.T, useMissionControl bool, useMsat bool,
 		}
 	}
 
-	findRoute := func(req *routing.RouteRequest) (*route.Route, float64,
-		error) {
+	findRoute := func(_ context.Context, req *routing.RouteRequest) (
+		*route.Route, float64, error) {
 
 		if int64(req.Amount) != amtSat*1000 {
 			t.Fatal("unexpected amount")

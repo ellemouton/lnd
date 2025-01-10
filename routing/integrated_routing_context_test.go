@@ -174,7 +174,9 @@ func (c *integratedRoutingContext) testPayment(maxParts uint32,
 	)
 	require.NoError(c.t, err)
 
-	getBandwidthHints := func(_ Graph) (bandwidthHints, error) {
+	getBandwidthHints := func(_ context.Context, _ Graph) (bandwidthHints,
+		error) {
+
 		// Create bandwidth hints based on local channel balances.
 		bandwidthHints := map[uint64]lnwire.MilliSatoshi{}
 		for _, ch := range c.graph.nodes[c.source.pubkey].channels {
@@ -236,7 +238,8 @@ func (c *integratedRoutingContext) testPayment(maxParts uint32,
 
 		// Find a route.
 		route, err := session.RequestRoute(
-			amtRemaining, lnwire.MaxMilliSatoshi, inFlightHtlcs, 0,
+			context.Background(), amtRemaining,
+			lnwire.MaxMilliSatoshi, inFlightHtlcs, 0,
 			lnwire.CustomRecords{
 				lnwire.MinCustomRecordsTlvType: []byte{1, 2, 3},
 			},

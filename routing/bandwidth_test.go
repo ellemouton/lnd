@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"context"
 	"testing"
 
 	"github.com/btcsuite/btcd/btcutil"
@@ -15,6 +16,9 @@ import (
 // TestBandwidthManager tests getting of bandwidth hints from a bandwidth
 // manager.
 func TestBandwidthManager(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
 	var (
 		chan1ID      uint64         = 101
 		chan2ID      uint64         = 102
@@ -116,7 +120,7 @@ func TestBandwidthManager(t *testing.T) {
 			)
 
 			m, err := newBandwidthManager(
-				g, sourceNode.pubkey, testCase.linkQuery,
+				ctx, g, sourceNode.pubkey, testCase.linkQuery,
 				fn.None[[]byte](),
 				fn.Some[htlcswitch.AuxTrafficShaper](
 					&mockTrafficShaper{},
