@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"os"
@@ -399,14 +400,15 @@ func (g *mockGraphSessionChanDB) close() error {
 	return nil
 }
 
-func (g *mockGraphSessionChanDB) ForEachNodeChannel(nodePub route.Vertex,
+func (g *mockGraphSessionChanDB) ForEachNodeChannel(_ context.Context,
+	nodePub route.Vertex,
 	cb func(channel *graphdb.DirectedChannel) error) error {
 
 	return g.graph.ForEachNodeDirectedChannel(g.tx, nodePub, cb)
 }
 
-func (g *mockGraphSessionChanDB) FetchNodeFeatures(nodePub route.Vertex) (
-	*lnwire.FeatureVector, error) {
+func (g *mockGraphSessionChanDB) FetchNodeFeatures(_ context.Context,
+	nodePub route.Vertex) (*lnwire.FeatureVector, error) {
 
 	return g.graph.FetchNodeFeatures(g.tx, nodePub)
 }

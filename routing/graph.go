@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcutil"
@@ -14,11 +15,12 @@ import (
 type Graph interface {
 	// ForEachNodeChannel calls the callback for every channel of the given
 	// node.
-	ForEachNodeChannel(nodePub route.Vertex,
+	ForEachNodeChannel(ctx context.Context, nodePub route.Vertex,
 		cb func(channel *graphdb.DirectedChannel) error) error
 
 	// FetchNodeFeatures returns the features of the given node.
-	FetchNodeFeatures(nodePub route.Vertex) (*lnwire.FeatureVector, error)
+	FetchNodeFeatures(ctx context.Context, nodePub route.Vertex) (
+		*lnwire.FeatureVector, error)
 }
 
 // GraphSessionFactory can be used to produce a new Graph instance which can
@@ -40,8 +42,9 @@ type GraphSessionFactory interface {
 
 // FetchAmountPairCapacity determines the maximal public capacity between two
 // nodes depending on the amount we try to send.
-func FetchAmountPairCapacity(graph Graph, source, nodeFrom, nodeTo route.Vertex,
-	amount lnwire.MilliSatoshi) (btcutil.Amount, error) {
+func FetchAmountPairCapacity(ctx context.Context, graph Graph, source, nodeFrom,
+	nodeTo route.Vertex, amount lnwire.MilliSatoshi) (btcutil.Amount,
+	error) {
 
 	// Create unified edges for all incoming connections.
 	//
@@ -49,7 +52,7 @@ func FetchAmountPairCapacity(graph Graph, source, nodeFrom, nodeTo route.Vertex,
 	// by a deprecated router rpc.
 	u := newNodeEdgeUnifier(source, nodeTo, false, nil)
 
-	err := u.addGraphPolicies(graph)
+	err := u.addGraphPolicies(ctx, graph)
 	if err != nil {
 		return 0, err
 	}

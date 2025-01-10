@@ -620,10 +620,12 @@ func (r *ChannelRouter) FindBlindedPaths(destination route.Vertex,
 	amt lnwire.MilliSatoshi, probabilitySrc probabilitySource,
 	restrictions *BlindedPathRestrictions) ([]*route.Route, error) {
 
+	ctx := context.TODO()
+
 	// First, find a set of candidate paths given the destination node and
 	// path length restrictions.
 	paths, err := findBlindedPaths(
-		r.cfg.RoutingGraph, destination, &blindedPathRestrictions{
+		ctx, r.cfg.RoutingGraph, destination, &blindedPathRestrictions{
 			minNumHops:      restrictions.MinDistanceFromIntroNode,
 			maxNumHops:      restrictions.NumHops,
 			nodeOmissionSet: restrictions.NodeOmissionSet,
@@ -1371,6 +1373,7 @@ func (r *ChannelRouter) BuildRoute(amt fn.Option[lnwire.MilliSatoshi],
 	payAddr fn.Option[[32]byte], firstHopBlob fn.Option[[]byte]) (
 	*route.Route, error) {
 
+	ctx := context.TODO()
 	log.Tracef("BuildRoute called: hopsCount=%v, amt=%v", len(hops), amt)
 
 	var outgoingChans map[uint64]struct{}
@@ -1395,7 +1398,7 @@ func (r *ChannelRouter) BuildRoute(amt fn.Option[lnwire.MilliSatoshi],
 	// We check that each node in the route has a connection to others that
 	// can forward in principle.
 	unifiers, err := getEdgeUnifiers(
-		r.cfg.SelfNode, hops, outgoingChans, r.cfg.RoutingGraph,
+		ctx, r.cfg.SelfNode, hops, outgoingChans, r.cfg.RoutingGraph,
 	)
 	if err != nil {
 		return nil, err
@@ -1652,8 +1655,8 @@ func (r *ChannelRouter) failStaleAttempt(a channeldb.HTLCAttempt,
 }
 
 // getEdgeUnifiers returns a list of edge unifiers for the given route.
-func getEdgeUnifiers(source route.Vertex, hops []route.Vertex,
-	outgoingChans map[uint64]struct{},
+func getEdgeUnifiers(ctx context.Context, source route.Vertex,
+	hops []route.Vertex, outgoingChans map[uint64]struct{},
 	graph Graph) ([]*edgeUnifier, error) {
 
 	// Allocate a list that will contain the edge unifiers for this route.
@@ -1678,7 +1681,7 @@ func getEdgeUnifiers(source route.Vertex, hops []route.Vertex,
 			source, toNode, !isExitHop, outgoingChans,
 		)
 
-		err := u.addGraphPolicies(graph)
+		err := u.addGraphPolicies(ctx, graph)
 		if err != nil {
 			return nil, err
 		}

@@ -682,9 +682,10 @@ func newRPCServer(cfg *Config, interceptorChain *rpcperms.InterceptorChain,
 // addDeps populates all dependencies needed by the RPC server, and any
 // of the sub-servers that it maintains. When this is done, the RPC server can
 // be started, and start accepting RPC calls.
-func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
-	subServerCgs *subRPCServerConfigs, atpl *autopilot.Manager,
-	invoiceRegistry *invoices.InvoiceRegistry, tower *watchtower.Standalone,
+func (r *rpcServer) addDeps(ctx context.Context, s *server,
+	macService *macaroons.Service, subServerCgs *subRPCServerConfigs,
+	atpl *autopilot.Manager, invoiceRegistry *invoices.InvoiceRegistry,
+	tower *watchtower.Standalone,
 	chanPredicate chanacceptor.MultiplexAcceptor,
 	invoiceHtlcModifier *invoices.HtlcModificationInterceptor) error {
 
@@ -711,7 +712,7 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 			amount lnwire.MilliSatoshi) (btcutil.Amount, error) {
 
 			return routing.FetchAmountPairCapacity(
-				graphSource.NewGraph(),
+				ctx, graphSource.NewGraph(),
 				selfNode.PubKeyBytes, nodeFrom, nodeTo, amount,
 			)
 		},
