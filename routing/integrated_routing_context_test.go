@@ -326,6 +326,10 @@ func newMockGraphSessionFactory(graph Graph) GraphSessionFactory {
 	return &mockGraphSessionFactory{Graph: graph}
 }
 
+func (m *mockGraphSessionFactory) NewGraph() Graph {
+	return m
+}
+
 func (m *mockGraphSessionFactory) NewGraphSession() (Graph, func() error,
 	error) {
 
@@ -347,6 +351,10 @@ func newMockGraphSessionFactoryFromChanDB(
 	return &mockGraphSessionFactoryChanDB{
 		graph: graph,
 	}
+}
+
+func (g *mockGraphSessionFactoryChanDB) NewGraph() Graph {
+	return newMockGraphSessionChanDB(g.graph)
 }
 
 func (g *mockGraphSessionFactoryChanDB) NewGraphSession() (Graph, func() error,

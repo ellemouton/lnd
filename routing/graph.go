@@ -31,6 +31,11 @@ type GraphSessionFactory interface {
 	// called once Graph access is complete. This call-back will close any
 	// read-only transaction that was created at Graph construction time.
 	NewGraphSession() (Graph, func() error, error)
+
+	// NewGraph creates a new Graph instance without any read-lock. This
+	// method should be used when the caller does not need to hold a
+	// read-lock across multiple calls to the Graph.
+	NewGraph() Graph
 }
 
 // FetchAmountPairCapacity determines the maximal public capacity between two
