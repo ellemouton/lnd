@@ -88,6 +88,11 @@ type ChannelGraphSource interface {
 
 	// ForEachNode is used to iterate over every node in the known graph.
 	ForEachNode(func(node *models.LightningNode) error) error
+
+	// IsZombieChannel takes the timestamps of the latest channel updates
+	// for a channel and returns true if the channel should be considered a
+	// zombie based on these timestamps.
+	IsZombieChannel(updateTime1, updateTime2 time.Time) bool
 }
 
 // DB is an interface describing a persisted Lightning Network graph.

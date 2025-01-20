@@ -97,6 +97,22 @@ func newMockRouter(height uint32) *mockGraphSource {
 
 var _ graph.ChannelGraphSource = (*mockGraphSource)(nil)
 
+func (r *mockGraphSource) IsZombieChannel(updateTime1,
+	updateTime2 time.Time) bool {
+
+	chanExpiry := graph.DefaultChannelPruneExpiry
+
+	e1Zombie := updateTime1.IsZero() ||
+		time.Since(updateTime1) >= chanExpiry
+
+	e2Zombie := updateTime2.IsZero() ||
+		time.Since(updateTime2) >= chanExpiry
+
+	// A channel is considered live if either of the edges have a recent
+	// update.
+	return e1Zombie && e2Zombie
+}
+
 func (r *mockGraphSource) AddNode(node *models.LightningNode,
 	_ ...batch.SchedulerOption) error {
 
