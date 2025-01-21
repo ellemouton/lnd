@@ -2,6 +2,7 @@ package routing
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -3256,7 +3257,8 @@ func dbFindBlindedPaths(graph *graphdb.ChannelGraph,
 	}
 
 	return findBlindedPaths(
-		graph.NewRoutingGraph(), sourceNode.PubKeyBytes, restrictions,
+		context.Background(), graph.NewRoutingGraph(),
+		sourceNode.PubKeyBytes, restrictions,
 	)
 }
 

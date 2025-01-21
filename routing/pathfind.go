@@ -3,6 +3,7 @@ package routing
 import (
 	"bytes"
 	"container/heap"
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -508,7 +509,8 @@ type PathFindingConfig struct {
 // getOutgoingBalance returns the maximum available balance in any of the
 // channels of the given node. The second return parameters is the total
 // available balance.
-func getOutgoingBalance(node route.Vertex, outgoingChans map[uint64]struct{},
+func getOutgoingBalance(ctx context.Context, node route.Vertex,
+	outgoingChans map[uint64]struct{},
 	bandwidthHints bandwidthHints, g graphdb.RoutingGraph) (
 	lnwire.MilliSatoshi, lnwire.MilliSatoshi, error) {
 
@@ -557,7 +559,7 @@ func getOutgoingBalance(node route.Vertex, outgoingChans map[uint64]struct{},
 	}
 
 	// Iterate over all channels of the to node.
-	err := g.ForEachNodeChannel(node, cb)
+	err := g.ForEachNodeChannel(ctx, node, cb)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -580,6 +582,8 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 	timePref float64, finalHtlcExpiry int32) ([]*unifiedEdge, float64,
 	error) {
 
+	ctx := context.TODO()
+
 	// Pathfinding can be a significant portion of the total payment
 	// latency, especially on low-powered devices. Log several metrics to
 	// aid in the analysis performance problems in this area.
@@ -597,7 +601,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 	features := r.DestFeatures
 	if features == nil {
 		var err error
-		features, err = g.graph.FetchNodeFeatures(target)
+		features, err = g.graph.FetchNodeFeatures(ctx, target)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -641,7 +645,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 	// balance available.
 	if source == self {
 		max, total, err := getOutgoingBalance(
-			self, outgoingChanMap, g.bandwidthHints, g.graph,
+			ctx, self, outgoingChanMap, g.bandwidthHints, g.graph,
 		)
 		if err != nil {
 			return nil, 0, err
@@ -995,7 +999,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 		}
 
 		// Fetch node features fresh from the graph.
-		fromFeatures, err := g.graph.FetchNodeFeatures(node)
+		fromFeatures, err := g.graph.FetchNodeFeatures(ctx, node)
 		if err != nil {
 			return nil, err
 		}
@@ -1035,7 +1039,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 			self, pivot, !isExitHop, outgoingChanMap,
 		)
 
-		err := u.addGraphPolicies(g.graph)
+		err := u.addGraphPolicies(ctx, g.graph)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -1210,8 +1214,9 @@ type blindedHop struct {
 // _and_ the introduction node for the path has more than one public channel.
 // Any filtering of paths based on payment value or success probabilities is
 // left to the caller.
-func findBlindedPaths(g graphdb.RoutingGraph, target route.Vertex,
-	restrictions *blindedPathRestrictions) ([][]blindedHop, error) {
+func findBlindedPaths(ctx context.Context, g graphdb.RoutingGraph,
+	target route.Vertex, restrictions *blindedPathRestrictions) (
+	[][]blindedHop, error) {
 
 	// Sanity check the restrictions.
 	if restrictions.minNumHops > restrictions.maxNumHops {
@@ -1229,7 +1234,7 @@ func findBlindedPaths(g graphdb.RoutingGraph, target route.Vertex,
 			return true, nil
 		}
 
-		features, err := g.FetchNodeFeatures(node)
+		features, err := g.FetchNodeFeatures(ctx, node)
 		if err != nil {
 			return false, err
 		}
@@ -1243,7 +1248,7 @@ func findBlindedPaths(g graphdb.RoutingGraph, target route.Vertex,
 	// a node that doesn't have any other edges - in that final case, the
 	// whole path should be ignored.
 	paths, _, err := processNodeForBlindedPath(
-		g, target, supportsRouteBlinding, nil, restrictions,
+		ctx, g, target, supportsRouteBlinding, nil, restrictions,
 	)
 	if err != nil {
 		return nil, err
@@ -1278,7 +1283,8 @@ func findBlindedPaths(g graphdb.RoutingGraph, target route.Vertex,
 // processNodeForBlindedPath is a recursive function that traverses the graph
 // in a depth first manner searching for a set of blinded paths to the given
 // node.
-func processNodeForBlindedPath(g graphdb.RoutingGraph, node route.Vertex,
+func processNodeForBlindedPath(ctx context.Context, g graphdb.RoutingGraph,
+	node route.Vertex,
 	supportsRouteBlinding func(vertex route.Vertex) (bool, error),
 	alreadyVisited map[route.Vertex]bool,
 	restrictions *blindedPathRestrictions) ([][]blindedHop, bool, error) {
@@ -1325,7 +1331,8 @@ func processNodeForBlindedPath(g graphdb.RoutingGraph, node route.Vertex,
 
 	// Now, iterate over the node's channels in search for paths to this
 	// node that can be used for blinded paths
-	err = g.ForEachNodeChannel(node,
+	err = g.ForEachNodeChannel(
+		ctx, node,
 		func(channel *graphdb.DirectedChannel) error {
 			// Keep track of how many incoming channels this node
 			// has. We only use a node as an introduction node if it
@@ -1335,8 +1342,8 @@ func processNodeForBlindedPath(g graphdb.RoutingGraph, node route.Vertex,
 			// Process each channel peer to gather any paths that
 			// lead to the peer.
 			nextPaths, hasMoreChans, err := processNodeForBlindedPath( //nolint:ll
-				g, channel.OtherNode, supportsRouteBlinding,
-				visited, restrictions,
+				ctx, g, channel.OtherNode,
+				supportsRouteBlinding, visited, restrictions,
 			)
 			if err != nil {
 				return err

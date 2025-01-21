@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -170,7 +171,8 @@ type paymentSession struct {
 
 	additionalEdges map[route.Vertex][]AdditionalEdge
 
-	getBandwidthHints func(graphdb.RoutingGraph) (bandwidthHints, error)
+	getBandwidthHints func(context.Context, graphdb.RoutingGraph) (
+		bandwidthHints, error)
 
 	payment *LightningPayment
 
@@ -198,7 +200,8 @@ type paymentSession struct {
 
 // newPaymentSession instantiates a new payment session.
 func newPaymentSession(p *LightningPayment, selfNode route.Vertex,
-	getBandwidthHints func(graphdb.RoutingGraph) (bandwidthHints, error),
+	getBandwidthHints func(context.Context, graphdb.RoutingGraph) (
+		bandwidthHints, error),
 	graphSessFactory GraphSessionFactory,
 	missionControl MissionControlQuerier,
 	pathFindingConfig PathFindingConfig) (*paymentSession, error) {
@@ -248,6 +251,8 @@ func newPaymentSession(p *LightningPayment, selfNode route.Vertex,
 func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 	activeShards, height uint32,
 	firstHopCustomRecords lnwire.CustomRecords) (*route.Route, error) {
+
+	ctx := context.TODO()
 
 	if p.empty {
 		return nil, errEmptyPaySession
@@ -310,7 +315,7 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 		// don't have enough bandwidth to carry the payment. New
 		// bandwidth hints are queried for every new path finding
 		// attempt, because concurrent payments may change balances.
-		bandwidthHints, err := p.getBandwidthHints(graph)
+		bandwidthHints, err := p.getBandwidthHints(ctx, graph)
 		if err != nil {
 			// Close routing graph session.
 			if graphErr := closeGraph(); graphErr != nil {

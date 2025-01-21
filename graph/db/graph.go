@@ -2,6 +2,7 @@ package graphdb
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -3955,8 +3956,8 @@ type dbSrcSession struct {
 // FetchNodeFeatures returns the features of the given node.
 //
 // NOTE: this is part of the RoutingGraph interface.
-func (s *dbSrcSession) FetchNodeFeatures(nodePub route.Vertex) (
-	*lnwire.FeatureVector, error) {
+func (s *dbSrcSession) FetchNodeFeatures(_ context.Context,
+	nodePub route.Vertex) (*lnwire.FeatureVector, error) {
 
 	return s.src.FetchNodeFeatures(s.tx, nodePub)
 }
@@ -3964,7 +3965,7 @@ func (s *dbSrcSession) FetchNodeFeatures(nodePub route.Vertex) (
 // ForEachNodeChannel calls the callback for every channel of the given node.
 //
 // NOTE: this is part of the RoutingGraph interface.
-func (s *dbSrcSession) ForEachNodeChannel(node route.Vertex,
+func (s *dbSrcSession) ForEachNodeChannel(_ context.Context, node route.Vertex,
 	cb func(channel *DirectedChannel) error) error {
 
 	return s.src.ForEachNodeDirectedChannel(s.tx, node, cb)

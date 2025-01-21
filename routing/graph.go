@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcutil"
@@ -28,13 +29,15 @@ func FetchAmountPairCapacity(graph graphdb.RoutingGraph, source, nodeFrom,
 	nodeTo route.Vertex, amount lnwire.MilliSatoshi) (btcutil.Amount,
 	error) {
 
+	ctx := context.Background()
+
 	// Create unified edges for all incoming connections.
 	//
 	// Note: Inbound fees are not used here because this method is only used
 	// by a deprecated router rpc.
 	u := newNodeEdgeUnifier(source, nodeTo, false, nil)
 
-	err := u.addGraphPolicies(graph)
+	err := u.addGraphPolicies(ctx, graph)
 	if err != nil {
 		return 0, err
 	}

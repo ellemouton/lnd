@@ -1,6 +1,8 @@
 package graphdb
 
 import (
+	"context"
+
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -10,9 +12,10 @@ import (
 type RoutingGraph interface {
 	// ForEachNodeChannel calls the callback for every channel of the given
 	// node.
-	ForEachNodeChannel(nodePub route.Vertex,
+	ForEachNodeChannel(ctx context.Context, nodePub route.Vertex,
 		cb func(channel *DirectedChannel) error) error
 
 	// FetchNodeFeatures returns the features of the given node.
-	FetchNodeFeatures(nodePub route.Vertex) (*lnwire.FeatureVector, error)
+	FetchNodeFeatures(ctx context.Context,
+		nodePub route.Vertex) (*lnwire.FeatureVector, error)
 }
