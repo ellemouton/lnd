@@ -20,6 +20,7 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/fn/v2"
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/lntypes"
@@ -237,7 +238,7 @@ type Config struct {
 	SelfNode route.Vertex
 
 	// RoutingGraph is a graph source that will be used for pathfinding.
-	RoutingGraph Graph
+	RoutingGraph graphdb.RoutingGraph
 
 	// Chain is the router's source to the most up-to-date blockchain data.
 	// All incoming advertised channels will be checked against the chain
@@ -1654,7 +1655,7 @@ func (r *ChannelRouter) failStaleAttempt(a channeldb.HTLCAttempt,
 // getEdgeUnifiers returns a list of edge unifiers for the given route.
 func getEdgeUnifiers(source route.Vertex, hops []route.Vertex,
 	outgoingChans map[uint64]struct{},
-	graph Graph) ([]*edgeUnifier, error) {
+	graph graphdb.RoutingGraph) ([]*edgeUnifier, error) {
 
 	// Allocate a list that will contain the edge unifiers for this route.
 	unifiers := make([]*edgeUnifier, len(hops))

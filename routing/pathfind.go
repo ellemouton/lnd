@@ -411,7 +411,7 @@ func edgeWeight(lockedAmt lnwire.MilliSatoshi, fee lnwire.MilliSatoshi,
 // graphParams wraps the set of graph parameters passed to findPath.
 type graphParams struct {
 	// graph is the ChannelGraph to be used during path finding.
-	graph Graph
+	graph graphdb.RoutingGraph
 
 	// additionalEdges is an optional set of edges that should be
 	// considered during path finding, that is not already found in the
@@ -509,8 +509,8 @@ type PathFindingConfig struct {
 // channels of the given node. The second return parameters is the total
 // available balance.
 func getOutgoingBalance(node route.Vertex, outgoingChans map[uint64]struct{},
-	bandwidthHints bandwidthHints,
-	g Graph) (lnwire.MilliSatoshi, lnwire.MilliSatoshi, error) {
+	bandwidthHints bandwidthHints, g graphdb.RoutingGraph) (
+	lnwire.MilliSatoshi, lnwire.MilliSatoshi, error) {
 
 	var max, total lnwire.MilliSatoshi
 	cb := func(channel *graphdb.DirectedChannel) error {
@@ -1210,7 +1210,7 @@ type blindedHop struct {
 // _and_ the introduction node for the path has more than one public channel.
 // Any filtering of paths based on payment value or success probabilities is
 // left to the caller.
-func findBlindedPaths(g Graph, target route.Vertex,
+func findBlindedPaths(g graphdb.RoutingGraph, target route.Vertex,
 	restrictions *blindedPathRestrictions) ([][]blindedHop, error) {
 
 	// Sanity check the restrictions.
@@ -1278,7 +1278,7 @@ func findBlindedPaths(g Graph, target route.Vertex,
 // processNodeForBlindedPath is a recursive function that traverses the graph
 // in a depth first manner searching for a set of blinded paths to the given
 // node.
-func processNodeForBlindedPath(g Graph, node route.Vertex,
+func processNodeForBlindedPath(g graphdb.RoutingGraph, node route.Vertex,
 	supportsRouteBlinding func(vertex route.Vertex) (bool, error),
 	alreadyVisited map[route.Vertex]bool,
 	restrictions *blindedPathRestrictions) ([][]blindedHop, bool, error) {

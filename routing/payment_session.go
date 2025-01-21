@@ -6,6 +6,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btclog/v2"
 	"github.com/lightningnetwork/lnd/channeldb"
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnutils"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -169,7 +170,7 @@ type paymentSession struct {
 
 	additionalEdges map[route.Vertex][]AdditionalEdge
 
-	getBandwidthHints func(Graph) (bandwidthHints, error)
+	getBandwidthHints func(graphdb.RoutingGraph) (bandwidthHints, error)
 
 	payment *LightningPayment
 
@@ -197,7 +198,7 @@ type paymentSession struct {
 
 // newPaymentSession instantiates a new payment session.
 func newPaymentSession(p *LightningPayment, selfNode route.Vertex,
-	getBandwidthHints func(Graph) (bandwidthHints, error),
+	getBandwidthHints func(graphdb.RoutingGraph) (bandwidthHints, error),
 	graphSessFactory GraphSessionFactory,
 	missionControl MissionControlQuerier,
 	pathFindingConfig PathFindingConfig) (*paymentSession, error) {
@@ -297,7 +298,8 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 
 	for {
 		// Get a routing graph session.
-		graph, closeGraph, err := p.graphSessFactory.NewGraphSession()
+		graph, closeGraph, err := p.graphSessFactory.
+			NewRoutingGraphSession()
 		if err != nil {
 			return nil, err
 		}

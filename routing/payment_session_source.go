@@ -3,6 +3,7 @@ package routing
 import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/lightningnetwork/lnd/fn/v2"
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -56,7 +57,9 @@ func (m *SessionSource) NewPaymentSession(p *LightningPayment,
 	trafficShaper fn.Option[htlcswitch.AuxTrafficShaper]) (PaymentSession,
 	error) {
 
-	getBandwidthHints := func(graph Graph) (bandwidthHints, error) {
+	getBandwidthHints := func(graph graphdb.RoutingGraph) (bandwidthHints,
+		error) {
+
 		return newBandwidthManager(
 			graph, m.SourceNode.PubKeyBytes, m.GetLink,
 			firstHopBlob, trafficShaper,

@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -115,7 +116,7 @@ func TestUpdateAdditionalEdge(t *testing.T) {
 	// Create the paymentsession.
 	session, err := newPaymentSession(
 		payment, route.Vertex{},
-		func(Graph) (bandwidthHints, error) {
+		func(graph graphdb.RoutingGraph) (bandwidthHints, error) {
 			return &mockBandwidthHints{}, nil
 		},
 		newMockGraphSessionFactory(&sessionGraph{}),
@@ -193,7 +194,7 @@ func TestRequestRoute(t *testing.T) {
 
 	session, err := newPaymentSession(
 		payment, route.Vertex{},
-		func(Graph) (bandwidthHints, error) {
+		func(graph graphdb.RoutingGraph) (bandwidthHints, error) {
 			return &mockBandwidthHints{}, nil
 		},
 		newMockGraphSessionFactory(&sessionGraph{}),
@@ -251,7 +252,7 @@ func TestRequestRoute(t *testing.T) {
 }
 
 type sessionGraph struct {
-	Graph
+	graphdb.RoutingGraph
 }
 
 func (g *sessionGraph) sourceNode() route.Vertex {

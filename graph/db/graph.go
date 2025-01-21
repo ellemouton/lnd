@@ -3913,6 +3913,72 @@ func (c *ChannelGraph) IsClosedScid(scid lnwire.ShortChannelID) (bool, error) {
 	return isClosed, nil
 }
 
+// NewRoutingGraph creates a new RoutingGraph instance without any underlying
+// read-lock. This method should be used when the caller does not need to hold a
+// read-lock across multiple calls to the underlying graph source.
+//
+// NOTE: this is part of the GraphSessionFactory interface.
+func (c *ChannelGraph) NewRoutingGraph() RoutingGraph {
+	return &dbSrcSession{src: c}
+}
+
+// NewRoutingGraphSession will produce a new RoutingGraph to use for a
+// path-finding session. It returns the RoutingGraph along with a call-back
+// that must be called once RoutingGraph access is complete. This call-back
+// will close any read-only transaction that was created at Graph construction
+// time.
+//
+// NOTE: this is part of the GraphSessionFactory interface.
+func (c *ChannelGraph) NewRoutingGraphSession() (RoutingGraph, func() error,
+	error) {
+
+	tx, err := c.NewPathFindTx()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	session := &dbSrcSession{
+		src: c,
+		tx:  tx,
+	}
+
+	return session, session.close, nil
+}
+
+// dbSrcSession is an implementation of the routing.Graph interface where the
+// same read-only transaction is held across calls.
+type dbSrcSession struct {
+	src *ChannelGraph
+	tx  kvdb.RTx
+}
+
+// FetchNodeFeatures returns the features of the given node.
+//
+// NOTE: this is part of the RoutingGraph interface.
+func (s *dbSrcSession) FetchNodeFeatures(nodePub route.Vertex) (
+	*lnwire.FeatureVector, error) {
+
+	return s.src.FetchNodeFeatures(s.tx, nodePub)
+}
+
+// ForEachNodeChannel calls the callback for every channel of the given node.
+//
+// NOTE: this is part of the RoutingGraph interface.
+func (s *dbSrcSession) ForEachNodeChannel(node route.Vertex,
+	cb func(channel *DirectedChannel) error) error {
+
+	return s.src.ForEachNodeDirectedChannel(s.tx, node, cb)
+}
+
+// close closes the underlying transaction if there is one.
+func (s *dbSrcSession) close() error {
+	if s.tx == nil {
+		return nil
+	}
+
+	return s.tx.Rollback()
+}
+
 func putLightningNode(nodeBucket kvdb.RwBucket, aliasBucket kvdb.RwBucket, // nolint:dupl
 	updateIndex kvdb.RwBucket, node *models.LightningNode) error {
 

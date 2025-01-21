@@ -3221,9 +3221,7 @@ func dbFindPath(graph *graphdb.ChannelGraph,
 		return nil, err
 	}
 
-	graphSessFactory := newMockGraphSessionFactoryFromChanDB(graph)
-
-	graphSess, closeGraphSess, err := graphSessFactory.NewGraphSession()
+	graphSess, closeGraphSess, err := graph.NewRoutingGraphSession()
 	if err != nil {
 		return nil, err
 	}
@@ -3258,8 +3256,7 @@ func dbFindBlindedPaths(graph *graphdb.ChannelGraph,
 	}
 
 	return findBlindedPaths(
-		newMockGraphSessionChanDB(graph), sourceNode.PubKeyBytes,
-		restrictions,
+		graph.NewRoutingGraph(), sourceNode.PubKeyBytes, restrictions,
 	)
 }
 

@@ -271,4 +271,4 @@ func (m *mockGraph) sendHtlc(route *route.Route) (htlcResult, error) {
 }
 
 // Compile-time check for the Graph interface.
-var _ Graph = &mockGraph{}
+var _ graphdb.RoutingGraph = &mockGraph{}
