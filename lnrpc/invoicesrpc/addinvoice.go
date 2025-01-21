@@ -96,7 +96,8 @@ type AddInvoiceConfig struct {
 
 	// QueryBlindedRoutes can be used to generate a few routes to this node
 	// that can then be used in the construction of a blinded payment path.
-	QueryBlindedRoutes func(lnwire.MilliSatoshi) ([]*route.Route, error)
+	QueryBlindedRoutes func(context.Context, lnwire.MilliSatoshi) (
+		[]*route.Route, error)
 }
 
 // AddInvoiceData contains the required data to create a new invoice.
@@ -521,6 +522,7 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 
 		//nolint:ll
 		paths, err := blindedpath.BuildBlindedPaymentPaths(
+			ctx,
 			&blindedpath.BuildBlindedPathCfg{
 				FindRoutes:              cfg.QueryBlindedRoutes,
 				FetchChannelEdgesByID:   cfg.Graph.FetchChannelEdgesByID,

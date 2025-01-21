@@ -2,6 +2,7 @@ package blindedpath
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -38,7 +39,8 @@ type BuildBlindedPathCfg struct {
 	// various lengths and may even contain only a single hop. Any route
 	// shorter than MinNumHops will be padded with dummy hops during route
 	// construction.
-	FindRoutes func(value lnwire.MilliSatoshi) ([]*route.Route, error)
+	FindRoutes func(ctx context.Context, value lnwire.MilliSatoshi) (
+		[]*route.Route, error)
 
 	// FetchChannelEdgesByID attempts to look up the two directed edges for
 	// the channel identified by the channel ID.
@@ -111,12 +113,12 @@ type BuildBlindedPathCfg struct {
 
 // BuildBlindedPaymentPaths uses the passed config to construct a set of blinded
 // payment paths that can be added to the invoice.
-func BuildBlindedPaymentPaths(cfg *BuildBlindedPathCfg) (
+func BuildBlindedPaymentPaths(ctx context.Context, cfg *BuildBlindedPathCfg) (
 	[]*zpay32.BlindedPaymentPath, error) {
 
 	// Find some appropriate routes for the value to be routed. This will
 	// return a set of routes made up of real nodes.
-	routes, err := cfg.FindRoutes(cfg.ValueMsat)
+	routes, err := cfg.FindRoutes(ctx, cfg.ValueMsat)
 	if err != nil {
 		return nil, err
 	}

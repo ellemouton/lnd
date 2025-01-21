@@ -6122,10 +6122,11 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 		},
 		GetAlias:   r.server.aliasMgr.GetPeerAlias,
 		BestHeight: r.server.cc.BestBlockTracker.BestHeight,
-		QueryBlindedRoutes: func(amt lnwire.MilliSatoshi) (
-			[]*route.Route, error) {
+		QueryBlindedRoutes: func(ctx context.Context,
+			amt lnwire.MilliSatoshi) ([]*route.Route, error) {
 
 			return r.server.chanRouter.FindBlindedPaths(
+				ctx,
 				r.selfNode, amt,
 				r.server.defaultMC.GetProbability,
 				blindingRestrictions,

@@ -2305,20 +2305,21 @@ func TestPathInsufficientCapacityWithFee(t *testing.T) {
 
 func TestPathFindSpecExample(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	// All our path finding tests will assume a starting height of 100, so
 	// we'll pass that in to ensure that the router uses 100 as the current
 	// height.
 	const startingHeight = 100
-	ctx := createTestCtxFromFile(t, startingHeight, specExampleFilePath)
+	tCtx := createTestCtxFromFile(t, startingHeight, specExampleFilePath)
 
 	// We'll first exercise the scenario of a direct payment from Bob to
 	// Carol, so we set "B" as the source node so path finding starts from
 	// Bob.
-	bob := ctx.aliases["B"]
+	bob := tCtx.aliases["B"]
 
 	// Query for a route of 4,999,999 mSAT to carol.
-	carol := ctx.aliases["C"]
+	carol := tCtx.aliases["C"]
 	const amt lnwire.MilliSatoshi = 4999999
 	req, err := NewRouteRequest(
 		bob, &carol, amt, 0, noRestrictions, nil, nil,
@@ -2326,7 +2327,7 @@ func TestPathFindSpecExample(t *testing.T) {
 	)
 	require.NoError(t, err, "invalid route request")
 
-	route, _, err := ctx.router.FindRoute(req)
+	route, _, err := tCtx.router.FindRoute(ctx, req)
 	require.NoError(t, err, "unable to find route")
 
 	// Now we'll examine the route returned for correctness.
@@ -2343,8 +2344,8 @@ func TestPathFindSpecExample(t *testing.T) {
 
 	// Next, we'll set A as the source node so we can assert that we create
 	// the proper route for any queries starting with Alice.
-	alice := ctx.aliases["A"]
-	ctx.router.cfg.SelfNode = alice
+	alice := tCtx.aliases["A"]
+	tCtx.router.cfg.SelfNode = alice
 
 	// We'll now request a route from A -> B -> C.
 	req, err = NewRouteRequest(
@@ -2353,7 +2354,7 @@ func TestPathFindSpecExample(t *testing.T) {
 	)
 	require.NoError(t, err, "invalid route request")
 
-	route, _, err = ctx.router.FindRoute(req)
+	route, _, err = tCtx.router.FindRoute(ctx, req)
 	require.NoError(t, err, "unable to find routes")
 
 	// The route should be two hops.
@@ -3234,7 +3235,7 @@ func dbFindPath(graph *graphdb.ChannelGraph,
 	}()
 
 	route, _, err := findPath(
-		&graphParams{
+		context.Background(), &graphParams{
 			additionalEdges: additionalEdges,
 			bandwidthHints:  bandwidthHints,
 			graph:           graphSess,

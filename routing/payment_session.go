@@ -139,7 +139,7 @@ type PaymentSession interface {
 	//
 	// A noRouteError is returned if a non-critical error is encountered
 	// during path finding.
-	RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
+	RequestRoute(ctx context.Context, maxAmt, feeLimit lnwire.MilliSatoshi,
 		activeShards, height uint32,
 		firstHopCustomRecords lnwire.CustomRecords) (*route.Route,
 		error)
@@ -248,11 +248,9 @@ func newPaymentSession(p *LightningPayment, selfNode route.Vertex,
 //
 // NOTE: This function is safe for concurrent access.
 // NOTE: Part of the PaymentSession interface.
-func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
-	activeShards, height uint32,
+func (p *paymentSession) RequestRoute(ctx context.Context, maxAmt,
+	feeLimit lnwire.MilliSatoshi, activeShards, height uint32,
 	firstHopCustomRecords lnwire.CustomRecords) (*route.Route, error) {
-
-	ctx := context.TODO()
 
 	if p.empty {
 		return nil, errEmptyPaySession
@@ -330,7 +328,7 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 
 		// Find a route for the current amount.
 		path, _, err := p.pathFinder(
-			&graphParams{
+			ctx, &graphParams{
 				additionalEdges: p.additionalEdges,
 				bandwidthHints:  bandwidthHints,
 				graph:           graph,

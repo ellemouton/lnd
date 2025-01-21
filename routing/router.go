@@ -516,10 +516,8 @@ func getTargetNode(target *route.Vertex,
 // FindRoute attempts to query the ChannelRouter for the optimum path to a
 // particular target destination to which it is able to send `amt` after
 // factoring in channel capacities and cumulative fees along the route.
-func (r *ChannelRouter) FindRoute(req *RouteRequest) (*route.Route, float64,
-	error) {
-
-	ctx := context.TODO()
+func (r *ChannelRouter) FindRoute(ctx context.Context, req *RouteRequest) (
+	*route.Route, float64, error) {
 
 	log.Debugf("Searching for path to %v, sending %v", req.Target,
 		req.Amount)
@@ -552,7 +550,7 @@ func (r *ChannelRouter) FindRoute(req *RouteRequest) (*route.Route, float64,
 	}
 
 	path, probability, err := findPath(
-		&graphParams{
+		ctx, &graphParams{
 			additionalEdges: req.RouteHints,
 			bandwidthHints:  bandwidthHints,
 			graph:           r.cfg.RoutingGraph,
@@ -619,11 +617,10 @@ type BlindedPathRestrictions struct {
 
 // FindBlindedPaths finds a selection of paths to the destination node that can
 // be used in blinded payment paths.
-func (r *ChannelRouter) FindBlindedPaths(destination route.Vertex,
-	amt lnwire.MilliSatoshi, probabilitySrc probabilitySource,
+func (r *ChannelRouter) FindBlindedPaths(ctx context.Context,
+	destination route.Vertex, amt lnwire.MilliSatoshi,
+	probabilitySrc probabilitySource,
 	restrictions *BlindedPathRestrictions) ([]*route.Route, error) {
-
-	ctx := context.TODO()
 
 	// First, find a set of candidate paths given the destination node and
 	// path length restrictions.
@@ -1371,12 +1368,10 @@ func (e ErrNoChannel) Error() string {
 // BuildRoute returns a fully specified route based on a list of pubkeys. If
 // amount is nil, the minimum routable amount is used. To force a specific
 // outgoing channel, use the outgoingChan parameter.
-func (r *ChannelRouter) BuildRoute(amt fn.Option[lnwire.MilliSatoshi],
-	hops []route.Vertex, outgoingChan *uint64, finalCltvDelta int32,
-	payAddr fn.Option[[32]byte], firstHopBlob fn.Option[[]byte]) (
-	*route.Route, error) {
-
-	ctx := context.TODO()
+func (r *ChannelRouter) BuildRoute(ctx context.Context,
+	amt fn.Option[lnwire.MilliSatoshi], hops []route.Vertex,
+	outgoingChan *uint64, finalCltvDelta int32, payAddr fn.Option[[32]byte],
+	firstHopBlob fn.Option[[]byte]) (*route.Route, error) {
 
 	log.Tracef("BuildRoute called: hopsCount=%v, amt=%v", len(hops), amt)
 

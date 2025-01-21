@@ -2,6 +2,7 @@ package routing
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image/color"
 	"math"
@@ -244,9 +245,12 @@ func signErrChanUpdate(t *testing.T, key *btcec.PrivateKey,
 // limit.
 func TestFindRoutesWithFeeLimit(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	const startingBlockHeight = 101
-	ctx := createTestCtxFromFile(t, startingBlockHeight, basicGraphFilePath)
+	tCtx := createTestCtxFromFile(
+		t, startingBlockHeight, basicGraphFilePath,
+	)
 
 	// This test will attempt to find routes from roasbeef to sophon for 100
 	// satoshis with a fee limit of 10 satoshis. There are two routes from
@@ -255,7 +259,7 @@ func TestFindRoutesWithFeeLimit(t *testing.T) {
 	//	2. roasbeef -> phamnuwen -> sophon
 	// The second route violates our fee limit, so we should only expect to
 	// see the first route.
-	target := ctx.aliases["sophon"]
+	target := tCtx.aliases["sophon"]
 	paymentAmt := lnwire.NewMSatFromSatoshis(100)
 	restrictions := &RestrictParams{
 		FeeLimit:          lnwire.NewMSatFromSatoshis(10),
@@ -264,12 +268,12 @@ func TestFindRoutesWithFeeLimit(t *testing.T) {
 	}
 
 	req, err := NewRouteRequest(
-		ctx.router.cfg.SelfNode, &target, paymentAmt, 0,
+		tCtx.router.cfg.SelfNode, &target, paymentAmt, 0,
 		restrictions, nil, nil, nil, MinCLTVDelta,
 	)
 	require.NoError(t, err, "invalid route request")
 
-	route, _, err := ctx.router.FindRoute(req)
+	route, _, err := tCtx.router.FindRoute(ctx, req)
 	require.NoError(t, err, "unable to find any routes")
 
 	require.Falsef(t,
@@ -281,9 +285,9 @@ func TestFindRoutesWithFeeLimit(t *testing.T) {
 	require.Equal(t, 2, len(hops), "expected 2 hops")
 
 	require.Equalf(t,
-		ctx.aliases["songoku"], hops[0].PubKeyBytes,
+		tCtx.aliases["songoku"], hops[0].PubKeyBytes,
 		"expected first hop through songoku, got %s",
-		getAliasFromPubKey(hops[0].PubKeyBytes, ctx.aliases),
+		getAliasFromPubKey(hops[0].PubKeyBytes, tCtx.aliases),
 	)
 }
 
@@ -1528,6 +1532,9 @@ func TestSendToRouteMaxHops(t *testing.T) {
 
 // TestBuildRoute tests whether correct routes are built.
 func TestBuildRoute(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
 	// Setup a three node network.
 	chanCapSat := btcutil.Amount(100000)
 	paymentAddrFeatures := lnwire.NewFeatureVector(
@@ -1636,7 +1643,9 @@ func TestBuildRoute(t *testing.T) {
 
 	const startingBlockHeight = 101
 
-	ctx := createTestCtxFromGraphInstance(t, startingBlockHeight, testGraph)
+	tCtx := createTestCtxFromGraphInstance(
+		t, startingBlockHeight, testGraph,
+	)
 
 	checkHops := func(rt *route.Route, expected []uint64,
 		payAddr [32]byte) {
@@ -1662,27 +1671,28 @@ func TestBuildRoute(t *testing.T) {
 
 	// Test that we can't build a route when no hops are given.
 	hops = []route.Vertex{}
-	_, err = ctx.router.BuildRoute(
-		noAmt, hops, nil, 40, fn.None[[32]byte](), fn.None[[]byte](),
+	_, err = tCtx.router.BuildRoute(
+		ctx, noAmt, hops, nil, 40, fn.None[[32]byte](),
+		fn.None[[]byte](),
 	)
 	require.Error(t, err)
 
 	// Create hop list for an unknown destination.
-	hops := []route.Vertex{ctx.aliases["b"], ctx.aliases["y"]}
-	_, err = ctx.router.BuildRoute(
-		noAmt, hops, nil, 40, fn.Some(payAddr), fn.None[[]byte](),
+	hops := []route.Vertex{tCtx.aliases["b"], tCtx.aliases["y"]}
+	_, err = tCtx.router.BuildRoute(
+		ctx, noAmt, hops, nil, 40, fn.Some(payAddr), fn.None[[]byte](),
 	)
 	noChanErr := ErrNoChannel{}
 	require.ErrorAs(t, err, &noChanErr)
 	require.Equal(t, 1, noChanErr.position)
 
 	// Create hop list from the route node pubkeys.
-	hops = []route.Vertex{ctx.aliases["b"], ctx.aliases["c"]}
+	hops = []route.Vertex{tCtx.aliases["b"], tCtx.aliases["c"]}
 	amt := lnwire.NewMSatFromSatoshis(100)
 
 	// Build the route for the given amount.
-	rt, err := ctx.router.BuildRoute(
-		fn.Some(amt), hops, nil, 40, fn.Some(payAddr),
+	rt, err := tCtx.router.BuildRoute(
+		ctx, fn.Some(amt), hops, nil, 40, fn.Some(payAddr),
 		fn.None[[]byte](),
 	)
 	require.NoError(t, err)
@@ -1694,8 +1704,8 @@ func TestBuildRoute(t *testing.T) {
 	require.Equal(t, lnwire.MilliSatoshi(106000), rt.TotalAmount)
 
 	// Build the route for the minimum amount.
-	rt, err = ctx.router.BuildRoute(
-		noAmt, hops, nil, 40, fn.Some(payAddr), fn.None[[]byte](),
+	rt, err = tCtx.router.BuildRoute(
+		ctx, noAmt, hops, nil, 40, fn.Some(payAddr), fn.None[[]byte](),
 	)
 	require.NoError(t, err)
 
@@ -1711,9 +1721,10 @@ func TestBuildRoute(t *testing.T) {
 
 	// Test a route that contains incompatible channel htlc constraints.
 	// There is no amount that can pass through both channel 5 and 4.
-	hops = []route.Vertex{ctx.aliases["e"], ctx.aliases["c"]}
-	_, err = ctx.router.BuildRoute(
-		noAmt, hops, nil, 40, fn.None[[32]byte](), fn.None[[]byte](),
+	hops = []route.Vertex{tCtx.aliases["e"], tCtx.aliases["c"]}
+	_, err = tCtx.router.BuildRoute(
+		ctx, noAmt, hops, nil, 40, fn.None[[32]byte](),
+		fn.None[[]byte](),
 	)
 	require.Error(t, err)
 	noChanErr = ErrNoChannel{}
@@ -1731,9 +1742,9 @@ func TestBuildRoute(t *testing.T) {
 	// could me more applicable, which is why we don't get back the highest
 	// amount that could be delivered to the receiver of 21819 msat, using
 	// policy of channel 3.
-	hops = []route.Vertex{ctx.aliases["b"], ctx.aliases["z"]}
-	rt, err = ctx.router.BuildRoute(
-		noAmt, hops, nil, 40, fn.Some(payAddr), fn.None[[]byte](),
+	hops = []route.Vertex{tCtx.aliases["b"], tCtx.aliases["z"]}
+	rt, err = tCtx.router.BuildRoute(
+		ctx, noAmt, hops, nil, 40, fn.Some(payAddr), fn.None[[]byte](),
 	)
 	require.NoError(t, err)
 	checkHops(rt, []uint64{1, 8}, payAddr)
@@ -1744,10 +1755,10 @@ func TestBuildRoute(t *testing.T) {
 	// inbound fees. We expect a similar amount as for the above case of
 	// b->c, but reduced by the inbound discount on the channel a->d.
 	// We get 106000 - 1000 (base in) - 0.001 * 106000 (rate in) = 104894.
-	hops = []route.Vertex{ctx.aliases["d"], ctx.aliases["f"]}
+	hops = []route.Vertex{tCtx.aliases["d"], tCtx.aliases["f"]}
 	amt = lnwire.NewMSatFromSatoshis(100)
-	rt, err = ctx.router.BuildRoute(
-		fn.Some(amt), hops, nil, 40, fn.Some(payAddr),
+	rt, err = tCtx.router.BuildRoute(
+		ctx, fn.Some(amt), hops, nil, 40, fn.Some(payAddr),
 		fn.None[[]byte](),
 	)
 	require.NoError(t, err)
@@ -1762,9 +1773,9 @@ func TestBuildRoute(t *testing.T) {
 	// due to rounding. This would not be compatible with the sender amount
 	// of 20179 msat, which results in underpayment of 1 msat in fee. There
 	// is a third pass through newRoute in which this gets corrected to end
-	hops = []route.Vertex{ctx.aliases["d"], ctx.aliases["f"]}
-	rt, err = ctx.router.BuildRoute(
-		noAmt, hops, nil, 40, fn.Some(payAddr), fn.None[[]byte](),
+	hops = []route.Vertex{tCtx.aliases["d"], tCtx.aliases["f"]}
+	rt, err = tCtx.router.BuildRoute(
+		ctx, noAmt, hops, nil, 40, fn.Some(payAddr), fn.None[[]byte](),
 	)
 	require.NoError(t, err)
 	checkHops(rt, []uint64{9, 10}, payAddr)
@@ -2745,9 +2756,12 @@ func TestNewRouteRequest(t *testing.T) {
 // announcements for the channel vertexes to be able to use the channel.
 func TestAddEdgeUnknownVertexes(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	const startingBlockHeight = 101
-	ctx := createTestCtxFromFile(t, startingBlockHeight, basicGraphFilePath)
+	tCtx := createTestCtxFromFile(
+		t, startingBlockHeight, basicGraphFilePath,
+	)
 
 	var pub1 [33]byte
 	copy(pub1[:], priv1.PubKey().SerializeCompressed())
@@ -2756,11 +2770,11 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 	copy(pub2[:], priv2.PubKey().SerializeCompressed())
 
 	// The two nodes we are about to add should not exist yet.
-	_, exists1, err := ctx.graph.HasLightningNode(pub1)
+	_, exists1, err := tCtx.graph.HasLightningNode(pub1)
 	require.NoError(t, err, "unable to query graph")
 	require.False(t, exists1)
 
-	_, exists2, err := ctx.graph.HasLightningNode(pub2)
+	_, exists2, err := tCtx.graph.HasLightningNode(pub2)
 	require.NoError(t, err, "unable to query graph")
 	require.False(t, exists2)
 
@@ -2781,7 +2795,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 		BitcoinKey2Bytes: pub2,
 		AuthProof:        nil,
 	}
-	require.NoError(t, ctx.graph.AddChannelEdge(edge))
+	require.NoError(t, tCtx.graph.AddChannelEdge(edge))
 
 	// We must add the edge policy to be able to use the edge for route
 	// finding.
@@ -2797,7 +2811,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 	}
 	edgePolicy.ChannelFlags = 0
 
-	require.NoError(t, ctx.graph.UpdateEdgePolicy(edgePolicy))
+	require.NoError(t, tCtx.graph.UpdateEdgePolicy(edgePolicy))
 
 	// Create edge in the other direction as well.
 	edgePolicy = &models.ChannelEdgePolicy{
@@ -2812,15 +2826,15 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 	}
 	edgePolicy.ChannelFlags = 1
 
-	require.NoError(t, ctx.graph.UpdateEdgePolicy(edgePolicy))
+	require.NoError(t, tCtx.graph.UpdateEdgePolicy(edgePolicy))
 
 	// After adding the edge between the two previously unknown nodes, they
 	// should have been added to the graph.
-	_, exists1, err = ctx.graph.HasLightningNode(pub1)
+	_, exists1, err = tCtx.graph.HasLightningNode(pub1)
 	require.NoError(t, err, "unable to query graph")
 	require.True(t, exists1)
 
-	_, exists2, err = ctx.graph.HasLightningNode(pub2)
+	_, exists2, err = tCtx.graph.HasLightningNode(pub2)
 	require.NoError(t, err, "unable to query graph")
 	require.True(t, exists2)
 
@@ -2829,7 +2843,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 	// edge.
 
 	// We will connect node 1 to "sophon"
-	connectNode := ctx.aliases["sophon"]
+	connectNode := tCtx.aliases["sophon"]
 	connectNodeKey, err := btcec.ParsePubKey(connectNode[:])
 	require.NoError(t, err)
 
@@ -2861,7 +2875,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 	copy(edge.BitcoinKey1Bytes[:], node1Bytes)
 	edge.BitcoinKey2Bytes = node2Bytes
 
-	require.NoError(t, ctx.graph.AddChannelEdge(edge))
+	require.NoError(t, tCtx.graph.AddChannelEdge(edge))
 
 	edgePolicy = &models.ChannelEdgePolicy{
 		SigBytes:                  testSig.Serialize(),
@@ -2875,7 +2889,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 	}
 	edgePolicy.ChannelFlags = 0
 
-	require.NoError(t, ctx.graph.UpdateEdgePolicy(edgePolicy))
+	require.NoError(t, tCtx.graph.UpdateEdgePolicy(edgePolicy))
 
 	edgePolicy = &models.ChannelEdgePolicy{
 		SigBytes:                  testSig.Serialize(),
@@ -2889,7 +2903,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 	}
 	edgePolicy.ChannelFlags = 1
 
-	require.NoError(t, ctx.graph.UpdateEdgePolicy(edgePolicy))
+	require.NoError(t, tCtx.graph.UpdateEdgePolicy(edgePolicy))
 
 	// We should now be able to find a route to node 2.
 	paymentAmt := lnwire.NewMSatFromSatoshis(100)
@@ -2898,11 +2912,11 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 	copy(targetPubKeyBytes[:], targetNode.SerializeCompressed())
 
 	req, err := NewRouteRequest(
-		ctx.router.cfg.SelfNode, &targetPubKeyBytes,
+		tCtx.router.cfg.SelfNode, &targetPubKeyBytes,
 		paymentAmt, 0, noRestrictions, nil, nil, nil, MinCLTVDelta,
 	)
 	require.NoError(t, err, "invalid route request")
-	_, _, err = ctx.router.FindRoute(req)
+	_, _, err = tCtx.router.FindRoute(ctx, req)
 	require.NoError(t, err, "unable to find any routes")
 
 	// Now check that we can update the node info for the partial node
@@ -2918,7 +2932,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 	}
 	copy(n1.PubKeyBytes[:], priv1.PubKey().SerializeCompressed())
 
-	require.NoError(t, ctx.graph.AddLightningNode(n1))
+	require.NoError(t, tCtx.graph.AddLightningNode(n1))
 
 	n2 := &models.LightningNode{
 		HaveNodeAnnouncement: true,
@@ -2931,25 +2945,25 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 	}
 	copy(n2.PubKeyBytes[:], priv2.PubKey().SerializeCompressed())
 
-	require.NoError(t, ctx.graph.AddLightningNode(n2))
+	require.NoError(t, tCtx.graph.AddLightningNode(n2))
 
 	// Should still be able to find the route, and the info should be
 	// updated.
 	req, err = NewRouteRequest(
-		ctx.router.cfg.SelfNode, &targetPubKeyBytes,
+		tCtx.router.cfg.SelfNode, &targetPubKeyBytes,
 		paymentAmt, 0, noRestrictions, nil, nil, nil, MinCLTVDelta,
 	)
 	require.NoError(t, err, "invalid route request")
 
-	_, _, err = ctx.router.FindRoute(req)
+	_, _, err = tCtx.router.FindRoute(ctx, req)
 	require.NoError(t, err, "unable to find any routes")
 
-	copy1, err := ctx.graph.FetchLightningNode(pub1)
+	copy1, err := tCtx.graph.FetchLightningNode(pub1)
 	require.NoError(t, err, "unable to fetch node")
 
 	require.Equal(t, n1.Alias, copy1.Alias)
 
-	copy2, err := ctx.graph.FetchLightningNode(pub2)
+	copy2, err := tCtx.graph.FetchLightningNode(pub2)
 	require.NoError(t, err, "unable to fetch node")
 
 	require.Equal(t, n2.Alias, copy2.Alias)
@@ -3079,6 +3093,7 @@ func createChannelEdge(bitcoinKey1, bitcoinKey2 []byte,
 // paths with the highest success probability.
 func TestFindBlindedPathsWithMC(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	rbFeatureBits := []lnwire.FeatureBit{
 		lnwire.RouteBlindingOptional,
@@ -3136,15 +3151,15 @@ func TestFindBlindedPathsWithMC(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	ctx := createTestCtxFromGraphInstance(t, 101, testGraph)
+	tCtx := createTestCtxFromGraphInstance(t, 101, testGraph)
 
 	var (
-		alice   = ctx.aliases["alice"]
-		bob     = ctx.aliases["bob"]
-		charlie = ctx.aliases["charlie"]
-		dave    = ctx.aliases["dave"]
-		eve     = ctx.aliases["eve"]
-		frank   = ctx.aliases["frank"]
+		alice   = tCtx.aliases["alice"]
+		bob     = tCtx.aliases["bob"]
+		charlie = tCtx.aliases["charlie"]
+		dave    = tCtx.aliases["dave"]
+		eve     = tCtx.aliases["eve"]
+		frank   = tCtx.aliases["frank"]
 	)
 
 	// Create a mission control store which initially sets the success
@@ -3171,8 +3186,8 @@ func TestFindBlindedPathsWithMC(t *testing.T) {
 
 	// All the probabilities are set to 1. So if we restrict the path length
 	// to 2 and allow a max of 3 routes, then we expect three paths here.
-	routes, err := ctx.router.FindBlindedPaths(
-		dave, 1000, probabilitySrc, &BlindedPathRestrictions{
+	routes, err := tCtx.router.FindBlindedPaths(
+		ctx, dave, 1000, probabilitySrc, &BlindedPathRestrictions{
 			MinDistanceFromIntroNode: 2,
 			NumHops:                  2,
 			MaxNumPaths:              3,
@@ -3189,12 +3204,12 @@ func TestFindBlindedPathsWithMC(t *testing.T) {
 		var actualPaths []string
 		for _, path := range paths {
 			label := getAliasFromPubKey(
-				path.SourcePubKey, ctx.aliases,
+				path.SourcePubKey, tCtx.aliases,
 			) + ","
 
 			for _, hop := range path.Hops {
 				label += getAliasFromPubKey(
-					hop.PubKeyBytes, ctx.aliases,
+					hop.PubKeyBytes, tCtx.aliases,
 				) + ","
 			}
 
@@ -3216,8 +3231,8 @@ func TestFindBlindedPathsWithMC(t *testing.T) {
 	// 3) A -> F -> D
 	missionControl[bob][dave] = 0.5
 	missionControl[frank][dave] = 0.25
-	routes, err = ctx.router.FindBlindedPaths(
-		dave, 1000, probabilitySrc, &BlindedPathRestrictions{
+	routes, err = tCtx.router.FindBlindedPaths(
+		ctx, dave, 1000, probabilitySrc, &BlindedPathRestrictions{
 			MinDistanceFromIntroNode: 2,
 			NumHops:                  2,
 			MaxNumPaths:              3,
@@ -3233,8 +3248,8 @@ func TestFindBlindedPathsWithMC(t *testing.T) {
 	// Just to show that the above result was not a fluke, let's change
 	// the C->D link to be the weak one.
 	missionControl[charlie][dave] = 0.125
-	routes, err = ctx.router.FindBlindedPaths(
-		dave, 1000, probabilitySrc, &BlindedPathRestrictions{
+	routes, err = tCtx.router.FindBlindedPaths(
+		ctx, dave, 1000, probabilitySrc, &BlindedPathRestrictions{
 			MinDistanceFromIntroNode: 2,
 			NumHops:                  2,
 			MaxNumPaths:              3,
@@ -3249,8 +3264,8 @@ func TestFindBlindedPathsWithMC(t *testing.T) {
 
 	// Change the MaxNumPaths to 1 to assert that only the best route is
 	// returned.
-	routes, err = ctx.router.FindBlindedPaths(
-		dave, 1000, probabilitySrc, &BlindedPathRestrictions{
+	routes, err = tCtx.router.FindBlindedPaths(
+		ctx, dave, 1000, probabilitySrc, &BlindedPathRestrictions{
 			MinDistanceFromIntroNode: 2,
 			NumHops:                  2,
 			MaxNumPaths:              1,
@@ -3263,8 +3278,8 @@ func TestFindBlindedPathsWithMC(t *testing.T) {
 
 	// Test the edge case where Dave, the recipient, is also the
 	// introduction node.
-	routes, err = ctx.router.FindBlindedPaths(
-		dave, 1000, probabilitySrc, &BlindedPathRestrictions{
+	routes, err = tCtx.router.FindBlindedPaths(
+		ctx, dave, 1000, probabilitySrc, &BlindedPathRestrictions{
 			MinDistanceFromIntroNode: 0,
 			NumHops:                  0,
 			MaxNumPaths:              1,
@@ -3278,8 +3293,8 @@ func TestFindBlindedPathsWithMC(t *testing.T) {
 	// Finally, we make one of the routes have a probability less than the
 	// minimum. This means we expect that route not to be chosen.
 	missionControl[charlie][dave] = DefaultMinRouteProbability
-	routes, err = ctx.router.FindBlindedPaths(
-		dave, 1000, probabilitySrc, &BlindedPathRestrictions{
+	routes, err = tCtx.router.FindBlindedPaths(
+		ctx, dave, 1000, probabilitySrc, &BlindedPathRestrictions{
 			MinDistanceFromIntroNode: 2,
 			NumHops:                  2,
 			MaxNumPaths:              3,
@@ -3293,8 +3308,8 @@ func TestFindBlindedPathsWithMC(t *testing.T) {
 
 	// Test that if the user explicitly indicates that we should ignore
 	// the Frank node during path selection, then this is done.
-	routes, err = ctx.router.FindBlindedPaths(
-		dave, 1000, probabilitySrc, &BlindedPathRestrictions{
+	routes, err = tCtx.router.FindBlindedPaths(
+		ctx, dave, 1000, probabilitySrc, &BlindedPathRestrictions{
 			MinDistanceFromIntroNode: 2,
 			NumHops:                  2,
 			MaxNumPaths:              3,
