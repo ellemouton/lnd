@@ -505,7 +505,7 @@ func ChannelGraphFromCachedDatabase(db *graphdb.BoltStore) ChannelGraph {
 // interface.
 type dbNodeCached struct {
 	node     route.Vertex
-	channels map[uint64]*graphdb.DirectedChannel
+	channels map[uint64]*models.DirectedChannel
 }
 
 // A compile time assertion to ensure dbNodeCached meets the autopilot.Node
@@ -559,7 +559,7 @@ func (nc dbNodeCached) ForEachChannel(cb func(ChannelEdge) error) error {
 // NOTE: Part of the autopilot.ChannelGraph interface.
 func (dc *databaseChannelGraphCached) ForEachNode(cb func(Node) error) error {
 	return dc.db.ForEachNodeCached(func(n route.Vertex,
-		channels map[uint64]*graphdb.DirectedChannel) error {
+		channels map[uint64]*models.DirectedChannel) error {
 
 		if len(channels) > 0 {
 			node := dbNodeCached{

@@ -868,7 +868,7 @@ func (s *Server) SendToRouteV2(ctx context.Context,
 		return nil, fmt.Errorf("unable to send, no routes provided")
 	}
 
-	route, err := s.cfg.RouterBackend.UnmarshallRoute(req.Route)
+	route, err := s.cfg.RouterBackend.UnmarshallRoute(ctx, req.Route)
 	if err != nil {
 		return nil, err
 	}

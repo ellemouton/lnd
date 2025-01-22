@@ -101,12 +101,12 @@ func TestGraphCacheAddNode(t *testing.T) {
 		cache := NewGraphCache(10)
 		require.NoError(t, cache.AddNode(nil, node))
 
-		var fromChannels, toChannels []*DirectedChannel
-		_ = cache.ForEachChannel(nodeA, func(c *DirectedChannel) error {
+		var fromChannels, toChannels []*models.DirectedChannel
+		_ = cache.ForEachChannel(nodeA, func(c *models.DirectedChannel) error {
 			fromChannels = append(fromChannels, c)
 			return nil
 		})
-		_ = cache.ForEachChannel(nodeB, func(c *DirectedChannel) error {
+		_ = cache.ForEachChannel(nodeB, func(c *models.DirectedChannel) error {
 			toChannels = append(toChannels, c)
 			return nil
 		})
@@ -125,7 +125,7 @@ func TestGraphCacheAddNode(t *testing.T) {
 		nodes := make(map[route.Vertex]struct{})
 		chans := make(map[uint64]struct{})
 		_ = cache.ForEachNode(func(node route.Vertex,
-			edges map[uint64]*DirectedChannel) error {
+			edges map[uint64]*models.DirectedChannel) error {
 
 			nodes[node] = struct{}{}
 			for chanID, directedChannel := range edges {

@@ -58,10 +58,6 @@ var (
 	// ErrZombieEdgeNotFound is an error returned when we attempt to find an
 	// edge in the zombie index which is not there.
 	ErrZombieEdgeNotFound = errors.New("edge not found in zombie index")
-
-	// ErrUnknownAddressType is returned when a node's addressType is not
-	// an expected value.
-	ErrUnknownAddressType = fmt.Errorf("address type cannot be resolved")
 )
 
 // ErrTooManyExtraOpaqueBytes creates an error which should be returned if the

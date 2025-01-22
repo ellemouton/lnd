@@ -697,10 +697,10 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 
 	routerBackend := &routerrpc.RouterBackend{
 		SelfNode: selfNode.PubKeyBytes,
-		FetchChannelCapacity: func(chanID uint64) (btcutil.Amount,
-			error) {
+		FetchChannelCapacity: func(ctx context.Context,
+			chanID uint64) (btcutil.Amount, error) {
 
-			info, _, _, err := graph.FetchChannelEdgesByID(chanID)
+			info, _, _, err := graph.FetchChannelEdgesByID(ctx, chanID)
 			if err != nil {
 				return 0, err
 			}
@@ -714,11 +714,11 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 				selfNode.PubKeyBytes, nodeFrom, nodeTo, amount,
 			)
 		},
-		FetchChannelEndpoints: func(chanID uint64) (route.Vertex,
+		FetchChannelEndpoints: func(ctx context.Context, chanID uint64) (route.Vertex,
 			route.Vertex, error) {
 
 			info, _, _, err := graph.FetchChannelEdgesByID(
-				chanID,
+				ctx, chanID,
 			)
 			if err != nil {
 				return route.Vertex{}, route.Vertex{},
@@ -5328,7 +5328,7 @@ func (r *rpcServer) SendToRoute(stream lnrpc.Lightning_SendToRouteServer) error 
 				return nil, err
 			}
 
-			return r.unmarshallSendToRouteRequest(req)
+			return r.unmarshallSendToRouteRequest(stream.Context(), req)
 		},
 		send: func(r *lnrpc.SendResponse) error {
 			// Calling stream.Send concurrently is not safe.
@@ -5340,14 +5340,14 @@ func (r *rpcServer) SendToRoute(stream lnrpc.Lightning_SendToRouteServer) error 
 }
 
 // unmarshallSendToRouteRequest unmarshalls an rpc sendtoroute request
-func (r *rpcServer) unmarshallSendToRouteRequest(
+func (r *rpcServer) unmarshallSendToRouteRequest(ctx context.Context,
 	req *lnrpc.SendToRouteRequest) (*rpcPaymentRequest, error) {
 
 	if req.Route == nil {
 		return nil, fmt.Errorf("unable to send, no route provided")
 	}
 
-	route, err := r.routerBackend.UnmarshallRoute(req.Route)
+	route, err := r.routerBackend.UnmarshallRoute(ctx, req.Route)
 	if err != nil {
 		return nil, err
 	}
@@ -5978,7 +5978,7 @@ func (r *rpcServer) SendToRouteSync(ctx context.Context,
 		return nil, fmt.Errorf("unable to send, no routes provided")
 	}
 
-	paymentRequest, err := r.unmarshallSendToRouteRequest(req)
+	paymentRequest, err := r.unmarshallSendToRouteRequest(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -6095,7 +6095,7 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 		NodeSigner:        r.server.nodeSigner,
 		DefaultCLTVExpiry: defaultDelta,
 		ChanDB:            r.server.chanStateDB,
-		Graph:             r.server.graphDB,
+		Graph:             r.server.chanGraph,
 		GenInvoiceFeatures: func() *lnwire.FeatureVector {
 			v := r.server.featureMgr.Get(feature.SetInvoice)
 
@@ -6930,7 +6930,7 @@ func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 	// each node so we can measure the graph diameter and degree stats
 	// below.
 	err := graph.ForEachNodeCached(func(node route.Vertex,
-		edges map[uint64]*graphdb.DirectedChannel) error {
+		edges map[uint64]*models.DirectedChannel) error {
 
 		// Increment the total number of nodes with each iteration.
 		numNodes++

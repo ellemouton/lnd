@@ -165,7 +165,7 @@ func (c *ChannelGraph) FilterChannelRange(startHeight,
 	return c.db.FilterChannelRange(startHeight, endHeight, withTimestamps)
 }
 
-func (c *ChannelGraph) ChannelView() ([]EdgePoint, error) {
+func (c *ChannelGraph) ChannelView() ([]models.EdgePoint, error) {
 	return c.db.ChannelView()
 }
 
@@ -201,12 +201,15 @@ func (c *ChannelGraph) HasChannelEdge(chanID uint64) (time.Time, time.Time,
 	return c.db.HasChannelEdge(chanID)
 }
 
-func (c *ChannelGraph) IsPublicNode(pubKey [33]byte) (bool, error) {
+func (c *ChannelGraph) IsPublicNode(_ context.Context, pubKey [33]byte) (bool,
+	error) {
+
 	return c.db.IsPublicNode(pubKey)
 }
 
-func (c *ChannelGraph) FetchChannelEdgesByID(chanID uint64) (*models.ChannelEdgeInfo,
-	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error) {
+func (c *ChannelGraph) FetchChannelEdgesByID(_ context.Context,
+	chanID uint64) (*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy, error) {
 
 	return c.db.FetchChannelEdgesByID(chanID)
 }
@@ -447,7 +450,7 @@ func (c *ChannelGraph) DeleteLightningNode(nodePub route.Vertex) error {
 }
 
 func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
-	chans map[uint64]*DirectedChannel) error) error {
+	chans map[uint64]*models.DirectedChannel) error) error {
 
 	if c.graphCache != nil {
 		return c.graphCache.ForEachNode(cb)
@@ -487,7 +490,7 @@ type chanGraphSession struct {
 }
 
 func (c *chanGraphSession) ForEachNodeChannel(ctx context.Context,
-	node route.Vertex, cb func(channel *DirectedChannel) error) error {
+	node route.Vertex, cb func(channel *models.DirectedChannel) error) error {
 
 	if c.c.graphCache != nil {
 		return c.c.graphCache.ForEachChannel(node, cb)
@@ -508,6 +511,6 @@ func (c *chanGraphSession) FetchNodeFeatures(ctx context.Context,
 
 var _ RoutingGraph = (*chanGraphSession)(nil)
 
-// A compile time assertion to ensure ChannelGraph implements the GraphReads
-// interface.
-var _ GraphReads = (*ChannelGraph)(nil)
+//// A compile time assertion to ensure ChannelGraph implements the GraphReads
+//// interface.
+//var _ GraphReads = (*ChannelGraph)(nil)

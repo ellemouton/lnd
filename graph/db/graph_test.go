@@ -810,7 +810,7 @@ func assertEdgeWithNoPoliciesInCache(t *testing.T, g *BoltStore,
 	require.NotEmpty(t, g.graphCache.nodeChannels[e.NodeKey1Bytes])
 	require.NotEmpty(t, g.graphCache.nodeChannels[e.NodeKey2Bytes])
 
-	expectedNode1Channel := &DirectedChannel{
+	expectedNode1Channel := &models.DirectedChannel{
 		ChannelID:    e.ChannelID,
 		IsNode1:      true,
 		OtherNode:    e.NodeKey2Bytes,
@@ -826,7 +826,7 @@ func assertEdgeWithNoPoliciesInCache(t *testing.T, g *BoltStore,
 		g.graphCache.nodeChannels[e.NodeKey1Bytes][e.ChannelID],
 	)
 
-	expectedNode2Channel := &DirectedChannel{
+	expectedNode2Channel := &models.DirectedChannel{
 		ChannelID:    e.ChannelID,
 		IsNode1:      false,
 		OtherNode:    e.NodeKey1Bytes,
@@ -843,9 +843,9 @@ func assertEdgeWithNoPoliciesInCache(t *testing.T, g *BoltStore,
 	)
 
 	// The external view should reflect this as well.
-	var foundChannel *DirectedChannel
+	var foundChannel *models.DirectedChannel
 	err := g.graphCache.ForEachChannel(
-		e.NodeKey1Bytes, func(c *DirectedChannel) error {
+		e.NodeKey1Bytes, func(c *models.DirectedChannel) error {
 			if c.ChannelID == e.ChannelID {
 				foundChannel = c
 			}
@@ -858,7 +858,7 @@ func assertEdgeWithNoPoliciesInCache(t *testing.T, g *BoltStore,
 	require.Equal(t, expectedNode1Channel, foundChannel)
 
 	err = g.graphCache.ForEachChannel(
-		e.NodeKey2Bytes, func(c *DirectedChannel) error {
+		e.NodeKey2Bytes, func(c *models.DirectedChannel) error {
 			if c.ChannelID == e.ChannelID {
 				foundChannel = c
 			}
@@ -913,18 +913,18 @@ func assertEdgeWithPolicyInCache(t *testing.T, g *BoltStore,
 
 	// Now for both nodes make sure that the external view is also correct.
 	var (
-		c1Ext *DirectedChannel
-		c2Ext *DirectedChannel
+		c1Ext *models.DirectedChannel
+		c2Ext *models.DirectedChannel
 	)
 	require.NoError(t, g.graphCache.ForEachChannel(
-		e.NodeKey1Bytes, func(c *DirectedChannel) error {
+		e.NodeKey1Bytes, func(c *models.DirectedChannel) error {
 			c1Ext = c
 
 			return nil
 		},
 	))
 	require.NoError(t, g.graphCache.ForEachChannel(
-		e.NodeKey2Bytes, func(c *DirectedChannel) error {
+		e.NodeKey2Bytes, func(c *models.DirectedChannel) error {
 			c2Ext = c
 
 			return nil
@@ -1004,7 +1004,7 @@ func TestGraphTraversal(t *testing.T) {
 	// channel as well as the nodes included.
 	graph.graphCache = nil
 	err = graph.ForEachNodeCached(func(node route.Vertex,
-		chans map[uint64]*DirectedChannel) error {
+		chans map[uint64]*models.DirectedChannel) error {
 
 		if _, ok := nodeIndex[node]; !ok {
 			return fmt.Errorf("node %x not found in graph", node)
@@ -1163,7 +1163,7 @@ func TestGraphCacheTraversal(t *testing.T) {
 		node := node
 
 		err = graph.graphCache.ForEachChannel(
-			node.PubKeyBytes, func(d *DirectedChannel) error {
+			node.PubKeyBytes, func(d *models.DirectedChannel) error {
 				delete(chanIndex, d.ChannelID)
 
 				if !d.OutPolicySet || d.InPolicy == nil {
@@ -1347,7 +1347,7 @@ func assertNumNodes(t *testing.T, graph *BoltStore, n int) {
 	}
 }
 
-func assertChanViewEqual(t *testing.T, a []EdgePoint, b []EdgePoint) {
+func assertChanViewEqual(t *testing.T, a []models.EdgePoint, b []models.EdgePoint) {
 	if len(a) != len(b) {
 		_, _, line, _ := runtime.Caller(1)
 		t.Fatalf("line %v: chan views don't match", line)
@@ -1367,7 +1367,7 @@ func assertChanViewEqual(t *testing.T, a []EdgePoint, b []EdgePoint) {
 	}
 }
 
-func assertChanViewEqualChanPoints(t *testing.T, a []EdgePoint,
+func assertChanViewEqualChanPoints(t *testing.T, a []models.EdgePoint,
 	b []*wire.OutPoint) {
 
 	if len(a) != len(b) {
@@ -1422,7 +1422,7 @@ func TestGraphPruning(t *testing.T) {
 	// With the vertexes created, we'll next create a series of channels
 	// between them.
 	channelPoints := make([]*wire.OutPoint, 0, numNodes-1)
-	edgePoints := make([]EdgePoint, 0, numNodes-1)
+	edgePoints := make([]models.EdgePoint, 0, numNodes-1)
 	for i := 0; i < numNodes-1; i++ {
 		txHash := sha256.Sum256([]byte{byte(i)})
 		chanID := uint64(i + 1)
@@ -1463,7 +1463,7 @@ func TestGraphPruning(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unable to gen multi-sig p2wsh: %v", err)
 		}
-		edgePoints = append(edgePoints, EdgePoint{
+		edgePoints = append(edgePoints, models.EdgePoint{
 			FundingPkScript: pkScript,
 			OutPoint:        op,
 		})
@@ -2907,7 +2907,7 @@ func TestChannelEdgePruningUpdateIndexDeletion(t *testing.T) {
 			}
 
 			return edgeUpdateIndex.ForEach(func(k, _ []byte) error {
-				t := byteOrder.Uint64(k[:8])
+				t := codec.byteOrder.Uint64(k[:8])
 				if _, ok := timestampSet[t]; !ok {
 					return fmt.Errorf("found unexpected "+
 						"timestamp "+"%d", t)
@@ -3441,12 +3441,12 @@ func TestEdgePolicyMissingMaxHtcl(t *testing.T) {
 
 		var edgeKey [33 + 8]byte
 		copy(edgeKey[:], from)
-		byteOrder.PutUint64(edgeKey[33:], edge1.ChannelID)
+		codec.byteOrder.PutUint64(edgeKey[33:], edge1.ChannelID)
 
 		var scratch [8]byte
 		var indexKey [8 + 8]byte
 		copy(indexKey[:], scratch[:])
-		byteOrder.PutUint64(indexKey[8:], edge1.ChannelID)
+		codec.byteOrder.PutUint64(indexKey[8:], edge1.ChannelID)
 
 		updateIndex, err := edges.CreateBucketIfNotExists(
 			edgeUpdateIndexBucket,
@@ -3959,10 +3959,10 @@ func TestGraphCacheForEachNodeChannel(t *testing.T) {
 	// Add the channel, but only insert a single edge into the graph.
 	require.NoError(t, graph.AddChannelEdge(edgeInfo))
 
-	getSingleChannel := func() *DirectedChannel {
-		var ch *DirectedChannel
+	getSingleChannel := func() *models.DirectedChannel {
+		var ch *models.DirectedChannel
 		err = graph.ForEachNodeDirectedChannel(nil, node1.PubKeyBytes,
-			func(c *DirectedChannel) error {
+			func(c *models.DirectedChannel) error {
 				require.Nil(t, ch)
 				ch = c
 

@@ -13,9 +13,10 @@ import (
 	"github.com/lightningnetwork/lnd/routing/route"
 )
 
-type GraphReads interface {
-	GraphSessionFactory
-}
+//type GraphReads interface {
+//	GraphSessionFactory
+//	invoicesrpc.GraphSource
+//}
 
 // RoutingGraph is an abstract interface that provides information about nodes
 // and edges to pathfinding.
@@ -23,7 +24,7 @@ type RoutingGraph interface {
 	// ForEachNodeChannel calls the callback for every channel of the given
 	// node.
 	ForEachNodeChannel(ctx context.Context, nodePub route.Vertex,
-		cb func(channel *DirectedChannel) error) error
+		cb func(channel *models.DirectedChannel) error) error
 
 	// FetchNodeFeatures returns the features of the given node.
 	FetchNodeFeatures(ctx context.Context,
@@ -67,7 +68,7 @@ type DB interface {
 	// channel within the known channel graph. The set of UTXO's (along with
 	// their scripts) returned are the ones that need to be watched on
 	// chain to detect channel closes on the resident blockchain.
-	ChannelView() ([]EdgePoint, error)
+	ChannelView() ([]models.EdgePoint, error)
 
 	// PruneGraphNodes is a garbage collection method which attempts to
 	// prune out any nodes from the channel graph that are currently
@@ -217,7 +218,7 @@ type DB interface {
 	ForEachNodeCacheable(cb func(GraphCacheNode) error) error
 
 	ForEachNodeCached(cb func(node route.Vertex,
-		chans map[uint64]*DirectedChannel) error) error
+		chans map[uint64]*models.DirectedChannel) error) error
 
 	DeleteLightningNode(nodePub route.Vertex) error
 

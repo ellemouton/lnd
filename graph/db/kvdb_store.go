@@ -21,6 +21,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/aliasmgr"
 	"github.com/lightningnetwork/lnd/batch"
+	"github.com/lightningnetwork/lnd/graph/db/codec"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/kvdb"
@@ -161,6 +162,9 @@ var (
 	//
 	// maps: scid -> []byte{}
 	closedScidBucket = []byte("closed-scid")
+
+	// byteOrder defines the preferred byte order, which is Big Endian.
+	byteOrder = binary.BigEndian
 )
 
 const (
@@ -471,7 +475,7 @@ func (c *BoltStore) ForEachChannel(cb func(*models.ChannelEdgeInfo,
 //
 // NOTE: this is part of the graphsession.graph interface.
 func (c *BoltStore) ForEachNodeDirectedChannel(tx kvdb.RTx,
-	node route.Vertex, cb func(channel *DirectedChannel) error) error {
+	node route.Vertex, cb func(channel *models.DirectedChannel) error) error {
 
 	// Fallback that uses the database.
 	toNodeCallback := func() route.Vertex {
@@ -502,7 +506,7 @@ func (c *BoltStore) ForEachNodeDirectedChannel(tx kvdb.RTx,
 			}
 		}
 
-		directedChannel := &DirectedChannel{
+		directedChannel := &models.DirectedChannel{
 			ChannelID:    e.ChannelID,
 			IsNode1:      node == e.NodeKey1Bytes,
 			OtherNode:    e.NodeKey2Bytes,
@@ -553,7 +557,7 @@ func (c *BoltStore) FetchNodeFeatures(tx kvdb.RTx,
 //
 // NOTE: The callback contents MUST not be modified.
 func (c *BoltStore) ForEachNodeCached(cb func(node route.Vertex,
-	chans map[uint64]*DirectedChannel) error) error {
+	chans map[uint64]*models.DirectedChannel) error) error {
 
 	// Otherwise call back to a version that uses the database directly.
 	// We'll iterate over each node, then the set of channels for each
@@ -562,7 +566,7 @@ func (c *BoltStore) ForEachNodeCached(cb func(node route.Vertex,
 	return c.ForEachNodeTx(func(tx kvdb.RTx,
 		node *models.LightningNode) error {
 
-		channels := make(map[uint64]*DirectedChannel)
+		channels := make(map[uint64]*models.DirectedChannel)
 
 		err := c.ForEachNodeChannelTx(tx, node.PubKeyBytes,
 			func(tx kvdb.RTx, e *models.ChannelEdgeInfo,
@@ -589,7 +593,7 @@ func (c *BoltStore) ForEachNodeCached(cb func(node route.Vertex,
 						toNodeFeatures
 				}
 
-				directedChannel := &DirectedChannel{
+				directedChannel := &models.DirectedChannel{
 					ChannelID: e.ChannelID,
 					IsNode1: node.PubKeyBytes ==
 						e.NodeKey1Bytes,
@@ -1113,7 +1117,7 @@ func (c *BoltStore) addChannelEdge(tx kvdb.RwTx,
 	// Finally we add it to the channel index which maps channel points
 	// (outpoints) to the shorter channel ID's.
 	var b bytes.Buffer
-	if err := WriteOutpoint(&b, &edge.ChannelPoint); err != nil {
+	if err := codec.WriteOutpoint(&b, &edge.ChannelPoint); err != nil {
 		return err
 	}
 	return chanIndex.Put(b.Bytes(), chanKey[:])
@@ -1321,7 +1325,7 @@ func (c *BoltStore) PruneGraph(spentOutputs []*wire.OutPoint,
 			// if NOT if filter
 
 			var opBytes bytes.Buffer
-			err := WriteOutpoint(&opBytes, chanPoint)
+			err := codec.WriteOutpoint(&opBytes, chanPoint)
 			if err != nil {
 				return err
 			}
@@ -1797,7 +1801,7 @@ func (c *BoltStore) ChannelID(chanPoint *wire.OutPoint) (uint64, error) {
 // getChanID returns the assigned channel ID for a given channel point.
 func getChanID(tx kvdb.RTx, chanPoint *wire.OutPoint) (uint64, error) {
 	var b bytes.Buffer
-	if err := WriteOutpoint(&b, chanPoint); err != nil {
+	if err := codec.WriteOutpoint(&b, chanPoint); err != nil {
 		return 0, err
 	}
 
@@ -2585,7 +2589,7 @@ func (c *BoltStore) delChannelEdgeUnsafe(edges, edgeIndex, chanIndex,
 		return err
 	}
 	var b bytes.Buffer
-	if err := WriteOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
+	if err := codec.WriteOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
 		return err
 	}
 	if err := chanIndex.Delete(b.Bytes()); err != nil {
@@ -3249,7 +3253,7 @@ func (c *BoltStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 			return ErrGraphNoEdgesFound
 		}
 		var b bytes.Buffer
-		if err := WriteOutpoint(&b, op); err != nil {
+		if err := codec.WriteOutpoint(&b, op); err != nil {
 			return err
 		}
 		chanID := chanIndex.Get(b.Bytes())
@@ -3447,30 +3451,12 @@ func genMultiSigP2WSH(aPub, bPub []byte) ([]byte, error) {
 	return bldr.Script()
 }
 
-// EdgePoint couples the outpoint of a channel with the funding script that it
-// creates. The FilteredChainView will use this to watch for spends of this
-// edge point on chain. We require both of these values as depending on the
-// concrete implementation, either the pkScript, or the out point will be used.
-type EdgePoint struct {
-	// FundingPkScript is the p2wsh multi-sig script of the target channel.
-	FundingPkScript []byte
-
-	// OutPoint is the outpoint of the target channel.
-	OutPoint wire.OutPoint
-}
-
-// String returns a human readable version of the target EdgePoint. We return
-// the outpoint directly as it is enough to uniquely identify the edge point.
-func (e *EdgePoint) String() string {
-	return e.OutPoint.String()
-}
-
 // ChannelView returns the verifiable edge information for each active channel
 // within the known channel graph. The set of UTXO's (along with their scripts)
 // returned are the ones that need to be watched on chain to detect channel
 // closes on the resident blockchain.
-func (c *BoltStore) ChannelView() ([]EdgePoint, error) {
-	var edgePoints []EdgePoint
+func (c *BoltStore) ChannelView() ([]models.EdgePoint, error) {
+	var edgePoints []models.EdgePoint
 	if err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		// We're going to iterate over the entire channel index, so
 		// we'll need to fetch the edgeBucket to get to the index as
@@ -3498,7 +3484,7 @@ func (c *BoltStore) ChannelView() ([]EdgePoint, error) {
 				)
 
 				var chanPoint wire.OutPoint
-				err := ReadOutpoint(chanPointReader, &chanPoint)
+				err := codec.ReadOutpoint(chanPointReader, &chanPoint)
 				if err != nil {
 					return err
 				}
@@ -3518,7 +3504,7 @@ func (c *BoltStore) ChannelView() ([]EdgePoint, error) {
 					return err
 				}
 
-				edgePoints = append(edgePoints, EdgePoint{
+				edgePoints = append(edgePoints, models.EdgePoint{
 					FundingPkScript: pkScript,
 					OutPoint:        chanPoint,
 				})
@@ -3829,7 +3815,7 @@ func (s *dbSrcSession) FetchNodeFeatures(_ context.Context,
 //
 // NOTE: this is part of the RoutingGraph interface.
 func (s *dbSrcSession) ForEachNodeChannel(_ context.Context, node route.Vertex,
-	cb func(channel *DirectedChannel) error) error {
+	cb func(channel *models.DirectedChannel) error) error {
 
 	return s.src.ForEachNodeDirectedChannel(s.tx, node, cb)
 }
@@ -3915,7 +3901,7 @@ func putLightningNode(nodeBucket kvdb.RwBucket, aliasBucket kvdb.RwBucket, // no
 	}
 
 	for _, address := range node.Addresses {
-		if err := SerializeAddr(&b, address); err != nil {
+		if err := codec.SerializeAddr(&b, address); err != nil {
 			return err
 		}
 	}
@@ -4111,7 +4097,7 @@ func deserializeLightningNode(r io.Reader) (models.LightningNode, error) {
 
 	var addresses []net.Addr
 	for i := 0; i < numAddresses; i++ {
-		address, err := DeserializeAddr(r)
+		address, err := codec.DeserializeAddr(r)
 		if err != nil {
 			return models.LightningNode{}, err
 		}
@@ -4183,7 +4169,7 @@ func putChanEdgeInfo(edgeIndex kvdb.RwBucket,
 		return err
 	}
 
-	if err := WriteOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
+	if err := codec.WriteOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
 		return err
 	}
 	err := binary.Write(&b, byteOrder, uint64(edgeInfo.Capacity))
@@ -4268,7 +4254,7 @@ func deserializeChanEdgeInfo(r io.Reader) (models.ChannelEdgeInfo, error) {
 	}
 
 	edgeInfo.ChannelPoint = wire.OutPoint{}
-	if err := ReadOutpoint(r, &edgeInfo.ChannelPoint); err != nil {
+	if err := codec.ReadOutpoint(r, &edgeInfo.ChannelPoint); err != nil {
 		return models.ChannelEdgeInfo{}, err
 	}
 	if err := binary.Read(r, byteOrder, &edgeInfo.Capacity); err != nil {

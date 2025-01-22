@@ -1,4 +1,4 @@
-package graphdb
+package codec
 
 import (
 	"encoding/binary"

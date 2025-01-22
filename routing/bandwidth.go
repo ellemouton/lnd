@@ -6,6 +6,7 @@ import (
 
 	"github.com/lightningnetwork/lnd/fn/v2"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
+	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -65,7 +66,7 @@ func newBandwidthManager(ctx context.Context, graph graphdb.RoutingGraph,
 	// First, we'll collect the set of outbound edges from the target
 	// source node and add them to our bandwidth manager's map of channels.
 	err := graph.ForEachNodeChannel(ctx, sourceNode,
-		func(channel *graphdb.DirectedChannel) error {
+		func(channel *models.DirectedChannel) error {
 			shortID := lnwire.NewShortChanIDFromInt(
 				channel.ChannelID,
 			)

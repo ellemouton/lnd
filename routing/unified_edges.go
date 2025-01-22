@@ -101,7 +101,7 @@ func (u *nodeEdgeUnifier) addPolicy(fromNode route.Vertex,
 func (u *nodeEdgeUnifier) addGraphPolicies(ctx context.Context,
 	g graphdb.RoutingGraph) error {
 
-	cb := func(channel *graphdb.DirectedChannel) error {
+	cb := func(channel *models.DirectedChannel) error {
 		// If there is no edge policy for this candidate node, skip.
 		// Note that we are searching backwards so this node would have
 		// come prior to the pivot node in the route.

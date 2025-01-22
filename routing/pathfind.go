@@ -515,7 +515,7 @@ func getOutgoingBalance(ctx context.Context, node route.Vertex,
 	lnwire.MilliSatoshi, lnwire.MilliSatoshi, error) {
 
 	var max, total lnwire.MilliSatoshi
-	cb := func(channel *graphdb.DirectedChannel) error {
+	cb := func(channel *models.DirectedChannel) error {
 		if !channel.OutPolicySet {
 			return nil
 		}
@@ -1331,7 +1331,7 @@ func processNodeForBlindedPath(ctx context.Context, g graphdb.RoutingGraph,
 	// node that can be used for blinded paths
 	err = g.ForEachNodeChannel(
 		ctx, node,
-		func(channel *graphdb.DirectedChannel) error {
+		func(channel *models.DirectedChannel) error {
 			// Keep track of how many incoming channels this node
 			// has. We only use a node as an introduction node if it
 			// has channels other than the one that lead us to it.

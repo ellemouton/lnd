@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"context"
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -106,6 +107,7 @@ func (c *ChanSeries) HighestChanID(chain chainhash.Hash) (*lnwire.ShortChannelID
 func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 	startTime time.Time, endTime time.Time) ([]lnwire.Message, error) {
 
+	ctx := context.TODO()
 	var updates []lnwire.Message
 
 	// First, we'll query for all the set of channels that have an update
@@ -169,7 +171,7 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 
 		// Ensure we only forward nodes that are publicly advertised to
 		// prevent leaking information about nodes.
-		isNodePublic, err := c.graph.IsPublicNode(nodeAnn.PubKeyBytes)
+		isNodePublic, err := c.graph.IsPublicNode(ctx, nodeAnn.PubKeyBytes)
 		if err != nil {
 			log.Errorf("Unable to determine if node %x is "+
 				"advertised: %v", nodeAnn.PubKeyBytes, err)
@@ -333,8 +335,10 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 func (c *ChanSeries) FetchChanUpdates(chain chainhash.Hash,
 	shortChanID lnwire.ShortChannelID) ([]*lnwire.ChannelUpdate1, error) {
 
+	ctx := context.TODO()
+
 	chanInfo, e1, e2, err := c.graph.FetchChannelEdgesByID(
-		shortChanID.ToUint64(),
+		ctx, shortChanID.ToUint64(),
 	)
 	if err != nil {
 		return nil, err

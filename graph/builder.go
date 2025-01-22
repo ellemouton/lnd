@@ -2,6 +2,7 @@ package graph
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"runtime"
 	"strings"
@@ -301,7 +302,7 @@ func (b *Builder) Start() error {
 	}
 
 	b.wg.Add(1)
-	go b.networkHandler()
+	go b.networkHandler(context.TODO())
 
 	log.Debug("Builder started")
 
@@ -669,7 +670,7 @@ func (b *Builder) pruneZombieChans() error {
 // notifies topology changes, if any.
 //
 // NOTE: must be run inside goroutine.
-func (b *Builder) handleNetworkUpdate(vb *ValidationBarrier,
+func (b *Builder) handleNetworkUpdate(ctx context.Context, vb *ValidationBarrier,
 	update *routingMsg) {
 
 	defer b.wg.Done()
@@ -726,7 +727,7 @@ func (b *Builder) handleNetworkUpdate(vb *ValidationBarrier,
 	// update, if any.
 	topChange := &TopologyChange{}
 	err = addToTopologyChange(
-		b.cfg.Graph.FetchChannelEdgesByID, topChange, update.msg,
+		ctx, b.cfg.Graph.FetchChannelEdgesByID, topChange, update.msg,
 	)
 	if err != nil {
 		log.Errorf("unable to update topology change notification: %v",
@@ -745,7 +746,7 @@ func (b *Builder) handleNetworkUpdate(vb *ValidationBarrier,
 // updates, and registering new topology clients.
 //
 // NOTE: This MUST be run as a goroutine.
-func (b *Builder) networkHandler() {
+func (b *Builder) networkHandler(ctx context.Context) {
 	defer b.wg.Done()
 
 	graphPruneTicker := time.NewTicker(b.cfg.GraphPruneInterval)
@@ -797,7 +798,7 @@ func (b *Builder) networkHandler() {
 			validationBarrier.InitJobDependencies(update.msg)
 
 			b.wg.Add(1)
-			go b.handleNetworkUpdate(validationBarrier, update)
+			go b.handleNetworkUpdate(ctx, validationBarrier, update)
 
 			// TODO(roasbeef): remove all unconnected vertexes
 			// after N blocks pass with no corresponding
@@ -1346,7 +1347,7 @@ func (b *Builder) processUpdate(msg interface{},
 		// update the current UTXO filter within our active
 		// FilteredChainView so we are notified if/when this channel is
 		// closed.
-		filterUpdate := []graphdb.EdgePoint{
+		filterUpdate := []models.EdgePoint{
 			{
 				FundingPkScript: fundingPkScript,
 				OutPoint:        *fundingPoint,
@@ -1618,7 +1619,9 @@ func (b *Builder) GetChannelByID(chanID lnwire.ShortChannelID) (
 	*models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
-	return b.cfg.Graph.FetchChannelEdgesByID(chanID.ToUint64())
+	ctx := context.TODO()
+
+	return b.cfg.Graph.FetchChannelEdgesByID(ctx, chanID.ToUint64())
 }
 
 // FetchLightningNode attempts to look up a target node by its identity public
@@ -1661,7 +1664,9 @@ func (b *Builder) ForAllOutgoingChannels(cb func(*models.ChannelEdgeInfo,
 func (b *Builder) AddProof(chanID lnwire.ShortChannelID,
 	proof *models.ChannelAuthProof) error {
 
-	info, _, _, err := b.cfg.Graph.FetchChannelEdgesByID(chanID.ToUint64())
+	ctx := context.TODO()
+
+	info, _, _, err := b.cfg.Graph.FetchChannelEdgesByID(ctx, chanID.ToUint64())
 	if err != nil {
 		return err
 	}
@@ -1694,7 +1699,7 @@ func (b *Builder) IsStaleNode(node route.Vertex,
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (b *Builder) IsPublicNode(node route.Vertex) (bool, error) {
-	return b.cfg.Graph.IsPublicNode(node)
+	return b.cfg.Graph.IsPublicNode(context.TODO(), node)
 }
 
 // IsKnownEdge returns true if the graph source already knows of the passed

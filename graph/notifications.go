@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"context"
 	"fmt"
 	"image/color"
 	"net"
@@ -305,7 +306,7 @@ type ChannelEdgeUpdate struct {
 	ExtraOpaqueData lnwire.ExtraOpaqueData
 }
 
-type fetchChannelEdgesByID func(chanID uint64) (*models.ChannelEdgeInfo,
+type fetchChannelEdgesByID func(ctx context.Context, chanID uint64) (*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error)
 
 // appendTopologyChange appends the passed update message to the passed
@@ -313,7 +314,7 @@ type fetchChannelEdgesByID func(chanID uint64) (*models.ChannelEdgeInfo,
 // constitutes. This function will also fetch any required auxiliary
 // information required to create the topology change update from the graph
 // database.
-func addToTopologyChange(fetchChanEdges fetchChannelEdgesByID,
+func addToTopologyChange(ctx context.Context, fetchChanEdges fetchChannelEdgesByID,
 	update *TopologyChange, msg interface{}) error {
 
 	switch m := msg.(type) {
@@ -348,7 +349,7 @@ func addToTopologyChange(fetchChanEdges fetchChannelEdgesByID,
 		// We'll need to fetch the edge's information from the database
 		// in order to get the information concerning which nodes are
 		// being connected.
-		edgeInfo, _, _, err := fetchChanEdges(m.ChannelID)
+		edgeInfo, _, _, err := fetchChanEdges(ctx, m.ChannelID)
 		if err != nil {
 			return errors.Errorf("unable fetch channel edge: %v",
 				err)
