@@ -411,7 +411,7 @@ func edgeWeight(lockedAmt lnwire.MilliSatoshi, fee lnwire.MilliSatoshi,
 
 // graphParams wraps the set of graph parameters passed to findPath.
 type graphParams struct {
-	// graph is the ChannelGraph to be used during path finding.
+	// graph is the BoltStore to be used during path finding.
 	graph graphdb.RoutingGraph
 
 	// additionalEdges is an optional set of edges that should be
@@ -566,7 +566,7 @@ func getOutgoingBalance(ctx context.Context, node route.Vertex,
 	return max, total, err
 }
 
-// findPath attempts to find a path from the source node within the ChannelGraph
+// findPath attempts to find a path from the source node within the BoltStore
 // to the target node that's capable of supporting a payment of `amt` value. The
 // current approach implemented is modified version of Dijkstra's algorithm to
 // find a single shortest path between the source node and the destination. The

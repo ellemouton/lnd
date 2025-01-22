@@ -35,7 +35,7 @@ func newDiskChanGraph(t *testing.T) (testGraph, error) {
 	})
 	require.NoError(t, err)
 
-	graphDB, err := graphdb.NewChannelGraph(backend)
+	graphDB, err := graphdb.NewBoltStore(backend)
 	require.NoError(t, err)
 
 	return &databaseChannelGraph{

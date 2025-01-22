@@ -75,8 +75,8 @@ type AddInvoiceConfig struct {
 	// channel graph.
 	ChanDB *channeldb.ChannelStateDB
 
-	// Graph holds a reference to the ChannelGraph database.
-	Graph *graphdb.ChannelGraph
+	// Graph holds a reference to the BoltStore database.
+	Graph *graphdb.BoltStore
 
 	// GenInvoiceFeatures returns a feature containing feature bits that
 	// should be advertised on freshly generated invoices.

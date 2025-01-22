@@ -154,9 +154,9 @@ type testChan struct {
 	Capacity     int64  `json:"capacity"`
 }
 
-// makeTestGraph creates a new instance of a channeldb.ChannelGraph for testing
+// makeTestGraph creates a new instance of a channeldb.BoltStore for testing
 // purposes.
-func makeTestGraph(t *testing.T, useCache bool) (*graphdb.ChannelGraph,
+func makeTestGraph(t *testing.T, useCache bool) (*graphdb.BoltStore,
 	kvdb.Backend, error) {
 
 	// Create channelgraph for the first time.
@@ -167,7 +167,7 @@ func makeTestGraph(t *testing.T, useCache bool) (*graphdb.ChannelGraph,
 
 	t.Cleanup(backendCleanup)
 
-	graph, err := graphdb.NewChannelGraph(
+	graph, err := graphdb.NewBoltStore(
 		backend, graphdb.WithUseGraphCache(useCache),
 	)
 	if err != nil {
@@ -177,7 +177,7 @@ func makeTestGraph(t *testing.T, useCache bool) (*graphdb.ChannelGraph,
 	return graph, backend, nil
 }
 
-// parseTestGraph returns a fully populated ChannelGraph given a path to a JSON
+// parseTestGraph returns a fully populated BoltStore given a path to a JSON
 // file which encodes a test graph.
 func parseTestGraph(t *testing.T, useCache bool, path string) (
 	*testGraphInstance, error) {
@@ -475,7 +475,7 @@ type testChannel struct {
 }
 
 type testGraphInstance struct {
-	graph        *graphdb.ChannelGraph
+	graph        *graphdb.BoltStore
 	graphBackend kvdb.Backend
 
 	// aliasMap is a map from a node's alias to its public key. This type is
@@ -507,7 +507,7 @@ func (g *testGraphInstance) getLink(chanID lnwire.ShortChannelID) (
 	return link, nil
 }
 
-// createTestGraphFromChannels returns a fully populated ChannelGraph based on a set of
+// createTestGraphFromChannels returns a fully populated BoltStore based on a set of
 // test channels. Additional required information like keys are derived in
 // a deterministic way and added to the channel graph. A list of nodes is
 // not required and derived from the channel data. The goal is to keep
@@ -3129,7 +3129,7 @@ func runInboundFees(t *testing.T, useCache bool) {
 
 type pathFindingTestContext struct {
 	t                 *testing.T
-	graph             *graphdb.ChannelGraph
+	graph             *graphdb.BoltStore
 	restrictParams    RestrictParams
 	bandwidthHints    bandwidthHints
 	pathFindingConfig PathFindingConfig
@@ -3211,7 +3211,7 @@ func (c *pathFindingTestContext) assertPath(path []*unifiedEdge,
 
 // dbFindPath calls findPath after getting a db transaction from the database
 // graph.
-func dbFindPath(graph *graphdb.ChannelGraph,
+func dbFindPath(graph *graphdb.BoltStore,
 	additionalEdges map[route.Vertex][]AdditionalEdge,
 	bandwidthHints bandwidthHints,
 	r *RestrictParams, cfg *PathFindingConfig,
@@ -3249,7 +3249,7 @@ func dbFindPath(graph *graphdb.ChannelGraph,
 
 // dbFindBlindedPaths calls findBlindedPaths after getting a db transaction from
 // the database graph.
-func dbFindBlindedPaths(graph *graphdb.ChannelGraph,
+func dbFindBlindedPaths(graph *graphdb.BoltStore,
 	restrictions *blindedPathRestrictions) ([][]blindedHop, error) {
 
 	sourceNode, err := graph.SourceNode()

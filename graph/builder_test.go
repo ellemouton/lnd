@@ -1415,7 +1415,7 @@ func createTestCtxFromFile(t *testing.T,
 	)
 }
 
-// parseTestGraph returns a fully populated ChannelGraph given a path to a JSON
+// parseTestGraph returns a fully populated BoltStore given a path to a JSON
 // file which encodes a test graph.
 func parseTestGraph(t *testing.T, useCache bool, path string) (
 	*testGraphInstance, error) {
@@ -1750,7 +1750,7 @@ func asymmetricTestChannel(alias1, alias2 string, capacity btcutil.Amount,
 
 // assertChannelsPruned ensures that only the given channels are pruned from the
 // graph out of the set of all channels.
-func assertChannelsPruned(t *testing.T, graph *graphdb.ChannelGraph,
+func assertChannelsPruned(t *testing.T, graph *graphdb.BoltStore,
 	channels []*testChannel, prunedChanIDs ...uint64) {
 
 	t.Helper()
@@ -1802,7 +1802,7 @@ type testChannelPolicy struct {
 	Features           *lnwire.FeatureVector
 }
 
-// createTestGraphFromChannels returns a fully populated ChannelGraph based on a
+// createTestGraphFromChannels returns a fully populated BoltStore based on a
 // set of test channels. Additional required information like keys are derived
 // in a deterministic way and added to the channel graph. A list of nodes is not
 // required and derived from the channel data. The goal is to keep instantiating

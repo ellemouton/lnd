@@ -31,12 +31,12 @@ var (
 	chanIDCounter uint64 // To be used atomically.
 )
 
-// databaseChannelGraph wraps a channeldb.ChannelGraph instance with the
+// databaseChannelGraph wraps a channeldb.BoltStore instance with the
 // necessary API to properly implement the autopilot.ChannelGraph interface.
 //
 // TODO(roasbeef): move inmpl to main package?
 type databaseChannelGraph struct {
-	db *graphdb.ChannelGraph
+	db *graphdb.BoltStore
 }
 
 // A compile time assertion to ensure databaseChannelGraph meets the
@@ -45,7 +45,7 @@ var _ ChannelGraph = (*databaseChannelGraph)(nil)
 
 // ChannelGraphFromDatabase returns an instance of the autopilot.ChannelGraph
 // backed by a live, open channeldb instance.
-func ChannelGraphFromDatabase(db *graphdb.ChannelGraph) ChannelGraph {
+func ChannelGraphFromDatabase(db *graphdb.BoltStore) ChannelGraph {
 	return &databaseChannelGraph{
 		db: db,
 	}
@@ -55,7 +55,7 @@ func ChannelGraphFromDatabase(db *graphdb.ChannelGraph) ChannelGraph {
 // channeldb.LightningNode. The wrapper method implement the autopilot.Node
 // interface.
 type dbNode struct {
-	db *graphdb.ChannelGraph
+	db *graphdb.BoltStore
 
 	tx kvdb.RTx
 
@@ -478,10 +478,10 @@ func (m *memChannelGraph) addRandNode() (*btcec.PublicKey, error) {
 	return newPub, nil
 }
 
-// databaseChannelGraphCached wraps a channeldb.ChannelGraph instance with the
+// databaseChannelGraphCached wraps a channeldb.BoltStore instance with the
 // necessary API to properly implement the autopilot.ChannelGraph interface.
 type databaseChannelGraphCached struct {
-	db *graphdb.ChannelGraph
+	db *graphdb.BoltStore
 }
 
 // A compile time assertion to ensure databaseChannelGraphCached meets the
@@ -490,7 +490,7 @@ var _ ChannelGraph = (*databaseChannelGraphCached)(nil)
 
 // ChannelGraphFromCachedDatabase returns an instance of the
 // autopilot.ChannelGraph backed by a live, open channeldb instance.
-func ChannelGraphFromCachedDatabase(db *graphdb.ChannelGraph) ChannelGraph {
+func ChannelGraphFromCachedDatabase(db *graphdb.BoltStore) ChannelGraph {
 	return &databaseChannelGraphCached{
 		db: db,
 	}

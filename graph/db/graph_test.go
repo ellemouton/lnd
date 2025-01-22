@@ -773,7 +773,7 @@ func TestEdgeInfoUpdates(t *testing.T) {
 	assertEdgeInfoEqual(t, dbEdgeInfo, edgeInfo)
 }
 
-func assertNodeInCache(t *testing.T, g *ChannelGraph, n *models.LightningNode,
+func assertNodeInCache(t *testing.T, g *BoltStore, n *models.LightningNode,
 	expectedFeatures *lnwire.FeatureVector) {
 
 	// Let's check the internal view first.
@@ -791,7 +791,7 @@ func assertNodeInCache(t *testing.T, g *ChannelGraph, n *models.LightningNode,
 	require.Equal(t, expectedFeatures, features)
 }
 
-func assertNodeNotInCache(t *testing.T, g *ChannelGraph, n route.Vertex) {
+func assertNodeNotInCache(t *testing.T, g *BoltStore, n route.Vertex) {
 	_, ok := g.graphCache.nodeFeatures[n]
 	require.False(t, ok)
 
@@ -803,7 +803,7 @@ func assertNodeNotInCache(t *testing.T, g *ChannelGraph, n route.Vertex) {
 	require.Equal(t, lnwire.EmptyFeatureVector(), features)
 }
 
-func assertEdgeWithNoPoliciesInCache(t *testing.T, g *ChannelGraph,
+func assertEdgeWithNoPoliciesInCache(t *testing.T, g *BoltStore,
 	e *models.ChannelEdgeInfo) {
 
 	// Let's check the internal view first.
@@ -871,7 +871,7 @@ func assertEdgeWithNoPoliciesInCache(t *testing.T, g *ChannelGraph,
 	require.Equal(t, expectedNode2Channel, foundChannel)
 }
 
-func assertNoEdge(t *testing.T, g *ChannelGraph, chanID uint64) {
+func assertNoEdge(t *testing.T, g *BoltStore, chanID uint64) {
 	// Make sure no channel in the cache has the given channel ID. If there
 	// are no channels at all, that is fine as well.
 	for _, channels := range g.graphCache.nodeChannels {
@@ -881,7 +881,7 @@ func assertNoEdge(t *testing.T, g *ChannelGraph, chanID uint64) {
 	}
 }
 
-func assertEdgeWithPolicyInCache(t *testing.T, g *ChannelGraph,
+func assertEdgeWithPolicyInCache(t *testing.T, g *BoltStore,
 	e *models.ChannelEdgeInfo, p *models.ChannelEdgePolicy, policy1 bool) {
 
 	// Check the internal state first.
@@ -1196,7 +1196,7 @@ func TestGraphCacheTraversal(t *testing.T) {
 	require.Equal(t, numChannels*2*(numNodes-1), numNodeChans)
 }
 
-func fillTestGraph(t require.TestingT, graph *ChannelGraph, numNodes,
+func fillTestGraph(t require.TestingT, graph *BoltStore, numNodes,
 	numChannels int) (map[uint64]struct{}, []*models.LightningNode) {
 
 	nodes := make([]*models.LightningNode, numNodes)
@@ -1288,7 +1288,7 @@ func fillTestGraph(t require.TestingT, graph *ChannelGraph, numNodes,
 	return chanIndex, nodes
 }
 
-func assertPruneTip(t *testing.T, graph *ChannelGraph,
+func assertPruneTip(t *testing.T, graph *BoltStore,
 	blockHash *chainhash.Hash, blockHeight uint32) {
 
 	pruneHash, pruneHeight, err := graph.PruneTip()
@@ -1308,7 +1308,7 @@ func assertPruneTip(t *testing.T, graph *ChannelGraph,
 	}
 }
 
-func assertNumChans(t *testing.T, graph *ChannelGraph, n int) {
+func assertNumChans(t *testing.T, graph *BoltStore, n int) {
 	numChans := 0
 	if err := graph.ForEachChannel(func(*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy,
@@ -1327,7 +1327,7 @@ func assertNumChans(t *testing.T, graph *ChannelGraph, n int) {
 	}
 }
 
-func assertNumNodes(t *testing.T, graph *ChannelGraph, n int) {
+func assertNumNodes(t *testing.T, graph *BoltStore, n int) {
 	numNodes := 0
 	err := graph.ForEachNode(
 		func(_ kvdb.RTx, _ *models.LightningNode) error {
@@ -2101,7 +2101,7 @@ func TestFilterKnownChanIDs(t *testing.T) {
 }
 
 // TestStressTestChannelGraphAPI is a stress test that concurrently calls some
-// of the ChannelGraph methods in various orders in order to ensure that no
+// of the BoltStore methods in various orders in order to ensure that no
 // deadlock can occur. This test currently focuses on stress testing all the
 // methods that acquire the cache mutex along with the DB mutex.
 func TestStressTestChannelGraphAPI(t *testing.T) {
@@ -3169,7 +3169,7 @@ func TestNodeIsPublic(t *testing.T) {
 	// participant's graph.
 	nodes := []*models.LightningNode{aliceNode, bobNode, carolNode}
 	edges := []*models.ChannelEdgeInfo{&aliceBobEdge, &bobCarolEdge}
-	graphs := []*ChannelGraph{aliceGraph, bobGraph, carolGraph}
+	graphs := []*BoltStore{aliceGraph, bobGraph, carolGraph}
 	for _, graph := range graphs {
 		for _, node := range nodes {
 			if err := graph.AddLightningNode(node); err != nil {
@@ -3186,7 +3186,7 @@ func TestNodeIsPublic(t *testing.T) {
 	// checkNodes is a helper closure that will be used to assert that the
 	// given nodes are seen as public/private within the given graphs.
 	checkNodes := func(nodes []*models.LightningNode,
-		graphs []*ChannelGraph, public bool) {
+		graphs []*BoltStore, public bool) {
 
 		t.Helper()
 
@@ -3229,7 +3229,7 @@ func TestNodeIsPublic(t *testing.T) {
 	}
 	checkNodes(
 		[]*models.LightningNode{aliceNode},
-		[]*ChannelGraph{bobGraph, carolGraph},
+		[]*BoltStore{bobGraph, carolGraph},
 		false,
 	)
 
@@ -3260,7 +3260,7 @@ func TestNodeIsPublic(t *testing.T) {
 	// node from both Alice's and Carol's perspective.
 	checkNodes(
 		[]*models.LightningNode{bobNode},
-		[]*ChannelGraph{aliceGraph, carolGraph},
+		[]*BoltStore{aliceGraph, carolGraph},
 		false,
 	)
 }
@@ -3501,9 +3501,9 @@ func TestEdgePolicyMissingMaxHtcl(t *testing.T) {
 	assertEdgeInfoEqual(t, dbEdgeInfo, edgeInfo)
 }
 
-// assertNumZombies queries the provided ChannelGraph for NumZombies, and
+// assertNumZombies queries the provided BoltStore for NumZombies, and
 // asserts that the returned number is equal to expZombies.
-func assertNumZombies(t *testing.T, graph *ChannelGraph, expZombies uint64) {
+func assertNumZombies(t *testing.T, graph *BoltStore, expZombies uint64) {
 	t.Helper()
 
 	numZombies, err := graph.NumZombies()
@@ -4014,7 +4014,7 @@ func TestGraphLoading(t *testing.T) {
 	defer backend.Close()
 	defer backendCleanup()
 
-	graph, err := NewChannelGraph(backend)
+	graph, err := NewBoltStore(backend)
 	require.NoError(t, err)
 
 	// Populate the graph with test data.
@@ -4024,7 +4024,7 @@ func TestGraphLoading(t *testing.T) {
 
 	// Recreate the graph. This should cause the graph cache to be
 	// populated.
-	graphReloaded, err := NewChannelGraph(backend)
+	graphReloaded, err := NewBoltStore(backend)
 	require.NoError(t, err)
 
 	// Assert that the cache content is identical.

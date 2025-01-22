@@ -70,7 +70,7 @@ type testCtx struct {
 
 	graphBuilder *mockGraphBuilder
 
-	graph *graphdb.ChannelGraph
+	graph *graphdb.BoltStore
 
 	aliases map[string]route.Vertex
 

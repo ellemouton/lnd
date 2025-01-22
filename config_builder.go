@@ -912,7 +912,7 @@ func (d *RPCSignerWalletImpl) BuildChainControl(
 type DatabaseInstances struct {
 	// GraphDB is the database that stores the channel graph used for path
 	// finding.
-	GraphDB *graphdb.ChannelGraph
+	GraphDB *graphdb.BoltStore
 
 	// ChanStateDB is the database that stores all of our node's channel
 	// state.
@@ -1043,7 +1043,7 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		)
 	}
 
-	dbs.GraphDB, err = graphdb.NewChannelGraph(
+	dbs.GraphDB, err = graphdb.NewBoltStore(
 		databaseBackends.GraphDB, graphDBOptions...,
 	)
 	if err != nil {

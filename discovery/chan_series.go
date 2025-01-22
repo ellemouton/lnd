@@ -65,17 +65,17 @@ type ChannelGraphTimeSeries interface {
 }
 
 // ChanSeries is an implementation of the ChannelGraphTimeSeries
-// interface backed by the channeldb ChannelGraph database. We'll provide this
+// interface backed by the channeldb BoltStore database. We'll provide this
 // implementation to the AuthenticatedGossiper so it can properly use the
 // in-protocol channel range queries to quickly and efficiently synchronize our
 // channel state with all peers.
 type ChanSeries struct {
-	graph *graphdb.ChannelGraph
+	graph *graphdb.BoltStore
 }
 
-// NewChanSeries constructs a new ChanSeries backed by a channeldb.ChannelGraph.
+// NewChanSeries constructs a new ChanSeries backed by a channeldb.BoltStore.
 // The returned ChanSeries implements the ChannelGraphTimeSeries interface.
-func NewChanSeries(graph *graphdb.ChannelGraph) *ChanSeries {
+func NewChanSeries(graph *graphdb.BoltStore) *ChanSeries {
 	return &ChanSeries{
 		graph: graph,
 	}

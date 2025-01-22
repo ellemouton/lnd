@@ -1019,7 +1019,7 @@ func TestEncodeHexColor(t *testing.T) {
 type testCtx struct {
 	builder *Builder
 
-	graph *graphdb.ChannelGraph
+	graph *graphdb.BoltStore
 
 	aliases map[string]route.Vertex
 
@@ -1086,9 +1086,9 @@ func (c *testCtx) RestartBuilder(t *testing.T) {
 	c.builder = builder
 }
 
-// makeTestGraph creates a new instance of a channeldb.ChannelGraph for testing
+// makeTestGraph creates a new instance of a channeldb.BoltStore for testing
 // purposes.
-func makeTestGraph(t *testing.T, useCache bool) (*graphdb.ChannelGraph,
+func makeTestGraph(t *testing.T, useCache bool) (*graphdb.BoltStore,
 	kvdb.Backend, error) {
 
 	// Create channelgraph for the first time.
@@ -1099,7 +1099,7 @@ func makeTestGraph(t *testing.T, useCache bool) (*graphdb.ChannelGraph,
 
 	t.Cleanup(backendCleanup)
 
-	graph, err := graphdb.NewChannelGraph(
+	graph, err := graphdb.NewBoltStore(
 		backend, graphdb.WithUseGraphCache(useCache),
 	)
 	if err != nil {
@@ -1110,7 +1110,7 @@ func makeTestGraph(t *testing.T, useCache bool) (*graphdb.ChannelGraph,
 }
 
 type testGraphInstance struct {
-	graph        *graphdb.ChannelGraph
+	graph        *graphdb.BoltStore
 	graphBackend kvdb.Backend
 
 	// aliasMap is a map from a node's alias to its public key. This type is

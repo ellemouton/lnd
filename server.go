@@ -259,7 +259,7 @@ type server struct {
 
 	fundingMgr *funding.Manager
 
-	graphDB *graphdb.ChannelGraph
+	graphDB *graphdb.BoltStore
 
 	chanStateDB *channeldb.ChannelStateDB
 
