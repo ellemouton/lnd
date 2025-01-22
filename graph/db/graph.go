@@ -78,18 +78,19 @@ func NewChannelGraph(db *BoltStore, src Source, options ...ChanGraphOption) (*Ch
 		log.Debugf("Populating in-memory channel graph, this might " +
 			"take a while...")
 
-		err := g.localDB.ForEachNodeCacheable(
-			func(node GraphCacheNode) error {
-				g.graphCache.AddNodeFeatures(node)
+		err := src.ForEachNode(func(node *models.LightningNode) error {
+			g.graphCache.AddNodeFeatures(newGraphCacheNode(
+				src,
+				node.PubKeyBytes, node.Features,
+			))
 
-				return nil
-			},
-		)
+			return nil
+		})
 		if err != nil {
 			return nil, err
 		}
 
-		err = g.localDB.ForEachChannel(func(info *models.ChannelEdgeInfo,
+		err = src.ForEachChannel(func(info *models.ChannelEdgeInfo,
 			policy1, policy2 *models.ChannelEdgePolicy) error {
 
 			g.graphCache.AddChannel(info, policy1, policy2)
@@ -554,7 +555,7 @@ var _ RoutingGraph = (*chanGraphSession)(nil)
 func (c *ChannelGraph) ForEachNodeWithTx(ctx context.Context,
 	cb func(NodeTx) error) error {
 
-	return c.localDB.ForEachNodeWithTx(ctx, cb)
+	return c.src.ForEachNodeWithTx(ctx, cb)
 }
 
 //// A compile time assertion to ensure ChannelGraph implements the GraphReads

@@ -373,7 +373,8 @@ func (m *muxedSource) NewRoutingGraph() RoutingGraph {
 }
 
 func (m *muxedSource) ForEachNodeWithTx(ctx context.Context, cb func(NodeTx) error) error {
-	panic("implement me")
+	// TODO: merge with local somehow?
+	return m.remote.ForEachNodeWithTx(ctx, cb)
 }
 
 type muxNodeTx struct {
@@ -462,7 +463,9 @@ func (m *muxedSource) selfNodePub() (route.Vertex, error) {
 	}
 
 	pub, err := m.getLocalSource()
-	if err != nil {
+	if errors.Is(err, ErrSourceNodeNotSet) { // on first init, it wont be set yet.
+		return route.Vertex{}, nil
+	} else if err != nil {
 		return route.Vertex{}, err
 	}
 

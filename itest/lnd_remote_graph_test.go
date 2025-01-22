@@ -16,17 +16,18 @@ import (
 func testRemoteGraph(ht *lntest.HarnessTest) {
 	var (
 		ctx          = context.Background()
-		alice        = ht.Alice
-		bob          = ht.Bob
+		alice        = ht.NewNodeWithCoins("Alice", nil)
+		bob          = ht.NewNodeWithCoins("Bob", nil)
 		descGraphReq = &lnrpc.ChannelGraphRequest{
 			IncludeUnannounced: true,
 		}
 	)
+	ht.ConnectNodes(bob, alice)
 
 	// Set up a network:
 	// A <- B <- C
 	carol := ht.NewNode("Carol", nil)
-	setupNetwork(ht, carol)
+	setupNetwork(ht, alice, bob, carol)
 
 	assertDescGraph := func(node *node.HarnessNode, numEdges int,
 		nodes ...*node.HarnessNode) {
@@ -62,6 +63,7 @@ func testRemoteGraph(ht *lntest.HarnessTest) {
 
 	// Create a node, Zane, that uses Greg as its graph provider.
 	zane := ht.NewNode("Zane", []string{
+		"--db.no-graph-cache", // TEMP
 		"--gossip.no-sync",
 		"--remotegraph.enable",
 		fmt.Sprintf(
@@ -167,14 +169,14 @@ func testRemoteGraph(ht *lntest.HarnessTest) {
 	require.NoError(ht.T, err)
 }
 
-func setupNetwork(ht *lntest.HarnessTest, carol *node.HarnessNode) {
+func setupNetwork(ht *lntest.HarnessTest, alice, bob, carol *node.HarnessNode) {
 	const chanAmt = btcutil.Amount(100000)
 	var networkChans []*lnrpc.ChannelPoint
 
 	// Open a channel with 100k satoshis between Alice and Bob with Bob
 	// being the sole funder of the channel.
 	chanPointAlice := ht.OpenChannel(
-		ht.Bob, ht.Alice, lntest.OpenChannelParams{
+		bob, alice, lntest.OpenChannelParams{
 			Amt: chanAmt,
 		},
 	)
@@ -182,16 +184,16 @@ func setupNetwork(ht *lntest.HarnessTest, carol *node.HarnessNode) {
 
 	// Create a channel between Carol and Bob.
 	ht.FundCoins(btcutil.SatoshiPerBitcoin, carol)
-	ht.EnsureConnected(ht.Bob, carol)
+	ht.EnsureConnected(bob, carol)
 	chanPointBob := ht.OpenChannel(
-		carol, ht.Bob, lntest.OpenChannelParams{
+		carol, bob, lntest.OpenChannelParams{
 			Amt: chanAmt,
 		},
 	)
 	networkChans = append(networkChans, chanPointBob)
 
 	// Wait for all nodes to have seen all channels.
-	nodes := []*node.HarnessNode{ht.Alice, ht.Bob, carol}
+	nodes := []*node.HarnessNode{alice, bob, carol}
 	for _, chanPoint := range networkChans {
 		for _, node := range nodes {
 			ht.AssertChannelInGraph(node, chanPoint)
@@ -199,7 +201,7 @@ func setupNetwork(ht *lntest.HarnessTest, carol *node.HarnessNode) {
 	}
 
 	ht.T.Cleanup(func() {
-		ht.CloseChannel(ht.Alice, chanPointAlice)
-		ht.CloseChannel(ht.Bob, chanPointBob)
+		ht.CloseChannel(alice, chanPointAlice)
+		ht.CloseChannel(bob, chanPointBob)
 	})
 }

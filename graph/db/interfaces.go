@@ -107,6 +107,10 @@ type DB interface {
 	FilterChannelRange(startHeight, endHeight uint32,
 		withTimestamps bool) ([]BlockChannelRange, error)
 
+	// FetchNodeFeatures returns the features of the given node.
+	FetchNodeFeatures(ctx context.Context,
+		nodePub route.Vertex) (*lnwire.FeatureVector, error)
+
 	// ChannelView returns the verifiable edge information for each active
 	// channel within the known channel graph. The set of UTXO's (along with
 	// their scripts) returned are the ones that need to be watched on

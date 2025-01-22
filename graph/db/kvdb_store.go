@@ -2933,13 +2933,13 @@ func (c *BoltStore) fetchLightningNode(tx kvdb.RTx,
 // graphCacheNode is a struct that wraps a LightningNode in a way that it can be
 // cached in the graph cache.
 type graphCacheNode struct {
-	db          DB
+	db          Source
 	pubKeyBytes route.Vertex
 	features    *lnwire.FeatureVector
 }
 
 // newGraphCacheNode returns a new cache optimized node.
-func newGraphCacheNode(db DB, pubKey route.Vertex,
+func newGraphCacheNode(db Source, pubKey route.Vertex,
 	features *lnwire.FeatureVector) *graphCacheNode {
 
 	return &graphCacheNode{

@@ -39,7 +39,8 @@ func NewRemoteClient(conn *grpc.ClientConn,
 		error)) *Client {
 
 	return &Client{
-		lnConn: lnrpc.NewLightningClient(conn),
+		lnConn:         lnrpc.NewLightningClient(conn),
+		resolveTCPAddr: resolveTCPAddr,
 	}
 }
 
