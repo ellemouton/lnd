@@ -56,7 +56,7 @@ func WithUseGraphCache(use bool) ChanGraphOption {
 	}
 }
 
-func NewChannelGraph(db *BoltStore, options ...ChanGraphOption) (*ChannelGraph,
+func NewChannelGraph(db *BoltStore, src Source, options ...ChanGraphOption) (*ChannelGraph,
 	error) {
 
 	opts := defaultChanGraphOpts()
@@ -66,7 +66,7 @@ func NewChannelGraph(db *BoltStore, options ...ChanGraphOption) (*ChannelGraph,
 
 	g := &ChannelGraph{
 		localDB: db,
-		src:     db,
+		src:     src,
 	}
 
 	// The graph cache can be turned off (e.g. for mobile users) for a

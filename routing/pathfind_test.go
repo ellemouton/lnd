@@ -170,7 +170,7 @@ func makeTestGraph(t *testing.T, useCache bool) (*graphdb.ChannelGraph,
 	store, err := graphdb.NewBoltStore(backend)
 
 	graph, err := graphdb.NewChannelGraph(
-		store, graphdb.WithUseGraphCache(useCache),
+		store, store, graphdb.WithUseGraphCache(useCache),
 	)
 	if err != nil {
 		return nil, nil, err

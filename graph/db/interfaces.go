@@ -72,6 +72,10 @@ type Source interface {
 
 	ForEachNodeWithTx(ctx context.Context,
 		cb func(NodeTx) error) error
+
+	// FetchNodeFeatures returns the features of the given node.
+	FetchNodeFeatures(ctx context.Context,
+		nodePub route.Vertex) (*lnwire.FeatureVector, error)
 }
 
 // DB is an interface describing a persisted Lightning Network graph.

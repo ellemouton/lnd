@@ -627,7 +627,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		)
 	}
 
-	chanGraph, err := graphdb.NewChannelGraph(dbs.GraphDB, chanGraphOpts...)
+	chanGraph, err := graphdb.NewChannelGraph(dbs.GraphDB, dbs.GraphDB, chanGraphOpts...)
 	if err != nil {
 		return nil, err
 	}

@@ -481,7 +481,7 @@ func (c *BoltStore) ForEachNodeDirectedChannel(tx kvdb.RTx,
 	toNodeCallback := func() route.Vertex {
 		return node
 	}
-	toNodeFeatures, err := c.FetchNodeFeatures(tx, node)
+	toNodeFeatures, err := c.FetchNodeFeaturesTx(tx, node)
 	if err != nil {
 		return err
 	}
@@ -525,12 +525,18 @@ func (c *BoltStore) ForEachNodeDirectedChannel(tx kvdb.RTx,
 	return nodeTraversal(tx, node[:], c.db, dbCallback)
 }
 
-// FetchNodeFeatures returns the features of a given node. If no features are
+func (c *BoltStore) FetchNodeFeatures(_ context.Context, node route.Vertex) (
+	*lnwire.FeatureVector, error) {
+
+	return c.FetchNodeFeaturesTx(nil, node)
+}
+
+// FetchNodeFeaturesTx returns the features of a given node. If no features are
 // known for the node, an empty feature vector is returned. An optional read
 // transaction may be provided. If none is provided, a new one will be created.
 //
 // NOTE: this is part of the graphsession.graph interface.
-func (c *BoltStore) FetchNodeFeatures(tx kvdb.RTx,
+func (c *BoltStore) FetchNodeFeaturesTx(tx kvdb.RTx,
 	node route.Vertex) (*lnwire.FeatureVector, error) {
 
 	// Fallback that uses the database.
@@ -576,7 +582,7 @@ func (c *BoltStore) ForEachNodeCached(cb func(node route.Vertex,
 				toNodeCallback := func() route.Vertex {
 					return node.PubKeyBytes
 				}
-				toNodeFeatures, err := c.FetchNodeFeatures(
+				toNodeFeatures, err := c.FetchNodeFeaturesTx(
 					tx, node.PubKeyBytes,
 				)
 				if err != nil {
@@ -3866,7 +3872,7 @@ type dbSrcSession struct {
 func (s *dbSrcSession) FetchNodeFeatures(_ context.Context,
 	nodePub route.Vertex) (*lnwire.FeatureVector, error) {
 
-	return s.src.FetchNodeFeatures(s.tx, nodePub)
+	return s.src.FetchNodeFeaturesTx(s.tx, nodePub)
 }
 
 // ForEachNodeChannel calls the callback for every channel of the given node.
