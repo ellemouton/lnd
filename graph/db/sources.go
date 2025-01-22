@@ -29,6 +29,14 @@ type muxedSource struct {
 	mu     sync.Mutex
 }
 
+func NewMuxedSource(remote, local Source, getLocalSource func() (route.Vertex, error)) Source {
+	return &muxedSource{
+		remote:         remote,
+		local:          local,
+		getLocalSource: getLocalSource,
+	}
+}
+
 func (m *muxedSource) AddrsForNode(nodePub *btcec.PublicKey) (bool, []net.Addr, error) {
 	// Check both the local and remote sources and merge the results.
 	return channeldb.NewMultiAddrSource(
