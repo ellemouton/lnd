@@ -56,7 +56,6 @@ import (
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/keychain"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/labels"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -6648,6 +6647,7 @@ func marshalDBEdge(edgeInfo *models.ChannelEdgeInfo,
 		Node2Pub:      hex.EncodeToString(edgeInfo.NodeKey2Bytes[:]),
 		Capacity:      int64(edgeInfo.Capacity),
 		CustomRecords: customRecords,
+		Announced:     edgeInfo.AuthProof != nil,
 	}
 
 	if c1 != nil {
@@ -6819,14 +6819,21 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 		numChannels   uint32
 		totalCapacity btcutil.Amount
 		channels      []*lnrpc.ChannelEdge
+		isPublicNode  bool
 	)
 
 	err = graph.ForEachNodeChannel(node.PubKeyBytes,
-		func(_ kvdb.RTx, edge *models.ChannelEdgeInfo,
+		func(edge *models.ChannelEdgeInfo,
 			c1, c2 *models.ChannelEdgePolicy) error {
 
 			numChannels++
 			totalCapacity += edge.Capacity
+
+			// If the edge has an authentication proof, then this
+			// is a public channel and so the node is public.
+			if edge.AuthProof != nil {
+				isPublicNode = true
+			}
 
 			// Only populate the node's channels if the user
 			// requested them.
@@ -6856,6 +6863,7 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 		NumChannels:   numChannels,
 		TotalCapacity: int64(totalCapacity),
 		Channels:      channels,
+		IsPublic:      isPublicNode,
 	}, nil
 }
 
@@ -7504,7 +7512,7 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 
 	var feeReports []*lnrpc.ChannelFeeReport
 	err = channelGraph.ForEachNodeChannel(selfNode.PubKeyBytes,
-		func(_ kvdb.RTx, chanInfo *models.ChannelEdgeInfo,
+		func(chanInfo *models.ChannelEdgeInfo,
 			edgePolicy, _ *models.ChannelEdgePolicy) error {
 
 			// Self node should always have policies for its

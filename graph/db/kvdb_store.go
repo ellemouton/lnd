@@ -2962,10 +2962,10 @@ func (n *graphCacheNode) Features() *lnwire.FeatureVector {
 //
 // Unknown policies are passed into the callback as nil values.
 func (n *graphCacheNode) ForEachChannel(
-	cb func(kvdb.RTx, *models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
 
-	return n.db.ForEachNodeChannel(n.pubKeyBytes, cb)
+	return n.db.ForEachNodeChannel(context.TODO(), n.pubKeyBytes, cb)
 }
 
 var _ GraphCacheNode = (*graphCacheNode)(nil)
@@ -3113,11 +3113,13 @@ func nodeTraversal(tx kvdb.RTx, nodePub []byte, db kvdb.Backend,
 // halted with the error propagated back up to the caller.
 //
 // Unknown policies are passed into the callback as nil values.
-func (c *BoltStore) ForEachNodeChannel(nodePub route.Vertex,
-	cb func(kvdb.RTx, *models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+func (c *BoltStore) ForEachNodeChannel(ctx context.Context, nodePub route.Vertex,
+	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
 
-	return nodeTraversal(nil, nodePub[:], c.db, cb)
+	return nodeTraversal(nil, nodePub[:], c.db, func(tx kvdb.RTx, info *models.ChannelEdgeInfo, policy *models.ChannelEdgePolicy, policy2 *models.ChannelEdgePolicy) error {
+		return cb(info, policy, policy2)
+	})
 }
 
 // ForEachNodeChannelTx iterates through all channels of the given node,
@@ -3132,7 +3134,7 @@ func (c *BoltStore) ForEachNodeChannel(nodePub route.Vertex,
 // If the caller wishes to re-use an existing boltdb transaction, then it
 // should be passed as the first argument.  Otherwise, the first argument should
 // be nil and a fresh transaction will be created to execute the graph
-// traversal.
+// traversal.ForEachNodeChannel
 func (c *BoltStore) ForEachNodeChannelTx(tx kvdb.RTx,
 	nodePub route.Vertex, cb func(kvdb.RTx, *models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy,

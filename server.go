@@ -1171,7 +1171,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			*models.ChannelEdgePolicy) error) error {
 
 			return s.chanGraph.ForEachNodeChannel(selfVertex,
-				func(_ kvdb.RTx, c *models.ChannelEdgeInfo,
+				func(c *models.ChannelEdgeInfo,
 					e *models.ChannelEdgePolicy,
 					_ *models.ChannelEdgePolicy) error {
 
@@ -3463,7 +3463,7 @@ func (s *server) establishPersistentConnections() error {
 	// TODO(roasbeef): instead iterate over link nodes and query graph for
 	// each of the nodes.
 	selfPub := s.identityECDH.PubKey().SerializeCompressed()
-	err = s.chanGraph.ForEachNodeChannel(sourceNode.PubKeyBytes, func(
+	err = s.graphDB.ForEachNodeChannelTx(nil, sourceNode.PubKeyBytes, func(
 		tx kvdb.RTx,
 		chanInfo *models.ChannelEdgeInfo,
 		policy, _ *models.ChannelEdgePolicy) error {

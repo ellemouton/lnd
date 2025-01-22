@@ -11,7 +11,6 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/batch"
 	"github.com/lightningnetwork/lnd/graph/db/models"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -414,11 +413,11 @@ func (c *ChannelGraph) ForEachNode(cb func(*models.LightningNode) error) error {
 
 // MUX: check local and remote.
 func (c *ChannelGraph) ForEachNodeChannel(nodePub route.Vertex,
-	cb func(kvdb.RTx, *models.ChannelEdgeInfo,
+	cb func(*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
 
-	return c.src.ForEachNodeChannel(nodePub, cb)
+	return c.src.ForEachNodeChannel(context.Background(), nodePub, cb)
 }
 
 // MUX: check local and remote.

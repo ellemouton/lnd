@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"github.com/lightningnetwork/lnd/graph/db/models"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -26,7 +25,7 @@ type GraphCacheNode interface {
 	// incoming edge *from* the connecting node. If the callback returns an
 	// error, then the iteration is halted with the error propagated back up
 	// to the caller.
-	ForEachChannel(func(kvdb.RTx, *models.ChannelEdgeInfo,
+	ForEachChannel(func(*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error
 }
@@ -89,7 +88,7 @@ func (c *GraphCache) AddNodeFeatures(node GraphCacheNode) {
 func (c *GraphCache) AddNode(node GraphCacheNode) error {
 	c.AddNodeFeatures(node)
 
-	return node.ForEachChannel(func(tx kvdb.RTx,
+	return node.ForEachChannel(func(
 		info *models.ChannelEdgeInfo,
 		outPolicy *models.ChannelEdgePolicy,
 		inPolicy *models.ChannelEdgePolicy) error {

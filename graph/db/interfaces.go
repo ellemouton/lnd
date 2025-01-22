@@ -10,7 +10,6 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/batch"
 	"github.com/lightningnetwork/lnd/graph/db/models"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -49,8 +48,8 @@ type Source interface {
 
 	ForEachNode(cb func(*models.LightningNode) error) error
 
-	ForEachNodeChannel(nodePub route.Vertex,
-		cb func(kvdb.RTx, *models.ChannelEdgeInfo,
+	ForEachNodeChannel(ctx context.Context, nodePub route.Vertex,
+		cb func(*models.ChannelEdgeInfo,
 			*models.ChannelEdgePolicy,
 			*models.ChannelEdgePolicy) error) error
 
@@ -244,7 +243,7 @@ type DB interface {
 	// to the caller.
 	//
 	// Unknown policies are passed into the callback as nil values.
-	ForEachNodeChannel(nodePub route.Vertex, cb func(kvdb.RTx,
+	ForEachNodeChannel(ctx context.Context, nodePub route.Vertex, cb func(
 		*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error
