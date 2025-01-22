@@ -327,7 +327,7 @@ type mockGraphSessionFactory struct {
 }
 
 func newMockGraphSessionFactory(
-	graph graphdb.RoutingGraph) GraphSessionFactory {
+	graph graphdb.RoutingGraph) graphdb.GraphSessionFactory {
 
 	return &mockGraphSessionFactory{RoutingGraph: graph}
 }
@@ -340,5 +340,5 @@ func (m *mockGraphSessionFactory) NewRoutingGraphSession() (
 	}, nil
 }
 
-var _ GraphSessionFactory = (*mockGraphSessionFactory)(nil)
+var _ graphdb.GraphSessionFactory = (*mockGraphSessionFactory)(nil)
 var _ graphdb.RoutingGraph = (*mockGraphSessionFactory)(nil)

@@ -24,7 +24,7 @@ type SessionSource struct {
 	// GraphSessionFactory can be used to gain access to a Graph session.
 	// If the backing DB allows it, this will mean that a read transaction
 	// is being held during the use of the session.
-	GraphSessionFactory GraphSessionFactory
+	GraphSessionFactory graphdb.GraphSessionFactory
 
 	// SourceNode is the graph's source node.
 	SourceNode *models.LightningNode

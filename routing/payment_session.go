@@ -180,7 +180,7 @@ type paymentSession struct {
 
 	pathFinder pathFinder
 
-	graphSessFactory GraphSessionFactory
+	graphSessFactory graphdb.GraphSessionFactory
 
 	// pathFindingConfig defines global parameters that control the
 	// trade-off in path finding between fees and probability.
@@ -202,7 +202,7 @@ type paymentSession struct {
 func newPaymentSession(p *LightningPayment, selfNode route.Vertex,
 	getBandwidthHints func(context.Context, graphdb.RoutingGraph) (
 		bandwidthHints, error),
-	graphSessFactory GraphSessionFactory,
+	graphSessFactory graphdb.GraphSessionFactory,
 	missionControl MissionControlQuerier,
 	pathFindingConfig PathFindingConfig) (*paymentSession, error) {
 

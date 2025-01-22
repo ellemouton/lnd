@@ -261,6 +261,8 @@ type server struct {
 
 	graphDB *graphdb.BoltStore
 
+	chanGraph *graphdb.ChannelGraph
+
 	chanStateDB *channeldb.ChannelStateDB
 
 	addrSource channeldb.AddrSource
@@ -617,6 +619,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		cfg:            cfg,
 		implCfg:        implCfg,
 		graphDB:        dbs.GraphDB,
+		chanGraph:      graphdb.NewChannelGraph(dbs.GraphDB),
 		chanStateDB:    dbs.ChanStateDB.ChannelStateDB(),
 		addrSource:     addrSource,
 		miscDB:         dbs.ChanStateDB,
@@ -1037,7 +1040,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		return nil, fmt.Errorf("error getting source node: %w", err)
 	}
 	paymentSessionSource := &routing.SessionSource{
-		GraphSessionFactory: dbs.GraphDB,
+		GraphSessionFactory: s.chanGraph,
 		SourceNode:          sourceNode,
 		MissionControl:      s.defaultMC,
 		GetLink:             s.htlcSwitch.GetLinkByShortID,
@@ -1070,7 +1073,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	s.chanRouter, err = routing.New(routing.Config{
 		SelfNode:           selfNode.PubKeyBytes,
-		RoutingGraph:       dbs.GraphDB.NewRoutingGraph(),
+		RoutingGraph:       s.chanGraph.NewRoutingGraph(),
 		Chain:              cc.ChainIO,
 		Payer:              s.htlcSwitch,
 		Control:            s.controlTower,
