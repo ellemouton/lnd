@@ -693,7 +693,7 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 	if err != nil {
 		return err
 	}
-	graph := s.graphDB
+	graph := s.chanGraph
 
 	routerBackend := &routerrpc.RouterBackend{
 		SelfNode: selfNode.PubKeyBytes,
@@ -1756,7 +1756,7 @@ func (r *rpcServer) VerifyMessage(ctx context.Context,
 	// channels signed the message.
 	//
 	// TODO(phlip9): Require valid nodes to have capital in active channels.
-	graph := r.server.graphDB
+	graph := r.server.chanGraph
 	_, active, err := graph.HasLightningNode(pub)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query graph: %w", err)
@@ -6904,7 +6904,7 @@ func (r *rpcServer) QueryRoutes(ctx context.Context,
 func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 	_ *lnrpc.NetworkInfoRequest) (*lnrpc.NetworkInfo, error) {
 
-	graph := r.server.graphDB
+	graph := r.server.chanGraph
 
 	var (
 		numNodes             uint32
@@ -7002,7 +7002,7 @@ func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 	}
 
 	// Graph diameter.
-	channelGraph := autopilot.ChannelGraphFromCachedDatabase(graph)
+	channelGraph := autopilot.ChannelGraphFromCachedDatabase(r.server.graphDB) // TODO (elle): replace
 	simpleGraph, err := autopilot.NewSimpleGraph(channelGraph)
 	if err != nil {
 		return nil, err
@@ -7496,7 +7496,7 @@ const feeBase float64 = 1000000
 func (r *rpcServer) FeeReport(ctx context.Context,
 	_ *lnrpc.FeeReportRequest) (*lnrpc.FeeReportResponse, error) {
 
-	channelGraph := r.server.graphDB
+	channelGraph := r.server.chanGraph
 	selfNode, err := channelGraph.SourceNode()
 	if err != nil {
 		return nil, err
@@ -7882,7 +7882,7 @@ func (r *rpcServer) ForwardingHistory(ctx context.Context,
 			return "", err
 		}
 
-		peer, err := r.server.graphDB.FetchLightningNode(vertex)
+		peer, err := r.server.chanGraph.FetchLightningNode(vertex)
 		if err != nil {
 			return "", err
 		}

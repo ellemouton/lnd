@@ -248,6 +248,8 @@ type DB interface {
 	// live.
 	MarkEdgeLive(chanID uint64, db func(ChannelEdge)) error
 
+	NumZombies() (uint64, error)
+
 	GraphSessionFactory
 }
 

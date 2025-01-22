@@ -416,6 +416,10 @@ func (c *ChannelGraph) DisconnectBlockAtHeight(height uint32) (
 	return edges, nil
 }
 
+func (c *ChannelGraph) NumZombies() (uint64, error) {
+	return c.db.NumZombies()
+}
+
 func (c *ChannelGraph) UpdateChannelEdge(edge *models.ChannelEdgeInfo) error {
 	err := c.db.UpdateChannelEdge(edge)
 	if err != nil {
