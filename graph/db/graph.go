@@ -3,8 +3,10 @@ package graphdb
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/batch"
@@ -18,6 +20,12 @@ type ChannelGraph struct {
 	graphCache *GraphCache
 
 	db DB
+}
+
+func (c *ChannelGraph) AddrsForNode(nodePub *btcec.PublicKey) (bool, []net.Addr,
+	error) {
+
+	return c.db.AddrsForNode(nodePub)
 }
 
 func (c *ChannelGraph) SetSourceNode(node *models.LightningNode) error {

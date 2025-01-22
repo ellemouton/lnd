@@ -2,8 +2,10 @@ package graphdb
 
 import (
 	"context"
+	"net"
 	"time"
 
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/batch"
@@ -48,6 +50,8 @@ type DB interface {
 	PruneTip() (*chainhash.Hash, uint32, error)
 
 	SetSourceNode(node *models.LightningNode) error
+
+	AddrsForNode(nodePub *btcec.PublicKey) (bool, []net.Addr, error)
 
 	// PruneGraph prunes newly closed channels from the channel graph in
 	// response to a new block being solved on the network. Any transactions
