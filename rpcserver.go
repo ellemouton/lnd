@@ -6709,7 +6709,7 @@ func (r *rpcServer) GetNodeMetrics(ctx context.Context,
 	// Obtain the pointer to the global singleton channel graph, this will
 	// provide a consistent view of the graph due to bolt db's
 	// transactional model.
-	graph := r.server.graphDB // TODO(elle): replace
+	graph := r.server.chanGraph
 
 	// Calculate betweenness centrality if requested. Note that depending on the
 	// graph size, this may take up to a few minutes.
@@ -7002,7 +7002,7 @@ func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 	}
 
 	// Graph diameter.
-	channelGraph := autopilot.ChannelGraphFromCachedDatabase(r.server.graphDB) // TODO (elle): replace
+	channelGraph := autopilot.ChannelGraphFromCachedDatabase(graph)
 	simpleGraph, err := autopilot.NewSimpleGraph(channelGraph)
 	if err != nil {
 		return nil, err

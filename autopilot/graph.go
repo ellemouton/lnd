@@ -2,19 +2,17 @@ package autopilot
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
-	"errors"
 	"net"
 	"sort"
 	"sync/atomic"
-	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -36,7 +34,7 @@ var (
 //
 // TODO(roasbeef): move inmpl to main package?
 type databaseChannelGraph struct {
-	db *graphdb.BoltStore
+	db Graph
 }
 
 // A compile time assertion to ensure databaseChannelGraph meets the
@@ -45,7 +43,7 @@ var _ ChannelGraph = (*databaseChannelGraph)(nil)
 
 // ChannelGraphFromDatabase returns an instance of the autopilot.ChannelGraph
 // backed by a live, open channeldb instance.
-func ChannelGraphFromDatabase(db *graphdb.BoltStore) ChannelGraph {
+func ChannelGraphFromDatabase(db Graph) ChannelGraph {
 	return &databaseChannelGraph{
 		db: db,
 	}
@@ -55,11 +53,7 @@ func ChannelGraphFromDatabase(db *graphdb.BoltStore) ChannelGraph {
 // channeldb.LightningNode. The wrapper method implement the autopilot.Node
 // interface.
 type dbNode struct {
-	db *graphdb.BoltStore
-
-	tx kvdb.RTx
-
-	node *models.LightningNode
+	node graphdb.NodeTx
 }
 
 // A compile time assertion to ensure dbNode meets the autopilot.Node
@@ -72,7 +66,7 @@ var _ Node = (*dbNode)(nil)
 //
 // NOTE: Part of the autopilot.Node interface.
 func (d *dbNode) PubKey() [33]byte {
-	return d.node.PubKeyBytes
+	return d.node.Node().PubKeyBytes
 }
 
 // Addrs returns a slice of publicly reachable public TCP addresses that the
@@ -80,7 +74,7 @@ func (d *dbNode) PubKey() [33]byte {
 //
 // NOTE: Part of the autopilot.Node interface.
 func (d *dbNode) Addrs() []net.Addr {
-	return d.node.Addresses
+	return d.node.Node().Addresses
 }
 
 // ForEachChannel is a higher-order function that will be used to iterate
@@ -90,9 +84,10 @@ func (d *dbNode) Addrs() []net.Addr {
 //
 // NOTE: Part of the autopilot.Node interface.
 func (d *dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
-	return d.db.ForEachNodeChannelTx(d.tx, d.node.PubKeyBytes,
-		func(tx kvdb.RTx, ei *models.ChannelEdgeInfo, ep,
-			_ *models.ChannelEdgePolicy) error {
+	return d.node.ForEachNodeChannel(
+		context.TODO(), d.node.Node().PubKeyBytes,
+		func(ctx context.Context, ei *models.ChannelEdgeInfo,
+			ep, _ *models.ChannelEdgePolicy) error {
 
 			// Skip channels for which no outgoing edge policy is
 			// available.
@@ -106,8 +101,8 @@ func (d *dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 				return nil
 			}
 
-			node, err := d.db.FetchLightningNodeTx(
-				tx, ep.ToNode,
+			node, err := d.node.FetchLightningNode(
+				ctx, ep.ToNode,
 			)
 			if err != nil {
 				return err
@@ -119,8 +114,6 @@ func (d *dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 				),
 				Capacity: ei.Capacity,
 				Peer: &dbNode{
-					tx:   tx,
-					db:   d.db,
 					node: node,
 				},
 			}
@@ -135,199 +128,19 @@ func (d *dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 //
 // NOTE: Part of the autopilot.ChannelGraph interface.
 func (d *databaseChannelGraph) ForEachNode(cb func(Node) error) error {
-	return d.db.ForEachNodeTx(func(tx kvdb.RTx,
-		n *models.LightningNode) error {
-
+	return d.db.ForEachNodeWithTx(context.TODO(), func(n graphdb.NodeTx) error {
 		// We'll skip over any node that doesn't have any advertised
 		// addresses. As we won't be able to reach them to actually
 		// open any channels.
-		if len(n.Addresses) == 0 {
+		if len(n.Node().Addresses) == 0 {
 			return nil
 		}
 
 		node := &dbNode{
-			db:   d.db,
-			tx:   tx,
 			node: n,
 		}
 		return cb(node)
 	})
-}
-
-// addRandChannel creates a new channel two target nodes. This function is
-// meant to aide in the generation of random graphs for use within test cases
-// the exercise the autopilot package.
-func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
-	capacity btcutil.Amount) (*ChannelEdge, *ChannelEdge, error) {
-
-	fetchNode := func(pub *btcec.PublicKey) (*models.LightningNode, error) {
-		if pub != nil {
-			vertex, err := route.NewVertexFromBytes(
-				pub.SerializeCompressed(),
-			)
-			if err != nil {
-				return nil, err
-			}
-
-			dbNode, err := d.db.FetchLightningNode(vertex)
-			switch {
-			case errors.Is(err, graphdb.ErrGraphNodeNotFound):
-				fallthrough
-			case errors.Is(err, graphdb.ErrGraphNotFound):
-				graphNode := &models.LightningNode{
-					HaveNodeAnnouncement: true,
-					Addresses: []net.Addr{
-						&net.TCPAddr{
-							IP: bytes.Repeat([]byte("a"), 16),
-						},
-					},
-					Features: lnwire.NewFeatureVector(
-						nil, lnwire.Features,
-					),
-					AuthSigBytes: testSig.Serialize(),
-				}
-				graphNode.AddPubKey(pub)
-				if err := d.db.AddLightningNode(graphNode); err != nil {
-					return nil, err
-				}
-			case err != nil:
-				return nil, err
-			}
-
-			return dbNode, nil
-		}
-
-		nodeKey, err := randKey()
-		if err != nil {
-			return nil, err
-		}
-		dbNode := &models.LightningNode{
-			HaveNodeAnnouncement: true,
-			Addresses: []net.Addr{
-				&net.TCPAddr{
-					IP: bytes.Repeat([]byte("a"), 16),
-				},
-			},
-			Features: lnwire.NewFeatureVector(
-				nil, lnwire.Features,
-			),
-			AuthSigBytes: testSig.Serialize(),
-		}
-		dbNode.AddPubKey(nodeKey)
-		if err := d.db.AddLightningNode(dbNode); err != nil {
-			return nil, err
-		}
-
-		return dbNode, nil
-	}
-
-	vertex1, err := fetchNode(node1)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	vertex2, err := fetchNode(node2)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	var lnNode1, lnNode2 *btcec.PublicKey
-	if bytes.Compare(vertex1.PubKeyBytes[:], vertex2.PubKeyBytes[:]) == -1 {
-		lnNode1, _ = vertex1.PubKey()
-		lnNode2, _ = vertex2.PubKey()
-	} else {
-		lnNode1, _ = vertex2.PubKey()
-		lnNode2, _ = vertex1.PubKey()
-	}
-
-	chanID := randChanID()
-	edge := &models.ChannelEdgeInfo{
-		ChannelID: chanID.ToUint64(),
-		Capacity:  capacity,
-	}
-	edge.AddNodeKeys(lnNode1, lnNode2, lnNode1, lnNode2)
-	if err := d.db.AddChannelEdge(edge); err != nil {
-		return nil, nil, err
-	}
-	edgePolicy := &models.ChannelEdgePolicy{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 chanID.ToUint64(),
-		LastUpdate:                time.Now(),
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		MaxHTLC:                   lnwire.NewMSatFromSatoshis(capacity),
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
-		MessageFlags:              1,
-		ChannelFlags:              0,
-	}
-
-	if err := d.db.UpdateEdgePolicy(edgePolicy, func(fromNode, toNode route.Vertex, isUpdate1 bool) {
-
-	}); err != nil {
-		return nil, nil, err
-	}
-	edgePolicy = &models.ChannelEdgePolicy{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 chanID.ToUint64(),
-		LastUpdate:                time.Now(),
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		MaxHTLC:                   lnwire.NewMSatFromSatoshis(capacity),
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
-		MessageFlags:              1,
-		ChannelFlags:              1,
-	}
-	if err := d.db.UpdateEdgePolicy(edgePolicy, func(fromNode, toNode route.Vertex, isUpdate1 bool) {
-
-	}); err != nil {
-		return nil, nil, err
-	}
-
-	return &ChannelEdge{
-			ChanID:   chanID,
-			Capacity: capacity,
-			Peer: &dbNode{
-				db:   d.db,
-				node: vertex1,
-			},
-		},
-		&ChannelEdge{
-			ChanID:   chanID,
-			Capacity: capacity,
-			Peer: &dbNode{
-				db:   d.db,
-				node: vertex2,
-			},
-		},
-		nil
-}
-
-func (d *databaseChannelGraph) addRandNode() (*btcec.PublicKey, error) {
-	nodeKey, err := randKey()
-	if err != nil {
-		return nil, err
-	}
-	dbNode := &models.LightningNode{
-		HaveNodeAnnouncement: true,
-		Addresses: []net.Addr{
-			&net.TCPAddr{
-				IP: bytes.Repeat([]byte("a"), 16),
-			},
-		},
-		Features: lnwire.NewFeatureVector(
-			nil, lnwire.Features,
-		),
-		AuthSigBytes: testSig.Serialize(),
-	}
-	dbNode.AddPubKey(nodeKey)
-	if err := d.db.AddLightningNode(dbNode); err != nil {
-		return nil, err
-	}
-
-	return nodeKey, nil
-
 }
 
 // memChannelGraph is an implementation of the autopilot.ChannelGraph backed by
@@ -485,7 +298,7 @@ func (m *memChannelGraph) addRandNode() (*btcec.PublicKey, error) {
 // databaseChannelGraphCached wraps a channeldb.BoltStore instance with the
 // necessary API to properly implement the autopilot.ChannelGraph interface.
 type databaseChannelGraphCached struct {
-	db *graphdb.BoltStore
+	db CachedGraph
 }
 
 // A compile time assertion to ensure databaseChannelGraphCached meets the
@@ -494,7 +307,7 @@ var _ ChannelGraph = (*databaseChannelGraphCached)(nil)
 
 // ChannelGraphFromCachedDatabase returns an instance of the
 // autopilot.ChannelGraph backed by a live, open channeldb instance.
-func ChannelGraphFromCachedDatabase(db *graphdb.BoltStore) ChannelGraph {
+func ChannelGraphFromCachedDatabase(db *graphdb.ChannelGraph) ChannelGraph {
 	return &databaseChannelGraphCached{
 		db: db,
 	}

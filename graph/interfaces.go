@@ -87,5 +87,3 @@ type ChannelGraphSource interface {
 	// zombie based on these timestamps.
 	IsZombieChannel(updateTime1, updateTime2 time.Time) bool
 }
-
-//nolint:interfacebloat

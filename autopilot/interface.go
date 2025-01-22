@@ -1,18 +1,31 @@
 package autopilot
 
 import (
+	"context"
 	"net"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/wire"
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
+	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing/route"
 )
 
 // DefaultConfTarget is the default confirmation target for autopilot channels.
 // TODO(halseth): possibly make dynamic, going aggressive->lax as more channels
 // are opened.
 const DefaultConfTarget = 3
+
+type Graph interface {
+	ForEachNodeWithTx(ctx context.Context, cb func(graphdb.NodeTx) error) error
+}
+
+type CachedGraph interface {
+	ForEachNodeCached(cb func(node route.Vertex,
+		chans map[uint64]*models.DirectedChannel) error) error
+}
 
 // Node is an interface which represents n abstract vertex within the
 // channel graph. All nodes should have at least a single edge to/from them

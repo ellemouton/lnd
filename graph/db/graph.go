@@ -526,6 +526,12 @@ func (c *chanGraphSession) FetchNodeFeatures(ctx context.Context,
 
 var _ RoutingGraph = (*chanGraphSession)(nil)
 
+func (c *ChannelGraph) ForEachNodeWithTx(ctx context.Context,
+	cb func(NodeTx) error) error {
+
+	return c.db.ForEachNodeWithTx(ctx, cb)
+}
+
 //// A compile time assertion to ensure ChannelGraph implements the GraphReads
 //// interface.
 //var _ GraphReads = (*ChannelGraph)(nil)

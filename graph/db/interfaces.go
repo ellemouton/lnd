@@ -241,6 +241,8 @@ type DB interface {
 		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy, error)
 
+	ForEachNodeWithTx(ctx context.Context, cb func(NodeTx) error) error
+
 	// UpdateChannelEdge retrieves and update edge of the graph database.
 	// Method only reserved for updating an edge info after its already been
 	// created. In order to maintain this constraints, we return an error in
@@ -279,4 +281,17 @@ type GraphSessionFactory interface {
 	// not need to hold a read-lock across multiple calls to the underlying
 	// graph source.
 	NewRoutingGraph() RoutingGraph
+}
+
+type NodeTx interface {
+	ForEachNodeChannel(ctx context.Context,
+		nodePub route.Vertex, cb func(context.Context,
+			*models.ChannelEdgeInfo,
+			*models.ChannelEdgePolicy,
+			*models.ChannelEdgePolicy) error) error
+
+	FetchLightningNode(ctx context.Context, nodePub route.Vertex) (NodeTx,
+		error)
+
+	Node() *models.LightningNode
 }

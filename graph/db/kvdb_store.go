@@ -3141,6 +3141,60 @@ func (c *BoltStore) ForEachNodeChannelTx(tx kvdb.RTx,
 	return nodeTraversal(tx, nodePub[:], c.db, cb)
 }
 
+func (c *BoltStore) ForEachNodeWithTx(_ context.Context,
+	cb func(NodeTx) error) error {
+
+	return c.ForEachNodeTx(func(tx kvdb.RTx,
+		node *models.LightningNode) error {
+
+		return cb(newDBNodeWithTx(c, node, tx))
+	})
+}
+
+type dbNodeWithTx struct {
+	node *models.LightningNode
+	db   *BoltStore
+	tx   kvdb.RTx
+}
+
+func newDBNodeWithTx(db *BoltStore, node *models.LightningNode,
+	tx kvdb.RTx) *dbNodeWithTx {
+
+	return &dbNodeWithTx{
+		db:   db,
+		node: node,
+		tx:   tx,
+	}
+}
+
+func (n *dbNodeWithTx) Node() *models.LightningNode {
+	return n.node
+}
+
+func (n *dbNodeWithTx) ForEachNodeChannel(ctx context.Context,
+	nodePub route.Vertex, cb func(context.Context,
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy) error) error {
+
+	return n.db.ForEachNodeChannelTx(n.tx, nodePub, func(tx kvdb.RTx,
+		info *models.ChannelEdgeInfo, policy *models.ChannelEdgePolicy,
+		policy2 *models.ChannelEdgePolicy) error {
+
+		return cb(ctx, info, policy, policy2)
+	})
+}
+
+func (n *dbNodeWithTx) FetchLightningNode(_ context.Context,
+	nodePub route.Vertex) (NodeTx, error) {
+
+	node, err := n.db.FetchLightningNodeTx(n.tx, nodePub)
+	if err != nil {
+		return nil, err
+	}
+
+	return newDBNodeWithTx(n.db, node, n.tx), nil
+}
+
 // FetchOtherNode attempts to fetch the full LightningNode that's opposite of
 // the target node in the channel. This is useful when one knows the pubkey of
 // one of the nodes, and wishes to obtain the full LightningNode for the other
