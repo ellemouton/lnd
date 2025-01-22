@@ -183,6 +183,10 @@ func (c *ChannelGraph) FetchLightningNode(nodePub route.Vertex) (
 	return c.db.FetchLightningNode(nodePub)
 }
 
+func (c *ChannelGraph) ForEachNode(cb func(*models.LightningNode) error) error {
+	return c.db.ForEachNode(cb)
+}
+
 func (c *ChannelGraph) ForEachNodeChannel(nodePub route.Vertex,
 	cb func(kvdb.RTx, *models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy,

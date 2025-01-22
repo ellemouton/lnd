@@ -212,6 +212,8 @@ type DB interface {
 		*models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error
 
+	ForEachNode(cb func(*models.LightningNode) error) error
+
 	ForEachNodeCacheable(cb func(GraphCacheNode) error) error
 
 	ForEachNodeCached(cb func(node route.Vertex,

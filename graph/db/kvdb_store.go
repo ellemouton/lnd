@@ -547,9 +547,9 @@ func (c *BoltStore) FetchNodeFeatures(tx kvdb.RTx,
 	}
 }
 
-// ForEachNodeCached is similar to ForEachNode, but it utilizes the channel
+// ForEachNodeCached is similar to ForEachNodeTx, but it utilizes the channel
 // graph cache instead. Note that this doesn't return all the information the
-// regular ForEachNode method does.
+// regular ForEachNodeTx method does.
 //
 // NOTE: The callback contents MUST not be modified.
 func (c *BoltStore) ForEachNodeCached(cb func(node route.Vertex,
@@ -559,7 +559,7 @@ func (c *BoltStore) ForEachNodeCached(cb func(node route.Vertex,
 	// We'll iterate over each node, then the set of channels for each
 	// node, and construct a similar callback functiopn signature as the
 	// main funcotin expects.
-	return c.ForEachNode(func(tx kvdb.RTx,
+	return c.ForEachNodeTx(func(tx kvdb.RTx,
 		node *models.LightningNode) error {
 
 		channels := make(map[uint64]*DirectedChannel)
@@ -668,14 +668,20 @@ func (c *BoltStore) DisabledChannelIDs() ([]uint64, error) {
 	return disabledChanIDs, nil
 }
 
-// ForEachNode iterates through all the stored vertices/nodes in the graph,
+func (c *BoltStore) ForEachNode(cb func(*models.LightningNode) error) error {
+	return c.ForEachNodeTx(func(_ kvdb.RTx, node *models.LightningNode) error {
+		return cb(node)
+	})
+}
+
+// ForEachNodeTx iterates through all the stored vertices/nodes in the graph,
 // executing the passed callback with each node encountered. If the callback
 // returns an error, then the transaction is aborted and the iteration stops
 // early.
 //
 // TODO(roasbeef): add iterator interface to allow for memory efficient graph
 // traversal when graph gets mega
-func (c *BoltStore) ForEachNode(
+func (c *BoltStore) ForEachNodeTx(
 	cb func(kvdb.RTx, *models.LightningNode) error) error {
 
 	traversal := func(tx kvdb.RTx) error {

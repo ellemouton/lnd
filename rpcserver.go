@@ -6526,17 +6526,12 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 		}
 	}
 
-	// Obtain the pointer to the global singleton channel graph, this will
-	// provide a consistent view of the graph due to bolt db's
-	// transactional model.
-	graph := r.server.graphDB
+	graph := r.server.chanGraph
 
 	// First iterate through all the known nodes (connected or unconnected
 	// within the graph), collating their current state into the RPC
 	// response.
-	err := graph.ForEachNode(func(_ kvdb.RTx,
-		node *models.LightningNode) error {
-
+	err := graph.ForEachNode(func(node *models.LightningNode) error {
 		lnNode := marshalNode(node)
 
 		resp.Nodes = append(resp.Nodes, lnNode)
