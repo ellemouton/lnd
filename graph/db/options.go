@@ -34,15 +34,6 @@ type Options struct {
 	// wait before attempting to commit a pending set of updates.
 	BatchCommitInterval time.Duration
 
-	// PreAllocCacheNumNodes is the number of nodes we expect to be in the
-	// graph cache, so we can pre-allocate the map accordingly.
-	PreAllocCacheNumNodes int
-
-	// UseGraphCache denotes whether the in-memory graph cache should be
-	// used or a fallback version that uses the underlying database for
-	// path finding.
-	UseGraphCache bool
-
 	// NoMigration specifies that underlying backend was opened in read-only
 	// mode and migrations shouldn't be performed. This can be useful for
 	// applications that use the channeldb package as a library.
@@ -52,11 +43,9 @@ type Options struct {
 // DefaultOptions returns an Options populated with default values.
 func DefaultOptions() *Options {
 	return &Options{
-		RejectCacheSize:       DefaultRejectCacheSize,
-		ChannelCacheSize:      DefaultChannelCacheSize,
-		PreAllocCacheNumNodes: DefaultPreAllocCacheNumNodes,
-		UseGraphCache:         true,
-		NoMigration:           false,
+		RejectCacheSize:  DefaultRejectCacheSize,
+		ChannelCacheSize: DefaultChannelCacheSize,
+		NoMigration:      false,
 	}
 }
 
@@ -77,24 +66,10 @@ func WithChannelCacheSize(n int) OptionModifier {
 	}
 }
 
-// WithPreAllocCacheNumNodes sets the PreAllocCacheNumNodes to n.
-func WithPreAllocCacheNumNodes(n int) OptionModifier {
-	return func(o *Options) {
-		o.PreAllocCacheNumNodes = n
-	}
-}
-
 // WithBatchCommitInterval sets the batch commit interval for the interval batch
 // schedulers.
 func WithBatchCommitInterval(interval time.Duration) OptionModifier {
 	return func(o *Options) {
 		o.BatchCommitInterval = interval
-	}
-}
-
-// WithUseGraphCache sets the UseGraphCache option to the given value.
-func WithUseGraphCache(use bool) OptionModifier {
-	return func(o *Options) {
-		o.UseGraphCache = use
 	}
 }

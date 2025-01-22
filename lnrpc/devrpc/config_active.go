@@ -16,6 +16,6 @@ import (
 // also be specified.
 type Config struct {
 	ActiveNetParams *chaincfg.Params
-	GraphDB         *graphdb.BoltStore
+	GraphDB         *graphdb.ChannelGraph
 	Switch          *htlcswitch.Switch
 }

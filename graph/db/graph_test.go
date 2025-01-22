@@ -1107,7 +1107,7 @@ func TestGraphTraversalCacheable(t *testing.T) {
 	// indicates that all edges have properly been reached.
 	var nodes []GraphCacheNode
 	err = graph.ForEachNodeCacheable(
-		func(tx kvdb.RTx, node GraphCacheNode) error {
+		func(node GraphCacheNode) error {
 			delete(nodeMap, node.PubKey())
 
 			nodes = append(nodes, node)
@@ -3885,7 +3885,7 @@ func BenchmarkForEachChannel(b *testing.B) {
 
 		var nodes []GraphCacheNode
 		err = graph.ForEachNodeCacheable(
-			func(tx kvdb.RTx, node GraphCacheNode) error {
+			func(node GraphCacheNode) error {
 				nodes = append(nodes, node)
 
 				return nil

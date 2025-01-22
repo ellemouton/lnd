@@ -156,7 +156,7 @@ type testChan struct {
 
 // makeTestGraph creates a new instance of a channeldb.BoltStore for testing
 // purposes.
-func makeTestGraph(t *testing.T, useCache bool) (*graphdb.BoltStore,
+func makeTestGraph(t *testing.T, useCache bool) (*graphdb.ChannelGraph,
 	kvdb.Backend, error) {
 
 	// Create channelgraph for the first time.
@@ -167,8 +167,10 @@ func makeTestGraph(t *testing.T, useCache bool) (*graphdb.BoltStore,
 
 	t.Cleanup(backendCleanup)
 
-	graph, err := graphdb.NewBoltStore(
-		backend, graphdb.WithUseGraphCache(useCache),
+	store, err := graphdb.NewBoltStore(backend)
+
+	graph, err := graphdb.NewChannelGraph(
+		store, graphdb.WithUseGraphCache(useCache),
 	)
 	if err != nil {
 		return nil, nil, err
@@ -475,7 +477,7 @@ type testChannel struct {
 }
 
 type testGraphInstance struct {
-	graph        *graphdb.BoltStore
+	graph        *graphdb.ChannelGraph
 	graphBackend kvdb.Backend
 
 	// aliasMap is a map from a node's alias to its public key. This type is
@@ -3129,7 +3131,7 @@ func runInboundFees(t *testing.T, useCache bool) {
 
 type pathFindingTestContext struct {
 	t                 *testing.T
-	graph             *graphdb.BoltStore
+	graph             *graphdb.ChannelGraph
 	restrictParams    RestrictParams
 	bandwidthHints    bandwidthHints
 	pathFindingConfig PathFindingConfig
@@ -3211,7 +3213,7 @@ func (c *pathFindingTestContext) assertPath(path []*unifiedEdge,
 
 // dbFindPath calls findPath after getting a db transaction from the database
 // graph.
-func dbFindPath(graph *graphdb.BoltStore,
+func dbFindPath(graph *graphdb.ChannelGraph,
 	additionalEdges map[route.Vertex][]AdditionalEdge,
 	bandwidthHints bandwidthHints,
 	r *RestrictParams, cfg *PathFindingConfig,
@@ -3249,7 +3251,7 @@ func dbFindPath(graph *graphdb.BoltStore,
 
 // dbFindBlindedPaths calls findBlindedPaths after getting a db transaction from
 // the database graph.
-func dbFindBlindedPaths(graph *graphdb.BoltStore,
+func dbFindBlindedPaths(graph *graphdb.ChannelGraph,
 	restrictions *blindedPathRestrictions) ([][]blindedHop, error) {
 
 	sourceNode, err := graph.SourceNode()

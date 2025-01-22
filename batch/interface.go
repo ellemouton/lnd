@@ -1,10 +1,29 @@
 package batch
 
-import "github.com/lightningnetwork/lnd/kvdb"
+import (
+	"github.com/lightningnetwork/lnd/kvdb"
+)
+
+type RequestOptions struct {
+	// lazy should be true if we don't have to immediately execute this
+	// request when it comes in. This means that it can be scheduled later,
+	// allowing larger batches.
+	lazy bool
+
+	onUpdate []func() error
+}
+
+func DefaultRequestOptions() RequestOptions {
+	return RequestOptions{
+		lazy: false,
+	}
+}
 
 // Request defines an operation that can be batched into a single bbolt
 // transaction.
 type Request struct {
+	RequestOptions
+
 	// Reset is called before each invocation of Update and is used to clear
 	// any possible modifications to local state as a result of previous
 	// calls to Update that were not committed due to a concurrent batch
@@ -25,22 +44,23 @@ type Request struct {
 	//
 	// NOTE: This field is optional.
 	OnCommit func(commitErr error) error
-
-	// lazy should be true if we don't have to immediately execute this
-	// request when it comes in. This means that it can be scheduled later,
-	// allowing larger batches.
-	lazy bool
 }
 
 // SchedulerOption is a type that can be used to supply options to a scheduled
 // request.
-type SchedulerOption func(r *Request)
+type SchedulerOption func(r *RequestOptions)
 
 // LazyAdd will make the request be executed lazily, added to the next batch to
 // reduce db contention.
 func LazyAdd() SchedulerOption {
-	return func(r *Request) {
+	return func(r *RequestOptions) {
 		r.lazy = true
+	}
+}
+
+func OnUpdate(f func() error) SchedulerOption {
+	return func(r *RequestOptions) {
+		r.onUpdate = append(r.onUpdate, f)
 	}
 }
 

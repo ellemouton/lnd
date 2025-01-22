@@ -262,7 +262,9 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 		ChannelFlags:              0,
 	}
 
-	if err := d.db.UpdateEdgePolicy(edgePolicy); err != nil {
+	if err := d.db.UpdateEdgePolicy(edgePolicy, func(fromNode, toNode route.Vertex, isUpdate1 bool) {
+
+	}); err != nil {
 		return nil, nil, err
 	}
 	edgePolicy = &models.ChannelEdgePolicy{
@@ -277,7 +279,9 @@ func (d *databaseChannelGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 		MessageFlags:              1,
 		ChannelFlags:              1,
 	}
-	if err := d.db.UpdateEdgePolicy(edgePolicy); err != nil {
+	if err := d.db.UpdateEdgePolicy(edgePolicy, func(fromNode, toNode route.Vertex, isUpdate1 bool) {
+
+	}); err != nil {
 		return nil, nil, err
 	}
 

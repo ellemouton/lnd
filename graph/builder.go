@@ -64,7 +64,7 @@ type Config struct {
 
 	// Graph is the channel graph that the ChannelRouter will use to gather
 	// metrics from and also to carry out path finding queries.
-	Graph graphdb.DB
+	Graph *graphdb.ChannelGraph
 
 	// Chain is the router's source to the most up-to-date blockchain data.
 	// All incoming advertised channels will be checked against the chain
@@ -725,7 +725,9 @@ func (b *Builder) handleNetworkUpdate(vb *ValidationBarrier,
 	// Otherwise, we'll send off a new notification for the newly accepted
 	// update, if any.
 	topChange := &TopologyChange{}
-	err = addToTopologyChange(b.cfg.Graph, topChange, update.msg)
+	err = addToTopologyChange(
+		b.cfg.Graph.FetchChannelEdgesByID, topChange, update.msg,
+	)
 	if err != nil {
 		log.Errorf("unable to update topology change notification: %v",
 			err)

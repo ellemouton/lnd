@@ -615,11 +615,30 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	addrSource := channeldb.NewMultiAddrSource(dbs.ChanStateDB, dbs.GraphDB)
 
+	chanGraphOpts := []graphdb.ChanGraphOption{
+		graphdb.WithUseGraphCache(!cfg.DB.NoGraphCache),
+	}
+
+	// We want to pre-allocate the channel graph cache according to what we
+	// expect for mainnet to speed up memory allocation.
+	if cfg.ActiveNetParams.Name == chaincfg.MainNetParams.Name {
+		chanGraphOpts = append(
+			chanGraphOpts, graphdb.WithPreAllocCacheNumNodes(
+				graphdb.DefaultPreAllocCacheNumNodes,
+			),
+		)
+	}
+
+	chanGraph, err := graphdb.NewChannelGraph(dbs.GraphDB, chanGraphOpts...)
+	if err != nil {
+		return nil, err
+	}
+
 	s := &server{
 		cfg:            cfg,
 		implCfg:        implCfg,
 		graphDB:        dbs.GraphDB,
-		chanGraph:      graphdb.NewChannelGraph(dbs.GraphDB),
+		chanGraph:      chanGraph,
 		chanStateDB:    dbs.ChanStateDB.ChannelStateDB(),
 		addrSource:     addrSource,
 		miscDB:         dbs.ChanStateDB,
@@ -1056,7 +1075,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	s.graphBuilder, err = graph.NewBuilder(&graph.Config{
 		SelfNode:            selfNode.PubKeyBytes,
-		Graph:               dbs.GraphDB,
+		Graph:               s.chanGraph,
 		Chain:               cc.ChainIO,
 		ChainView:           cc.ChainView,
 		Notifier:            cc.ChainNotifier,
@@ -1091,7 +1110,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		return nil, fmt.Errorf("can't create router: %w", err)
 	}
 
-	chanSeries := discovery.NewChanSeries(s.graphDB)
+	chanSeries := discovery.NewChanSeries(s.chanGraph)
 	gossipMessageStore, err := discovery.NewMessageStore(dbs.ChanStateDB)
 	if err != nil {
 		return nil, err
@@ -1432,7 +1451,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			return nil, fmt.Errorf("we don't have an edge")
 		}
 
-		err = s.graphDB.DeleteChannelEdges(
+		err = s.chanGraph.DeleteChannelEdges(
 			false, false, scid.ToUint64(),
 		)
 		return ourPolicy, err

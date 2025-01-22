@@ -10,7 +10,6 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/go-errors/errors"
-	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
@@ -306,13 +305,16 @@ type ChannelEdgeUpdate struct {
 	ExtraOpaqueData lnwire.ExtraOpaqueData
 }
 
+type fetchChannelEdgesByID func(chanID uint64) (*models.ChannelEdgeInfo,
+	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error)
+
 // appendTopologyChange appends the passed update message to the passed
 // TopologyChange, properly identifying which type of update the message
 // constitutes. This function will also fetch any required auxiliary
 // information required to create the topology change update from the graph
 // database.
-func addToTopologyChange(graph graphdb.DB, update *TopologyChange,
-	msg interface{}) error {
+func addToTopologyChange(fetchChanEdges fetchChannelEdgesByID,
+	update *TopologyChange, msg interface{}) error {
 
 	switch m := msg.(type) {
 
@@ -346,7 +348,7 @@ func addToTopologyChange(graph graphdb.DB, update *TopologyChange,
 		// We'll need to fetch the edge's information from the database
 		// in order to get the information concerning which nodes are
 		// being connected.
-		edgeInfo, _, _, err := graph.FetchChannelEdgesByID(m.ChannelID)
+		edgeInfo, _, _, err := fetchChanEdges(m.ChannelID)
 		if err != nil {
 			return errors.Errorf("unable fetch channel edge: %v",
 				err)

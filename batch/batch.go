@@ -71,6 +71,13 @@ func (b *batch) run() {
 
 					return dbErr
 				}
+
+				for _, f := range req.onUpdate {
+					err = f()
+					if err != nil {
+						return err
+					}
+				}
 			}
 			return nil
 		}, func() {

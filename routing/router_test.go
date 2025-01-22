@@ -69,7 +69,7 @@ type testCtx struct {
 
 	graphBuilder *mockGraphBuilder
 
-	graph *graphdb.BoltStore
+	graph *graphdb.ChannelGraph
 
 	aliases map[string]route.Vertex
 
@@ -2990,7 +2990,7 @@ type mockGraphBuilder struct {
 	updateEdge   func(update *models.ChannelEdgePolicy) error
 }
 
-func newMockGraphBuilder(graph graphdb.DB) *mockGraphBuilder {
+func newMockGraphBuilder(graph *graphdb.ChannelGraph) *mockGraphBuilder {
 	return &mockGraphBuilder{
 		updateEdge: func(update *models.ChannelEdgePolicy) error {
 			return graph.UpdateEdgePolicy(update)

@@ -114,6 +114,7 @@ func (s *subRPCServerConfigs) PopulateDependencies(cfg *Config,
 	routerBackend *routerrpc.RouterBackend,
 	nodeSigner *netann.NodeSigner,
 	graphDB *graphdb.BoltStore,
+	chanGraph *graphdb.ChannelGraph,
 	chanStateDB *channeldb.ChannelStateDB,
 	sweeper *sweep.UtxoSweeper,
 	tower *watchtower.Standalone,
@@ -344,7 +345,7 @@ func (s *subRPCServerConfigs) PopulateDependencies(cfg *Config,
 			)
 
 			subCfgValue.FieldByName("GraphDB").Set(
-				reflect.ValueOf(graphDB),
+				reflect.ValueOf(chanGraph),
 			)
 
 			subCfgValue.FieldByName("Switch").Set(

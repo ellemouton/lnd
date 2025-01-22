@@ -70,12 +70,12 @@ type ChannelGraphTimeSeries interface {
 // in-protocol channel range queries to quickly and efficiently synchronize our
 // channel state with all peers.
 type ChanSeries struct {
-	graph *graphdb.BoltStore
+	graph *graphdb.ChannelGraph
 }
 
 // NewChanSeries constructs a new ChanSeries backed by a channeldb.BoltStore.
 // The returned ChanSeries implements the ChannelGraphTimeSeries interface.
-func NewChanSeries(graph *graphdb.BoltStore) *ChanSeries {
+func NewChanSeries(graph *graphdb.ChannelGraph) *ChanSeries {
 	return &ChanSeries{
 		graph: graph,
 	}
@@ -204,7 +204,12 @@ func (c *ChanSeries) FilterKnownChanIDs(_ chainhash.Hash,
 	isZombieChan func(time.Time, time.Time) bool) (
 	[]lnwire.ShortChannelID, error) {
 
-	newChanIDs, err := c.graph.FilterKnownChanIDs(superSet, isZombieChan)
+	infos := make(map[uint64]graphdb.ChannelUpdateInfo)
+	for _, info := range superSet {
+		infos[info.ShortChannelID.ToUint64()] = info
+	}
+
+	newChanIDs, err := c.graph.FilterKnownChanIDs(infos, isZombieChan)
 	if err != nil {
 		return nil, err
 	}

@@ -30,6 +30,12 @@ type RoutingGraph interface {
 		nodePub route.Vertex) (*lnwire.FeatureVector, error)
 }
 
+type DBSessionCreator interface {
+	NewLockedSession() (DB, func() error, error)
+
+	NewSession() DB
+}
+
 // DB is an interface describing a persisted Lightning Network graph.
 //
 //nolint:interfacebloat
@@ -40,6 +46,8 @@ type DB interface {
 	// current best known UTXO state.
 	PruneTip() (*chainhash.Hash, uint32, error)
 
+	SetSourceNode(node *models.LightningNode) error
+
 	// PruneGraph prunes newly closed channels from the channel graph in
 	// response to a new block being solved on the network. Any transactions
 	// which spend the funding output of any known channels within the graph
@@ -49,7 +57,11 @@ type DB interface {
 	// slice of channels that have been closed by the target block are
 	// returned if the function succeeds without error.
 	PruneGraph(spentOutputs []*wire.OutPoint, blockHash *chainhash.Hash,
-		blockHeight uint32) ([]*models.ChannelEdgeInfo, error)
+		blockHeight uint32, nodeCB func(route.Vertex),
+		edgeCB func(*models.ChannelEdgeInfo)) ([]*models.ChannelEdgeInfo, error)
+
+	FilterChannelRange(startHeight, endHeight uint32,
+		withTimestamps bool) ([]BlockChannelRange, error)
 
 	// ChannelView returns the verifiable edge information for each active
 	// channel within the known channel graph. The set of UTXO's (along with
@@ -62,7 +74,7 @@ type DB interface {
 	// unconnected. This ensure that we only maintain a graph of reachable
 	// nodes. In the event that a pruned node gains more channels, it will
 	// be re-added back to the graph.
-	PruneGraphNodes() error
+	PruneGraphNodes(func(node route.Vertex)) error
 
 	// SourceNode returns the source node of the graph. The source node is
 	// treated as the center node within a star-graph. This method may be
@@ -99,7 +111,7 @@ type DB interface {
 	// channel from its zombie state. The markZombie bool denotes whether
 	// to mark the channel as a zombie.
 	DeleteChannelEdges(strictZombiePruning, markZombie bool,
-		chanIDs ...uint64) error
+		edgeCB func(*models.ChannelEdgeInfo), chanIDs ...uint64) error
 
 	// DisconnectBlockAtHeight is used to indicate that the block specified
 	// by the passed height has been disconnected from the main chain. This
@@ -166,6 +178,7 @@ type DB interface {
 	// lexicographical ordering of the identity public keys of the nodes on
 	// either side of the channel.
 	UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
+		cb func(fromNode, toNode route.Vertex, isUpdate1 bool),
 		op ...batch.SchedulerOption) error
 
 	// HasLightningNode determines if the graph has a vertex identified by
@@ -195,6 +208,28 @@ type DB interface {
 		*models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error
 
+	ForEachChannel(cb func(*models.ChannelEdgeInfo,
+		*models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy) error) error
+
+	ForEachNodeCacheable(cb func(GraphCacheNode) error) error
+
+	ForEachNodeCached(cb func(node route.Vertex,
+		chans map[uint64]*DirectedChannel) error) error
+
+	DeleteLightningNode(nodePub route.Vertex) error
+
+	FilterKnownChanIDs(chansInfo map[uint64]ChannelUpdateInfo) ([]uint64, error)
+
+	IsZombieEdge(chanID uint64) (bool, [33]byte, [33]byte, error)
+
+	ChannelID(chanPoint *wire.OutPoint) (uint64, error)
+
+	HighestChanID() (uint64, error)
+
+	NodeUpdatesInHorizon(startTime,
+		endTime time.Time) ([]models.LightningNode, error)
+
 	// UpdateChannelEdge retrieves and update edge of the graph database.
 	// Method only reserved for updating an edge info after its already been
 	// created. In order to maintain this constraints, we return an error in
@@ -209,7 +244,7 @@ type DB interface {
 
 	// MarkEdgeLive clears an edge from our zombie index, deeming it as
 	// live.
-	MarkEdgeLive(chanID uint64) error
+	MarkEdgeLive(chanID uint64, db func(ChannelEdge)) error
 
 	GraphSessionFactory
 }
