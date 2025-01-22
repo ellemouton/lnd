@@ -40,6 +40,13 @@ func (c *ChannelGraph) IsZombieEdge(chanID uint64) (bool, [33]byte, [33]byte, er
 	return c.db.IsZombieEdge(chanID)
 }
 
+func (c *ChannelGraph) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
+	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy, error) {
+
+	return c.db.FetchChannelEdgesByOutpoint(op)
+}
+
 type chanGraphOpts struct {
 	// withCache denotes whether the in-memory graph cache should be
 	// used or a fallback version that uses the underlying database for

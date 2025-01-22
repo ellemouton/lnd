@@ -233,6 +233,10 @@ type DB interface {
 	NodeUpdatesInHorizon(startTime,
 		endTime time.Time) ([]models.LightningNode, error)
 
+	FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, error)
+
 	// UpdateChannelEdge retrieves and update edge of the graph database.
 	// Method only reserved for updating an edge info after its already been
 	// created. In order to maintain this constraints, we return an error in
