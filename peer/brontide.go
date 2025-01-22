@@ -236,7 +236,7 @@ type Config struct {
 
 	// ChannelGraph is a pointer to the channel graph which is used to
 	// query information about the set of known active channels.
-	ChannelGraph *graphdb.BoltStore
+	ChannelGraph Graph
 
 	// ChainArb is used to subscribe to channel events, update contract signals,
 	// and force close channels.

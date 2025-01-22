@@ -4,6 +4,8 @@ import (
 	"net"
 	"time"
 
+	"github.com/btcsuite/btcd/wire"
+	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -72,4 +74,10 @@ type MessageConn interface {
 
 	// ReadNextBody reads the next body.
 	ReadNextBody([]byte) ([]byte, error)
+}
+
+type Graph interface {
+	FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, error)
 }
