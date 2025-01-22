@@ -2,6 +2,7 @@ package graphdb
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -187,7 +188,7 @@ func TestPartialNode(t *testing.T) {
 	}
 
 	// The two nodes should match exactly! (with default values for
-	// LastUpdate and db set to satisfy compareNodes())
+	// LastUpdate and localDB set to satisfy compareNodes())
 	node = &models.LightningNode{
 		HaveNodeAnnouncement: false,
 		LastUpdate:           time.Unix(0, 0),
@@ -502,7 +503,7 @@ func TestDisconnectBlockAtHeight(t *testing.T) {
 		t.Fatalf("expected edge to be removed from graph")
 	}
 
-	// The two first edges should be removed from the db.
+	// The two first edges should be removed from the localDB.
 	_, _, has, isZombie, err := graph.HasChannelEdge(edgeInfo.ChannelID)
 	require.NoError(t, err, "unable to query for edge")
 	if has {
@@ -696,7 +697,7 @@ func TestEdgeInfoUpdates(t *testing.T) {
 	}
 	assertNodeInCache(t, graph, node2, testFeatures)
 
-	// Create an edge and add it to the db.
+	// Create an edge and add it to the localDB.
 	edgeInfo, edge1, edge2 := createChannelEdge(graph.db, node1, node2)
 
 	// Make sure inserting the policy at this point, before the edge info
@@ -3193,7 +3194,7 @@ func TestNodeIsPublic(t *testing.T) {
 		for _, node := range nodes {
 			for _, graph := range graphs {
 				isPublic, err := graph.IsPublicNode(
-					node.PubKeyBytes,
+					context.TODO(), node.PubKeyBytes,
 				)
 				if err != nil {
 					t.Fatalf("unable to determine if "+
@@ -3425,7 +3426,7 @@ func TestEdgePolicyMissingMaxHtcl(t *testing.T) {
 
 		return nil
 	}, func() {})
-	require.NoError(t, err, "error reading db")
+	require.NoError(t, err, "error reading localDB")
 
 	// Put the stripped bytes in the DB.
 	err = kvdb.Update(graph.db, func(tx kvdb.RwTx) error {
@@ -3461,7 +3462,7 @@ func TestEdgePolicyMissingMaxHtcl(t *testing.T) {
 
 		return edges.Put(edgeKey[:], stripped)
 	}, func() {})
-	require.NoError(t, err, "error writing db")
+	require.NoError(t, err, "error writing localDB")
 
 	// And add the second, unmodified edge.
 	if err := graph.UpdateEdgePolicy(edge2); err != nil {
@@ -3477,7 +3478,7 @@ func TestEdgePolicyMissingMaxHtcl(t *testing.T) {
 
 	// The first edge should have a nil-policy returned
 	if dbEdge1 != nil {
-		t.Fatalf("expected db edge to be nil")
+		t.Fatalf("expected localDB edge to be nil")
 	}
 	if err := compareEdgePolicies(dbEdge2, edge2); err != nil {
 		t.Fatalf("edge doesn't match: %v", err)
@@ -3825,7 +3826,7 @@ func TestBatchedUpdateEdgePolicy(t *testing.T) {
 	err = graph.AddLightningNode(node2)
 	require.Nil(t, err)
 
-	// Create an edge and add it to the db.
+	// Create an edge and add it to the localDB.
 	edgeInfo, edge1, edge2 := createChannelEdge(graph.db, node1, node2)
 
 	// Make sure inserting the policy at this point, before the edge info
@@ -3943,7 +3944,7 @@ func TestGraphCacheForEachNodeChannel(t *testing.T) {
 	err = graph.AddLightningNode(node2)
 	require.Nil(t, err)
 
-	// Create an edge and add it to the db.
+	// Create an edge and add it to the localDB.
 	edgeInfo, e1, e2 := createChannelEdge(graph.db, node1, node2)
 
 	// Because of lexigraphical sorting and the usage of random node keys in

@@ -33,10 +33,46 @@ type RoutingGraph interface {
 		nodePub route.Vertex) (*lnwire.FeatureVector, error)
 }
 
-type DBSessionCreator interface {
-	NewLockedSession() (DB, func() error, error)
+type Source interface {
+	AddrsForNode(nodePub *btcec.PublicKey) (bool, []net.Addr, error)
 
-	NewSession() DB
+	ForEachChannel(cb func(*models.ChannelEdgeInfo,
+		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error
+
+	FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, error)
+
+	HasLightningNode(nodePub [33]byte) (time.Time, bool, error)
+
+	FetchLightningNode(nodePub route.Vertex) (*models.LightningNode, error)
+
+	ForEachNode(cb func(*models.LightningNode) error) error
+
+	ForEachNodeChannel(nodePub route.Vertex,
+		cb func(kvdb.RTx, *models.ChannelEdgeInfo,
+			*models.ChannelEdgePolicy,
+			*models.ChannelEdgePolicy) error) error
+
+	IsPublicNode(_ context.Context, pubKey [33]byte) (bool,
+		error)
+
+	FetchChannelEdgesByID(_ context.Context,
+		chanID uint64) (*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, error)
+
+	NumZombies() (uint64, error)
+
+	ForEachNodeCached(cb func(node route.Vertex,
+		chans map[uint64]*models.DirectedChannel) error) error
+
+	NewRoutingGraphSession() (RoutingGraph, func() error,
+		error)
+
+	NewRoutingGraph() RoutingGraph
+
+	ForEachNodeWithTx(ctx context.Context,
+		cb func(NodeTx) error) error
 }
 
 // DB is an interface describing a persisted Lightning Network graph.
@@ -147,7 +183,7 @@ type DB interface {
 	// zombie within the database. In this case, the ChannelEdgePolicy's
 	// will be nil, and the ChannelEdgeInfo will only include the public
 	// keys of each node.
-	FetchChannelEdgesByID(chanID uint64) (*models.ChannelEdgeInfo,
+	FetchChannelEdgesByID(ctx context.Context, chanID uint64) (*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error)
 
 	// AddLightningNode adds a vertex/node to the graph database. If the
@@ -224,8 +260,6 @@ type DB interface {
 	ForEachNodeCached(cb func(node route.Vertex,
 		chans map[uint64]*models.DirectedChannel) error) error
 
-	DeleteLightningNode(nodePub route.Vertex) error
-
 	FilterKnownChanIDs(chansInfo map[uint64]ChannelUpdateInfo) ([]uint64, error)
 
 	IsZombieEdge(chanID uint64) (bool, [33]byte, [33]byte, error)
@@ -253,7 +287,7 @@ type DB interface {
 	// IsPublicNode is a helper method that determines whether the node with
 	// the given public key is seen as a public node in the graph from the
 	// graph's source node's point of view.
-	IsPublicNode(pubKey [33]byte) (bool, error)
+	IsPublicNode(_ context.Context, pubKey [33]byte) (bool, error)
 
 	// MarkEdgeLive clears an edge from our zombie index, deeming it as
 	// live.

@@ -7,7 +7,7 @@ import (
 
 var (
 	// ErrEdgePolicyOptionalFieldNotFound is an error returned if a channel
-	// policy field is not found in the db even though its message flags
+	// policy field is not found in the localDB even though its message flags
 	// indicate it should be.
 	ErrEdgePolicyOptionalFieldNotFound = fmt.Errorf("optional field not " +
 		"present")

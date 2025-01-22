@@ -274,7 +274,7 @@ func (c *BoltStore) getChannelMap(edges kvdb.RBucket) (
 		)
 
 		switch {
-		// If the db policy was missing an expected optional field, we
+		// If the localDB policy was missing an expected optional field, we
 		// return nil as if the policy was unknown.
 		case err == ErrEdgePolicyOptionalFieldNotFound:
 			return nil
@@ -1550,7 +1550,7 @@ func (c *BoltStore) DisconnectBlockAtHeight(height uint32) (
 		BlockHeight: height,
 	}
 
-	// Delete everything after this height from the db up until the
+	// Delete everything after this height from the localDB up until the
 	// SCID alias range.
 	endShortChanID := aliasmgr.StartingAlias
 
@@ -2132,7 +2132,7 @@ func (c *BoltStore) FilterKnownChanIDs(chansInfo map[uint64]ChannelUpdateInfo) (
 		}
 
 		// We'll run through the set of chanIDs and collate only the
-		// set of channel that are unable to be found within our db.
+		// set of channel that are unable to be found within our localDB.
 		var cidBytes [8]byte
 		for _, info := range chansInfo {
 			scid := info.ShortChannelID.ToUint64()
@@ -3234,7 +3234,7 @@ func (c *BoltStore) FetchOtherNode(tx kvdb.RTx,
 	}
 
 	// If the transaction is nil, then we'll need to create a new one,
-	// otherwise we can use the existing db transaction.
+	// otherwise we can use the existing localDB transaction.
 	var err error
 	if tx == nil {
 		err = kvdb.View(c.db, fetchNodeFunc, func() {
@@ -3355,7 +3355,7 @@ func (c *BoltStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 // ErrZombieEdge an be returned if the edge is currently marked as a zombie
 // within the database. In this case, the ChannelEdgePolicy's will be nil, and
 // the ChannelEdgeInfo will only include the public keys of each node.
-func (c *BoltStore) FetchChannelEdgesByID(chanID uint64) (
+func (c *BoltStore) FetchChannelEdgesByID(_ context.Context, chanID uint64) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
@@ -3457,7 +3457,9 @@ func (c *BoltStore) FetchChannelEdgesByID(chanID uint64) (
 // IsPublicNode is a helper method that determines whether the node with the
 // given public key is seen as a public node in the graph from the graph's
 // source node's point of view.
-func (c *BoltStore) IsPublicNode(pubKey [33]byte) (bool, error) {
+func (c *BoltStore) IsPublicNode(_ context.Context, pubKey [33]byte) (bool,
+	error) {
+
 	var nodeIsPublic bool
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		nodes := tx.ReadBucket(nodeBucket)
@@ -4481,7 +4483,7 @@ func fetchChanEdgePolicy(edges kvdb.RBucket, chanID []byte,
 
 	ep, err := deserializeChanEdgePolicy(edgeReader)
 	switch {
-	// If the db policy was missing an expected optional field, we return
+	// If the localDB policy was missing an expected optional field, we return
 	// nil as if the policy was unknown.
 	case err == ErrEdgePolicyOptionalFieldNotFound:
 		return nil, nil
