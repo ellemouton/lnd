@@ -22,47 +22,8 @@ type ChannelGraph struct {
 	src     Source
 }
 
-type chanGraphOpts struct {
-	// withCache denotes whether the in-memory graph cache should be
-	// used or a fallback version that uses the underlying database for
-	// path finding.
-	withCache bool
-
-	// preAllocCacheNumNodes is the number of nodes we expect to be in the
-	// graph cache, so we can pre-allocate the map accordingly.
-	preAllocNumNodes int
-}
-
-func defaultChanGraphOpts() *chanGraphOpts {
-	return &chanGraphOpts{
-		withCache:        true,
-		preAllocNumNodes: DefaultPreAllocCacheNumNodes,
-	}
-}
-
-type ChanGraphOption func(*chanGraphOpts)
-
-// WithPreAllocCacheNumNodes sets the PreAllocCacheNumNodes to n.
-func WithPreAllocCacheNumNodes(n int) ChanGraphOption {
-	return func(o *chanGraphOpts) {
-		o.preAllocNumNodes = n
-	}
-}
-
-// WithUseGraphCache sets the UseGraphCache option to the given value.
-func WithUseGraphCache(use bool) ChanGraphOption {
-	return func(o *chanGraphOpts) {
-		o.withCache = use
-	}
-}
-
-func NewChannelGraph(db *BoltStore, src Source, options ...ChanGraphOption) (*ChannelGraph,
-	error) {
-
-	opts := defaultChanGraphOpts()
-	for _, option := range options {
-		option(opts)
-	}
+func NewChannelGraph(db *BoltStore, src Source, cache *GraphCache) (
+	*ChannelGraph, error) {
 
 	g := &ChannelGraph{
 		localDB: db,
@@ -71,18 +32,17 @@ func NewChannelGraph(db *BoltStore, src Source, options ...ChanGraphOption) (*Ch
 
 	// The graph cache can be turned off (e.g. for mobile users) for a
 	// speed/memory usage tradeoff.
-	if opts.withCache {
-		g.graphCache = NewGraphCache(opts.preAllocNumNodes)
+	if cache != nil {
+		g.graphCache = cache
 
 		startTime := time.Now()
 		log.Debugf("Populating in-memory channel graph, this might " +
 			"take a while...")
 
 		err := src.ForEachNode(func(node *models.LightningNode) error {
-			g.graphCache.AddNodeFeatures(newGraphCacheNode(
-				src,
+			g.graphCache.AddNodeFeatures(
 				node.PubKeyBytes, node.Features,
-			))
+			)
 
 			return nil
 		})
@@ -364,7 +324,16 @@ func (c *ChannelGraph) ForEachChannel(cb func(*models.ChannelEdgeInfo,
 
 	// Take this opportunity to update the graph cache.
 
-	return c.src.ForEachChannel(cb)
+	return c.src.ForEachChannel(func(info *models.ChannelEdgeInfo,
+		policy *models.ChannelEdgePolicy,
+		policy2 *models.ChannelEdgePolicy) error {
+
+		if c.graphCache != nil {
+			c.graphCache.AddChannel(info, policy, policy2)
+		}
+
+		return cb(info, policy, policy2)
+	})
 }
 
 // MUX: check local and remote.
@@ -409,7 +378,15 @@ func (c *ChannelGraph) FetchLightningNode(nodePub route.Vertex) (
 
 // MUX: used by Describe graph. Take opportunity to update cache.
 func (c *ChannelGraph) ForEachNode(cb func(*models.LightningNode) error) error {
-	return c.src.ForEachNode(cb)
+	return c.src.ForEachNode(func(node *models.LightningNode) error {
+		if c.graphCache != nil {
+			c.graphCache.AddNodeFeatures(
+				node.PubKeyBytes, node.Features,
+			)
+		}
+
+		return cb(node)
+	})
 }
 
 // MUX: check local and remote.
@@ -418,7 +395,18 @@ func (c *ChannelGraph) ForEachNodeChannel(nodePub route.Vertex,
 		*models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
 
-	return c.src.ForEachNodeChannel(context.Background(), nodePub, cb)
+	// Take this opportunity to update the graph cache.
+	return c.src.ForEachNodeChannel(context.Background(), nodePub,
+		func(info *models.ChannelEdgeInfo,
+			policy *models.ChannelEdgePolicy,
+			policy2 *models.ChannelEdgePolicy) error {
+
+			if c.graphCache != nil {
+				c.graphCache.AddChannel(info, policy, policy2)
+			}
+
+			return cb(info, policy, policy2)
+		})
 }
 
 // MUX: check local and remote.

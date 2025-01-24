@@ -1,6 +1,7 @@
 package graphrpc
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"image/color"
@@ -11,6 +12,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/lightningnetwork/lnd/fn/v2"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lncfg"
@@ -29,19 +31,169 @@ type Client struct {
 	// lnConn is a grpc client that implements the LightningClient service.
 	lnConn lnrpc.LightningClient
 
+	cache *graphdb.GraphCache
+
 	resolveTCPAddr func(network, address string) (*net.TCPAddr, error)
+
+	cancel fn.Option[context.CancelFunc]
 }
 
 // NewRemoteClient constructs a new Client that uses the given grpc connections
 // to implement the sources.GraphSource interface.
-func NewRemoteClient(conn *grpc.ClientConn,
+func NewRemoteClient(conn *grpc.ClientConn, cache *graphdb.GraphCache,
 	resolveTCPAddr func(network, address string) (*net.TCPAddr,
 		error)) *Client {
 
 	return &Client{
+		cache:          cache,
 		lnConn:         lnrpc.NewLightningClient(conn),
 		resolveTCPAddr: resolveTCPAddr,
 	}
+}
+
+func (r *Client) Start(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	r.cancel = fn.Some(cancel)
+
+	if r.cache != nil {
+		go r.onNetworkUpdates(ctx)
+	}
+
+	return nil
+}
+
+func (r *Client) Stop() error {
+	r.cancel.WhenSome(func(cancel context.CancelFunc) { cancel() })
+	return nil
+}
+
+func (r *Client) onNetworkUpdates(ctx context.Context) {
+	log.Infof("ELLE: onNetworkUpdates")
+	client, err := r.lnConn.SubscribeChannelGraph(ctx, &lnrpc.GraphTopologySubscription{})
+	if err != nil {
+		return
+	}
+
+	featureBits := make(map[string]lnwire.FeatureBit)
+	for bit, name := range lnwire.Features {
+		featureBits[name] = bit
+	}
+
+	for {
+		updates, err := client.Recv()
+		if err != nil {
+			return
+		}
+
+		for _, update := range updates.ChannelUpdates {
+			log.Infof("ELLE: Got new channel!")
+			nodePub, err := route.NewVertexFromStr(update.AdvertisingNode)
+			if err != nil {
+				panic(err)
+			}
+			peer, err := route.NewVertexFromStr(update.ConnectingNode)
+			if err != nil {
+				panic(err)
+			}
+
+			// Lexicographically sort the pubkeys.
+			var (
+				node1 route.Vertex
+				node2 route.Vertex
+			)
+			if bytes.Compare(nodePub[:], peer[:]) == -1 {
+				node1 = peer
+				node2 = nodePub
+			} else {
+				node1 = nodePub
+				node2 = peer
+			}
+
+			edge := &models.ChannelEdgeInfo{
+				ChannelID:     update.ChanId,
+				Capacity:      btcutil.Amount(update.Capacity),
+				NodeKey1Bytes: node1,
+				NodeKey2Bytes: node2,
+			}
+
+			r.cache.AddChannel(edge, nil, nil)
+
+			if update.RoutingPolicy != nil {
+				policy := makePolicy(update.ChanId, update.RoutingPolicy)
+
+				from, err := route.NewVertexFromStr(update.AdvertisingNode)
+				if err != nil {
+					panic(err)
+				}
+				to, err := route.NewVertexFromStr(update.ConnectingNode)
+				if err != nil {
+					panic(err)
+				}
+
+				r.cache.UpdatePolicy(policy, from, to, true)
+			}
+
+		}
+
+		for _, update := range updates.NodeUpdates {
+			log.Infof("ELLE: Got new node!")
+			pub, err := route.NewVertexFromStr(update.IdentityKey)
+			if err != nil {
+				panic(err)
+			}
+
+			features := lnwire.NewRawFeatureVector()
+
+			for _, feature := range update.Features {
+				bit := featureBits[feature.Name]
+				if !feature.IsRequired {
+					bit ^= 1
+				}
+
+				features.Set(bit)
+			}
+
+			r.cache.AddNodeFeatures(pub, lnwire.NewFeatureVector(features, lnwire.Features))
+		}
+
+		//for _, update := range updates.ClosedChans {
+		//	// r.cache.RemoveChannel()
+		//}
+	}
+}
+
+func makePolicy(chanID uint64, rpcPolicy *lnrpc.RoutingPolicy) *models.ChannelEdgePolicy { //nolint:ll
+	policy := &models.ChannelEdgePolicy{
+		ChannelID: chanID,
+		LastUpdate: time.Unix(
+			int64(rpcPolicy.LastUpdate), 0,
+		),
+		TimeLockDelta: uint16(
+			rpcPolicy.TimeLockDelta,
+		),
+		MinHTLC: lnwire.MilliSatoshi(
+			rpcPolicy.MinHtlc,
+		),
+		FeeBaseMSat: lnwire.MilliSatoshi(
+			rpcPolicy.FeeBaseMsat,
+		),
+		FeeProportionalMillionths: lnwire.MilliSatoshi(
+			rpcPolicy.FeeRateMilliMsat,
+		),
+	}
+	if rpcPolicy.MaxHtlcMsat > 0 {
+		policy.MaxHTLC = lnwire.MilliSatoshi(
+			rpcPolicy.MaxHtlcMsat,
+		)
+		policy.MessageFlags |=
+			lnwire.ChanUpdateRequiredMaxHtlc
+	}
+
+	if rpcPolicy.Disabled {
+		policy.ChannelFlags |= lnwire.ChanUpdateDisabled
+	}
+
+	return policy
 }
 
 // AddrsForNode queries the remote node for all the addresses it knows about for
@@ -50,7 +202,6 @@ func NewRemoteClient(conn *grpc.ClientConn,
 //
 // NOTE: this is part of the sources.GraphSource interface.
 func (r *Client) AddrsForNode(nodePub *btcec.PublicKey) (bool, []net.Addr, error) {
-
 	resp, err := r.lnConn.GetNodeInfo(context.TODO(), &lnrpc.NodeInfoRequest{
 		PubKey: hex.EncodeToString(
 			nodePub.SerializeCompressed(),
@@ -389,7 +540,7 @@ func (r *Client) FetchChannelEdgesByID(ctx context.Context,
 	return unmarshalChannelInfo(info)
 }
 
-func (r Client) NumZombies() (uint64, error) {
+func (r *Client) NumZombies() (uint64, error) {
 	info, err := r.lnConn.GetNetworkInfo(context.TODO(), &lnrpc.NetworkInfoRequest{})
 	if err != nil {
 		return 0, err

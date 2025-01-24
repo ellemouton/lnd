@@ -3,6 +3,7 @@ package itest
 import (
 	"context"
 	"fmt"
+	"testing"
 	"time"
 
 	"github.com/btcsuite/btcd/btcutil"
@@ -14,10 +15,28 @@ import (
 )
 
 func testRemoteGraph(ht *lntest.HarnessTest) {
+	ht.Run("with cache", func(t *testing.T) {
+		tt := ht.Subtest(t)
+		testRemoteGraphOptionalCache(tt, true)
+	})
+
+	if *dbBackendFlag == "bbolt" {
+		ht.Run("without cache", func(t *testing.T) {
+			tt := ht.Subtest(t)
+			testRemoteGraphOptionalCache(tt, false)
+		})
+	}
+}
+
+func testRemoteGraphOptionalCache(ht *lntest.HarnessTest, withCache bool) {
 	var (
+		commonOpts = []string{
+			"--bitcoin.timelockdelta=18",
+			"--bitcoin.defaultremotedelay=2",
+		}
 		ctx          = context.Background()
-		alice        = ht.NewNodeWithCoins("Alice", nil)
-		bob          = ht.NewNodeWithCoins("Bob", nil)
+		alice        = ht.NewNodeWithCoins("Alice", commonOpts)
+		bob          = ht.NewNodeWithCoins("Bob", commonOpts)
 		descGraphReq = &lnrpc.ChannelGraphRequest{
 			IncludeUnannounced: true,
 		}
@@ -26,7 +45,7 @@ func testRemoteGraph(ht *lntest.HarnessTest) {
 
 	// Set up a network:
 	// A <- B <- C
-	carol := ht.NewNode("Carol", nil)
+	carol := ht.NewNode("Carol", commonOpts)
 	setupNetwork(ht, alice, bob, carol)
 
 	assertDescGraph := func(node *node.HarnessNode, numEdges int,
@@ -55,15 +74,14 @@ func testRemoteGraph(ht *lntest.HarnessTest) {
 	assertDescGraph(alice, 2, bob, carol)
 
 	// Create graph provider node, Greg. Don't connect it to any nodes yet.
-	greg := ht.NewNode("Greg", nil)
+	greg := ht.NewNode("Greg", commonOpts)
 
 	// Greg should just know about himself right now. He should not know
 	// about any channels yet.
 	assertDescGraph(greg, 0)
 
 	// Create a node, Zane, that uses Greg as its graph provider.
-	zane := ht.NewNode("Zane", []string{
-		"--db.no-graph-cache", // TEMP
+	zaneOpts := []string{
 		"--gossip.no-sync",
 		"--remotegraph.enable",
 		fmt.Sprintf(
@@ -75,7 +93,12 @@ func testRemoteGraph(ht *lntest.HarnessTest) {
 		fmt.Sprintf(
 			"--remotegraph.macaroonpath=%s", greg.Cfg.AdminMacPath,
 		),
-	})
+	}
+	zaneOpts = append(zaneOpts, commonOpts...)
+	if !withCache {
+		zaneOpts = append(zaneOpts, "--db.no-graph-cache")
+	}
+	zane := ht.NewNode("Zane", zaneOpts)
 
 	// Zane should know about Zane and Greg. He should not know about any
 	// channels yet.
@@ -199,9 +222,4 @@ func setupNetwork(ht *lntest.HarnessTest, alice, bob, carol *node.HarnessNode) {
 			ht.AssertChannelInGraph(node, chanPoint)
 		}
 	}
-
-	ht.T.Cleanup(func() {
-		ht.CloseChannel(alice, chanPointAlice)
-		ht.CloseChannel(bob, chanPointBob)
-	})
 }

@@ -31,6 +31,7 @@ import (
 	"github.com/lightningnetwork/lnd/lnrpc/autopilotrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/chainrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/devrpc"
+	"github.com/lightningnetwork/lnd/lnrpc/graphrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/invoicesrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/neutrinorpc"
 	"github.com/lightningnetwork/lnd/lnrpc/peersrpc"
@@ -200,6 +201,7 @@ func SetupLoggers(root *build.SubLoggerManager, interceptor signal.Interceptor) 
 	)
 	AddV1SubLogger(root, graphdb.Subsystem, interceptor, graphdb.UseLogger)
 	AddSubLogger(root, chainio.Subsystem, interceptor, chainio.UseLogger)
+	AddSubLogger(root, graphrpc.Subsystem, interceptor, graphrpc.UseLogger)
 }
 
 // AddSubLogger is a helper method to conveniently create and register the

@@ -71,22 +71,19 @@ func (c *GraphCache) Stats() string {
 }
 
 // AddNodeFeatures adds a graph node and its features to the cache.
-func (c *GraphCache) AddNodeFeatures(node GraphCacheNode) {
-	nodePubKey := node.PubKey()
+func (c *GraphCache) AddNodeFeatures(nodePub route.Vertex,
+	features *lnwire.FeatureVector) {
 
-	// Only hold the lock for a short time. The `ForEachChannel()` below is
-	// possibly slow as it has to go to the backend, so we can unlock
-	// between the calls. And the AddChannel() method will acquire its own
-	// lock anyway.
 	c.mtx.Lock()
-	c.nodeFeatures[nodePubKey] = node.Features()
-	c.mtx.Unlock()
+	defer c.mtx.Unlock()
+
+	c.nodeFeatures[nodePub] = features
 }
 
 // AddNode adds a graph node, including all the (directed) channels of that
 // node.
 func (c *GraphCache) AddNode(node GraphCacheNode) error {
-	c.AddNodeFeatures(node)
+	c.AddNodeFeatures(node.PubKey(), node.Features())
 
 	return node.ForEachChannel(func(
 		info *models.ChannelEdgeInfo,
@@ -258,6 +255,10 @@ func (c *GraphCache) removeChannelIfFound(node route.Vertex, chanID uint64) {
 	}
 
 	delete(c.nodeChannels[node], chanID)
+
+	if len(c.nodeChannels[node]) == 0 {
+		delete(c.nodeFeatures, node)
+	}
 }
 
 // UpdateChannel updates the channel edge information for a specific edge. We

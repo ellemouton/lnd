@@ -266,7 +266,8 @@ type server struct {
 
 	fundingMgr *funding.Manager
 
-	graphDB *graphdb.BoltStore
+	graphDB        *graphdb.BoltStore
+	remoteGraphCli *graphrpc.Client
 
 	chanGraph *graphdb.ChannelGraph
 
@@ -621,17 +622,10 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		HtlcInterceptor:             invoiceHtlcModifier,
 	}
 
-	chanGraphOpts := []graphdb.ChanGraphOption{
-		graphdb.WithUseGraphCache(!cfg.DB.NoGraphCache),
-	}
-
-	// We want to pre-allocate the channel graph cache according to what we
-	// expect for mainnet to speed up memory allocation.
-	if cfg.ActiveNetParams.Name == chaincfg.MainNetParams.Name {
-		chanGraphOpts = append(
-			chanGraphOpts, graphdb.WithPreAllocCacheNumNodes(
-				graphdb.DefaultPreAllocCacheNumNodes,
-			),
+	var graphCache *graphdb.GraphCache
+	if !cfg.DB.NoGraphCache {
+		graphCache = graphdb.NewGraphCache(
+			graphdb.DefaultPreAllocCacheNumNodes,
 		)
 	}
 
@@ -648,8 +642,9 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		}
 
 		remoteSourceClient := graphrpc.NewRemoteClient(
-			conn, cfg.net.ResolveTCPAddr,
+			conn, graphCache, cfg.net.ResolveTCPAddr,
 		)
+		remoteSourceClient.Start(context.Background())
 
 		getLocalPub := func() (route.Vertex, error) {
 			node, err := dbs.GraphDB.SourceNode()
@@ -663,7 +658,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		src = graphdb.NewMuxedSource(remoteSourceClient, dbs.GraphDB, getLocalPub)
 	}
 
-	chanGraph, err := graphdb.NewChannelGraph(dbs.GraphDB, src, chanGraphOpts...)
+	chanGraph, err := graphdb.NewChannelGraph(dbs.GraphDB, src, graphCache)
 	if err != nil {
 		return nil, err
 	}
@@ -2347,6 +2342,14 @@ func (s *server) Start() error {
 			return
 		}
 
+		if s.remoteGraphCli != nil {
+			cleanup = cleanup.add(s.remoteGraphCli.Stop)
+			if err := s.remoteGraphCli.Start(context.Background()); err != nil {
+				startErr = err
+				return
+			}
+		}
+
 		cleanup = cleanup.add(s.chanRouter.Stop)
 		if err := s.chanRouter.Start(); err != nil {
 			startErr = err
@@ -2641,6 +2644,11 @@ func (s *server) Stop() error {
 		}
 		if err := s.graphBuilder.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop graphBuilder %v", err)
+		}
+		if s.remoteGraphCli != nil {
+			if err := s.remoteGraphCli.Stop(); err != nil {
+				srvrLog.Warnf("failed to stop remoteGraphCli %v", err)
+			}
 		}
 		if err := s.chainArb.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop chainArb: %v", err)
