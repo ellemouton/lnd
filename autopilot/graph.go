@@ -11,6 +11,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
+	"github.com/lightningnetwork/lnd/graph"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -307,7 +308,7 @@ var _ ChannelGraph = (*databaseChannelGraphCached)(nil)
 
 // ChannelGraphFromCachedDatabase returns an instance of the
 // autopilot.ChannelGraph backed by a live, open channeldb instance.
-func ChannelGraphFromCachedDatabase(db *graphdb.ChannelGraph) ChannelGraph {
+func ChannelGraphFromCachedDatabase(db *graph.ChannelGraph) ChannelGraph {
 	return &databaseChannelGraphCached{
 		db: db,
 	}

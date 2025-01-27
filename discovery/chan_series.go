@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	graph2 "github.com/lightningnetwork/lnd/graph"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/netann"
@@ -71,12 +72,12 @@ type ChannelGraphTimeSeries interface {
 // in-protocol channel range queries to quickly and efficiently synchronize our
 // channel state with all peers.
 type ChanSeries struct {
-	graph *graphdb.ChannelGraph
+	graph *graph2.ChannelGraph
 }
 
 // NewChanSeries constructs a new ChanSeries backed by a channeldb.BoltStore.
 // The returned ChanSeries implements the ChannelGraphTimeSeries interface.
-func NewChanSeries(graph *graphdb.ChannelGraph) *ChanSeries {
+func NewChanSeries(graph *graph2.ChannelGraph) *ChanSeries {
 	return &ChanSeries{
 		graph: graph,
 	}

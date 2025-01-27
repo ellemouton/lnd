@@ -2938,8 +2938,8 @@ type graphCacheNode struct {
 	features    *lnwire.FeatureVector
 }
 
-// newGraphCacheNode returns a new cache optimized node.
-func newGraphCacheNode(db Source, pubKey route.Vertex,
+// NewGraphCacheNode returns a new cache optimized node.
+func NewGraphCacheNode(db Source, pubKey route.Vertex,
 	features *lnwire.FeatureVector) *graphCacheNode {
 
 	return &graphCacheNode{
@@ -4039,7 +4039,7 @@ func deserializeLightningNodeCacheable(db DB, r io.Reader) (*graphCacheNode,
 
 	// Always populate a feature vector, even if we don't have a node
 	// announcement and short circuit below.
-	node := newGraphCacheNode(
+	node := NewGraphCacheNode(
 		db,
 		route.Vertex{},
 		lnwire.EmptyFeatureVector(),

@@ -6,7 +6,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/wire"
-	graphdb "github.com/lightningnetwork/lnd/graph/db"
+	graphdb "github.com/lightningnetwork/lnd/graph"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
 )

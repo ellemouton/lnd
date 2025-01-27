@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/x509"
 	"encoding/hex"
 	"fmt"
 	"math/big"
 	prand "math/rand"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,7 +63,6 @@ import (
 	"github.com/lightningnetwork/lnd/lnwallet/chanfunding"
 	"github.com/lightningnetwork/lnd/lnwallet/rpcwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
-	"github.com/lightningnetwork/lnd/macaroons"
 	"github.com/lightningnetwork/lnd/nat"
 	"github.com/lightningnetwork/lnd/netann"
 	"github.com/lightningnetwork/lnd/peer"
@@ -84,9 +81,6 @@ import (
 	"github.com/lightningnetwork/lnd/watchtower/wtclient"
 	"github.com/lightningnetwork/lnd/watchtower/wtpolicy"
 	"github.com/lightningnetwork/lnd/watchtower/wtserver"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"gopkg.in/macaroon.v2"
 )
 
 const (
@@ -269,7 +263,7 @@ type server struct {
 	graphDB        *graphdb.BoltStore
 	remoteGraphCli *graphrpc.Client
 
-	chanGraph *graphdb.ChannelGraph
+	chanGraph *graph.ChannelGraph
 
 	chanStateDB *channeldb.ChannelStateDB
 
@@ -622,43 +616,22 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		HtlcInterceptor:             invoiceHtlcModifier,
 	}
 
-	var graphCache *graphdb.GraphCache
-	if !cfg.DB.NoGraphCache {
-		graphCache = graphdb.NewGraphCache(
-			graphdb.DefaultPreAllocCacheNumNodes,
-		)
-	}
+	chanGraph, err := graph.NewChannelGraph(
+		&graph.ChanGraphCfg{
+			DB:           dbs.GraphDB,
+			WithCache:    !cfg.DB.NoGraphCache,
+			RemoteConfig: cfg.RemoteGraph,
+			ParseAddressString: func(strAddress string) (net.Addr,
+				error) {
 
-	var src graphdb.Source
-	src = dbs.GraphDB
-	if cfg.RemoteGraph != nil && cfg.RemoteGraph.Enable {
-		rCfg := cfg.RemoteGraph
-		conn, err := connectRPC(
-			rCfg.RPCHost, rCfg.TLSCertPath, rCfg.MacaroonPath,
-			rCfg.Timeout,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		remoteSourceClient := graphrpc.NewRemoteClient(
-			conn, graphCache, cfg.net.ResolveTCPAddr,
-		)
-		remoteSourceClient.Start(context.Background())
-
-		getLocalPub := func() (route.Vertex, error) {
-			node, err := dbs.GraphDB.SourceNode()
-			if err != nil {
-				return route.Vertex{}, err
-			}
-
-			return route.NewVertexFromBytes(node.PubKeyBytes[:])
-		}
-
-		src = graphdb.NewMuxedSource(remoteSourceClient, dbs.GraphDB, getLocalPub)
-	}
-
-	chanGraph, err := graphdb.NewChannelGraph(dbs.GraphDB, src, graphCache)
+				return lncfg.ParseAddressString(
+					strAddress,
+					strconv.Itoa(defaultPeerPort),
+					cfg.net.ResolveTCPAddr,
+				)
+			},
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -5319,54 +5292,4 @@ func (s *server) getStartingBeat() (*chainio.Beat, error) {
 	}
 
 	return beat, nil
-}
-
-// connectRPC tries to establish an RPC connection to the given host:port with
-// the supplied certificate and macaroon.
-func connectRPC(hostPort, tlsCertPath, macaroonPath string,
-	timeout time.Duration) (*grpc.ClientConn, error) {
-
-	certBytes, err := os.ReadFile(tlsCertPath)
-	if err != nil {
-		return nil, fmt.Errorf("error reading TLS cert file %v: %w",
-			tlsCertPath, err)
-	}
-
-	cp := x509.NewCertPool()
-	if !cp.AppendCertsFromPEM(certBytes) {
-		return nil, fmt.Errorf("credentials: failed to append " +
-			"certificate")
-	}
-
-	macBytes, err := os.ReadFile(macaroonPath)
-	if err != nil {
-		return nil, fmt.Errorf("error reading macaroon file %v: %w",
-			macaroonPath, err)
-	}
-	mac := &macaroon.Macaroon{}
-	if err := mac.UnmarshalBinary(macBytes); err != nil {
-		return nil, fmt.Errorf("error decoding macaroon: %w", err)
-	}
-
-	macCred, err := macaroons.NewMacaroonCredential(mac)
-	if err != nil {
-		return nil, fmt.Errorf("error creating creds: %w", err)
-	}
-
-	opts := []grpc.DialOption{
-		grpc.WithTransportCredentials(credentials.NewClientTLSFromCert(
-			cp, "",
-		)),
-		grpc.WithPerRPCCredentials(macCred),
-		grpc.WithBlock(),
-	}
-	ctxt, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	conn, err := grpc.DialContext(ctxt, hostPort, opts...)
-	if err != nil {
-		return nil, fmt.Errorf("unable to connect to RPC server: %w",
-			err)
-	}
-
-	return conn, nil
 }

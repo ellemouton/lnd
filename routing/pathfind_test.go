@@ -23,6 +23,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/fn/v2"
+	"github.com/lightningnetwork/lnd/graph"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
@@ -156,7 +157,7 @@ type testChan struct {
 
 // makeTestGraph creates a new instance of a channeldb.BoltStore for testing
 // purposes.
-func makeTestGraph(t *testing.T, useCache bool) (*graphdb.ChannelGraph,
+func makeTestGraph(t *testing.T, useCache bool) (*graph.ChannelGraph,
 	kvdb.Backend, error) {
 
 	// Create channelgraph for the first time.
@@ -169,7 +170,7 @@ func makeTestGraph(t *testing.T, useCache bool) (*graphdb.ChannelGraph,
 
 	store, err := graphdb.NewBoltStore(backend)
 
-	graph, err := graphdb.NewChannelGraph(
+	graph, err := graph.NewChannelGraph(
 		store, store, graphdb.WithUseGraphCache(useCache),
 	)
 	if err != nil {
@@ -477,7 +478,7 @@ type testChannel struct {
 }
 
 type testGraphInstance struct {
-	graph        *graphdb.ChannelGraph
+	graph        *graph.ChannelGraph
 	graphBackend kvdb.Backend
 
 	// aliasMap is a map from a node's alias to its public key. This type is
@@ -3131,7 +3132,7 @@ func runInboundFees(t *testing.T, useCache bool) {
 
 type pathFindingTestContext struct {
 	t                 *testing.T
-	graph             *graphdb.ChannelGraph
+	graph             *graph.ChannelGraph
 	restrictParams    RestrictParams
 	bandwidthHints    bandwidthHints
 	pathFindingConfig PathFindingConfig
@@ -3213,7 +3214,7 @@ func (c *pathFindingTestContext) assertPath(path []*unifiedEdge,
 
 // dbFindPath calls findPath after getting a db transaction from the database
 // graph.
-func dbFindPath(graph *graphdb.ChannelGraph,
+func dbFindPath(graph *graph.ChannelGraph,
 	additionalEdges map[route.Vertex][]AdditionalEdge,
 	bandwidthHints bandwidthHints,
 	r *RestrictParams, cfg *PathFindingConfig,
@@ -3251,7 +3252,7 @@ func dbFindPath(graph *graphdb.ChannelGraph,
 
 // dbFindBlindedPaths calls findBlindedPaths after getting a db transaction from
 // the database graph.
-func dbFindBlindedPaths(graph *graphdb.ChannelGraph,
+func dbFindBlindedPaths(graph *graph.ChannelGraph,
 	restrictions *blindedPathRestrictions) ([][]blindedHop, error) {
 
 	sourceNode, err := graph.SourceNode()

@@ -3,10 +3,12 @@ package graphrpc
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/hex"
+	"fmt"
 	"image/color"
 	"net"
-	"strconv"
+	"os"
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -15,39 +17,72 @@ import (
 	"github.com/lightningnetwork/lnd/fn/v2"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
-	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/macaroons"
 	"github.com/lightningnetwork/lnd/routing/route"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
+	"gopkg.in/macaroon.v2"
 )
 
 // Client is a wrapper that implements the sources.GraphSource interface using a
 // grpc connection which it uses to communicate with a grpc GraphClient client
 // along with an lnrpc.LightningClient.
 type Client struct {
+	cfg *RemoteGraph
+
 	// lnConn is a grpc client that implements the LightningClient service.
 	lnConn lnrpc.LightningClient
 
-	cache *graphdb.GraphCache
-
-	resolveTCPAddr func(network, address string) (*net.TCPAddr, error)
+	parseAddressString func(strAddress string) (
+		net.Addr, error)
 
 	cancel fn.Option[context.CancelFunc]
 }
 
+// RemoteGraph holds the configuration options for a remote graph source.
+//
+//nolint:lll
+type RemoteGraph struct {
+	Enable       bool          `long:"enable" description:"Use an external RPC server as a remote graph source"`
+	RPCHost      string        `long:"rpchost" description:"The remote graph's RPC host:port"`
+	MacaroonPath string        `long:"macaroonpath" description:"The macaroon to use for authenticating with the remote graph source"`
+	TLSCertPath  string        `long:"tlscertpath" description:"The TLS certificate to use for establishing the remote graph's identity"`
+	Timeout      time.Duration `long:"timeout" description:"The timeout for connecting to and signing requests with the remote graph. Valid time units are {s, m, h}."`
+
+	OnNewChannel    fn.Option[func(info *models.ChannelEdgeInfo)]
+	OnChannelUpdate fn.Option[func(policy *models.ChannelEdgePolicy, fromNode,
+		toNode route.Vertex, edge1 bool)]
+	OnNodeUpsert fn.Option[func(node route.Vertex, features *lnwire.FeatureVector)]
+	OnChanClose  fn.Option[func(chanID uint64)]
+}
+
+// Validate checks the values configured for our remote RPC signer.
+func (r *RemoteGraph) Validate() error {
+	if !r.Enable {
+		return nil
+	}
+
+	if r.Timeout < time.Millisecond {
+		return fmt.Errorf("remote graph: timeout of %v is invalid, "+
+			"cannot be smaller than %v", r.Timeout,
+			time.Millisecond)
+	}
+
+	return nil
+}
+
 // NewRemoteClient constructs a new Client that uses the given grpc connections
 // to implement the sources.GraphSource interface.
-func NewRemoteClient(conn *grpc.ClientConn, cache *graphdb.GraphCache,
-	resolveTCPAddr func(network, address string) (*net.TCPAddr,
-		error)) *Client {
+func NewRemoteClient(cfg *RemoteGraph,
+	parseAddressString func(strAddress string) (net.Addr, error)) *Client {
 
 	return &Client{
-		cache:          cache,
-		lnConn:         lnrpc.NewLightningClient(conn),
-		resolveTCPAddr: resolveTCPAddr,
+		cfg:                cfg,
+		parseAddressString: parseAddressString,
 	}
 }
 
@@ -55,9 +90,17 @@ func (r *Client) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	r.cancel = fn.Some(cancel)
 
-	if r.cache != nil {
-		go r.onNetworkUpdates(ctx)
+	conn, err := connectRPC(
+		r.cfg.RPCHost, r.cfg.TLSCertPath, r.cfg.MacaroonPath,
+		r.cfg.Timeout,
+	)
+	if err != nil {
+		return err
 	}
+
+	r.lnConn = lnrpc.NewLightningClient(conn)
+
+	go r.onNetworkUpdates(ctx)
 
 	return nil
 }
@@ -68,7 +111,6 @@ func (r *Client) Stop() error {
 }
 
 func (r *Client) onNetworkUpdates(ctx context.Context) {
-	log.Infof("ELLE: onNetworkUpdates")
 	client, err := r.lnConn.SubscribeChannelGraph(ctx, &lnrpc.GraphTopologySubscription{})
 	if err != nil {
 		return
@@ -86,7 +128,6 @@ func (r *Client) onNetworkUpdates(ctx context.Context) {
 		}
 
 		for _, update := range updates.ChannelUpdates {
-			log.Infof("ELLE: Got new channel!")
 			nodePub, err := route.NewVertexFromStr(update.AdvertisingNode)
 			if err != nil {
 				panic(err)
@@ -116,7 +157,9 @@ func (r *Client) onNetworkUpdates(ctx context.Context) {
 				NodeKey2Bytes: node2,
 			}
 
-			r.cache.AddChannel(edge, nil, nil)
+			r.cfg.OnNewChannel.WhenSome(func(f func(info *models.ChannelEdgeInfo)) {
+				f(edge)
+			})
 
 			if update.RoutingPolicy != nil {
 				policy := makePolicy(update.ChanId, update.RoutingPolicy)
@@ -130,13 +173,13 @@ func (r *Client) onNetworkUpdates(ctx context.Context) {
 					panic(err)
 				}
 
-				r.cache.UpdatePolicy(policy, from, to, true)
+				r.cfg.OnChannelUpdate.WhenSome(func(f func(policy *models.ChannelEdgePolicy, fromNode route.Vertex, toNode route.Vertex, edge1 bool)) {
+					f(policy, from, to, true)
+				})
 			}
-
 		}
 
 		for _, update := range updates.NodeUpdates {
-			log.Infof("ELLE: Got new node!")
 			pub, err := route.NewVertexFromStr(update.IdentityKey)
 			if err != nil {
 				panic(err)
@@ -153,12 +196,16 @@ func (r *Client) onNetworkUpdates(ctx context.Context) {
 				features.Set(bit)
 			}
 
-			r.cache.AddNodeFeatures(pub, lnwire.NewFeatureVector(features, lnwire.Features))
+			r.cfg.OnNodeUpsert.WhenSome(func(f func(node route.Vertex, fv *lnwire.FeatureVector)) {
+				f(pub, lnwire.NewFeatureVector(features, lnwire.Features))
+			})
 		}
 
-		//for _, update := range updates.ClosedChans {
-		//	// r.cache.RemoveChannel()
-		//}
+		for _, update := range updates.ClosedChans {
+			r.cfg.OnChanClose.WhenSome(func(f func(chanID uint64)) {
+				f(update.ChanId)
+			})
+		}
 	}
 }
 
@@ -227,10 +274,7 @@ func (r *Client) unmarshalAddrs(addrs []*lnrpc.NodeAddress) ([]net.Addr,
 
 	netAddrs := make([]net.Addr, 0, len(addrs))
 	for _, addr := range addrs {
-		netAddr, err := lncfg.ParseAddressString(
-			addr.Addr, strconv.Itoa(9735), // TODO: move DefaultPeerPort to lncfg and import
-			r.resolveTCPAddr,
-		)
+		netAddr, err := r.parseAddressString(addr.Addr)
 		if err != nil {
 			return nil, err
 		}
@@ -866,4 +910,54 @@ func unmarshalPolicy(channelID uint64, rpcPolicy *lnrpc.RoutingPolicy,
 		ToNode:          toNode,
 		ExtraOpaqueData: extra,
 	}, nil
+}
+
+// connectRPC tries to establish an RPC connection to the given host:port with
+// the supplied certificate and macaroon.
+func connectRPC(hostPort, tlsCertPath, macaroonPath string,
+	timeout time.Duration) (*grpc.ClientConn, error) {
+
+	certBytes, err := os.ReadFile(tlsCertPath)
+	if err != nil {
+		return nil, fmt.Errorf("error reading TLS cert file %v: %w",
+			tlsCertPath, err)
+	}
+
+	cp := x509.NewCertPool()
+	if !cp.AppendCertsFromPEM(certBytes) {
+		return nil, fmt.Errorf("credentials: failed to append " +
+			"certificate")
+	}
+
+	macBytes, err := os.ReadFile(macaroonPath)
+	if err != nil {
+		return nil, fmt.Errorf("error reading macaroon file %v: %w",
+			macaroonPath, err)
+	}
+	mac := &macaroon.Macaroon{}
+	if err := mac.UnmarshalBinary(macBytes); err != nil {
+		return nil, fmt.Errorf("error decoding macaroon: %w", err)
+	}
+
+	macCred, err := macaroons.NewMacaroonCredential(mac)
+	if err != nil {
+		return nil, fmt.Errorf("error creating creds: %w", err)
+	}
+
+	opts := []grpc.DialOption{
+		grpc.WithTransportCredentials(credentials.NewClientTLSFromCert(
+			cp, "",
+		)),
+		grpc.WithPerRPCCredentials(macCred),
+		grpc.WithBlock(),
+	}
+	ctxt, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	conn, err := grpc.DialContext(ctxt, hostPort, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("unable to connect to RPC server: %w",
+			err)
+	}
+
+	return conn, nil
 }

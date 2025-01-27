@@ -48,6 +48,7 @@ import (
 	"github.com/lightningnetwork/lnd/feature"
 	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/funding"
+	"github.com/lightningnetwork/lnd/graph"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
@@ -3036,7 +3037,7 @@ func createRPCCloseUpdate(
 // abandonChanFromGraph attempts to remove a channel from the channel graph. If
 // we can't find the chanID in the graph, then we assume it has already been
 // removed, and will return a nop.
-func abandonChanFromGraph(chanGraph *graphdb.ChannelGraph,
+func abandonChanFromGraph(chanGraph *graph.ChannelGraph,
 	chanPoint *wire.OutPoint) error {
 
 	// First, we'll obtain the channel ID. If we can't locate this, then
@@ -3286,7 +3287,7 @@ func (r *rpcServer) GetInfo(_ context.Context,
 	// TODO(roasbeef): add synced height n stuff
 
 	isTestNet := chainreg.IsTestnet(&r.cfg.ActiveNetParams)
-	nodeColor := graphdb.EncodeHexColor(nodeAnn.RGBColor)
+	nodeColor := graph.EncodeHexColor(nodeAnn.RGBColor)
 	version := build.Version() + " commit=" + build.Commit
 
 	return &lnrpc.GetInfoResponse{
@@ -6888,7 +6889,7 @@ func marshalNode(node *models.LightningNode) *lnrpc.LightningNode {
 		PubKey:        hex.EncodeToString(node.PubKeyBytes[:]),
 		Addresses:     nodeAddrs,
 		Alias:         node.Alias,
-		Color:         graphdb.EncodeHexColor(node.Color),
+		Color:         graph.EncodeHexColor(node.Color),
 		Features:      features,
 		CustomRecords: customRecords,
 	}
@@ -7139,7 +7140,7 @@ func (r *rpcServer) SubscribeChannelGraph(req *lnrpc.GraphTopologySubscription,
 // returned by the router to the form of notifications expected by the current
 // gRPC service.
 func marshallTopologyChange(
-	topChange *graphdb.TopologyChange) *lnrpc.GraphTopologyUpdate {
+	topChange *graph.TopologyChange) *lnrpc.GraphTopologyUpdate {
 
 	// encodeKey is a simple helper function that converts a live public
 	// key into a hex-encoded version of the compressed serialization for

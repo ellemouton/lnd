@@ -1,4 +1,4 @@
-package graphdb
+package graph
 
 import (
 	"context"
@@ -12,7 +12,9 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/batch"
 	"github.com/lightningnetwork/lnd/fn/v2"
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
+	"github.com/lightningnetwork/lnd/lnrpc/graphrpc"
 	"github.com/lightningnetwork/lnd/lnutils"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -24,10 +26,13 @@ type ChannelGraph struct {
 	started atomic.Bool
 	stopped atomic.Bool
 
-	graphCache *GraphCache
+	cfg *ChanGraphCfg
 
-	localDB DB
-	src     Source
+	graphCache *graphdb.GraphCache
+
+	src graphdb.Source
+
+	remoteSrc *graphrpc.Client
 
 	ntfnClientCounter atomic.Uint64
 
@@ -46,53 +51,70 @@ type ChannelGraph struct {
 	cancel fn.Option[context.CancelFunc]
 }
 
-func NewChannelGraph(db *BoltStore, src Source, cache *GraphCache) (
+type ChanGraphCfg struct {
+	DB                 *graphdb.BoltStore
+	WithCache          bool
+	ParseAddressString func(strAddress string) (
+		net.Addr, error)
+
+	RemoteConfig *graphrpc.RemoteGraph
+}
+
+const (
+	DefaultRemoteGraphRPCTimeout = 5 * time.Second
+)
+
+func NewChannelGraph(cfg *ChanGraphCfg) (
 	*ChannelGraph, error) {
 
-	g := &ChannelGraph{
-		localDB:           db,
+	var cache *graphdb.GraphCache
+	if cfg.WithCache {
+		cache = graphdb.NewGraphCache(graphdb.DefaultPreAllocCacheNumNodes)
+	}
+
+	var (
+		src                graphdb.Source = cfg.DB
+		remoteSourceClient *graphrpc.Client
+	)
+	if cfg.RemoteConfig != nil && cfg.RemoteConfig.Enable {
+		if cache != nil {
+			cfg.RemoteConfig.OnNewChannel = fn.Some(func(edge *models.ChannelEdgeInfo) {
+				cache.AddChannel(edge, nil, nil)
+			})
+			cfg.RemoteConfig.OnChannelUpdate = fn.Some(func(edge *models.ChannelEdgePolicy, fromNode,
+				toNode route.Vertex, edge1 bool) {
+
+				cache.UpdatePolicy(edge, fromNode, toNode, edge1)
+			})
+			cfg.RemoteConfig.OnNodeUpsert = fn.Some(func(node route.Vertex, features *lnwire.FeatureVector) {
+				cache.AddNodeFeatures(node, features)
+			})
+			// TODO: cfg.RemoteConfig.OnChanClose
+		}
+		remoteSourceClient = graphrpc.NewRemoteClient(
+			cfg.RemoteConfig, cfg.ParseAddressString,
+		)
+		getLocalPub := func() (route.Vertex, error) {
+			node, err := cfg.DB.SourceNode()
+			if err != nil {
+				return route.Vertex{}, err
+			}
+
+			return route.NewVertexFromBytes(node.PubKeyBytes[:])
+		}
+
+		src = graphdb.NewMuxedSource(remoteSourceClient, cfg.DB, getLocalPub)
+	}
+
+	return &ChannelGraph{
+		cfg:               cfg,
+		graphCache:        cache,
 		src:               src,
+		remoteSrc:         remoteSourceClient,
 		topologyClients:   &lnutils.SyncMap[uint64, *topologyClient]{},
 		ntfnClientUpdates: make(chan *topologyClientUpdate),
 		cg:                fn.NewContextGuard(),
-	}
-
-	// The graph cache can be turned off (e.g. for mobile users) for a
-	// speed/memory usage tradeoff.
-	if cache != nil {
-		g.graphCache = cache
-
-		startTime := time.Now()
-		log.Debugf("Populating in-memory channel graph, this might " +
-			"take a while...")
-
-		err := src.ForEachNode(func(node *models.LightningNode) error {
-			g.graphCache.AddNodeFeatures(
-				node.PubKeyBytes, node.Features,
-			)
-
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		err = src.ForEachChannel(func(info *models.ChannelEdgeInfo,
-			policy1, policy2 *models.ChannelEdgePolicy) error {
-
-			g.graphCache.AddChannel(info, policy1, policy2)
-
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		log.Debugf("Finished populating in-memory channel graph (took "+
-			"%v, %s)", time.Since(startTime), g.graphCache.Stats())
-	}
-
-	return g, nil
+	}, nil
 }
 
 func (c *ChannelGraph) Start(ctx context.Context) error {
@@ -100,10 +122,59 @@ func (c *ChannelGraph) Start(ctx context.Context) error {
 		return nil
 	}
 
+	if c.remoteSrc != nil {
+		err := c.remoteSrc.Start(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
+	// The graph cache can be turned off (e.g. for mobile users) for a
+	// speed/memory usage tradeoff.
+	if c.graphCache != nil {
+		err := c.populateCache()
+		if err != nil {
+			return err
+		}
+	}
+
 	ctx, _ = c.cg.Create(ctx)
 
 	c.cg.WgAdd(1)
 	go c.goForever(ctx)
+
+	return nil
+}
+
+func (c *ChannelGraph) populateCache() error {
+	startTime := time.Now()
+	log.Debugf("Populating in-memory channel graph, this might " +
+		"take a while...")
+
+	err := c.src.ForEachNode(func(node *models.LightningNode) error {
+		c.graphCache.AddNodeFeatures(
+			node.PubKeyBytes, node.Features,
+		)
+
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	err = c.src.ForEachChannel(func(info *models.ChannelEdgeInfo,
+		policy1, policy2 *models.ChannelEdgePolicy) error {
+
+		c.graphCache.AddChannel(info, policy1, policy2)
+
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	log.Debugf("Finished populating in-memory channel graph (took "+
+		"%v, %s)", time.Since(startTime), c.graphCache.Stats())
 
 	return nil
 }
@@ -157,19 +228,19 @@ func (c *ChannelGraph) goForever(ctx context.Context) {
 }
 
 func (c *ChannelGraph) PruneTip() (*chainhash.Hash, uint32, error) {
-	return c.localDB.PruneTip()
+	return c.cfg.DB.PruneTip()
 }
 
 func (c *ChannelGraph) SetSourceNode(node *models.LightningNode) error {
-	return c.localDB.SetSourceNode(node)
+	return c.cfg.DB.SetSourceNode(node)
 }
 
 func (c *ChannelGraph) SourceNode() (*models.LightningNode, error) {
-	return c.localDB.SourceNode()
+	return c.cfg.DB.SourceNode()
 }
 
 func (c *ChannelGraph) PruneGraphNodes() error {
-	return c.localDB.PruneGraphNodes(func(node route.Vertex) {
+	return c.cfg.DB.PruneGraphNodes(func(node route.Vertex) {
 		if c.graphCache != nil {
 			c.graphCache.RemoveNode(node)
 		}
@@ -181,58 +252,58 @@ func (c *ChannelGraph) PruneGraphNodes() error {
 func (c *ChannelGraph) NodeUpdatesInHorizon(startTime,
 	endTime time.Time) ([]models.LightningNode, error) {
 
-	return c.localDB.NodeUpdatesInHorizon(startTime, endTime)
+	return c.cfg.DB.NodeUpdatesInHorizon(startTime, endTime)
 }
 
 // ChanSeries only: therefore, only on if syncers on and so no need to check
 // remote.
 func (c *ChannelGraph) FilterChannelRange(startHeight,
-	endHeight uint32, withTimestamps bool) ([]BlockChannelRange, error) {
+	endHeight uint32, withTimestamps bool) ([]graphdb.BlockChannelRange, error) {
 
-	return c.localDB.FilterChannelRange(startHeight, endHeight, withTimestamps)
+	return c.cfg.DB.FilterChannelRange(startHeight, endHeight, withTimestamps)
 }
 
 // Builder only: used to maintain local graph.
 func (c *ChannelGraph) ChannelView() ([]models.EdgePoint, error) {
-	return c.localDB.ChannelView()
+	return c.cfg.DB.ChannelView()
 }
 
 // Used only by Builder for pruning local DB and ChanSeries. So no remote needed.
-func (c *ChannelGraph) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
-	return c.localDB.FetchChanInfos(chanIDs)
+func (c *ChannelGraph) FetchChanInfos(chanIDs []uint64) ([]graphdb.ChannelEdge, error) {
+	return c.cfg.DB.FetchChanInfos(chanIDs)
 }
 
 // Builder only to maintain local graph.
 func (c *ChannelGraph) HasChannelEdge(chanID uint64) (time.Time, time.Time,
 	bool, bool, error) {
 
-	return c.localDB.HasChannelEdge(chanID)
+	return c.cfg.DB.HasChannelEdge(chanID)
 }
 
 // Builder only.
 func (c *ChannelGraph) DisabledChannelIDs() ([]uint64, error) {
-	return c.localDB.DisabledChannelIDs()
+	return c.cfg.DB.DisabledChannelIDs()
 }
 
 // ChanSeries and Builder only.
 func (c *ChannelGraph) ChanUpdatesInHorizon(startTime, endTime time.Time) (
-	[]ChannelEdge, error) {
+	[]graphdb.ChannelEdge, error) {
 
-	return c.localDB.ChanUpdatesInHorizon(startTime, endTime)
+	return c.cfg.DB.ChanUpdatesInHorizon(startTime, endTime)
 }
 
 // Chan series only.
-func (c *ChannelGraph) FilterKnownChanIDs(chansInfo map[uint64]ChannelUpdateInfo,
+func (c *ChannelGraph) FilterKnownChanIDs(chansInfo map[uint64]graphdb.ChannelUpdateInfo,
 	isZombieChan func(time.Time, time.Time) bool) ([]uint64, error) {
 
-	newSCIDs, err := c.localDB.FilterKnownChanIDs(chansInfo)
+	newSCIDs, err := c.cfg.DB.FilterKnownChanIDs(chansInfo)
 	if err != nil {
 		return nil, err
 	}
 
 	var scids []uint64
 	for _, scid := range newSCIDs {
-		isZombie, _, _, err := c.localDB.IsZombieEdge(scid)
+		isZombie, _, _, err := c.cfg.DB.IsZombieEdge(scid)
 		if err != nil {
 			return nil, err
 		}
@@ -277,7 +348,7 @@ func (c *ChannelGraph) FilterKnownChanIDs(chansInfo map[uint64]ChannelUpdateInfo
 		// and we let it be added to the set of IDs to
 		// query our peer for.
 		case isZombie && !isStillZombie:
-			err := c.localDB.MarkEdgeLive(scid, func(edge ChannelEdge) {
+			err := c.cfg.DB.MarkEdgeLive(scid, func(edge graphdb.ChannelEdge) {
 				if c.graphCache != nil {
 					c.graphCache.AddChannel(edge.Info, edge.Policy1, edge.Policy2)
 				}
@@ -295,7 +366,7 @@ func (c *ChannelGraph) FilterKnownChanIDs(chansInfo map[uint64]ChannelUpdateInfo
 
 // Builder only.
 func (c *ChannelGraph) MarkEdgeLive(chanID uint64) error {
-	return c.localDB.MarkEdgeLive(chanID, func(edge ChannelEdge) {
+	return c.cfg.DB.MarkEdgeLive(chanID, func(edge graphdb.ChannelEdge) {
 		if c.graphCache != nil {
 			c.graphCache.AddChannel(edge.Info, edge.Policy1, edge.Policy2)
 		}
@@ -306,7 +377,7 @@ func (c *ChannelGraph) MarkEdgeLive(chanID uint64) error {
 func (c *ChannelGraph) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 	chanIDs ...uint64) error {
 
-	return c.localDB.DeleteChannelEdges(strictZombiePruning, markZombie,
+	return c.cfg.DB.DeleteChannelEdges(strictZombiePruning, markZombie,
 		func(deletedEdge *models.ChannelEdgeInfo) {
 			if c.graphCache != nil {
 				c.graphCache.RemoveChannel(
@@ -321,14 +392,14 @@ func (c *ChannelGraph) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 
 // chan series
 func (c *ChannelGraph) HighestChanID() (uint64, error) {
-	return c.localDB.HighestChanID()
+	return c.cfg.DB.HighestChanID()
 }
 
 // builder
 func (c *ChannelGraph) MarkEdgeZombie(chanID uint64, pubKey1,
 	pubKey2 [33]byte) error {
 
-	err := c.localDB.MarkEdgeZombie(chanID, pubKey1, pubKey2)
+	err := c.cfg.DB.MarkEdgeZombie(chanID, pubKey1, pubKey2)
 	if err != nil {
 		return err
 	}
@@ -345,7 +416,7 @@ func (c *ChannelGraph) PruneGraph(spentOutputs []*wire.OutPoint,
 	blockHash *chainhash.Hash, blockHeight uint32) (
 	[]*models.ChannelEdgeInfo, error) {
 
-	edges, err := c.localDB.PruneGraph(spentOutputs, blockHash, blockHeight,
+	edges, err := c.cfg.DB.PruneGraph(spentOutputs, blockHash, blockHeight,
 		func(node route.Vertex) {
 			if c.graphCache != nil {
 				c.graphCache.RemoveNode(node)
@@ -383,7 +454,7 @@ func (c *ChannelGraph) PruneGraph(spentOutputs []*wire.OutPoint,
 func (c *ChannelGraph) DisconnectBlockAtHeight(height uint32) (
 	[]*models.ChannelEdgeInfo, error) {
 
-	edges, err := c.localDB.DisconnectBlockAtHeight(height)
+	edges, err := c.cfg.DB.DisconnectBlockAtHeight(height)
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +473,7 @@ func (c *ChannelGraph) DisconnectBlockAtHeight(height uint32) (
 
 // Local only
 func (c *ChannelGraph) ChannelID(chanPoint *wire.OutPoint) (uint64, error) {
-	return c.localDB.ChannelID(chanPoint)
+	return c.cfg.DB.ChannelID(chanPoint)
 }
 
 // MUX: combine local and remote.
@@ -445,8 +516,8 @@ func (c *ChannelGraph) AddLightningNode(node *models.LightningNode,
 	opts := op
 	if c.graphCache != nil {
 		opts = append(opts, batch.OnUpdate(func() error {
-			cNode := newGraphCacheNode(
-				c.localDB,
+			cNode := graphdb.NewGraphCacheNode(
+				c.cfg.DB,
 				node.PubKeyBytes, node.Features,
 			)
 			return c.graphCache.AddNode(cNode)
@@ -455,7 +526,7 @@ func (c *ChannelGraph) AddLightningNode(node *models.LightningNode,
 
 	// TODO: Push to remote.
 
-	err := c.localDB.AddLightningNode(node, opts...)
+	err := c.cfg.DB.AddLightningNode(node, opts...)
 	if err != nil {
 		return err
 	}
@@ -556,7 +627,7 @@ func (c *ChannelGraph) AddChannelEdge(edge *models.ChannelEdgeInfo,
 		}))
 	}
 
-	err := c.localDB.AddChannelEdge(edge, opts...)
+	err := c.cfg.DB.AddChannelEdge(edge, opts...)
 	if err != nil {
 		return err
 	}
@@ -572,7 +643,7 @@ func (c *ChannelGraph) AddChannelEdge(edge *models.ChannelEdgeInfo,
 func (c *ChannelGraph) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 	op ...batch.SchedulerOption) error {
 
-	err := c.localDB.UpdateEdgePolicy(
+	err := c.cfg.DB.UpdateEdgePolicy(
 		edge, func(fromNode, toNode route.Vertex, isUpdate1 bool) {
 			if c.graphCache != nil {
 				c.graphCache.UpdatePolicy(
@@ -599,7 +670,7 @@ func (c *ChannelGraph) NumZombies() (uint64, error) {
 
 // MUX: write through to local, remote and cache.
 func (c *ChannelGraph) UpdateChannelEdge(edge *models.ChannelEdgeInfo) error {
-	err := c.localDB.UpdateChannelEdge(edge)
+	err := c.cfg.DB.UpdateChannelEdge(edge)
 	if err != nil {
 		return err
 	}
@@ -622,7 +693,7 @@ func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
 	return c.src.ForEachNodeCached(cb)
 }
 
-func (c *ChannelGraph) NewRoutingGraphSession() (RoutingGraph, func() error,
+func (c *ChannelGraph) NewRoutingGraphSession() (graphdb.RoutingGraph, func() error,
 	error) {
 
 	if c.graphCache != nil {
@@ -640,7 +711,7 @@ func (c *ChannelGraph) NewRoutingGraphSession() (RoutingGraph, func() error,
 	}, done, nil
 }
 
-func (c *ChannelGraph) NewRoutingGraph() RoutingGraph {
+func (c *ChannelGraph) NewRoutingGraph() graphdb.RoutingGraph {
 	return &chanGraphSession{
 		c:     c,
 		graph: c.src.NewRoutingGraph(),
@@ -649,7 +720,7 @@ func (c *ChannelGraph) NewRoutingGraph() RoutingGraph {
 
 type chanGraphSession struct {
 	c     *ChannelGraph
-	graph RoutingGraph
+	graph graphdb.RoutingGraph
 }
 
 // MUX: use cache, else mux local and remote.
@@ -674,11 +745,11 @@ func (c *chanGraphSession) FetchNodeFeatures(ctx context.Context,
 	return c.graph.FetchNodeFeatures(ctx, node)
 }
 
-var _ RoutingGraph = (*chanGraphSession)(nil)
+var _ graphdb.RoutingGraph = (*chanGraphSession)(nil)
 
 // MUX: use cache, else mux local and remote.
 func (c *ChannelGraph) ForEachNodeWithTx(ctx context.Context,
-	cb func(NodeTx) error) error {
+	cb func(graphdb.NodeTx) error) error {
 
 	return c.src.ForEachNodeWithTx(ctx, cb)
 }

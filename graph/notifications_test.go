@@ -1,4 +1,4 @@
-package graphdb
+package graph
 
 import (
 	"bytes"
@@ -14,7 +14,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/chainntnfs"
-	graph2 "github.com/lightningnetwork/lnd/graph"
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/input"
@@ -48,11 +48,11 @@ func createTestNode(t *testing.T) *models.LightningNode {
 	n := &models.LightningNode{
 		HaveNodeAnnouncement: true,
 		LastUpdate:           time.Unix(updateTime, 0),
-		Addresses:            testAddrs,
+		Addresses:            graphdb.testAddrs,
 		Color:                color.RGBA{1, 2, 3, 0},
 		Alias:                "kek" + string(pub[:]),
-		AuthSigBytes:         testSig.Serialize(),
-		Features:             testFeatures,
+		AuthSigBytes:         graphdb.testSig.Serialize(),
+		Features:             graphdb.testFeatures,
 	}
 	copy(n.PubKeyBytes[:], pub)
 
@@ -74,7 +74,7 @@ func randEdgePolicy(chanID *lnwire.ShortChannelID,
 	}
 
 	return &models.ChannelEdgePolicy{
-		SigBytes:                  testSig.Serialize(),
+		SigBytes:                  graphdb.testSig.Serialize(),
 		ChannelID:                 chanID.ToUint64(),
 		LastUpdate:                time.Unix(int64(prand.Int31()), 0),
 		TimeLockDelta:             uint16(prand.Int63()),
@@ -432,10 +432,10 @@ func TestEdgeUpdateNotification(t *testing.T) {
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
 		AuthProof: &models.ChannelAuthProof{
-			NodeSig1Bytes:    testSig.Serialize(),
-			NodeSig2Bytes:    testSig.Serialize(),
-			BitcoinSig1Bytes: testSig.Serialize(),
-			BitcoinSig2Bytes: testSig.Serialize(),
+			NodeSig1Bytes:    graphdb.testSig.Serialize(),
+			NodeSig2Bytes:    graphdb.testSig.Serialize(),
+			BitcoinSig1Bytes: graphdb.testSig.Serialize(),
+			BitcoinSig2Bytes: graphdb.testSig.Serialize(),
 		},
 	}
 	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
@@ -612,17 +612,17 @@ func TestNodeUpdateNotification(t *testing.T) {
 	node2 := createTestNode(t)
 
 	testFeaturesBuf := new(bytes.Buffer)
-	require.NoError(t, testFeatures.Encode(testFeaturesBuf))
+	require.NoError(t, graphdb.testFeatures.Encode(testFeaturesBuf))
 
 	edge := &models.ChannelEdgeInfo{
 		ChannelID:     chanID.ToUint64(),
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
 		AuthProof: &models.ChannelAuthProof{
-			NodeSig1Bytes:    testSig.Serialize(),
-			NodeSig2Bytes:    testSig.Serialize(),
-			BitcoinSig1Bytes: testSig.Serialize(),
-			BitcoinSig2Bytes: testSig.Serialize(),
+			NodeSig1Bytes:    graphdb.testSig.Serialize(),
+			NodeSig2Bytes:    graphdb.testSig.Serialize(),
+			BitcoinSig1Bytes: graphdb.testSig.Serialize(),
+			BitcoinSig2Bytes: graphdb.testSig.Serialize(),
 		},
 	}
 	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
@@ -803,10 +803,10 @@ func TestNotificationCancellation(t *testing.T) {
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
 		AuthProof: &models.ChannelAuthProof{
-			NodeSig1Bytes:    testSig.Serialize(),
-			NodeSig2Bytes:    testSig.Serialize(),
-			BitcoinSig1Bytes: testSig.Serialize(),
-			BitcoinSig2Bytes: testSig.Serialize(),
+			NodeSig1Bytes:    graphdb.testSig.Serialize(),
+			NodeSig2Bytes:    graphdb.testSig.Serialize(),
+			BitcoinSig1Bytes: graphdb.testSig.Serialize(),
+			BitcoinSig2Bytes: graphdb.testSig.Serialize(),
 		},
 	}
 	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
@@ -872,10 +872,10 @@ func TestChannelCloseNotification(t *testing.T) {
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
 		AuthProof: &models.ChannelAuthProof{
-			NodeSig1Bytes:    testSig.Serialize(),
-			NodeSig2Bytes:    testSig.Serialize(),
-			BitcoinSig1Bytes: testSig.Serialize(),
-			BitcoinSig2Bytes: testSig.Serialize(),
+			NodeSig1Bytes:    graphdb.testSig.Serialize(),
+			NodeSig2Bytes:    graphdb.testSig.Serialize(),
+			BitcoinSig1Bytes: graphdb.testSig.Serialize(),
+			BitcoinSig2Bytes: graphdb.testSig.Serialize(),
 		},
 	}
 	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
@@ -980,7 +980,7 @@ func TestEncodeHexColor(t *testing.T) {
 type testCtx struct {
 	builder *ChannelGraph
 
-	graph *BoltStore
+	graph *graphdb.BoltStore
 
 	aliases map[string]route.Vertex
 
@@ -1024,7 +1024,7 @@ func (c *testCtx) RestartBuilder(t *testing.T) {
 
 	// With the chainView reset, we'll now re-create the builder itself, and
 	// start it.
-	builder, err := graph2.NewBuilder(&graph2.Config{
+	builder, err := NewBuilder(&Config{
 		SelfNode:            selfNode.PubKeyBytes,
 		Graph:               c.graph,
 		Chain:               c.chain,
@@ -1049,7 +1049,7 @@ func (c *testCtx) RestartBuilder(t *testing.T) {
 
 // makeTestGraph creates a new instance of a channeldb.BoltStore for testing
 // purposes.
-func makeTestGraph(t *testing.T, useCache bool) (*BoltStore,
+func makeTestGraph(t *testing.T, useCache bool) (*graphdb.BoltStore,
 	kvdb.Backend, error) {
 
 	// Create channelgraph for the first time.
@@ -1060,7 +1060,7 @@ func makeTestGraph(t *testing.T, useCache bool) (*BoltStore,
 
 	t.Cleanup(backendCleanup)
 
-	graph, err := NewBoltStore(
+	graph, err := graphdb.NewBoltStore(
 		backend, WithUseGraphCache(useCache),
 	)
 	if err != nil {
@@ -1071,7 +1071,7 @@ func makeTestGraph(t *testing.T, useCache bool) (*BoltStore,
 }
 
 type testGraphInstance struct {
-	graph        *BoltStore
+	graph        *graphdb.BoltStore
 	graphBackend kvdb.Backend
 
 	// aliasMap is a map from a node's alias to its public key. This type is
@@ -1119,7 +1119,7 @@ func createTestCtxFromGraphInstanceAssumeValid(t *testing.T,
 	selfnode, err := graphInstance.graph.SourceNode()
 	require.NoError(t, err)
 
-	graphBuilder, err := graph2.NewBuilder(&graph2.Config{
+	graphBuilder, err := NewBuilder(&Config{
 		SelfNode:            selfnode.PubKeyBytes,
 		Graph:               graphInstance.graph,
 		Chain:               chain,

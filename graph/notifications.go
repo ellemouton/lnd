@@ -1,4 +1,4 @@
-package graphdb
+package graph
 
 import (
 	"context"

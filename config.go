@@ -30,11 +30,13 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/discovery"
 	"github.com/lightningnetwork/lnd/funding"
+	graphdb "github.com/lightningnetwork/lnd/graph"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/htlcswitch/hodl"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnrpc"
+	"github.com/lightningnetwork/lnd/lnrpc/graphrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/peersrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/routerrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/signrpc"
@@ -486,7 +488,7 @@ type Config struct {
 
 	RemoteSigner *lncfg.RemoteSigner `group:"remotesigner" namespace:"remotesigner"`
 
-	RemoteGraph *lncfg.RemoteGraph `group:"remotegraph" namespace:"remotegraph"`
+	RemoteGraph *graphrpc.RemoteGraph `group:"remotegraph" namespace:"remotegraph"`
 
 	Sweeper *lncfg.Sweeper `group:"sweeper" namespace:"sweeper"`
 
@@ -726,8 +728,8 @@ func DefaultConfig() Config {
 		RemoteSigner: &lncfg.RemoteSigner{
 			Timeout: lncfg.DefaultRemoteSignerRPCTimeout,
 		},
-		RemoteGraph: &lncfg.RemoteGraph{
-			Timeout: lncfg.DefaultRemoteGraphRPCTimeout,
+		RemoteGraph: &graphrpc.RemoteGraph{
+			Timeout: graphdb.DefaultRemoteGraphRPCTimeout,
 		},
 		Sweeper: lncfg.DefaultSweeperConfig(),
 		Htlcswitch: &lncfg.Htlcswitch{
