@@ -533,7 +533,9 @@ func (r *Client) FetchChannelEdgesByID(ctx context.Context,
 	info, err := r.lnConn.GetChanInfo(ctx, &lnrpc.ChanInfoRequest{
 		ChanId: chanID,
 	})
-	if err != nil {
+	if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
+		return nil, nil, nil, graphdb.ErrEdgeNotFound
+	} else if err != nil {
 		return nil, nil, nil, err
 	}
 
