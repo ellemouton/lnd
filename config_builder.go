@@ -15,7 +15,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btclog/v2"
@@ -912,7 +911,7 @@ func (d *RPCSignerWalletImpl) BuildChainControl(
 type DatabaseInstances struct {
 	// GraphDB is the database that stores the channel graph used for path
 	// finding.
-	GraphDB *graphdb.ChannelGraph
+	GraphDB *graphdb.BoltStore
 
 	// ChanStateDB is the database that stores all of our node's channel
 	// state.
@@ -1030,20 +1029,9 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		graphdb.WithRejectCacheSize(cfg.Caches.RejectCacheSize),
 		graphdb.WithChannelCacheSize(cfg.Caches.ChannelCacheSize),
 		graphdb.WithBatchCommitInterval(cfg.DB.BatchCommitInterval),
-		graphdb.WithUseGraphCache(!cfg.DB.NoGraphCache),
 	}
 
-	// We want to pre-allocate the channel graph cache according to what we
-	// expect for mainnet to speed up memory allocation.
-	if cfg.ActiveNetParams.Name == chaincfg.MainNetParams.Name {
-		graphDBOptions = append(
-			graphDBOptions, graphdb.WithPreAllocCacheNumNodes(
-				graphdb.DefaultPreAllocCacheNumNodes,
-			),
-		)
-	}
-
-	dbs.GraphDB, err = graphdb.NewChannelGraph(
+	dbs.GraphDB, err = graphdb.NewBoltStore(
 		databaseBackends.GraphDB, graphDBOptions...,
 	)
 	if err != nil {

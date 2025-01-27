@@ -2,6 +2,7 @@ package routing
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 
@@ -165,8 +166,8 @@ func (m *mockGraph) addChannel(id uint64, node1id, node2id byte,
 // forEachNodeChannel calls the callback for every channel of the given node.
 //
 // NOTE: Part of the Graph interface.
-func (m *mockGraph) ForEachNodeChannel(nodePub route.Vertex,
-	cb func(channel *graphdb.DirectedChannel) error) error {
+func (m *mockGraph) ForEachNodeChannel(_ context.Context, nodePub route.Vertex,
+	cb func(channel *models.DirectedChannel) error) error {
 
 	// Look up the mock node.
 	node, ok := m.nodes[nodePub]
@@ -188,7 +189,7 @@ func (m *mockGraph) ForEachNodeChannel(nodePub route.Vertex,
 
 		// Call the per channel callback.
 		err := cb(
-			&graphdb.DirectedChannel{
+			&models.DirectedChannel{
 				ChannelID:    channel.id,
 				IsNode1:      nodePub == node1,
 				OtherNode:    peer,
@@ -221,7 +222,7 @@ func (m *mockGraph) sourceNode() route.Vertex {
 // fetchNodeFeatures returns the features of the given node.
 //
 // NOTE: Part of the Graph interface.
-func (m *mockGraph) FetchNodeFeatures(nodePub route.Vertex) (
+func (m *mockGraph) FetchNodeFeatures(_ context.Context, _ route.Vertex) (
 	*lnwire.FeatureVector, error) {
 
 	return lnwire.EmptyFeatureVector(), nil
@@ -271,4 +272,4 @@ func (m *mockGraph) sendHtlc(route *route.Route) (htlcResult, error) {
 }
 
 // Compile-time check for the Graph interface.
-var _ Graph = &mockGraph{}
+var _ graphdb.RoutingGraph = &mockGraph{}

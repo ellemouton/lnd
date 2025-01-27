@@ -1,9 +1,11 @@
 package routing
 
 import (
+	"context"
 	"testing"
 	"time"
 
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -115,7 +117,9 @@ func TestUpdateAdditionalEdge(t *testing.T) {
 	// Create the paymentsession.
 	session, err := newPaymentSession(
 		payment, route.Vertex{},
-		func(Graph) (bandwidthHints, error) {
+		func(_ context.Context, graph graphdb.RoutingGraph) (
+			bandwidthHints, error) {
+
 			return &mockBandwidthHints{}, nil
 		},
 		newMockGraphSessionFactory(&sessionGraph{}),
@@ -193,7 +197,9 @@ func TestRequestRoute(t *testing.T) {
 
 	session, err := newPaymentSession(
 		payment, route.Vertex{},
-		func(Graph) (bandwidthHints, error) {
+		func(_ context.Context, graph graphdb.RoutingGraph) (
+			bandwidthHints, error) {
+
 			return &mockBandwidthHints{}, nil
 		},
 		newMockGraphSessionFactory(&sessionGraph{}),
@@ -205,8 +211,8 @@ func TestRequestRoute(t *testing.T) {
 	}
 
 	// Override pathfinder with a mock.
-	session.pathFinder = func(_ *graphParams, r *RestrictParams,
-		_ *PathFindingConfig, _, _, _ route.Vertex,
+	session.pathFinder = func(_ context.Context, _ *graphParams,
+		r *RestrictParams, _ *PathFindingConfig, _, _, _ route.Vertex,
 		_ lnwire.MilliSatoshi, _ float64, _ int32) ([]*unifiedEdge,
 		float64, error) {
 
@@ -233,8 +239,8 @@ func TestRequestRoute(t *testing.T) {
 	}
 
 	route, err := session.RequestRoute(
-		payment.Amount, payment.FeeLimit, 0, height,
-		lnwire.CustomRecords{
+		context.Background(), payment.Amount, payment.FeeLimit, 0,
+		height, lnwire.CustomRecords{
 			lnwire.MinCustomRecordsTlvType + 123: []byte{1, 2, 3},
 		},
 	)
@@ -251,7 +257,7 @@ func TestRequestRoute(t *testing.T) {
 }
 
 type sessionGraph struct {
-	Graph
+	graphdb.RoutingGraph
 }
 
 func (g *sessionGraph) sourceNode() route.Vertex {

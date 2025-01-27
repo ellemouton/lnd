@@ -7,7 +7,7 @@ import (
 
 var (
 	// ErrEdgePolicyOptionalFieldNotFound is an error returned if a channel
-	// policy field is not found in the db even though its message flags
+	// policy field is not found in the localDB even though its message flags
 	// indicate it should be.
 	ErrEdgePolicyOptionalFieldNotFound = fmt.Errorf("optional field not " +
 		"present")
@@ -58,10 +58,6 @@ var (
 	// ErrZombieEdgeNotFound is an error returned when we attempt to find an
 	// edge in the zombie index which is not there.
 	ErrZombieEdgeNotFound = errors.New("edge not found in zombie index")
-
-	// ErrUnknownAddressType is returned when a node's addressType is not
-	// an expected value.
-	ErrUnknownAddressType = fmt.Errorf("address type cannot be resolved")
 )
 
 // ErrTooManyExtraOpaqueBytes creates an error which should be returned if the

@@ -357,6 +357,7 @@ func TestCheckTimeoutOnRouterQuit(t *testing.T) {
 // a route.
 func TestRequestRouteSucceed(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	p := createTestPaymentLifecycle()
 
@@ -379,11 +380,11 @@ func TestRequestRouteSucceed(t *testing.T) {
 
 	// Mock the paySession's `RequestRoute` method to return no error.
 	paySession.On("RequestRoute",
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+		ctx, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
 		mock.Anything,
 	).Return(dummyRoute, nil)
 
-	result, err := p.requestRoute(ps)
+	result, err := p.requestRoute(ctx, ps)
 	require.NoError(t, err, "expect no error")
 	require.Equal(t, dummyRoute, result, "returned route not matched")
 
@@ -395,6 +396,7 @@ func TestRequestRouteSucceed(t *testing.T) {
 // successfully handle a critical error returned from payment session.
 func TestRequestRouteHandleCriticalErr(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	p := createTestPaymentLifecycle()
 
@@ -416,11 +418,11 @@ func TestRequestRouteHandleCriticalErr(t *testing.T) {
 
 	// Mock the paySession's `RequestRoute` method to return an error.
 	paySession.On("RequestRoute",
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+		ctx, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
 		mock.Anything,
 	).Return(nil, errDummy)
 
-	result, err := p.requestRoute(ps)
+	result, err := p.requestRoute(ctx, ps)
 
 	// Expect an error is returned since it's critical.
 	require.ErrorIs(t, err, errDummy, "error not matched")
@@ -434,6 +436,7 @@ func TestRequestRouteHandleCriticalErr(t *testing.T) {
 // handle the `noRouteError` returned from payment session.
 func TestRequestRouteHandleNoRouteErr(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	// Create a paymentLifecycle with mockers.
 	p, m := newTestPaymentLifecycle(t)
@@ -451,7 +454,7 @@ func TestRequestRouteHandleNoRouteErr(t *testing.T) {
 	// Mock the paySession's `RequestRoute` method to return a NoRouteErr
 	// type.
 	m.paySession.On("RequestRoute",
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+		ctx, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
 		mock.Anything,
 	).Return(nil, errNoTlvPayload)
 
@@ -460,7 +463,7 @@ func TestRequestRouteHandleNoRouteErr(t *testing.T) {
 		p.identifier, channeldb.FailureReasonNoRoute,
 	).Return(nil).Once()
 
-	result, err := p.requestRoute(ps)
+	result, err := p.requestRoute(ctx, ps)
 
 	// Expect no error is returned since it's not critical.
 	require.NoError(t, err, "expected no error")
@@ -471,6 +474,7 @@ func TestRequestRouteHandleNoRouteErr(t *testing.T) {
 // error from calling `FailPayment`.
 func TestRequestRouteFailPaymentError(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	p := createTestPaymentLifecycle()
 
@@ -499,11 +503,11 @@ func TestRequestRouteFailPaymentError(t *testing.T) {
 
 	// Mock the paySession's `RequestRoute` method to return an error.
 	paySession.On("RequestRoute",
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+		ctx, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
 		mock.Anything,
 	).Return(nil, errNoTlvPayload)
 
-	result, err := p.requestRoute(ps)
+	result, err := p.requestRoute(ctx, ps)
 
 	// Expect an error is returned.
 	require.ErrorIs(t, err, errDummy, "error not matched")
@@ -850,6 +854,8 @@ func TestResumePaymentFailOnStepErr(t *testing.T) {
 //
 //nolint:paralleltest
 func TestResumePaymentFailOnRequestRouteErr(t *testing.T) {
+	ctx := context.Background()
+
 	// Create a test paymentLifecycle with the initial two calls mocked.
 	p, m := setupTestPaymentLifecycle(t)
 
@@ -876,12 +882,12 @@ func TestResumePaymentFailOnRequestRouteErr(t *testing.T) {
 
 	// 4. mock requestRoute to return an error.
 	m.paySession.On("RequestRoute",
-		paymentAmt, p.feeLimit, uint32(ps.NumAttemptsInFlight),
+		ctx, paymentAmt, p.feeLimit, uint32(ps.NumAttemptsInFlight),
 		uint32(p.currentHeight), mock.Anything,
 	).Return(nil, errDummy).Once()
 
 	// Send the payment and assert it failed.
-	sendPaymentAndAssertError(t, context.Background(), p, errDummy)
+	sendPaymentAndAssertError(t, ctx, p, errDummy)
 
 	// Expected collectResultAsync to not be called.
 	require.Zero(t, m.collectResultsCount)
@@ -894,6 +900,8 @@ func TestResumePaymentFailOnRequestRouteErr(t *testing.T) {
 //
 //nolint:paralleltest
 func TestResumePaymentFailOnRegisterAttemptErr(t *testing.T) {
+	ctx := context.Background()
+
 	// Create a test paymentLifecycle with the initial two calls mocked.
 	p, m := setupTestPaymentLifecycle(t)
 
@@ -922,7 +930,7 @@ func TestResumePaymentFailOnRegisterAttemptErr(t *testing.T) {
 
 	// 4. mock requestRoute to return an route.
 	m.paySession.On("RequestRoute",
-		paymentAmt, p.feeLimit, uint32(ps.NumAttemptsInFlight),
+		ctx, paymentAmt, p.feeLimit, uint32(ps.NumAttemptsInFlight),
 		uint32(p.currentHeight), mock.Anything,
 	).Return(rt, nil).Once()
 
@@ -941,7 +949,7 @@ func TestResumePaymentFailOnRegisterAttemptErr(t *testing.T) {
 	).Return(nil, errDummy).Once()
 
 	// Send the payment and assert it failed.
-	sendPaymentAndAssertError(t, context.Background(), p, errDummy)
+	sendPaymentAndAssertError(t, ctx, p, errDummy)
 
 	// Expected collectResultAsync to not be called.
 	require.Zero(t, m.collectResultsCount)
@@ -954,6 +962,8 @@ func TestResumePaymentFailOnRegisterAttemptErr(t *testing.T) {
 //
 //nolint:paralleltest
 func TestResumePaymentFailOnSendAttemptErr(t *testing.T) {
+	ctx := context.Background()
+
 	// Create a test paymentLifecycle with the initial two calls mocked.
 	p, m := setupTestPaymentLifecycle(t)
 
@@ -982,7 +992,7 @@ func TestResumePaymentFailOnSendAttemptErr(t *testing.T) {
 
 	// 4. mock requestRoute to return an route.
 	m.paySession.On("RequestRoute",
-		paymentAmt, p.feeLimit, uint32(ps.NumAttemptsInFlight),
+		ctx, paymentAmt, p.feeLimit, uint32(ps.NumAttemptsInFlight),
 		uint32(p.currentHeight), mock.Anything,
 	).Return(rt, nil).Once()
 
@@ -1033,7 +1043,7 @@ func TestResumePaymentFailOnSendAttemptErr(t *testing.T) {
 	).Return(nil, errDummy).Once()
 
 	// Send the payment and assert it failed.
-	sendPaymentAndAssertError(t, context.Background(), p, errDummy)
+	sendPaymentAndAssertError(t, ctx, p, errDummy)
 
 	// Expected collectResultAsync to not be called.
 	require.Zero(t, m.collectResultsCount)
@@ -1046,6 +1056,8 @@ func TestResumePaymentFailOnSendAttemptErr(t *testing.T) {
 //
 //nolint:paralleltest
 func TestResumePaymentSuccess(t *testing.T) {
+	ctx := context.Background()
+
 	// Create a test paymentLifecycle with the initial two calls mocked.
 	p, m := setupTestPaymentLifecycle(t)
 
@@ -1074,7 +1086,7 @@ func TestResumePaymentSuccess(t *testing.T) {
 
 	// 1.4. mock requestRoute to return an route.
 	m.paySession.On("RequestRoute",
-		paymentAmt, p.feeLimit, uint32(ps.NumAttemptsInFlight),
+		ctx, paymentAmt, p.feeLimit, uint32(ps.NumAttemptsInFlight),
 		uint32(p.currentHeight), mock.Anything,
 	).Return(rt, nil).Once()
 
@@ -1147,6 +1159,8 @@ func TestResumePaymentSuccess(t *testing.T) {
 //
 //nolint:paralleltest
 func TestResumePaymentSuccessWithTwoAttempts(t *testing.T) {
+	ctx := context.Background()
+
 	// Create a test paymentLifecycle with the initial two calls mocked.
 	p, m := setupTestPaymentLifecycle(t)
 
@@ -1175,7 +1189,7 @@ func TestResumePaymentSuccessWithTwoAttempts(t *testing.T) {
 
 	// 1.4. mock requestRoute to return an route.
 	m.paySession.On("RequestRoute",
-		paymentAmt, p.feeLimit, uint32(ps.NumAttemptsInFlight),
+		ctx, paymentAmt, p.feeLimit, uint32(ps.NumAttemptsInFlight),
 		uint32(p.currentHeight), mock.Anything,
 	).Return(rt, nil).Once()
 
@@ -1237,7 +1251,7 @@ func TestResumePaymentSuccessWithTwoAttempts(t *testing.T) {
 
 	// 2.4. mock requestRoute to return an route.
 	m.paySession.On("RequestRoute",
-		paymentAmt/2, p.feeLimit, uint32(ps.NumAttemptsInFlight),
+		ctx, paymentAmt/2, p.feeLimit, uint32(ps.NumAttemptsInFlight),
 		uint32(p.currentHeight), mock.Anything,
 	).Return(rt, nil).Once()
 

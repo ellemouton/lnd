@@ -51,13 +51,11 @@ import (
 	"github.com/lightningnetwork/lnd/graph"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
-	"github.com/lightningnetwork/lnd/graph/graphsession"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/keychain"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/labels"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -694,14 +692,14 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 	if err != nil {
 		return err
 	}
-	graph := s.graphDB
+	graph := s.chanGraph
 
 	routerBackend := &routerrpc.RouterBackend{
 		SelfNode: selfNode.PubKeyBytes,
-		FetchChannelCapacity: func(chanID uint64) (btcutil.Amount,
-			error) {
+		FetchChannelCapacity: func(ctx context.Context,
+			chanID uint64) (btcutil.Amount, error) {
 
-			info, _, _, err := graph.FetchChannelEdgesByID(chanID)
+			info, _, _, err := graph.FetchChannelEdgesByID(ctx, chanID)
 			if err != nil {
 				return 0, err
 			}
@@ -711,15 +709,15 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 			amount lnwire.MilliSatoshi) (btcutil.Amount, error) {
 
 			return routing.FetchAmountPairCapacity(
-				graphsession.NewRoutingGraph(graph),
+				graph.NewRoutingGraph(),
 				selfNode.PubKeyBytes, nodeFrom, nodeTo, amount,
 			)
 		},
-		FetchChannelEndpoints: func(chanID uint64) (route.Vertex,
+		FetchChannelEndpoints: func(ctx context.Context, chanID uint64) (route.Vertex,
 			route.Vertex, error) {
 
 			info, _, _, err := graph.FetchChannelEdgesByID(
-				chanID,
+				ctx, chanID,
 			)
 			if err != nil {
 				return route.Vertex{}, route.Vertex{},
@@ -795,7 +793,8 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 	err = subServerCgs.PopulateDependencies(
 		r.cfg, s.cc, r.cfg.networkDir, macService, atpl, invoiceRegistry,
 		s.htlcSwitch, r.cfg.ActiveNetParams.Params, s.chanRouter,
-		routerBackend, s.nodeSigner, s.graphDB, s.chanStateDB,
+		routerBackend, s.nodeSigner, s.chanGraph,
+		s.chanStateDB,
 		s.sweeper, tower, s.towerClientMgr, r.cfg.net.ResolveTCPAddr,
 		genInvoiceFeatures, genAmpInvoiceFeatures,
 		s.getNodeAnnouncement, s.updateAndBroadcastSelfNode, parseAddr,
@@ -1756,7 +1755,7 @@ func (r *rpcServer) VerifyMessage(ctx context.Context,
 	// channels signed the message.
 	//
 	// TODO(phlip9): Require valid nodes to have capital in active channels.
-	graph := r.server.graphDB
+	graph := r.server.chanGraph
 	_, active, err := graph.HasLightningNode(pub)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query graph: %w", err)
@@ -3038,7 +3037,7 @@ func createRPCCloseUpdate(
 // abandonChanFromGraph attempts to remove a channel from the channel graph. If
 // we can't find the chanID in the graph, then we assume it has already been
 // removed, and will return a nop.
-func abandonChanFromGraph(chanGraph *graphdb.ChannelGraph,
+func abandonChanFromGraph(chanGraph *graph.ChannelGraph,
 	chanPoint *wire.OutPoint) error {
 
 	// First, we'll obtain the channel ID. If we can't locate this, then
@@ -3079,7 +3078,7 @@ func (r *rpcServer) abandonChan(chanPoint *wire.OutPoint,
 	if err != nil {
 		return err
 	}
-	err = abandonChanFromGraph(r.server.graphDB, chanPoint)
+	err = abandonChanFromGraph(r.server.chanGraph, chanPoint)
 	if err != nil {
 		return err
 	}
@@ -5328,7 +5327,7 @@ func (r *rpcServer) SendToRoute(stream lnrpc.Lightning_SendToRouteServer) error 
 				return nil, err
 			}
 
-			return r.unmarshallSendToRouteRequest(req)
+			return r.unmarshallSendToRouteRequest(stream.Context(), req)
 		},
 		send: func(r *lnrpc.SendResponse) error {
 			// Calling stream.Send concurrently is not safe.
@@ -5340,14 +5339,14 @@ func (r *rpcServer) SendToRoute(stream lnrpc.Lightning_SendToRouteServer) error 
 }
 
 // unmarshallSendToRouteRequest unmarshalls an rpc sendtoroute request
-func (r *rpcServer) unmarshallSendToRouteRequest(
+func (r *rpcServer) unmarshallSendToRouteRequest(ctx context.Context,
 	req *lnrpc.SendToRouteRequest) (*rpcPaymentRequest, error) {
 
 	if req.Route == nil {
 		return nil, fmt.Errorf("unable to send, no route provided")
 	}
 
-	route, err := r.routerBackend.UnmarshallRoute(req.Route)
+	route, err := r.routerBackend.UnmarshallRoute(ctx, req.Route)
 	if err != nil {
 		return nil, err
 	}
@@ -5978,7 +5977,7 @@ func (r *rpcServer) SendToRouteSync(ctx context.Context,
 		return nil, fmt.Errorf("unable to send, no routes provided")
 	}
 
-	paymentRequest, err := r.unmarshallSendToRouteRequest(req)
+	paymentRequest, err := r.unmarshallSendToRouteRequest(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -6095,7 +6094,7 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 		NodeSigner:        r.server.nodeSigner,
 		DefaultCLTVExpiry: defaultDelta,
 		ChanDB:            r.server.chanStateDB,
-		Graph:             r.server.graphDB,
+		Graph:             r.server.chanGraph,
 		GenInvoiceFeatures: func() *lnwire.FeatureVector {
 			v := r.server.featureMgr.Get(feature.SetInvoice)
 
@@ -6123,10 +6122,11 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 		},
 		GetAlias:   r.server.aliasMgr.GetPeerAlias,
 		BestHeight: r.server.cc.BestBlockTracker.BestHeight,
-		QueryBlindedRoutes: func(amt lnwire.MilliSatoshi) (
-			[]*route.Route, error) {
+		QueryBlindedRoutes: func(ctx context.Context,
+			amt lnwire.MilliSatoshi) ([]*route.Route, error) {
 
 			return r.server.chanRouter.FindBlindedPaths(
+				ctx,
 				r.selfNode, amt,
 				r.server.defaultMC.GetProbability,
 				blindingRestrictions,
@@ -6525,17 +6525,12 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 		}
 	}
 
-	// Obtain the pointer to the global singleton channel graph, this will
-	// provide a consistent view of the graph due to bolt db's
-	// transactional model.
-	graph := r.server.graphDB
+	graph := r.server.chanGraph
 
 	// First iterate through all the known nodes (connected or unconnected
 	// within the graph), collating their current state into the RPC
 	// response.
-	err := graph.ForEachNode(func(_ kvdb.RTx,
-		node *models.LightningNode) error {
-
+	err := graph.ForEachNode(func(node *models.LightningNode) error {
 		lnNode := marshalNode(node)
 
 		resp.Nodes = append(resp.Nodes, lnNode)
@@ -6652,6 +6647,7 @@ func marshalDBEdge(edgeInfo *models.ChannelEdgeInfo,
 		Node2Pub:      hex.EncodeToString(edgeInfo.NodeKey2Bytes[:]),
 		Capacity:      int64(edgeInfo.Capacity),
 		CustomRecords: customRecords,
+		Announced:     edgeInfo.AuthProof != nil,
 	}
 
 	if c1 != nil {
@@ -6713,7 +6709,7 @@ func (r *rpcServer) GetNodeMetrics(ctx context.Context,
 	// Obtain the pointer to the global singleton channel graph, this will
 	// provide a consistent view of the graph due to bolt db's
 	// transactional model.
-	graph := r.server.graphDB
+	graph := r.server.chanGraph
 
 	// Calculate betweenness centrality if requested. Note that depending on the
 	// graph size, this may take up to a few minutes.
@@ -6750,10 +6746,10 @@ func (r *rpcServer) GetNodeMetrics(ctx context.Context,
 // uniquely identify the location of transaction's funding output within the
 // blockchain. The former is an 8-byte integer, while the latter is a string
 // formatted as funding_txid:output_index.
-func (r *rpcServer) GetChanInfo(_ context.Context,
+func (r *rpcServer) GetChanInfo(ctx context.Context,
 	in *lnrpc.ChanInfoRequest) (*lnrpc.ChannelEdge, error) {
 
-	graph := r.server.graphDB
+	graph := r.server.chanGraph
 
 	var (
 		edgeInfo     *models.ChannelEdgeInfo
@@ -6764,7 +6760,7 @@ func (r *rpcServer) GetChanInfo(_ context.Context,
 	switch {
 	case in.ChanId != 0:
 		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByID(
-			in.ChanId,
+			ctx, in.ChanId,
 		)
 
 	case in.ChanPoint != "":
@@ -6780,7 +6776,10 @@ func (r *rpcServer) GetChanInfo(_ context.Context,
 	default:
 		return nil, fmt.Errorf("specify either chan_id or chan_point")
 	}
-	if err != nil {
+	switch {
+	case errors.Is(err, graphdb.ErrEdgeNotFound):
+		return nil, status.Error(codes.NotFound, err.Error())
+	case err != nil:
 		return nil, err
 	}
 
@@ -6797,7 +6796,7 @@ func (r *rpcServer) GetChanInfo(_ context.Context,
 func (r *rpcServer) GetNodeInfo(ctx context.Context,
 	in *lnrpc.NodeInfoRequest) (*lnrpc.NodeInfo, error) {
 
-	graph := r.server.graphDB
+	graph := r.server.chanGraph
 
 	// First, parse the hex-encoded public key into a full in-memory public
 	// key object we can work with for querying.
@@ -6823,14 +6822,21 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 		numChannels   uint32
 		totalCapacity btcutil.Amount
 		channels      []*lnrpc.ChannelEdge
+		isPublicNode  bool
 	)
 
 	err = graph.ForEachNodeChannel(node.PubKeyBytes,
-		func(_ kvdb.RTx, edge *models.ChannelEdgeInfo,
+		func(edge *models.ChannelEdgeInfo,
 			c1, c2 *models.ChannelEdgePolicy) error {
 
 			numChannels++
 			totalCapacity += edge.Capacity
+
+			// If the edge has an authentication proof, then this
+			// is a public channel and so the node is public.
+			if edge.AuthProof != nil {
+				isPublicNode = true
+			}
 
 			// Only populate the node's channels if the user
 			// requested them.
@@ -6860,6 +6866,7 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 		NumChannels:   numChannels,
 		TotalCapacity: int64(totalCapacity),
 		Channels:      channels,
+		IsPublic:      isPublicNode,
 	}, nil
 }
 
@@ -6908,7 +6915,7 @@ func (r *rpcServer) QueryRoutes(ctx context.Context,
 func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 	_ *lnrpc.NetworkInfoRequest) (*lnrpc.NetworkInfo, error) {
 
-	graph := r.server.graphDB
+	graph := r.server.chanGraph
 
 	var (
 		numNodes             uint32
@@ -6934,7 +6941,7 @@ func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 	// each node so we can measure the graph diameter and degree stats
 	// below.
 	err := graph.ForEachNodeCached(func(node route.Vertex,
-		edges map[uint64]*graphdb.DirectedChannel) error {
+		edges map[uint64]*models.DirectedChannel) error {
 
 		// Increment the total number of nodes with each iteration.
 		numNodes++
@@ -7080,7 +7087,7 @@ func (r *rpcServer) SubscribeChannelGraph(req *lnrpc.GraphTopologySubscription,
 
 	// First, we start by subscribing to a new intent to receive
 	// notifications from the channel router.
-	client, err := r.server.graphBuilder.SubscribeTopology()
+	client, err := r.server.chanGraph.SubscribeTopology()
 	if err != nil {
 		return err
 	}
@@ -7500,7 +7507,7 @@ const feeBase float64 = 1000000
 func (r *rpcServer) FeeReport(ctx context.Context,
 	_ *lnrpc.FeeReportRequest) (*lnrpc.FeeReportResponse, error) {
 
-	channelGraph := r.server.graphDB
+	channelGraph := r.server.chanGraph
 	selfNode, err := channelGraph.SourceNode()
 	if err != nil {
 		return nil, err
@@ -7508,7 +7515,7 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 
 	var feeReports []*lnrpc.ChannelFeeReport
 	err = channelGraph.ForEachNodeChannel(selfNode.PubKeyBytes,
-		func(_ kvdb.RTx, chanInfo *models.ChannelEdgeInfo,
+		func(chanInfo *models.ChannelEdgeInfo,
 			edgePolicy, _ *models.ChannelEdgePolicy) error {
 
 			// Self node should always have policies for its
@@ -7886,7 +7893,7 @@ func (r *rpcServer) ForwardingHistory(ctx context.Context,
 			return "", err
 		}
 
-		peer, err := r.server.graphDB.FetchLightningNode(vertex)
+		peer, err := r.server.chanGraph.FetchLightningNode(vertex)
 		if err != nil {
 			return "", err
 		}

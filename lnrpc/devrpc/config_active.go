@@ -5,7 +5,7 @@ package devrpc
 
 import (
 	"github.com/btcsuite/btcd/chaincfg"
-	graphdb "github.com/lightningnetwork/lnd/graph/db"
+	graphdb "github.com/lightningnetwork/lnd/graph"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 )
 

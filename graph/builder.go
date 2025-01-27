@@ -2,6 +2,7 @@ package graph
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"runtime"
 	"strings"
@@ -20,7 +21,6 @@ import (
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/input"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnutils"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwallet/btcwallet"
@@ -64,7 +64,7 @@ type Config struct {
 
 	// Graph is the channel graph that the ChannelRouter will use to gather
 	// metrics from and also to carry out path finding queries.
-	Graph DB
+	Graph *ChannelGraph
 
 	// Chain is the router's source to the most up-to-date blockchain data.
 	// All incoming advertised channels will be checked against the chain
@@ -118,8 +118,7 @@ type Builder struct {
 	started atomic.Bool
 	stopped atomic.Bool
 
-	ntfnClientCounter atomic.Uint64
-	bestHeight        atomic.Uint32
+	bestHeight atomic.Uint32
 
 	cfg *Config
 
@@ -136,17 +135,6 @@ type Builder struct {
 	// messages from outside the Builder to be processed by the
 	// networkHandler.
 	networkUpdates chan *routingMsg
-
-	// topologyClients maps a client's unique notification ID to a
-	// topologyClient client that contains its notification dispatch
-	// channel.
-	topologyClients *lnutils.SyncMap[uint64, *topologyClient]
-
-	// ntfnClientUpdates is a channel that's used to send new updates to
-	// topology notification clients to the Builder. Updates either
-	// add a new notification client, or cancel notifications for an
-	// existing client.
-	ntfnClientUpdates chan *topologyClientUpdate
 
 	// channelEdgeMtx is a mutex we use to make sure we process only one
 	// ChannelEdgePolicy at a time for a given channelID, to ensure
@@ -172,14 +160,12 @@ var _ ChannelGraphSource = (*Builder)(nil)
 // NewBuilder constructs a new Builder.
 func NewBuilder(cfg *Config) (*Builder, error) {
 	return &Builder{
-		cfg:               cfg,
-		networkUpdates:    make(chan *routingMsg),
-		topologyClients:   &lnutils.SyncMap[uint64, *topologyClient]{},
-		ntfnClientUpdates: make(chan *topologyClientUpdate),
-		channelEdgeMtx:    multimutex.NewMutex[uint64](),
-		statTicker:        ticker.New(defaultStatInterval),
-		stats:             new(routerStats),
-		quit:              make(chan struct{}),
+		cfg:            cfg,
+		networkUpdates: make(chan *routingMsg),
+		channelEdgeMtx: multimutex.NewMutex[uint64](),
+		statTicker:     ticker.New(defaultStatInterval),
+		stats:          new(routerStats),
+		quit:           make(chan struct{}),
 	}, nil
 }
 
@@ -301,7 +287,7 @@ func (b *Builder) Start() error {
 	}
 
 	b.wg.Add(1)
-	go b.networkHandler()
+	go b.networkHandler(context.TODO())
 
 	log.Debug("Builder started")
 
@@ -669,7 +655,7 @@ func (b *Builder) pruneZombieChans() error {
 // notifies topology changes, if any.
 //
 // NOTE: must be run inside goroutine.
-func (b *Builder) handleNetworkUpdate(vb *ValidationBarrier,
+func (b *Builder) handleNetworkUpdate(ctx context.Context, vb *ValidationBarrier,
 	update *routingMsg) {
 
 	defer b.wg.Done()
@@ -721,20 +707,6 @@ func (b *Builder) handleNetworkUpdate(vb *ValidationBarrier,
 
 		return
 	}
-
-	// Otherwise, we'll send off a new notification for the newly accepted
-	// update, if any.
-	topChange := &TopologyChange{}
-	err = addToTopologyChange(b.cfg.Graph, topChange, update.msg)
-	if err != nil {
-		log.Errorf("unable to update topology change notification: %v",
-			err)
-		return
-	}
-
-	if !topChange.isEmpty() {
-		b.notifyTopologyChange(topChange)
-	}
 }
 
 // networkHandler is the primary goroutine for the Builder. The roles of
@@ -743,7 +715,7 @@ func (b *Builder) handleNetworkUpdate(vb *ValidationBarrier,
 // updates, and registering new topology clients.
 //
 // NOTE: This MUST be run as a goroutine.
-func (b *Builder) networkHandler() {
+func (b *Builder) networkHandler(ctx context.Context) {
 	defer b.wg.Done()
 
 	graphPruneTicker := time.NewTicker(b.cfg.GraphPruneInterval)
@@ -795,7 +767,7 @@ func (b *Builder) networkHandler() {
 			validationBarrier.InitJobDependencies(update.msg)
 
 			b.wg.Add(1)
-			go b.handleNetworkUpdate(validationBarrier, update)
+			go b.handleNetworkUpdate(ctx, validationBarrier, update)
 
 			// TODO(roasbeef): remove all unconnected vertexes
 			// after N blocks pass with no corresponding
@@ -872,31 +844,6 @@ func (b *Builder) networkHandler() {
 					"received block height %v was already"+
 					" processed.", chainUpdate.Height)
 			}
-
-		// A new notification client update has arrived. We're either
-		// gaining a new client, or cancelling notifications for an
-		// existing client.
-		case ntfnUpdate := <-b.ntfnClientUpdates:
-			clientID := ntfnUpdate.clientID
-
-			if ntfnUpdate.cancel {
-				client, ok := b.topologyClients.LoadAndDelete(
-					clientID,
-				)
-				if ok {
-					close(client.exit)
-					client.wg.Wait()
-
-					close(client.ntfnChan)
-				}
-
-				continue
-			}
-
-			b.topologyClients.Store(clientID, &topologyClient{
-				ntfnChan: ntfnUpdate.ntfnChan,
-				exit:     make(chan struct{}),
-			})
 
 		// The graph prune ticker has ticked, so we'll examine the
 		// state of the known graph to filter out any zombie channels
@@ -1027,12 +974,6 @@ func (b *Builder) updateGraphWithClosedChannels(
 	if len(chansClosed) == 0 {
 		return err
 	}
-
-	// Notify all currently registered clients of the newly closed channels.
-	closeSummaries := createCloseSummaries(blockHeight, chansClosed...)
-	b.notifyTopologyChange(&TopologyChange{
-		ClosedChannels: closeSummaries,
-	})
 
 	return nil
 }
@@ -1344,7 +1285,7 @@ func (b *Builder) processUpdate(msg interface{},
 		// update the current UTXO filter within our active
 		// FilteredChainView so we are notified if/when this channel is
 		// closed.
-		filterUpdate := []graphdb.EdgePoint{
+		filterUpdate := []models.EdgePoint{
 			{
 				FundingPkScript: fundingPkScript,
 				OutPoint:        *fundingPoint,
@@ -1616,7 +1557,9 @@ func (b *Builder) GetChannelByID(chanID lnwire.ShortChannelID) (
 	*models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
-	return b.cfg.Graph.FetchChannelEdgesByID(chanID.ToUint64())
+	ctx := context.TODO()
+
+	return b.cfg.Graph.FetchChannelEdgesByID(ctx, chanID.ToUint64())
 }
 
 // FetchLightningNode attempts to look up a target node by its identity public
@@ -1630,18 +1573,6 @@ func (b *Builder) FetchLightningNode(
 	return b.cfg.Graph.FetchLightningNode(node)
 }
 
-// ForEachNode is used to iterate over every node in router topology.
-//
-// NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) ForEachNode(
-	cb func(*models.LightningNode) error) error {
-
-	return b.cfg.Graph.ForEachNode(
-		func(_ kvdb.RTx, n *models.LightningNode) error {
-			return cb(n)
-		})
-}
-
 // ForAllOutgoingChannels is used to iterate over all outgoing channels owned by
 // the router.
 //
@@ -1650,7 +1581,7 @@ func (b *Builder) ForAllOutgoingChannels(cb func(*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy) error) error {
 
 	return b.cfg.Graph.ForEachNodeChannel(b.cfg.SelfNode,
-		func(_ kvdb.RTx, c *models.ChannelEdgeInfo,
+		func(c *models.ChannelEdgeInfo,
 			e *models.ChannelEdgePolicy,
 			_ *models.ChannelEdgePolicy) error {
 
@@ -1671,7 +1602,9 @@ func (b *Builder) ForAllOutgoingChannels(cb func(*models.ChannelEdgeInfo,
 func (b *Builder) AddProof(chanID lnwire.ShortChannelID,
 	proof *models.ChannelAuthProof) error {
 
-	info, _, _, err := b.cfg.Graph.FetchChannelEdgesByID(chanID.ToUint64())
+	ctx := context.TODO()
+
+	info, _, _, err := b.cfg.Graph.FetchChannelEdgesByID(ctx, chanID.ToUint64())
 	if err != nil {
 		return err
 	}
@@ -1704,7 +1637,7 @@ func (b *Builder) IsStaleNode(node route.Vertex,
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (b *Builder) IsPublicNode(node route.Vertex) (bool, error) {
-	return b.cfg.Graph.IsPublicNode(node)
+	return b.cfg.Graph.IsPublicNode(context.TODO(), node)
 }
 
 // IsKnownEdge returns true if the graph source already knows of the passed

@@ -1,9 +1,11 @@
 package discovery
 
 import (
+	"context"
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	graph2 "github.com/lightningnetwork/lnd/graph"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/netann"
@@ -65,17 +67,17 @@ type ChannelGraphTimeSeries interface {
 }
 
 // ChanSeries is an implementation of the ChannelGraphTimeSeries
-// interface backed by the channeldb ChannelGraph database. We'll provide this
+// interface backed by the channeldb BoltStore database. We'll provide this
 // implementation to the AuthenticatedGossiper so it can properly use the
 // in-protocol channel range queries to quickly and efficiently synchronize our
 // channel state with all peers.
 type ChanSeries struct {
-	graph *graphdb.ChannelGraph
+	graph *graph2.ChannelGraph
 }
 
-// NewChanSeries constructs a new ChanSeries backed by a channeldb.ChannelGraph.
+// NewChanSeries constructs a new ChanSeries backed by a channeldb.BoltStore.
 // The returned ChanSeries implements the ChannelGraphTimeSeries interface.
-func NewChanSeries(graph *graphdb.ChannelGraph) *ChanSeries {
+func NewChanSeries(graph *graph2.ChannelGraph) *ChanSeries {
 	return &ChanSeries{
 		graph: graph,
 	}
@@ -106,6 +108,7 @@ func (c *ChanSeries) HighestChanID(chain chainhash.Hash) (*lnwire.ShortChannelID
 func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 	startTime time.Time, endTime time.Time) ([]lnwire.Message, error) {
 
+	ctx := context.TODO()
 	var updates []lnwire.Message
 
 	// First, we'll query for all the set of channels that have an update
@@ -169,7 +172,7 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 
 		// Ensure we only forward nodes that are publicly advertised to
 		// prevent leaking information about nodes.
-		isNodePublic, err := c.graph.IsPublicNode(nodeAnn.PubKeyBytes)
+		isNodePublic, err := c.graph.IsPublicNode(ctx, nodeAnn.PubKeyBytes)
 		if err != nil {
 			log.Errorf("Unable to determine if node %x is "+
 				"advertised: %v", nodeAnn.PubKeyBytes, err)
@@ -204,7 +207,12 @@ func (c *ChanSeries) FilterKnownChanIDs(_ chainhash.Hash,
 	isZombieChan func(time.Time, time.Time) bool) (
 	[]lnwire.ShortChannelID, error) {
 
-	newChanIDs, err := c.graph.FilterKnownChanIDs(superSet, isZombieChan)
+	infos := make(map[uint64]graphdb.ChannelUpdateInfo)
+	for _, info := range superSet {
+		infos[info.ShortChannelID.ToUint64()] = info
+	}
+
+	newChanIDs, err := c.graph.FilterKnownChanIDs(infos, isZombieChan)
 	if err != nil {
 		return nil, err
 	}
@@ -328,8 +336,10 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 func (c *ChanSeries) FetchChanUpdates(chain chainhash.Hash,
 	shortChanID lnwire.ShortChannelID) ([]*lnwire.ChannelUpdate1, error) {
 
+	ctx := context.TODO()
+
 	chanInfo, e1, e2, err := c.graph.FetchChannelEdgesByID(
-		shortChanID.ToUint64(),
+		ctx, shortChanID.ToUint64(),
 	)
 	if err != nil {
 		return nil, err

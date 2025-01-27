@@ -45,7 +45,6 @@ import (
 	"github.com/lightningnetwork/lnd/graph"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
-	"github.com/lightningnetwork/lnd/graph/graphsession"
 	"github.com/lightningnetwork/lnd/healthcheck"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
@@ -57,6 +56,7 @@ import (
 	"github.com/lightningnetwork/lnd/lnencrypt"
 	"github.com/lightningnetwork/lnd/lnpeer"
 	"github.com/lightningnetwork/lnd/lnrpc"
+	"github.com/lightningnetwork/lnd/lnrpc/graphrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/routerrpc"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
@@ -260,7 +260,10 @@ type server struct {
 
 	fundingMgr *funding.Manager
 
-	graphDB *graphdb.ChannelGraph
+	graphDB        *graphdb.BoltStore
+	remoteGraphCli *graphrpc.Client
+
+	chanGraph *graph.ChannelGraph
 
 	chanStateDB *channeldb.ChannelStateDB
 
@@ -369,7 +372,7 @@ type server struct {
 // updatePersistentPeerAddrs subscribes to topology changes and stores
 // advertised addresses for any NodeAnnouncements from our persisted peers.
 func (s *server) updatePersistentPeerAddrs() error {
-	graphSub, err := s.graphBuilder.SubscribeTopology()
+	graphSub, err := s.chanGraph.SubscribeTopology()
 	if err != nil {
 		return err
 	}
@@ -594,6 +597,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		NoRouteBlinding:           cfg.ProtocolOptions.NoRouteBlinding(),
 		NoExperimentalEndorsement: cfg.ProtocolOptions.NoExperimentalEndorsement(),
 		NoQuiescence:              cfg.ProtocolOptions.NoQuiescence(),
+		NoGossipQueries:           cfg.Gossip.NoSync,
 	})
 	if err != nil {
 		return nil, err
@@ -612,12 +616,33 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		HtlcInterceptor:             invoiceHtlcModifier,
 	}
 
-	addrSource := channeldb.NewMultiAddrSource(dbs.ChanStateDB, dbs.GraphDB)
+	chanGraph, err := graph.NewChannelGraph(
+		&graph.ChanGraphCfg{
+			DB:           dbs.GraphDB,
+			WithCache:    !cfg.DB.NoGraphCache,
+			RemoteConfig: cfg.RemoteGraph,
+			ParseAddressString: func(strAddress string) (net.Addr,
+				error) {
+
+				return lncfg.ParseAddressString(
+					strAddress,
+					strconv.Itoa(defaultPeerPort),
+					cfg.net.ResolveTCPAddr,
+				)
+			},
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	addrSource := channeldb.NewMultiAddrSource(dbs.ChanStateDB, chanGraph)
 
 	s := &server{
 		cfg:            cfg,
 		implCfg:        implCfg,
 		graphDB:        dbs.GraphDB,
+		chanGraph:      chanGraph,
 		chanStateDB:    dbs.ChanStateDB.ChannelStateDB(),
 		addrSource:     addrSource,
 		miscDB:         dbs.ChanStateDB,
@@ -785,7 +810,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		IsChannelActive:          s.htlcSwitch.HasActiveLink,
 		ApplyChannelUpdate:       s.applyChannelUpdate,
 		DB:                       s.chanStateDB,
-		Graph:                    dbs.GraphDB,
+		Graph:                    s.chanGraph,
 	}
 
 	chanStatusMgr, err := netann.NewChanStatusManager(chanStatusMgrCfg)
@@ -1038,13 +1063,11 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		return nil, fmt.Errorf("error getting source node: %w", err)
 	}
 	paymentSessionSource := &routing.SessionSource{
-		GraphSessionFactory: graphsession.NewGraphSessionFactory(
-			dbs.GraphDB,
-		),
-		SourceNode:        sourceNode,
-		MissionControl:    s.defaultMC,
-		GetLink:           s.htlcSwitch.GetLinkByShortID,
-		PathFindingConfig: pathFindingConfig,
+		GraphSessionFactory: s.chanGraph,
+		SourceNode:          sourceNode,
+		MissionControl:      s.defaultMC,
+		GetLink:             s.htlcSwitch.GetLinkByShortID,
+		PathFindingConfig:   pathFindingConfig,
 	}
 
 	paymentControl := channeldb.NewPaymentControl(dbs.ChanStateDB)
@@ -1056,7 +1079,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	s.graphBuilder, err = graph.NewBuilder(&graph.Config{
 		SelfNode:            selfNode.PubKeyBytes,
-		Graph:               dbs.GraphDB,
+		Graph:               s.chanGraph,
 		Chain:               cc.ChainIO,
 		ChainView:           cc.ChainView,
 		Notifier:            cc.ChainNotifier,
@@ -1073,7 +1096,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	s.chanRouter, err = routing.New(routing.Config{
 		SelfNode:           selfNode.PubKeyBytes,
-		RoutingGraph:       graphsession.NewRoutingGraph(dbs.GraphDB),
+		RoutingGraph:       s.chanGraph.NewRoutingGraph(),
 		Chain:              cc.ChainIO,
 		Payer:              s.htlcSwitch,
 		Control:            s.controlTower,
@@ -1091,7 +1114,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		return nil, fmt.Errorf("can't create router: %w", err)
 	}
 
-	chanSeries := discovery.NewChanSeries(s.graphDB)
+	chanSeries := discovery.NewChanSeries(s.chanGraph)
 	gossipMessageStore, err := discovery.NewMessageStore(dbs.ChanStateDB)
 	if err != nil {
 		return nil, err
@@ -1140,7 +1163,6 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		FindBaseByAlias:         s.aliasMgr.FindBaseSCID,
 		GetAlias:                s.aliasMgr.GetPeerAlias,
 		FindChannel:             s.findChannel,
-		IsStillZombieChannel:    s.graphBuilder.IsZombieChannel,
 		ScidCloser:              scidCloserMan,
 	}, nodeKeyDesc)
 
@@ -1152,8 +1174,8 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		ForAllOutgoingChannels: func(cb func(*models.ChannelEdgeInfo,
 			*models.ChannelEdgePolicy) error) error {
 
-			return s.graphDB.ForEachNodeChannel(selfVertex,
-				func(_ kvdb.RTx, c *models.ChannelEdgeInfo,
+			return s.chanGraph.ForEachNodeChannel(selfVertex,
+				func(c *models.ChannelEdgeInfo,
 					e *models.ChannelEdgePolicy,
 					_ *models.ChannelEdgePolicy) error {
 
@@ -1404,8 +1426,8 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	deleteAliasEdge := func(scid lnwire.ShortChannelID) (
 		*models.ChannelEdgePolicy, error) {
 
-		info, e1, e2, err := s.graphDB.FetchChannelEdgesByID(
-			scid.ToUint64(),
+		info, e1, e2, err := s.chanGraph.FetchChannelEdgesByID(
+			context.TODO(), scid.ToUint64(),
 		)
 		if errors.Is(err, graphdb.ErrEdgeNotFound) {
 			// This is unlikely but there is a slim chance of this
@@ -1433,7 +1455,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			return nil, fmt.Errorf("we don't have an edge")
 		}
 
-		err = s.graphDB.DeleteChannelEdges(
+		err = s.chanGraph.DeleteChannelEdges(
 			false, false, scid.ToUint64(),
 		)
 		return ourPolicy, err
@@ -2287,6 +2309,20 @@ func (s *server) Start() error {
 			return
 		}
 
+		if s.remoteGraphCli != nil {
+			cleanup = cleanup.add(s.remoteGraphCli.Stop)
+			if err := s.remoteGraphCli.Start(context.Background()); err != nil {
+				startErr = err
+				return
+			}
+		}
+
+		cleanup = cleanup.add(s.chanGraph.Stop)
+		if err := s.chanGraph.Start(context.TODO()); err != nil {
+			startErr = err
+			return
+		}
+
 		cleanup = cleanup.add(s.graphBuilder.Stop)
 		if err := s.graphBuilder.Start(); err != nil {
 			startErr = err
@@ -2510,7 +2546,7 @@ func (s *server) Start() error {
 		// configure the set of active bootstrappers, and launch a
 		// dedicated goroutine to maintain a set of persistent
 		// connections.
-		if shouldPeerBootstrap(s.cfg) {
+		if !s.cfg.NoNetBootstrap {
 			bootstrappers, err := initNetworkBootstrappers(s)
 			if err != nil {
 				startErr = err
@@ -2587,6 +2623,14 @@ func (s *server) Stop() error {
 		}
 		if err := s.graphBuilder.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop graphBuilder %v", err)
+		}
+		if err := s.chanGraph.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop chanGraph %v", err)
+		}
+		if s.remoteGraphCli != nil {
+			if err := s.remoteGraphCli.Stop(); err != nil {
+				srvrLog.Warnf("failed to stop remoteGraphCli %v", err)
+			}
 		}
 		if err := s.chainArb.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop chainArb: %v", err)
@@ -2896,7 +2940,7 @@ func initNetworkBootstrappers(s *server) ([]discovery.NetworkPeerBootstrapper, e
 	// First, we'll create an instance of the ChannelGraphBootstrapper as
 	// this can be used by default if we've already partially seeded the
 	// network.
-	chanGraph := autopilot.ChannelGraphFromDatabase(s.graphDB)
+	chanGraph := autopilot.ChannelGraphFromDatabase(s.chanGraph)
 	graphBootstrapper, err := discovery.NewGraphBootstrapper(chanGraph)
 	if err != nil {
 		return nil, err
@@ -3445,7 +3489,7 @@ func (s *server) establishPersistentConnections() error {
 	// TODO(roasbeef): instead iterate over link nodes and query graph for
 	// each of the nodes.
 	selfPub := s.identityECDH.PubKey().SerializeCompressed()
-	err = s.graphDB.ForEachNodeChannel(sourceNode.PubKeyBytes, func(
+	err = s.graphDB.ForEachNodeChannelTx(nil, sourceNode.PubKeyBytes, func(
 		tx kvdb.RTx,
 		chanInfo *models.ChannelEdgeInfo,
 		policy, _ *models.ChannelEdgePolicy) error {
@@ -4244,7 +4288,7 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 		Switch:                  s.htlcSwitch,
 		InterceptSwitch:         s.interceptableSwitch,
 		ChannelDB:               s.chanStateDB,
-		ChannelGraph:            s.graphDB,
+		ChannelGraph:            s.chanGraph,
 		ChainArb:                s.chainArb,
 		AuthGossiper:            s.authGossiper,
 		ChanStatusMgr:           s.chanStatusMgr,
@@ -4310,6 +4354,7 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 				EndorsementExperimentEnd,
 			)
 		},
+		NoGossipSync: s.cfg.Gossip.NoSync,
 	}
 
 	copy(pCfg.PubKeyBytes[:], peerAddr.IdentityKey.SerializeCompressed())
@@ -5040,7 +5085,7 @@ func (s *server) fetchNodeAdvertisedAddrs(pub *btcec.PublicKey) ([]net.Addr, err
 		return nil, err
 	}
 
-	node, err := s.graphDB.FetchLightningNode(vertex)
+	node, err := s.chanGraph.FetchLightningNode(vertex)
 	if err != nil {
 		return nil, err
 	}
@@ -5166,20 +5211,6 @@ func newSweepPkScriptGen(
 			InternalKey:     internalKeyDesc,
 		})
 	}
-}
-
-// shouldPeerBootstrap returns true if we should attempt to perform peer
-// bootstrapping to actively seek our peers using the set of active network
-// bootstrappers.
-func shouldPeerBootstrap(cfg *Config) bool {
-	isSimnet := cfg.Bitcoin.SimNet
-	isSignet := cfg.Bitcoin.SigNet
-	isRegtest := cfg.Bitcoin.RegTest
-	isDevNetwork := isSimnet || isSignet || isRegtest
-
-	// TODO(yy): remove the check on simnet/regtest such that the itest is
-	// covering the bootstrapping process.
-	return !cfg.NoNetBootstrap && !isDevNetwork
 }
 
 // fetchClosedChannelSCIDs returns a set of SCIDs that have their force closing

@@ -132,8 +132,9 @@ type BaseNodeConfig struct {
 	ReadMacPath    string
 	InvoiceMacPath string
 
-	SkipUnlock bool
-	Password   []byte
+	SkipUnlock        bool
+	Password          []byte
+	WithPeerBootstrap bool
 
 	P2PPort     int
 	RPCPort     int
@@ -232,7 +233,6 @@ func (cfg *BaseNodeConfig) GenArgs() []string {
 	args = append(args, backendArgs...)
 
 	nodeArgs := []string{
-		"--nobootstrap",
 		"--debuglevel=debug",
 		"--bitcoin.defaultchanconfs=1",
 		"--accept-keysend",
@@ -271,6 +271,10 @@ func (cfg *BaseNodeConfig) GenArgs() []string {
 
 	if cfg.Password == nil {
 		args = append(args, "--noseedbackup")
+	}
+
+	if !cfg.WithPeerBootstrap {
+		args = append(args, "--nobootstrap")
 	}
 
 	switch cfg.DBBackend {

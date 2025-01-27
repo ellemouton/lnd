@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lightningnetwork/lnd/graph/db/codec"
 	"github.com/lightningnetwork/lnd/tor"
 )
 
@@ -117,7 +118,7 @@ func TestAddrSerialization(t *testing.T) {
 
 	var b bytes.Buffer
 	for _, test := range addrTests {
-		err := SerializeAddr(&b, test.expAddr)
+		err := codec.SerializeAddr(&b, test.expAddr)
 		switch {
 		case err == nil && test.serErr != "":
 			t.Fatalf("expected serialization err for addr %v",
@@ -136,7 +137,7 @@ func TestAddrSerialization(t *testing.T) {
 			continue
 		}
 
-		addr, err := DeserializeAddr(&b)
+		addr, err := codec.DeserializeAddr(&b)
 		if err != nil {
 			t.Fatalf("unable to deserialize address: %v", err)
 		}

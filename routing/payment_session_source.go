@@ -1,8 +1,11 @@
 package routing
 
 import (
+	"context"
+
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/lightningnetwork/lnd/fn/v2"
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -21,7 +24,7 @@ type SessionSource struct {
 	// GraphSessionFactory can be used to gain access to a Graph session.
 	// If the backing DB allows it, this will mean that a read transaction
 	// is being held during the use of the session.
-	GraphSessionFactory GraphSessionFactory
+	GraphSessionFactory graphdb.GraphSessionFactory
 
 	// SourceNode is the graph's source node.
 	SourceNode *models.LightningNode
@@ -56,9 +59,11 @@ func (m *SessionSource) NewPaymentSession(p *LightningPayment,
 	trafficShaper fn.Option[htlcswitch.AuxTrafficShaper]) (PaymentSession,
 	error) {
 
-	getBandwidthHints := func(graph Graph) (bandwidthHints, error) {
+	getBandwidthHints := func(ctx context.Context,
+		graph graphdb.RoutingGraph) (bandwidthHints, error) {
+
 		return newBandwidthManager(
-			graph, m.SourceNode.PubKeyBytes, m.GetLink,
+			ctx, graph, m.SourceNode.PubKeyBytes, m.GetLink,
 			firstHopBlob, trafficShaper,
 		)
 	}

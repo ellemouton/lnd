@@ -2,6 +2,7 @@ package graphdb
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/aliasmgr"
 	"github.com/lightningnetwork/lnd/batch"
+	"github.com/lightningnetwork/lnd/graph/db/codec"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/kvdb"
@@ -160,6 +162,9 @@ var (
 	//
 	// maps: scid -> []byte{}
 	closedScidBucket = []byte("closed-scid")
+
+	// byteOrder defines the preferred byte order, which is Big Endian.
+	byteOrder = binary.BigEndian
 )
 
 const (
@@ -170,7 +175,7 @@ const (
 	MaxAllowedExtraOpaqueBytes = 10000
 )
 
-// ChannelGraph is a persistent, on-disk graph representation of the Lightning
+// BoltStore is a persistent, on-disk graph representation of the Lightning
 // Network. This struct can be used to implement path finding algorithms on top
 // of, and also to update a node's view based on information received from the
 // p2p network. Internally, the graph is stored using a modified adjacency list
@@ -180,24 +185,22 @@ const (
 // Nodes, edges, and edge information can all be added to the graph
 // independently. Edge removal results in the deletion of all edge information
 // for that edge.
-type ChannelGraph struct {
+type BoltStore struct {
 	db kvdb.Backend
 
 	// cacheMu guards all caches (rejectCache, chanCache, graphCache). If
 	// this mutex will be acquired at the same time as the DB mutex then
 	// the cacheMu MUST be acquired first to prevent deadlock.
-	cacheMu     sync.RWMutex
-	rejectCache *rejectCache
-	chanCache   *channelCache
-	graphCache  *GraphCache
-
+	cacheMu       sync.RWMutex
+	rejectCache   *rejectCache
+	chanCache     *channelCache
 	chanScheduler batch.Scheduler
 	nodeScheduler batch.Scheduler
 }
 
-// NewChannelGraph allocates a new ChannelGraph backed by a DB instance. The
+// NewBoltStore allocates a new BoltStore backed by a DB instance. The
 // returned instance has its own unique reject cache and channel cache.
-func NewChannelGraph(db kvdb.Backend, options ...OptionModifier) (*ChannelGraph,
+func NewBoltStore(db kvdb.Backend, options ...OptionModifier) (*BoltStore,
 	error) {
 
 	opts := DefaultOptions()
@@ -211,7 +214,7 @@ func NewChannelGraph(db kvdb.Backend, options ...OptionModifier) (*ChannelGraph,
 		}
 	}
 
-	g := &ChannelGraph{
+	g := &BoltStore{
 		db:          db,
 		rejectCache: newRejectCache(opts.RejectCacheSize),
 		chanCache:   newChannelCache(opts.ChannelCacheSize),
@@ -222,40 +225,6 @@ func NewChannelGraph(db kvdb.Backend, options ...OptionModifier) (*ChannelGraph,
 	g.nodeScheduler = batch.NewTimeScheduler(
 		db, nil, opts.BatchCommitInterval,
 	)
-
-	// The graph cache can be turned off (e.g. for mobile users) for a
-	// speed/memory usage tradeoff.
-	if opts.UseGraphCache {
-		g.graphCache = NewGraphCache(opts.PreAllocCacheNumNodes)
-		startTime := time.Now()
-		log.Debugf("Populating in-memory channel graph, this might " +
-			"take a while...")
-
-		err := g.ForEachNodeCacheable(
-			func(tx kvdb.RTx, node GraphCacheNode) error {
-				g.graphCache.AddNodeFeatures(node)
-
-				return nil
-			},
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		err = g.ForEachChannel(func(info *models.ChannelEdgeInfo,
-			policy1, policy2 *models.ChannelEdgePolicy) error {
-
-			g.graphCache.AddChannel(info, policy1, policy2)
-
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		log.Debugf("Finished populating in-memory channel graph (took "+
-			"%v, %s)", time.Since(startTime), g.graphCache.Stats())
-	}
 
 	return g, nil
 }
@@ -268,7 +237,7 @@ type channelMapKey struct {
 
 // getChannelMap loads all channel edge policies from the database and stores
 // them in a map.
-func (c *ChannelGraph) getChannelMap(edges kvdb.RBucket) (
+func (c *BoltStore) getChannelMap(edges kvdb.RBucket) (
 	map[channelMapKey]*models.ChannelEdgePolicy, error) {
 
 	// Create a map to store all channel edge policies.
@@ -305,7 +274,7 @@ func (c *ChannelGraph) getChannelMap(edges kvdb.RBucket) (
 		)
 
 		switch {
-		// If the db policy was missing an expected optional field, we
+		// If the localDB policy was missing an expected optional field, we
 		// return nil as if the policy was unknown.
 		case err == ErrEdgePolicyOptionalFieldNotFound:
 			return nil
@@ -335,7 +304,7 @@ var graphTopLevelBuckets = [][]byte{
 // Wipe completely deletes all saved state within all used buckets within the
 // database. The deletion is done in a single transaction, therefore this
 // operation is fully atomic.
-func (c *ChannelGraph) Wipe() error {
+func (c *BoltStore) Wipe() error {
 	err := kvdb.Update(c.db, func(tx kvdb.RwTx) error {
 		for _, tlb := range graphTopLevelBuckets {
 			err := tx.DeleteTopLevelBucket(tlb)
@@ -405,11 +374,7 @@ func initChannelGraph(db kvdb.Backend) error {
 
 // NewPathFindTx returns a new read transaction that can be used for a single
 // path finding session. Will return nil if the graph cache is enabled.
-func (c *ChannelGraph) NewPathFindTx() (kvdb.RTx, error) {
-	if c.graphCache != nil {
-		return nil, nil
-	}
-
+func (c *BoltStore) NewPathFindTx() (kvdb.RTx, error) {
 	return c.db.BeginReadTx()
 }
 
@@ -418,7 +383,7 @@ func (c *ChannelGraph) NewPathFindTx() (kvdb.RTx, error) {
 // unknown to the graph DB or not.
 //
 // NOTE: this is part of the channeldb.AddrSource interface.
-func (c *ChannelGraph) AddrsForNode(nodePub *btcec.PublicKey) (bool, []net.Addr,
+func (c *BoltStore) AddrsForNode(nodePub *btcec.PublicKey) (bool, []net.Addr,
 	error) {
 
 	pubKey, err := route.NewVertexFromBytes(nodePub.SerializeCompressed())
@@ -448,7 +413,7 @@ func (c *ChannelGraph) AddrsForNode(nodePub *btcec.PublicKey) (bool, []net.Addr,
 // NOTE: If an edge can't be found, or wasn't advertised, then a nil pointer
 // for that particular channel edge routing policy will be passed into the
 // callback.
-func (c *ChannelGraph) ForEachChannel(cb func(*models.ChannelEdgeInfo,
+func (c *BoltStore) ForEachChannel(cb func(*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
 
 	return c.db.View(func(tx kvdb.RTx) error {
@@ -503,21 +468,20 @@ func (c *ChannelGraph) ForEachChannel(cb func(*models.ChannelEdgeInfo,
 // ForEachNodeDirectedChannel iterates through all channels of a given node,
 // executing the passed callback on the directed edge representing the channel
 // and its incoming policy. If the callback returns an error, then the iteration
-// is halted with the error propagated back up to the caller.
+// is halted with the error propagated back up to the caller. An optional read
+// transaction may be provided. If none is provided, a new one will be created.
 //
 // Unknown policies are passed into the callback as nil values.
-func (c *ChannelGraph) ForEachNodeDirectedChannel(tx kvdb.RTx,
-	node route.Vertex, cb func(channel *DirectedChannel) error) error {
-
-	if c.graphCache != nil {
-		return c.graphCache.ForEachChannel(node, cb)
-	}
+//
+// NOTE: this is part of the graphsession.graph interface.
+func (c *BoltStore) ForEachNodeDirectedChannel(tx kvdb.RTx,
+	node route.Vertex, cb func(channel *models.DirectedChannel) error) error {
 
 	// Fallback that uses the database.
 	toNodeCallback := func() route.Vertex {
 		return node
 	}
-	toNodeFeatures, err := c.FetchNodeFeatures(node)
+	toNodeFeatures, err := c.FetchNodeFeaturesTx(tx, node)
 	if err != nil {
 		return err
 	}
@@ -542,7 +506,7 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(tx kvdb.RTx,
 			}
 		}
 
-		directedChannel := &DirectedChannel{
+		directedChannel := &models.DirectedChannel{
 			ChannelID:    e.ChannelID,
 			IsNode1:      node == e.NodeKey1Bytes,
 			OtherNode:    e.NodeKey2Bytes,
@@ -561,17 +525,22 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(tx kvdb.RTx,
 	return nodeTraversal(tx, node[:], c.db, dbCallback)
 }
 
-// FetchNodeFeatures returns the features of a given node. If no features are
-// known for the node, an empty feature vector is returned.
-func (c *ChannelGraph) FetchNodeFeatures(
+func (c *BoltStore) FetchNodeFeatures(_ context.Context, node route.Vertex) (
+	*lnwire.FeatureVector, error) {
+
+	return c.FetchNodeFeaturesTx(nil, node)
+}
+
+// FetchNodeFeaturesTx returns the features of a given node. If no features are
+// known for the node, an empty feature vector is returned. An optional read
+// transaction may be provided. If none is provided, a new one will be created.
+//
+// NOTE: this is part of the graphsession.graph interface.
+func (c *BoltStore) FetchNodeFeaturesTx(tx kvdb.RTx,
 	node route.Vertex) (*lnwire.FeatureVector, error) {
 
-	if c.graphCache != nil {
-		return c.graphCache.GetFeatures(node), nil
-	}
-
 	// Fallback that uses the database.
-	targetNode, err := c.FetchLightningNode(node)
+	targetNode, err := c.FetchLightningNodeTx(tx, node)
 	switch err {
 	// If the node exists and has features, return them directly.
 	case nil:
@@ -588,26 +557,22 @@ func (c *ChannelGraph) FetchNodeFeatures(
 	}
 }
 
-// ForEachNodeCached is similar to ForEachNode, but it utilizes the channel
+// ForEachNodeCached is similar to ForEachNodeTx, but it utilizes the channel
 // graph cache instead. Note that this doesn't return all the information the
-// regular ForEachNode method does.
+// regular ForEachNodeTx method does.
 //
 // NOTE: The callback contents MUST not be modified.
-func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
-	chans map[uint64]*DirectedChannel) error) error {
-
-	if c.graphCache != nil {
-		return c.graphCache.ForEachNode(cb)
-	}
+func (c *BoltStore) ForEachNodeCached(cb func(node route.Vertex,
+	chans map[uint64]*models.DirectedChannel) error) error {
 
 	// Otherwise call back to a version that uses the database directly.
 	// We'll iterate over each node, then the set of channels for each
 	// node, and construct a similar callback functiopn signature as the
 	// main funcotin expects.
-	return c.ForEachNode(func(tx kvdb.RTx,
+	return c.ForEachNodeTx(func(tx kvdb.RTx,
 		node *models.LightningNode) error {
 
-		channels := make(map[uint64]*DirectedChannel)
+		channels := make(map[uint64]*models.DirectedChannel)
 
 		err := c.ForEachNodeChannelTx(tx, node.PubKeyBytes,
 			func(tx kvdb.RTx, e *models.ChannelEdgeInfo,
@@ -617,8 +582,8 @@ func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
 				toNodeCallback := func() route.Vertex {
 					return node.PubKeyBytes
 				}
-				toNodeFeatures, err := c.FetchNodeFeatures(
-					node.PubKeyBytes,
+				toNodeFeatures, err := c.FetchNodeFeaturesTx(
+					tx, node.PubKeyBytes,
 				)
 				if err != nil {
 					return err
@@ -634,7 +599,7 @@ func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
 						toNodeFeatures
 				}
 
-				directedChannel := &DirectedChannel{
+				directedChannel := &models.DirectedChannel{
 					ChannelID: e.ChannelID,
 					IsNode1: node.PubKeyBytes ==
 						e.NodeKey1Bytes,
@@ -664,7 +629,7 @@ func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
 // DisabledChannelIDs returns the channel ids of disabled channels.
 // A channel is disabled when two of the associated ChanelEdgePolicies
 // have their disabled bit on.
-func (c *ChannelGraph) DisabledChannelIDs() ([]uint64, error) {
+func (c *BoltStore) DisabledChannelIDs() ([]uint64, error) {
 	var disabledChanIDs []uint64
 	var chanEdgeFound map[uint64]struct{}
 
@@ -713,14 +678,20 @@ func (c *ChannelGraph) DisabledChannelIDs() ([]uint64, error) {
 	return disabledChanIDs, nil
 }
 
-// ForEachNode iterates through all the stored vertices/nodes in the graph,
+func (c *BoltStore) ForEachNode(cb func(*models.LightningNode) error) error {
+	return c.ForEachNodeTx(func(_ kvdb.RTx, node *models.LightningNode) error {
+		return cb(node)
+	})
+}
+
+// ForEachNodeTx iterates through all the stored vertices/nodes in the graph,
 // executing the passed callback with each node encountered. If the callback
 // returns an error, then the transaction is aborted and the iteration stops
 // early.
 //
 // TODO(roasbeef): add iterator interface to allow for memory efficient graph
 // traversal when graph gets mega
-func (c *ChannelGraph) ForEachNode(
+func (c *BoltStore) ForEachNodeTx(
 	cb func(kvdb.RTx, *models.LightningNode) error) error {
 
 	traversal := func(tx kvdb.RTx) error {
@@ -758,9 +729,7 @@ func (c *ChannelGraph) ForEachNode(
 // graph, executing the passed callback with each node encountered. If the
 // callback returns an error, then the transaction is aborted and the iteration
 // stops early.
-func (c *ChannelGraph) ForEachNodeCacheable(cb func(kvdb.RTx,
-	GraphCacheNode) error) error {
-
+func (c *BoltStore) ForEachNodeCacheable(cb func(GraphCacheNode) error) error {
 	traversal := func(tx kvdb.RTx) error {
 		// First grab the nodes bucket which stores the mapping from
 		// pubKey to node information.
@@ -779,7 +748,7 @@ func (c *ChannelGraph) ForEachNodeCacheable(cb func(kvdb.RTx,
 
 			nodeReader := bytes.NewReader(nodeBytes)
 			cacheableNode, err := deserializeLightningNodeCacheable(
-				nodeReader,
+				c, nodeReader,
 			)
 			if err != nil {
 				return err
@@ -787,7 +756,7 @@ func (c *ChannelGraph) ForEachNodeCacheable(cb func(kvdb.RTx,
 
 			// Execute the callback, the transaction will abort if
 			// this returns an error.
-			return cb(tx, cacheableNode)
+			return cb(cacheableNode)
 		})
 	}
 
@@ -798,7 +767,7 @@ func (c *ChannelGraph) ForEachNodeCacheable(cb func(kvdb.RTx,
 // as the center node within a star-graph. This method may be used to kick off
 // a path finding algorithm in order to explore the reachability of another
 // node based off the source node.
-func (c *ChannelGraph) SourceNode() (*models.LightningNode, error) {
+func (c *BoltStore) SourceNode() (*models.LightningNode, error) {
 	var source *models.LightningNode
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		// First grab the nodes bucket which stores the mapping from
@@ -829,7 +798,7 @@ func (c *ChannelGraph) SourceNode() (*models.LightningNode, error) {
 // of the graph. The source node is treated as the center node within a
 // star-graph. This method may be used to kick off a path finding algorithm in
 // order to explore the reachability of another node based off the source node.
-func (c *ChannelGraph) sourceNode(nodes kvdb.RBucket) (*models.LightningNode,
+func (c *BoltStore) sourceNode(nodes kvdb.RBucket) (*models.LightningNode,
 	error) {
 
 	selfPub := nodes.Get(sourceKey)
@@ -850,7 +819,7 @@ func (c *ChannelGraph) sourceNode(nodes kvdb.RBucket) (*models.LightningNode,
 // SetSourceNode sets the source node within the graph database. The source
 // node is to be used as the center of a star-graph within path finding
 // algorithms.
-func (c *ChannelGraph) SetSourceNode(node *models.LightningNode) error {
+func (c *BoltStore) SetSourceNode(node *models.LightningNode) error {
 	nodePubBytes := node.PubKeyBytes[:]
 
 	return kvdb.Update(c.db, func(tx kvdb.RwTx) error {
@@ -881,27 +850,19 @@ func (c *ChannelGraph) SetSourceNode(node *models.LightningNode) error {
 // channel update.
 //
 // TODO(roasbeef): also need sig of announcement
-func (c *ChannelGraph) AddLightningNode(node *models.LightningNode,
+func (c *BoltStore) AddLightningNode(node *models.LightningNode,
 	op ...batch.SchedulerOption) error {
 
-	r := &batch.Request{
-		Update: func(tx kvdb.RwTx) error {
-			if c.graphCache != nil {
-				cNode := newGraphCacheNode(
-					node.PubKeyBytes, node.Features,
-				)
-				err := c.graphCache.AddNode(tx, cNode)
-				if err != nil {
-					return err
-				}
-			}
-
-			return addLightningNode(tx, node)
-		},
+	opts := batch.DefaultRequestOptions()
+	for _, o := range op {
+		o(&opts)
 	}
 
-	for _, f := range op {
-		f(r)
+	r := &batch.Request{
+		RequestOptions: opts,
+		Update: func(tx kvdb.RwTx) error {
+			return addLightningNode(tx, node)
+		},
 	}
 
 	return c.nodeScheduler.Execute(r)
@@ -930,7 +891,7 @@ func addLightningNode(tx kvdb.RwTx, node *models.LightningNode) error {
 
 // LookupAlias attempts to return the alias as advertised by the target node.
 // TODO(roasbeef): currently assumes that aliases are unique...
-func (c *ChannelGraph) LookupAlias(pub *btcec.PublicKey) (string, error) {
+func (c *BoltStore) LookupAlias(pub *btcec.PublicKey) (string, error) {
 	var alias string
 
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
@@ -966,16 +927,12 @@ func (c *ChannelGraph) LookupAlias(pub *btcec.PublicKey) (string, error) {
 
 // DeleteLightningNode starts a new database transaction to remove a vertex/node
 // from the database according to the node's public key.
-func (c *ChannelGraph) DeleteLightningNode(nodePub route.Vertex) error {
+func (c *BoltStore) DeleteLightningNode(nodePub route.Vertex) error {
 	// TODO(roasbeef): ensure dangling edges are removed...
 	return kvdb.Update(c.db, func(tx kvdb.RwTx) error {
 		nodes := tx.ReadWriteBucket(nodeBucket)
 		if nodes == nil {
 			return ErrGraphNodeNotFound
-		}
-
-		if c.graphCache != nil {
-			c.graphCache.RemoveNode(nodePub)
 		}
 
 		return c.deleteLightningNode(nodes, nodePub[:])
@@ -984,7 +941,7 @@ func (c *ChannelGraph) DeleteLightningNode(nodePub route.Vertex) error {
 
 // deleteLightningNode uses an existing database transaction to remove a
 // vertex/node from the database according to the node's public key.
-func (c *ChannelGraph) deleteLightningNode(nodes kvdb.RwBucket,
+func (c *BoltStore) deleteLightningNode(nodes kvdb.RwBucket,
 	compressedPubKey []byte) error {
 
 	aliases := nodes.NestedReadWriteBucket(aliasIndexBucket)
@@ -1032,11 +989,17 @@ func (c *ChannelGraph) deleteLightningNode(nodes kvdb.RwBucket,
 // involved in creation of the channel, and the set of features that the channel
 // supports. The chanPoint and chanID are used to uniquely identify the edge
 // globally within the database.
-func (c *ChannelGraph) AddChannelEdge(edge *models.ChannelEdgeInfo,
+func (c *BoltStore) AddChannelEdge(edge *models.ChannelEdgeInfo,
 	op ...batch.SchedulerOption) error {
+
+	opts := batch.DefaultRequestOptions()
+	for _, o := range op {
+		o(&opts)
+	}
 
 	var alreadyExists bool
 	r := &batch.Request{
+		RequestOptions: opts,
 		Reset: func() {
 			alreadyExists = false
 		},
@@ -1066,20 +1029,12 @@ func (c *ChannelGraph) AddChannelEdge(edge *models.ChannelEdgeInfo,
 		},
 	}
 
-	for _, f := range op {
-		if f == nil {
-			return fmt.Errorf("nil scheduler option was used")
-		}
-
-		f(r)
-	}
-
 	return c.chanScheduler.Execute(r)
 }
 
 // addChannelEdge is the private form of AddChannelEdge that allows callers to
 // utilize an existing db transaction.
-func (c *ChannelGraph) addChannelEdge(tx kvdb.RwTx,
+func (c *BoltStore) addChannelEdge(tx kvdb.RwTx,
 	edge *models.ChannelEdgeInfo) error {
 
 	// Construct the channel's primary key which is the 8-byte channel ID.
@@ -1107,10 +1062,6 @@ func (c *ChannelGraph) addChannelEdge(tx kvdb.RwTx,
 	// so, then we can exit early as this method is meant to be idempotent.
 	if edgeInfo := edgeIndex.Get(chanKey[:]); edgeInfo != nil {
 		return ErrEdgeAlreadyExist
-	}
-
-	if c.graphCache != nil {
-		c.graphCache.AddChannel(edge, nil, nil)
 	}
 
 	// Before we insert the channel into the database, we'll ensure that
@@ -1172,7 +1123,7 @@ func (c *ChannelGraph) addChannelEdge(tx kvdb.RwTx,
 	// Finally we add it to the channel index which maps channel points
 	// (outpoints) to the shorter channel ID's.
 	var b bytes.Buffer
-	if err := WriteOutpoint(&b, &edge.ChannelPoint); err != nil {
+	if err := codec.WriteOutpoint(&b, &edge.ChannelPoint); err != nil {
 		return err
 	}
 	return chanIndex.Put(b.Bytes(), chanKey[:])
@@ -1184,7 +1135,7 @@ func (c *ChannelGraph) addChannelEdge(tx kvdb.RwTx,
 // was updated for both directed edges are returned along with the boolean. If
 // it is not found, then the zombie index is checked and its result is returned
 // as the second boolean.
-func (c *ChannelGraph) HasChannelEdge(
+func (c *BoltStore) HasChannelEdge(
 	chanID uint64) (time.Time, time.Time, bool, bool, error) {
 
 	var (
@@ -1292,7 +1243,7 @@ func (c *ChannelGraph) HasChannelEdge(
 // In order to maintain this constraints, we return an error in the scenario
 // that an edge info hasn't yet been created yet, but someone attempts to update
 // it.
-func (c *ChannelGraph) UpdateChannelEdge(edge *models.ChannelEdgeInfo) error {
+func (c *BoltStore) UpdateChannelEdge(edge *models.ChannelEdgeInfo) error {
 	// Construct the channel's primary key which is the 8-byte channel ID.
 	var chanKey [8]byte
 	binary.BigEndian.PutUint64(chanKey[:], edge.ChannelID)
@@ -1310,10 +1261,6 @@ func (c *ChannelGraph) UpdateChannelEdge(edge *models.ChannelEdgeInfo) error {
 
 		if edgeInfo := edgeIndex.Get(chanKey[:]); edgeInfo == nil {
 			return ErrEdgeNotFound
-		}
-
-		if c.graphCache != nil {
-			c.graphCache.UpdateChannel(edge)
 		}
 
 		return putChanEdgeInfo(edgeIndex, edge, chanKey)
@@ -1336,9 +1283,11 @@ const (
 // prune the graph is stored so callers can ensure the graph is fully in sync
 // with the current UTXO state. A slice of channels that have been closed by
 // the target block are returned if the function succeeds without error.
-func (c *ChannelGraph) PruneGraph(spentOutputs []*wire.OutPoint,
-	blockHash *chainhash.Hash, blockHeight uint32) (
-	[]*models.ChannelEdgeInfo, error) {
+func (c *BoltStore) PruneGraph(spentOutputs []*wire.OutPoint,
+	blockHash *chainhash.Hash, blockHeight uint32,
+	delNode func(route.Vertex),
+	delEdge func(info *models.ChannelEdgeInfo)) ([]*models.ChannelEdgeInfo,
+	error) {
 
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
@@ -1382,7 +1331,7 @@ func (c *ChannelGraph) PruneGraph(spentOutputs []*wire.OutPoint,
 			// if NOT if filter
 
 			var opBytes bytes.Buffer
-			err := WriteOutpoint(&opBytes, chanPoint)
+			err := codec.WriteOutpoint(&opBytes, chanPoint)
 			if err != nil {
 				return err
 			}
@@ -1408,7 +1357,7 @@ func (c *ChannelGraph) PruneGraph(spentOutputs []*wire.OutPoint,
 			// was successfully pruned.
 			err = c.delChannelEdgeUnsafe(
 				edges, edgeIndex, chanIndex, zombieIndex,
-				chanID, false, false,
+				chanID, false, false, delEdge,
 			)
 			if err != nil && !errors.Is(err, ErrEdgeNotFound) {
 				return err
@@ -1446,7 +1395,7 @@ func (c *ChannelGraph) PruneGraph(spentOutputs []*wire.OutPoint,
 		// Now that the graph has been pruned, we'll also attempt to
 		// prune any nodes that have had a channel closed within the
 		// latest block.
-		return c.pruneGraphNodes(nodes, edgeIndex)
+		return c.pruneGraphNodes(nodes, edgeIndex, delNode)
 	}, func() {
 		chansClosed = nil
 	})
@@ -1459,11 +1408,6 @@ func (c *ChannelGraph) PruneGraph(spentOutputs []*wire.OutPoint,
 		c.chanCache.remove(channel.ChannelID)
 	}
 
-	if c.graphCache != nil {
-		log.Debugf("Pruned graph, cache now has %s",
-			c.graphCache.Stats())
-	}
-
 	return chansClosed, nil
 }
 
@@ -1471,7 +1415,7 @@ func (c *ChannelGraph) PruneGraph(spentOutputs []*wire.OutPoint,
 // any nodes from the channel graph that are currently unconnected. This ensure
 // that we only maintain a graph of reachable nodes. In the event that a pruned
 // node gains more channels, it will be re-added back to the graph.
-func (c *ChannelGraph) PruneGraphNodes() error {
+func (c *BoltStore) PruneGraphNodes(cb func(vertex route.Vertex)) error {
 	return kvdb.Update(c.db, func(tx kvdb.RwTx) error {
 		nodes := tx.ReadWriteBucket(nodeBucket)
 		if nodes == nil {
@@ -1486,15 +1430,15 @@ func (c *ChannelGraph) PruneGraphNodes() error {
 			return ErrGraphNoEdgesFound
 		}
 
-		return c.pruneGraphNodes(nodes, edgeIndex)
+		return c.pruneGraphNodes(nodes, edgeIndex, cb)
 	}, func() {})
 }
 
 // pruneGraphNodes attempts to remove any nodes from the graph who have had a
 // channel closed within the current block. If the node still has existing
 // channels in the graph, this will act as a no-op.
-func (c *ChannelGraph) pruneGraphNodes(nodes kvdb.RwBucket,
-	edgeIndex kvdb.RwBucket) error {
+func (c *BoltStore) pruneGraphNodes(nodes kvdb.RwBucket,
+	edgeIndex kvdb.RwBucket, cb func(removedNode route.Vertex)) error {
 
 	log.Trace("Pruning nodes from graph with no open channels")
 
@@ -1564,9 +1508,8 @@ func (c *ChannelGraph) pruneGraphNodes(nodes kvdb.RwBucket,
 			continue
 		}
 
-		if c.graphCache != nil {
-			c.graphCache.RemoveNode(nodePubKey)
-		}
+		// Indicate via the call-back that this node is being deleted.
+		cb(nodePubKey)
 
 		// If we reach this point, then there are no longer any edges
 		// that connect this node, so we can delete it.
@@ -1604,7 +1547,7 @@ func (c *ChannelGraph) pruneGraphNodes(nodes kvdb.RwBucket,
 // set to the last prune height valid for the remaining chain.
 // Channels that were removed from the graph resulting from the
 // disconnected block are returned.
-func (c *ChannelGraph) DisconnectBlockAtHeight(height uint32) (
+func (c *BoltStore) DisconnectBlockAtHeight(height uint32) (
 	[]*models.ChannelEdgeInfo, error) {
 
 	// Every channel having a ShortChannelID starting at 'height'
@@ -1613,7 +1556,7 @@ func (c *ChannelGraph) DisconnectBlockAtHeight(height uint32) (
 		BlockHeight: height,
 	}
 
-	// Delete everything after this height from the db up until the
+	// Delete everything after this height from the localDB up until the
 	// SCID alias range.
 	endShortChanID := aliasmgr.StartingAlias
 
@@ -1675,6 +1618,7 @@ func (c *ChannelGraph) DisconnectBlockAtHeight(height uint32) (
 			err = c.delChannelEdgeUnsafe(
 				edges, edgeIndex, chanIndex, zombieIndex,
 				k, false, false,
+				func(_ *models.ChannelEdgeInfo) {},
 			)
 			if err != nil && !errors.Is(err, ErrEdgeNotFound) {
 				return err
@@ -1736,7 +1680,7 @@ func (c *ChannelGraph) DisconnectBlockAtHeight(height uint32) (
 // used to prune channels in the graph. Knowing the "prune tip" allows callers
 // to tell if the graph is currently in sync with the current best known UTXO
 // state.
-func (c *ChannelGraph) PruneTip() (*chainhash.Hash, uint32, error) {
+func (c *BoltStore) PruneTip() (*chainhash.Hash, uint32, error) {
 	var (
 		tipHash   chainhash.Hash
 		tipHeight uint32
@@ -1783,8 +1727,8 @@ func (c *ChannelGraph) PruneTip() (*chainhash.Hash, uint32, error) {
 // that we require the node that failed to send the fresh update to be the one
 // that resurrects the channel from its zombie state. The markZombie bool
 // denotes whether or not to mark the channel as a zombie.
-func (c *ChannelGraph) DeleteChannelEdges(strictZombiePruning, markZombie bool,
-	chanIDs ...uint64) error {
+func (c *BoltStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
+	cb func(deletedEdge *models.ChannelEdgeInfo), chanIDs ...uint64) error {
 
 	// TODO(roasbeef): possibly delete from node bucket if node has no more
 	// channels
@@ -1821,6 +1765,7 @@ func (c *ChannelGraph) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 			err := c.delChannelEdgeUnsafe(
 				edges, edgeIndex, chanIndex, zombieIndex,
 				rawChanID[:], markZombie, strictZombiePruning,
+				cb,
 			)
 			if err != nil {
 				return err
@@ -1844,7 +1789,7 @@ func (c *ChannelGraph) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 // ChannelID attempt to lookup the 8-byte compact channel ID which maps to the
 // passed channel point (outpoint). If the passed channel doesn't exist within
 // the database, then ErrEdgeNotFound is returned.
-func (c *ChannelGraph) ChannelID(chanPoint *wire.OutPoint) (uint64, error) {
+func (c *BoltStore) ChannelID(chanPoint *wire.OutPoint) (uint64, error) {
 	var chanID uint64
 	if err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		var err error
@@ -1862,7 +1807,7 @@ func (c *ChannelGraph) ChannelID(chanPoint *wire.OutPoint) (uint64, error) {
 // getChanID returns the assigned channel ID for a given channel point.
 func getChanID(tx kvdb.RTx, chanPoint *wire.OutPoint) (uint64, error) {
 	var b bytes.Buffer
-	if err := WriteOutpoint(&b, chanPoint); err != nil {
+	if err := codec.WriteOutpoint(&b, chanPoint); err != nil {
 		return 0, err
 	}
 
@@ -1890,7 +1835,7 @@ func getChanID(tx kvdb.RTx, chanPoint *wire.OutPoint) (uint64, error) {
 // HighestChanID returns the "highest" known channel ID in the channel graph.
 // This represents the "newest" channel from the PoV of the chain. This method
 // can be used by peers to quickly determine if they're graphs are in sync.
-func (c *ChannelGraph) HighestChanID() (uint64, error) {
+func (c *BoltStore) HighestChanID() (uint64, error) {
 	var cid uint64
 
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
@@ -1955,7 +1900,7 @@ type ChannelEdge struct {
 
 // ChanUpdatesInHorizon returns all the known channel edges which have at least
 // one edge that has an update timestamp within the specified horizon.
-func (c *ChannelGraph) ChanUpdatesInHorizon(startTime,
+func (c *BoltStore) ChanUpdatesInHorizon(startTime,
 	endTime time.Time) ([]ChannelEdge, error) {
 
 	// To ensure we don't return duplicate ChannelEdges, we'll use an
@@ -2107,7 +2052,7 @@ func (c *ChannelGraph) ChanUpdatesInHorizon(startTime,
 // update timestamp within the passed range. This method can be used by two
 // nodes to quickly determine if they have the same set of up to date node
 // announcements.
-func (c *ChannelGraph) NodeUpdatesInHorizon(startTime,
+func (c *BoltStore) NodeUpdatesInHorizon(startTime,
 	endTime time.Time) ([]models.LightningNode, error) {
 
 	var nodesInHorizon []models.LightningNode
@@ -2174,8 +2119,8 @@ func (c *ChannelGraph) NodeUpdatesInHorizon(startTime,
 // words, we perform a set difference of our set of chan ID's and the ones
 // passed in. This method can be used by callers to determine the set of
 // channels another peer knows of that we don't.
-func (c *ChannelGraph) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo,
-	isZombieChan func(time.Time, time.Time) bool) ([]uint64, error) {
+func (c *BoltStore) FilterKnownChanIDs(chansInfo map[uint64]ChannelUpdateInfo) (
+	[]uint64, error) {
 
 	var newChanIDs []uint64
 
@@ -2192,13 +2137,8 @@ func (c *ChannelGraph) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo,
 			return ErrGraphNoEdgesFound
 		}
 
-		// Fetch the zombie index, it may not exist if no edges have
-		// ever been marked as zombies. If the index has been
-		// initialized, we will use it later to skip known zombie edges.
-		zombieIndex := edges.NestedReadBucket(zombieBucket)
-
 		// We'll run through the set of chanIDs and collate only the
-		// set of channel that are unable to be found within our db.
+		// set of channel that are unable to be found within our localDB.
 		var cidBytes [8]byte
 		for _, info := range chansInfo {
 			scid := info.ShortChannelID.ToUint64()
@@ -2207,53 +2147,6 @@ func (c *ChannelGraph) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo,
 			// If the edge is already known, skip it.
 			if v := edgeIndex.Get(cidBytes[:]); v != nil {
 				continue
-			}
-
-			// If the edge is a known zombie, skip it.
-			if zombieIndex != nil {
-				isZombie, _, _ := isZombieEdge(
-					zombieIndex, scid,
-				)
-
-				// TODO(ziggie): Make sure that for the strict
-				// pruning case we compare the pubkeys and
-				// whether the right timestamp is not older than
-				// the `ChannelPruneExpiry`.
-				//
-				// NOTE: The timestamp data has no verification
-				// attached to it in the `ReplyChannelRange` msg
-				// so we are trusting this data at this point.
-				// However it is not critical because we are
-				// just removing the channel from the db when
-				// the timestamps are more recent. During the
-				// querying of the gossip msg verification
-				// happens as usual.
-				// However we should start punishing peers when
-				// they don't provide us honest data ?
-				isStillZombie := isZombieChan(
-					info.Node1UpdateTimestamp,
-					info.Node2UpdateTimestamp,
-				)
-
-				switch {
-				// If the edge is a known zombie and if we
-				// would still consider it a zombie given the
-				// latest update timestamps, then we skip this
-				// channel.
-				case isZombie && isStillZombie:
-					continue
-
-				// Otherwise, if we have marked it as a zombie
-				// but the latest update timestamps could bring
-				// it back from the dead, then we mark it alive,
-				// and we let it be added to the set of IDs to
-				// query our peer for.
-				case isZombie && !isStillZombie:
-					err := c.markEdgeLiveUnsafe(tx, scid)
-					if err != nil {
-						return err
-					}
-				}
 			}
 
 			newChanIDs = append(newChanIDs, scid)
@@ -2341,7 +2234,7 @@ type BlockChannelRange struct {
 // up after a period of time offline. If withTimestamps is true then the
 // timestamp info of the latest received channel update messages of the channel
 // will be included in the response.
-func (c *ChannelGraph) FilterChannelRange(startHeight,
+func (c *BoltStore) FilterChannelRange(startHeight,
 	endHeight uint32, withTimestamps bool) ([]BlockChannelRange, error) {
 
 	startChanID := &lnwire.ShortChannelID{
@@ -2486,7 +2379,7 @@ func (c *ChannelGraph) FilterChannelRange(startHeight,
 // skipped and the result will contain only those edges that exist at the time
 // of the query. This can be used to respond to peer queries that are seeking to
 // fill in gaps in their view of the channel graph.
-func (c *ChannelGraph) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
+func (c *BoltStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 	return c.fetchChanInfos(nil, chanIDs)
 }
 
@@ -2498,7 +2391,7 @@ func (c *ChannelGraph) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 //
 // NOTE: An optional transaction may be provided. If none is provided, then a
 // new one will be created.
-func (c *ChannelGraph) fetchChanInfos(tx kvdb.RTx, chanIDs []uint64) (
+func (c *BoltStore) fetchChanInfos(tx kvdb.RTx, chanIDs []uint64) (
 	[]ChannelEdge, error) {
 	// TODO(roasbeef): sort cids?
 
@@ -2639,21 +2532,16 @@ func delEdgeUpdateIndexEntry(edgesBucket kvdb.RwBucket, chanID uint64,
 //
 // NOTE: this method MUST only be called if the cacheMu has already been
 // acquired.
-func (c *ChannelGraph) delChannelEdgeUnsafe(edges, edgeIndex, chanIndex,
+func (c *BoltStore) delChannelEdgeUnsafe(edges, edgeIndex, chanIndex,
 	zombieIndex kvdb.RwBucket, chanID []byte, isZombie,
-	strictZombie bool) error {
+	strictZombie bool, cb func(deletedEdge *models.ChannelEdgeInfo)) error {
 
 	edgeInfo, err := fetchChanEdgeInfo(edgeIndex, chanID)
 	if err != nil {
 		return err
 	}
 
-	if c.graphCache != nil {
-		c.graphCache.RemoveChannel(
-			edgeInfo.NodeKey1Bytes, edgeInfo.NodeKey2Bytes,
-			edgeInfo.ChannelID,
-		)
-	}
+	cb(&edgeInfo)
 
 	// We'll also remove the entry in the edge update index bucket before
 	// we delete the edges themselves so we can access their last update
@@ -2707,7 +2595,7 @@ func (c *ChannelGraph) delChannelEdgeUnsafe(edges, edgeIndex, chanIndex,
 		return err
 	}
 	var b bytes.Buffer
-	if err := WriteOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
+	if err := codec.WriteOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
 		return err
 	}
 	if err := chanIndex.Delete(b.Bytes()); err != nil {
@@ -2778,7 +2666,8 @@ func makeZombiePubkeys(info *models.ChannelEdgeInfo,
 // updated, otherwise it's the second node's information. The node ordering is
 // determined by the lexicographical ordering of the identity public keys of the
 // nodes on either side of the channel.
-func (c *ChannelGraph) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
+func (c *BoltStore) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
+	cb func(fromNode, toNode route.Vertex, isUpdate1 bool),
 	op ...batch.SchedulerOption) error {
 
 	var (
@@ -2786,16 +2675,20 @@ func (c *ChannelGraph) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 		edgeNotFound bool
 	)
 
+	opts := batch.DefaultRequestOptions()
+	for _, o := range op {
+		o(&opts)
+	}
+
 	r := &batch.Request{
+		RequestOptions: opts,
 		Reset: func() {
 			isUpdate1 = false
 			edgeNotFound = false
 		},
 		Update: func(tx kvdb.RwTx) error {
 			var err error
-			isUpdate1, err = updateEdgePolicy(
-				tx, edge, c.graphCache,
-			)
+			isUpdate1, err = updateEdgePolicy(tx, edge, cb)
 
 			if err != nil {
 				log.Errorf("UpdateEdgePolicy faild: %v", err)
@@ -2823,14 +2716,10 @@ func (c *ChannelGraph) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 		},
 	}
 
-	for _, f := range op {
-		f(r)
-	}
-
 	return c.chanScheduler.Execute(r)
 }
 
-func (c *ChannelGraph) updateEdgeCache(e *models.ChannelEdgePolicy,
+func (c *BoltStore) updateEdgeCache(e *models.ChannelEdgePolicy,
 	isUpdate1 bool) {
 
 	// If an entry for this channel is found in reject cache, we'll modify
@@ -2865,7 +2754,7 @@ func (c *ChannelGraph) updateEdgeCache(e *models.ChannelEdgePolicy,
 // true if the updated policy belongs to node1, and false if the policy belonged
 // to node2.
 func updateEdgePolicy(tx kvdb.RwTx, edge *models.ChannelEdgePolicy,
-	graphCache *GraphCache) (bool, error) {
+	cb func(fromNode, toNode route.Vertex, isUpdate1 bool)) (bool, error) {
 
 	edges := tx.ReadWriteBucket(edgeBucket)
 	if edges == nil {
@@ -2916,11 +2805,7 @@ func updateEdgePolicy(tx kvdb.RwTx, edge *models.ChannelEdgePolicy,
 	copy(fromNodePubKey[:], fromNode)
 	copy(toNodePubKey[:], toNode)
 
-	if graphCache != nil {
-		graphCache.UpdatePolicy(
-			edge, fromNodePubKey, toNodePubKey, isUpdate1,
-		)
-	}
+	cb(fromNodePubKey, toNodePubKey, isUpdate1)
 
 	return isUpdate1, nil
 }
@@ -2928,7 +2813,7 @@ func updateEdgePolicy(tx kvdb.RwTx, edge *models.ChannelEdgePolicy,
 // isPublic determines whether the node is seen as public within the graph from
 // the source node's point of view. An existing database transaction can also be
 // specified.
-func (c *ChannelGraph) isPublic(tx kvdb.RTx, nodePub route.Vertex,
+func (c *BoltStore) isPublic(tx kvdb.RTx, nodePub route.Vertex,
 	sourcePubKey []byte) (bool, error) {
 
 	// In order to determine whether this node is publicly advertised within
@@ -2973,7 +2858,7 @@ func (c *ChannelGraph) isPublic(tx kvdb.RTx, nodePub route.Vertex,
 // public key. If the node isn't found in the database, then
 // ErrGraphNodeNotFound is returned. An optional transaction may be provided.
 // If none is provided, then a new one will be created.
-func (c *ChannelGraph) FetchLightningNodeTx(tx kvdb.RTx, nodePub route.Vertex) (
+func (c *BoltStore) FetchLightningNodeTx(tx kvdb.RTx, nodePub route.Vertex) (
 	*models.LightningNode, error) {
 
 	return c.fetchLightningNode(tx, nodePub)
@@ -2982,7 +2867,7 @@ func (c *ChannelGraph) FetchLightningNodeTx(tx kvdb.RTx, nodePub route.Vertex) (
 // FetchLightningNode attempts to look up a target node by its identity public
 // key. If the node isn't found in the database, then ErrGraphNodeNotFound is
 // returned.
-func (c *ChannelGraph) FetchLightningNode(nodePub route.Vertex) (
+func (c *BoltStore) FetchLightningNode(nodePub route.Vertex) (
 	*models.LightningNode, error) {
 
 	return c.fetchLightningNode(nil, nodePub)
@@ -2992,7 +2877,7 @@ func (c *ChannelGraph) FetchLightningNode(nodePub route.Vertex) (
 // key. If the node isn't found in the database, then ErrGraphNodeNotFound is
 // returned. An optional transaction may be provided. If none is provided, then
 // a new one will be created.
-func (c *ChannelGraph) fetchLightningNode(tx kvdb.RTx,
+func (c *BoltStore) fetchLightningNode(tx kvdb.RTx,
 	nodePub route.Vertex) (*models.LightningNode, error) {
 
 	var node *models.LightningNode
@@ -3048,15 +2933,17 @@ func (c *ChannelGraph) fetchLightningNode(tx kvdb.RTx,
 // graphCacheNode is a struct that wraps a LightningNode in a way that it can be
 // cached in the graph cache.
 type graphCacheNode struct {
+	db          Source
 	pubKeyBytes route.Vertex
 	features    *lnwire.FeatureVector
 }
 
-// newGraphCacheNode returns a new cache optimized node.
-func newGraphCacheNode(pubKey route.Vertex,
+// NewGraphCacheNode returns a new cache optimized node.
+func NewGraphCacheNode(db Source, pubKey route.Vertex,
 	features *lnwire.FeatureVector) *graphCacheNode {
 
 	return &graphCacheNode{
+		db:          db,
 		pubKeyBytes: pubKey,
 		features:    features,
 	}
@@ -3080,11 +2967,11 @@ func (n *graphCacheNode) Features() *lnwire.FeatureVector {
 // halted with the error propagated back up to the caller.
 //
 // Unknown policies are passed into the callback as nil values.
-func (n *graphCacheNode) ForEachChannel(tx kvdb.RTx,
-	cb func(kvdb.RTx, *models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+func (n *graphCacheNode) ForEachChannel(
+	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
 
-	return nodeTraversal(tx, n.pubKeyBytes[:], nil, cb)
+	return n.db.ForEachNodeChannel(context.TODO(), n.pubKeyBytes, cb)
 }
 
 var _ GraphCacheNode = (*graphCacheNode)(nil)
@@ -3094,7 +2981,7 @@ var _ GraphCacheNode = (*graphCacheNode)(nil)
 // timestamp of when the data for the node was lasted updated is returned along
 // with a true boolean. Otherwise, an empty time.Time is returned with a false
 // boolean.
-func (c *ChannelGraph) HasLightningNode(nodePub [33]byte) (time.Time, bool,
+func (c *BoltStore) HasLightningNode(nodePub [33]byte) (time.Time, bool,
 	error) {
 
 	var (
@@ -3232,11 +3119,13 @@ func nodeTraversal(tx kvdb.RTx, nodePub []byte, db kvdb.Backend,
 // halted with the error propagated back up to the caller.
 //
 // Unknown policies are passed into the callback as nil values.
-func (c *ChannelGraph) ForEachNodeChannel(nodePub route.Vertex,
-	cb func(kvdb.RTx, *models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+func (c *BoltStore) ForEachNodeChannel(ctx context.Context, nodePub route.Vertex,
+	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
 
-	return nodeTraversal(nil, nodePub[:], c.db, cb)
+	return nodeTraversal(nil, nodePub[:], c.db, func(tx kvdb.RTx, info *models.ChannelEdgeInfo, policy *models.ChannelEdgePolicy, policy2 *models.ChannelEdgePolicy) error {
+		return cb(info, policy, policy2)
+	})
 }
 
 // ForEachNodeChannelTx iterates through all channels of the given node,
@@ -3251,8 +3140,8 @@ func (c *ChannelGraph) ForEachNodeChannel(nodePub route.Vertex,
 // If the caller wishes to re-use an existing boltdb transaction, then it
 // should be passed as the first argument.  Otherwise, the first argument should
 // be nil and a fresh transaction will be created to execute the graph
-// traversal.
-func (c *ChannelGraph) ForEachNodeChannelTx(tx kvdb.RTx,
+// traversal.ForEachNodeChannel
+func (c *BoltStore) ForEachNodeChannelTx(tx kvdb.RTx,
 	nodePub route.Vertex, cb func(kvdb.RTx, *models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
@@ -3260,11 +3149,65 @@ func (c *ChannelGraph) ForEachNodeChannelTx(tx kvdb.RTx,
 	return nodeTraversal(tx, nodePub[:], c.db, cb)
 }
 
+func (c *BoltStore) ForEachNodeWithTx(_ context.Context,
+	cb func(NodeTx) error) error {
+
+	return c.ForEachNodeTx(func(tx kvdb.RTx,
+		node *models.LightningNode) error {
+
+		return cb(newDBNodeWithTx(c, node, tx))
+	})
+}
+
+type dbNodeWithTx struct {
+	node *models.LightningNode
+	db   *BoltStore
+	tx   kvdb.RTx
+}
+
+func newDBNodeWithTx(db *BoltStore, node *models.LightningNode,
+	tx kvdb.RTx) *dbNodeWithTx {
+
+	return &dbNodeWithTx{
+		db:   db,
+		node: node,
+		tx:   tx,
+	}
+}
+
+func (n *dbNodeWithTx) Node() *models.LightningNode {
+	return n.node
+}
+
+func (n *dbNodeWithTx) ForEachNodeChannel(ctx context.Context,
+	nodePub route.Vertex, cb func(context.Context,
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy) error) error {
+
+	return n.db.ForEachNodeChannelTx(n.tx, nodePub, func(tx kvdb.RTx,
+		info *models.ChannelEdgeInfo, policy *models.ChannelEdgePolicy,
+		policy2 *models.ChannelEdgePolicy) error {
+
+		return cb(ctx, info, policy, policy2)
+	})
+}
+
+func (n *dbNodeWithTx) FetchLightningNode(_ context.Context,
+	nodePub route.Vertex) (NodeTx, error) {
+
+	node, err := n.db.FetchLightningNodeTx(n.tx, nodePub)
+	if err != nil {
+		return nil, err
+	}
+
+	return newDBNodeWithTx(n.db, node, n.tx), nil
+}
+
 // FetchOtherNode attempts to fetch the full LightningNode that's opposite of
 // the target node in the channel. This is useful when one knows the pubkey of
 // one of the nodes, and wishes to obtain the full LightningNode for the other
 // end of the channel.
-func (c *ChannelGraph) FetchOtherNode(tx kvdb.RTx,
+func (c *BoltStore) FetchOtherNode(tx kvdb.RTx,
 	channel *models.ChannelEdgeInfo, thisNodeKey []byte) (
 	*models.LightningNode, error) {
 
@@ -3299,7 +3242,7 @@ func (c *ChannelGraph) FetchOtherNode(tx kvdb.RTx,
 	}
 
 	// If the transaction is nil, then we'll need to create a new one,
-	// otherwise we can use the existing db transaction.
+	// otherwise we can use the existing localDB transaction.
 	var err error
 	if tx == nil {
 		err = kvdb.View(c.db, fetchNodeFunc, func() {
@@ -3335,7 +3278,7 @@ func computeEdgePolicyKeys(info *models.ChannelEdgeInfo) ([]byte, []byte) {
 // found, then ErrEdgeNotFound is returned. A struct which houses the general
 // information for the channel itself is returned as well as two structs that
 // contain the routing policies for the channel in either direction.
-func (c *ChannelGraph) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
+func (c *BoltStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
@@ -3372,7 +3315,7 @@ func (c *ChannelGraph) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 			return ErrGraphNoEdgesFound
 		}
 		var b bytes.Buffer
-		if err := WriteOutpoint(&b, op); err != nil {
+		if err := codec.WriteOutpoint(&b, op); err != nil {
 			return err
 		}
 		chanID := chanIndex.Get(b.Bytes())
@@ -3420,7 +3363,7 @@ func (c *ChannelGraph) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 // ErrZombieEdge an be returned if the edge is currently marked as a zombie
 // within the database. In this case, the ChannelEdgePolicy's will be nil, and
 // the ChannelEdgeInfo will only include the public keys of each node.
-func (c *ChannelGraph) FetchChannelEdgesByID(chanID uint64) (
+func (c *BoltStore) FetchChannelEdgesByID(_ context.Context, chanID uint64) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
@@ -3522,7 +3465,9 @@ func (c *ChannelGraph) FetchChannelEdgesByID(chanID uint64) (
 // IsPublicNode is a helper method that determines whether the node with the
 // given public key is seen as a public node in the graph from the graph's
 // source node's point of view.
-func (c *ChannelGraph) IsPublicNode(pubKey [33]byte) (bool, error) {
+func (c *BoltStore) IsPublicNode(_ context.Context, pubKey [33]byte) (bool,
+	error) {
+
 	var nodeIsPublic bool
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		nodes := tx.ReadBucket(nodeBucket)
@@ -3570,30 +3515,12 @@ func genMultiSigP2WSH(aPub, bPub []byte) ([]byte, error) {
 	return bldr.Script()
 }
 
-// EdgePoint couples the outpoint of a channel with the funding script that it
-// creates. The FilteredChainView will use this to watch for spends of this
-// edge point on chain. We require both of these values as depending on the
-// concrete implementation, either the pkScript, or the out point will be used.
-type EdgePoint struct {
-	// FundingPkScript is the p2wsh multi-sig script of the target channel.
-	FundingPkScript []byte
-
-	// OutPoint is the outpoint of the target channel.
-	OutPoint wire.OutPoint
-}
-
-// String returns a human readable version of the target EdgePoint. We return
-// the outpoint directly as it is enough to uniquely identify the edge point.
-func (e *EdgePoint) String() string {
-	return e.OutPoint.String()
-}
-
 // ChannelView returns the verifiable edge information for each active channel
 // within the known channel graph. The set of UTXO's (along with their scripts)
 // returned are the ones that need to be watched on chain to detect channel
 // closes on the resident blockchain.
-func (c *ChannelGraph) ChannelView() ([]EdgePoint, error) {
-	var edgePoints []EdgePoint
+func (c *BoltStore) ChannelView() ([]models.EdgePoint, error) {
+	var edgePoints []models.EdgePoint
 	if err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		// We're going to iterate over the entire channel index, so
 		// we'll need to fetch the edgeBucket to get to the index as
@@ -3621,7 +3548,7 @@ func (c *ChannelGraph) ChannelView() ([]EdgePoint, error) {
 				)
 
 				var chanPoint wire.OutPoint
-				err := ReadOutpoint(chanPointReader, &chanPoint)
+				err := codec.ReadOutpoint(chanPointReader, &chanPoint)
 				if err != nil {
 					return err
 				}
@@ -3641,7 +3568,7 @@ func (c *ChannelGraph) ChannelView() ([]EdgePoint, error) {
 					return err
 				}
 
-				edgePoints = append(edgePoints, EdgePoint{
+				edgePoints = append(edgePoints, models.EdgePoint{
 					FundingPkScript: pkScript,
 					OutPoint:        chanPoint,
 				})
@@ -3661,7 +3588,7 @@ func (c *ChannelGraph) ChannelView() ([]EdgePoint, error) {
 // MarkEdgeZombie attempts to mark a channel identified by its channel ID as a
 // zombie. This method is used on an ad-hoc basis, when channels need to be
 // marked as zombies outside the normal pruning cycle.
-func (c *ChannelGraph) MarkEdgeZombie(chanID uint64,
+func (c *BoltStore) MarkEdgeZombie(chanID uint64,
 	pubKey1, pubKey2 [33]byte) error {
 
 	c.cacheMu.Lock()
@@ -3676,10 +3603,6 @@ func (c *ChannelGraph) MarkEdgeZombie(chanID uint64,
 		if err != nil {
 			return fmt.Errorf("unable to create zombie "+
 				"bucket: %w", err)
-		}
-
-		if c.graphCache != nil {
-			c.graphCache.RemoveChannel(pubKey1, pubKey2, chanID)
 		}
 
 		return markEdgeZombie(zombieIndex, chanID, pubKey1, pubKey2)
@@ -3711,11 +3634,11 @@ func markEdgeZombie(zombieIndex kvdb.RwBucket, chanID uint64, pubKey1,
 }
 
 // MarkEdgeLive clears an edge from our zombie index, deeming it as live.
-func (c *ChannelGraph) MarkEdgeLive(chanID uint64) error {
+func (c *BoltStore) MarkEdgeLive(chanID uint64, cb func(ChannelEdge)) error {
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 
-	return c.markEdgeLiveUnsafe(nil, chanID)
+	return c.markEdgeLiveUnsafe(nil, chanID, cb)
 }
 
 // markEdgeLiveUnsafe clears an edge from the zombie index. This method can be
@@ -3724,7 +3647,9 @@ func (c *ChannelGraph) MarkEdgeLive(chanID uint64) error {
 //
 // NOTE: this method MUST only be called if the cacheMu has already been
 // acquired.
-func (c *ChannelGraph) markEdgeLiveUnsafe(tx kvdb.RwTx, chanID uint64) error {
+func (c *BoltStore) markEdgeLiveUnsafe(tx kvdb.RwTx, chanID uint64,
+	cb func(live ChannelEdge)) error {
+
 	dbFn := func(tx kvdb.RwTx) error {
 		edges := tx.ReadWriteBucket(edgeBucket)
 		if edges == nil {
@@ -3760,20 +3685,13 @@ func (c *ChannelGraph) markEdgeLiveUnsafe(tx kvdb.RwTx, chanID uint64) error {
 	c.rejectCache.remove(chanID)
 	c.chanCache.remove(chanID)
 
-	// We need to add the channel back into our graph cache, otherwise we
-	// won't use it for path finding.
-	if c.graphCache != nil {
-		edgeInfos, err := c.fetchChanInfos(tx, []uint64{chanID})
-		if err != nil {
-			return err
-		}
+	edgeInfos, err := c.fetchChanInfos(tx, []uint64{chanID})
+	if err != nil {
+		return err
+	}
 
-		for _, edgeInfo := range edgeInfos {
-			c.graphCache.AddChannel(
-				edgeInfo.Info, edgeInfo.Policy1,
-				edgeInfo.Policy2,
-			)
-		}
+	for _, edgeInfo := range edgeInfos {
+		cb(edgeInfo)
 	}
 
 	return nil
@@ -3782,7 +3700,9 @@ func (c *ChannelGraph) markEdgeLiveUnsafe(tx kvdb.RwTx, chanID uint64) error {
 // IsZombieEdge returns whether the edge is considered zombie. If it is a
 // zombie, then the two node public keys corresponding to this edge are also
 // returned.
-func (c *ChannelGraph) IsZombieEdge(chanID uint64) (bool, [33]byte, [33]byte) {
+func (c *BoltStore) IsZombieEdge(chanID uint64) (bool, [33]byte, [33]byte,
+	error) {
+
 	var (
 		isZombie         bool
 		pubKey1, pubKey2 [33]byte
@@ -3806,10 +3726,10 @@ func (c *ChannelGraph) IsZombieEdge(chanID uint64) (bool, [33]byte, [33]byte) {
 		pubKey2 = [33]byte{}
 	})
 	if err != nil {
-		return false, [33]byte{}, [33]byte{}
+		return false, [33]byte{}, [33]byte{}, err
 	}
 
-	return isZombie, pubKey1, pubKey2
+	return isZombie, pubKey1, pubKey2, nil
 }
 
 // isZombieEdge returns whether an entry exists for the given channel in the
@@ -3834,7 +3754,7 @@ func isZombieEdge(zombieIndex kvdb.RBucket,
 }
 
 // NumZombies returns the current number of zombie channels in the graph.
-func (c *ChannelGraph) NumZombies() (uint64, error) {
+func (c *BoltStore) NumZombies() (uint64, error) {
 	var numZombies uint64
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		edges := tx.ReadBucket(edgeBucket)
@@ -3863,7 +3783,7 @@ func (c *ChannelGraph) NumZombies() (uint64, error) {
 // PutClosedScid stores a SCID for a closed channel in the database. This is so
 // that we can ignore channel announcements that we know to be closed without
 // having to validate them and fetch a block.
-func (c *ChannelGraph) PutClosedScid(scid lnwire.ShortChannelID) error {
+func (c *BoltStore) PutClosedScid(scid lnwire.ShortChannelID) error {
 	return kvdb.Update(c.db, func(tx kvdb.RwTx) error {
 		closedScids, err := tx.CreateTopLevelBucket(closedScidBucket)
 		if err != nil {
@@ -3880,7 +3800,7 @@ func (c *ChannelGraph) PutClosedScid(scid lnwire.ShortChannelID) error {
 // IsClosedScid checks whether a channel identified by the passed in scid is
 // closed. This helps avoid having to perform expensive validation checks.
 // TODO: Add an LRU cache to cut down on disc reads.
-func (c *ChannelGraph) IsClosedScid(scid lnwire.ShortChannelID) (bool, error) {
+func (c *BoltStore) IsClosedScid(scid lnwire.ShortChannelID) (bool, error) {
 	var isClosed bool
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		closedScids := tx.ReadBucket(closedScidBucket)
@@ -3905,6 +3825,72 @@ func (c *ChannelGraph) IsClosedScid(scid lnwire.ShortChannelID) (bool, error) {
 	}
 
 	return isClosed, nil
+}
+
+// NewRoutingGraph creates a new RoutingGraph instance without any underlying
+// read-lock. This method should be used when the caller does not need to hold a
+// read-lock across multiple calls to the underlying graph source.
+//
+// NOTE: this is part of the GraphSessionFactory interface.
+func (c *BoltStore) NewRoutingGraph() RoutingGraph {
+	return &dbSrcSession{src: c}
+}
+
+// NewRoutingGraphSession will produce a new RoutingGraph to use for a
+// path-finding session. It returns the RoutingGraph along with a call-back
+// that must be called once RoutingGraph access is complete. This call-back
+// will close any read-only transaction that was created at Graph construction
+// time.
+//
+// NOTE: this is part of the GraphSessionFactory interface.
+func (c *BoltStore) NewRoutingGraphSession() (RoutingGraph, func() error,
+	error) {
+
+	tx, err := c.NewPathFindTx()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	session := &dbSrcSession{
+		src: c,
+		tx:  tx,
+	}
+
+	return session, session.close, nil
+}
+
+// dbSrcSession is an implementation of the routing.Graph interface where the
+// same read-only transaction is held across calls.
+type dbSrcSession struct {
+	src *BoltStore
+	tx  kvdb.RTx
+}
+
+// FetchNodeFeatures returns the features of the given node.
+//
+// NOTE: this is part of the RoutingGraph interface.
+func (s *dbSrcSession) FetchNodeFeatures(_ context.Context,
+	nodePub route.Vertex) (*lnwire.FeatureVector, error) {
+
+	return s.src.FetchNodeFeaturesTx(s.tx, nodePub)
+}
+
+// ForEachNodeChannel calls the callback for every channel of the given node.
+//
+// NOTE: this is part of the RoutingGraph interface.
+func (s *dbSrcSession) ForEachNodeChannel(_ context.Context, node route.Vertex,
+	cb func(channel *models.DirectedChannel) error) error {
+
+	return s.src.ForEachNodeDirectedChannel(s.tx, node, cb)
+}
+
+// close closes the underlying transaction if there is one.
+func (s *dbSrcSession) close() error {
+	if s.tx == nil {
+		return nil
+	}
+
+	return s.tx.Rollback()
 }
 
 func putLightningNode(nodeBucket kvdb.RwBucket, aliasBucket kvdb.RwBucket, // nolint:dupl
@@ -3979,7 +3965,7 @@ func putLightningNode(nodeBucket kvdb.RwBucket, aliasBucket kvdb.RwBucket, // no
 	}
 
 	for _, address := range node.Addresses {
-		if err := SerializeAddr(&b, address); err != nil {
+		if err := codec.SerializeAddr(&b, address); err != nil {
 			return err
 		}
 	}
@@ -4048,10 +4034,13 @@ func fetchLightningNode(nodeBucket kvdb.RBucket,
 	return deserializeLightningNode(nodeReader)
 }
 
-func deserializeLightningNodeCacheable(r io.Reader) (*graphCacheNode, error) {
+func deserializeLightningNodeCacheable(db DB, r io.Reader) (*graphCacheNode,
+	error) {
+
 	// Always populate a feature vector, even if we don't have a node
 	// announcement and short circuit below.
-	node := newGraphCacheNode(
+	node := NewGraphCacheNode(
+		db,
 		route.Vertex{},
 		lnwire.EmptyFeatureVector(),
 	)
@@ -4172,7 +4161,7 @@ func deserializeLightningNode(r io.Reader) (models.LightningNode, error) {
 
 	var addresses []net.Addr
 	for i := 0; i < numAddresses; i++ {
-		address, err := DeserializeAddr(r)
+		address, err := codec.DeserializeAddr(r)
 		if err != nil {
 			return models.LightningNode{}, err
 		}
@@ -4244,7 +4233,7 @@ func putChanEdgeInfo(edgeIndex kvdb.RwBucket,
 		return err
 	}
 
-	if err := WriteOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
+	if err := codec.WriteOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
 		return err
 	}
 	err := binary.Write(&b, byteOrder, uint64(edgeInfo.Capacity))
@@ -4329,7 +4318,7 @@ func deserializeChanEdgeInfo(r io.Reader) (models.ChannelEdgeInfo, error) {
 	}
 
 	edgeInfo.ChannelPoint = wire.OutPoint{}
-	if err := ReadOutpoint(r, &edgeInfo.ChannelPoint); err != nil {
+	if err := codec.ReadOutpoint(r, &edgeInfo.ChannelPoint); err != nil {
 		return models.ChannelEdgeInfo{}, err
 	}
 	if err := binary.Read(r, byteOrder, &edgeInfo.Capacity); err != nil {
@@ -4502,7 +4491,7 @@ func fetchChanEdgePolicy(edges kvdb.RBucket, chanID []byte,
 
 	ep, err := deserializeChanEdgePolicy(edgeReader)
 	switch {
-	// If the db policy was missing an expected optional field, we return
+	// If the localDB policy was missing an expected optional field, we return
 	// nil as if the policy was unknown.
 	case err == ErrEdgePolicyOptionalFieldNotFound:
 		return nil, nil
@@ -4717,9 +4706,9 @@ func deserializeChanEdgePolicyRaw(r io.Reader) (*models.ChannelEdgePolicy,
 	return edge, nil
 }
 
-// MakeTestGraph creates a new instance of the ChannelGraph for testing
+// MakeTestGraph creates a new instance of the BoltStore for testing
 // purposes.
-func MakeTestGraph(t testing.TB, modifiers ...OptionModifier) (*ChannelGraph,
+func MakeTestGraph(t testing.TB, modifiers ...OptionModifier) (*BoltStore,
 	error) {
 
 	opts := DefaultOptions()
@@ -4734,7 +4723,7 @@ func MakeTestGraph(t testing.TB, modifiers ...OptionModifier) (*ChannelGraph,
 		return nil, err
 	}
 
-	graph, err := NewChannelGraph(backend)
+	graph, err := NewBoltStore(backend)
 	if err != nil {
 		backendCleanup()
 		return nil, err
