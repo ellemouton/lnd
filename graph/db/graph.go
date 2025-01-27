@@ -4,30 +4,57 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/batch"
+	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/graph/db/models"
+	"github.com/lightningnetwork/lnd/lnutils"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
 
+// TODO: move remote client set-up to here and change to call backs on update
+// so we can notify our own topology change clients.
 type ChannelGraph struct {
+	started atomic.Bool
+	stopped atomic.Bool
+
 	graphCache *GraphCache
 
 	localDB DB
 	src     Source
+
+	ntfnClientCounter atomic.Uint64
+
+	// topologyClients maps a client's unique notification ID to a
+	// topologyClient client that contains its notification dispatch
+	// channel.
+	topologyClients *lnutils.SyncMap[uint64, *topologyClient]
+
+	// ntfnClientUpdates is a channel that's used to send new updates to
+	// topology notification clients to the Builder. Updates either
+	// add a new notification client, or cancel notifications for an
+	// existing client.
+	ntfnClientUpdates chan *topologyClientUpdate
+
+	cg     *fn.ContextGuard
+	cancel fn.Option[context.CancelFunc]
 }
 
 func NewChannelGraph(db *BoltStore, src Source, cache *GraphCache) (
 	*ChannelGraph, error) {
 
 	g := &ChannelGraph{
-		localDB: db,
-		src:     src,
+		localDB:           db,
+		src:               src,
+		topologyClients:   &lnutils.SyncMap[uint64, *topologyClient]{},
+		ntfnClientUpdates: make(chan *topologyClientUpdate),
+		cg:                fn.NewContextGuard(),
 	}
 
 	// The graph cache can be turned off (e.g. for mobile users) for a
@@ -66,6 +93,67 @@ func NewChannelGraph(db *BoltStore, src Source, cache *GraphCache) (
 	}
 
 	return g, nil
+}
+
+func (c *ChannelGraph) Start(ctx context.Context) error {
+	if !c.started.CompareAndSwap(false, true) {
+		return nil
+	}
+
+	ctx, _ = c.cg.Create(ctx)
+
+	c.cg.WgAdd(1)
+	go c.goForever(ctx)
+
+	return nil
+}
+
+func (c *ChannelGraph) Stop() error {
+	if !c.stopped.CompareAndSwap(false, true) {
+		return nil
+	}
+
+	c.cg.Quit()
+	c.cg.WgWait()
+
+	return nil
+}
+
+func (c *ChannelGraph) goForever(ctx context.Context) {
+	defer c.cg.WgDone()
+
+	for {
+
+		select {
+		// A new notification client update has arrived. We're either
+		// gaining a new client, or cancelling notifications for an
+		// existing client.
+		case ntfnUpdate := <-c.ntfnClientUpdates:
+			clientID := ntfnUpdate.clientID
+
+			if ntfnUpdate.cancel {
+				client, ok := c.topologyClients.LoadAndDelete(
+					clientID,
+				)
+				if ok {
+					close(client.exit)
+					client.wg.Wait()
+
+					close(client.ntfnChan)
+				}
+
+				continue
+			}
+
+			c.topologyClients.Store(clientID, &topologyClient{
+				ntfnChan: ntfnUpdate.ntfnChan,
+				exit:     make(chan struct{}),
+			})
+
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func (c *ChannelGraph) PruneTip() (*chainhash.Hash, uint32, error) {
@@ -282,6 +370,12 @@ func (c *ChannelGraph) PruneGraph(spentOutputs []*wire.OutPoint,
 			c.graphCache.Stats())
 	}
 
+	// Notify all currently registered clients of the newly closed channels.
+	closeSummaries := createCloseSummaries(blockHeight, edges...)
+	c.notifyTopologyChange(&TopologyChange{
+		ClosedChannels: closeSummaries,
+	})
+
 	return edges, nil
 }
 
@@ -359,9 +453,34 @@ func (c *ChannelGraph) AddLightningNode(node *models.LightningNode,
 		}))
 	}
 
-	// Push to remote.
+	// TODO: Push to remote.
 
-	return c.localDB.AddLightningNode(node, opts...)
+	err := c.localDB.AddLightningNode(node, opts...)
+	if err != nil {
+		return err
+	}
+
+	c.topChange(context.TODO(), node)
+
+	return nil
+}
+
+func (c *ChannelGraph) topChange(ctx context.Context, update interface{}) {
+	// Otherwise, we'll send off a new notification for the newly accepted
+	// update, if any.
+	topChange := &TopologyChange{}
+	err := addToTopologyChange(
+		ctx, c.FetchChannelEdgesByID, topChange, update,
+	)
+	if err != nil {
+		log.Errorf("unable to update topology change notification: %v",
+			err)
+		return
+	}
+
+	if !topChange.isEmpty() {
+		c.notifyTopologyChange(topChange)
+	}
 }
 
 // MUX: check local and remote.
@@ -437,14 +556,23 @@ func (c *ChannelGraph) AddChannelEdge(edge *models.ChannelEdgeInfo,
 		}))
 	}
 
-	return c.localDB.AddChannelEdge(edge, opts...)
+	err := c.localDB.AddChannelEdge(edge, opts...)
+	if err != nil {
+		return err
+	}
+
+	c.topChange(context.TODO(), edge)
+
+	// TODO: push update to remote graph (if not private).
+
+	return nil
 }
 
 // Mux: push to remote.
 func (c *ChannelGraph) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 	op ...batch.SchedulerOption) error {
 
-	return c.localDB.UpdateEdgePolicy(
+	err := c.localDB.UpdateEdgePolicy(
 		edge, func(fromNode, toNode route.Vertex, isUpdate1 bool) {
 			if c.graphCache != nil {
 				c.graphCache.UpdatePolicy(
@@ -453,6 +581,15 @@ func (c *ChannelGraph) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 			}
 		}, op...,
 	)
+	if err != nil {
+		return err
+	}
+
+	c.topChange(context.TODO(), edge)
+
+	// TODO: push update to remote graph (if not private).
+
+	return nil
 }
 
 // MUX: just use remote.

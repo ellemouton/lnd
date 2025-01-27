@@ -43,18 +43,18 @@ const (
 func TestAddProof(t *testing.T) {
 	t.Parallel()
 
-	ctx := createTestCtxSingleNode(t, 0)
+	ctx := graphdb.createTestCtxSingleNode(t, 0)
 
 	// Before creating out edge, we'll create two new nodes within the
 	// network that the channel will connect.
-	node1 := createTestNode(t)
-	node2 := createTestNode(t)
+	node1 := graphdb.createTestNode(t)
+	node2 := graphdb.createTestNode(t)
 
 	// In order to be able to add the edge we should have a valid funding
 	// UTXO within the blockchain.
-	fundingTx, _, chanID, err := createChannelEdge(
-		ctx, bitcoinKey1.SerializeCompressed(),
-		bitcoinKey2.SerializeCompressed(), 100, 0,
+	fundingTx, _, chanID, err := graphdb.createChannelEdge(
+		ctx, graphdb.bitcoinKey1.SerializeCompressed(),
+		graphdb.bitcoinKey2.SerializeCompressed(), 100, 0,
 	)
 	require.NoError(t, err, "unable create channel edge")
 	fundingBlock := &wire.MsgBlock{
@@ -69,14 +69,14 @@ func TestAddProof(t *testing.T) {
 		NodeKey2Bytes: node2.PubKeyBytes,
 		AuthProof:     nil,
 	}
-	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
-	copy(edge.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
+	copy(edge.BitcoinKey1Bytes[:], graphdb.bitcoinKey1.SerializeCompressed())
+	copy(edge.BitcoinKey2Bytes[:], graphdb.bitcoinKey2.SerializeCompressed())
 
 	require.NoError(t, ctx.builder.AddEdge(edge))
 
 	// Now we'll attempt to update the proof and check that it has been
 	// properly updated.
-	require.NoError(t, ctx.builder.AddProof(*chanID, &testAuthProof))
+	require.NoError(t, ctx.builder.AddProof(*chanID, &graphdb.testAuthProof))
 
 	info, _, _, err := ctx.builder.GetChannelByID(*chanID)
 	require.NoError(t, err, "unable to get channel")
@@ -92,15 +92,15 @@ func TestIgnoreNodeAnnouncement(t *testing.T) {
 	const startingBlockHeight = 101
 	ctx := createTestCtxFromFile(t, startingBlockHeight, basicGraphFilePath)
 
-	pub := priv1.PubKey()
+	pub := graphdb.priv1.PubKey()
 	node := &models.LightningNode{
 		HaveNodeAnnouncement: true,
 		LastUpdate:           time.Unix(123, 0),
-		Addresses:            testAddrs,
+		Addresses:            graphdb.testAddrs,
 		Color:                color.RGBA{1, 2, 3, 0},
 		Alias:                "node11",
-		AuthSigBytes:         testSig.Serialize(),
-		Features:             testFeatures,
+		AuthSigBytes:         graphdb.testSig.Serialize(),
+		Features:             graphdb.testFeatures,
 	}
 	copy(node.PubKeyBytes[:], pub.SerializeCompressed())
 
@@ -124,21 +124,21 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 	)
 	require.NoError(t, err, "unable to create graph")
 
-	ctx := createTestCtxFromGraphInstance(
+	ctx := graphdb.createTestCtxFromGraphInstance(
 		t, startingBlockHeight, testGraph, false,
 	)
 
 	var pub1 [33]byte
-	copy(pub1[:], priv1.PubKey().SerializeCompressed())
+	copy(pub1[:], graphdb.priv1.PubKey().SerializeCompressed())
 
 	var pub2 [33]byte
-	copy(pub2[:], priv2.PubKey().SerializeCompressed())
+	copy(pub2[:], graphdb.priv2.PubKey().SerializeCompressed())
 
 	// Add the edge between the two unknown nodes to the graph, and check
 	// that the nodes are found after the fact.
-	fundingTx, _, chanID, err := createChannelEdge(
-		ctx, bitcoinKey1.SerializeCompressed(),
-		bitcoinKey2.SerializeCompressed(), 10000, 500,
+	fundingTx, _, chanID, err := graphdb.createChannelEdge(
+		ctx, graphdb.bitcoinKey1.SerializeCompressed(),
+		graphdb.bitcoinKey2.SerializeCompressed(), 10000, 500,
 	)
 	require.NoError(t, err, "unable to create channel edge")
 	fundingBlock := &wire.MsgBlock{
@@ -155,9 +155,9 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 		AuthProof:        nil,
 	}
 	edgePolicy := &models.ChannelEdgePolicy{
-		SigBytes:                  testSig.Serialize(),
+		SigBytes:                  graphdb.testSig.Serialize(),
 		ChannelID:                 edge.ChannelID,
-		LastUpdate:                testTime,
+		LastUpdate:                graphdb.testTime,
 		TimeLockDelta:             10,
 		MinHTLC:                   1,
 		FeeBaseMSat:               10,
@@ -188,7 +188,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 	t.Parallel()
 
 	const startingBlockHeight = 101
-	ctx := createTestCtxSingleNode(t, startingBlockHeight)
+	ctx := graphdb.createTestCtxSingleNode(t, startingBlockHeight)
 
 	const chanValue = 10000
 
@@ -205,9 +205,9 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		}
 		height := startingBlockHeight + i
 		if i == 5 {
-			fundingTx, _, chanID, err := createChannelEdge(ctx,
-				bitcoinKey1.SerializeCompressed(),
-				bitcoinKey2.SerializeCompressed(),
+			fundingTx, _, chanID, err := graphdb.createChannelEdge(ctx,
+				graphdb.bitcoinKey1.SerializeCompressed(),
+				graphdb.bitcoinKey2.SerializeCompressed(),
 				chanValue, height)
 			if err != nil {
 				t.Fatalf("unable create channel edge: %v", err)
@@ -235,9 +235,9 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		}
 		height := uint32(forkHeight) + i
 		if i == 5 {
-			fundingTx, _, chanID, err := createChannelEdge(ctx,
-				bitcoinKey1.SerializeCompressed(),
-				bitcoinKey2.SerializeCompressed(),
+			fundingTx, _, chanID, err := graphdb.createChannelEdge(ctx,
+				graphdb.bitcoinKey1.SerializeCompressed(),
+				graphdb.bitcoinKey2.SerializeCompressed(),
 				chanValue, height)
 			if err != nil {
 				t.Fatalf("unable create channel edge: %v", err)
@@ -256,22 +256,22 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 
 	// Now add the two edges to the channel graph, and check that they
 	// correctly show up in the database.
-	node1 := createTestNode(t)
-	node2 := createTestNode(t)
+	node1 := graphdb.createTestNode(t)
+	node2 := graphdb.createTestNode(t)
 
 	edge1 := &models.ChannelEdgeInfo{
 		ChannelID:     chanID1,
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
 		AuthProof: &models.ChannelAuthProof{
-			NodeSig1Bytes:    testSig.Serialize(),
-			NodeSig2Bytes:    testSig.Serialize(),
-			BitcoinSig1Bytes: testSig.Serialize(),
-			BitcoinSig2Bytes: testSig.Serialize(),
+			NodeSig1Bytes:    graphdb.testSig.Serialize(),
+			NodeSig2Bytes:    graphdb.testSig.Serialize(),
+			BitcoinSig1Bytes: graphdb.testSig.Serialize(),
+			BitcoinSig2Bytes: graphdb.testSig.Serialize(),
 		},
 	}
-	copy(edge1.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
-	copy(edge1.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
+	copy(edge1.BitcoinKey1Bytes[:], graphdb.bitcoinKey1.SerializeCompressed())
+	copy(edge1.BitcoinKey2Bytes[:], graphdb.bitcoinKey2.SerializeCompressed())
 
 	if err := ctx.builder.AddEdge(edge1); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
@@ -282,14 +282,14 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
 		AuthProof: &models.ChannelAuthProof{
-			NodeSig1Bytes:    testSig.Serialize(),
-			NodeSig2Bytes:    testSig.Serialize(),
-			BitcoinSig1Bytes: testSig.Serialize(),
-			BitcoinSig2Bytes: testSig.Serialize(),
+			NodeSig1Bytes:    graphdb.testSig.Serialize(),
+			NodeSig2Bytes:    graphdb.testSig.Serialize(),
+			BitcoinSig1Bytes: graphdb.testSig.Serialize(),
+			BitcoinSig2Bytes: graphdb.testSig.Serialize(),
 		},
 	}
-	copy(edge2.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
-	copy(edge2.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
+	copy(edge2.BitcoinKey1Bytes[:], graphdb.bitcoinKey1.SerializeCompressed())
+	copy(edge2.BitcoinKey2Bytes[:], graphdb.bitcoinKey2.SerializeCompressed())
 
 	if err := ctx.builder.AddEdge(edge2); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
@@ -392,7 +392,7 @@ func TestDisconnectedBlocks(t *testing.T) {
 	t.Parallel()
 
 	const startingBlockHeight = 101
-	ctx := createTestCtxSingleNode(t, startingBlockHeight)
+	ctx := graphdb.createTestCtxSingleNode(t, startingBlockHeight)
 
 	const chanValue = 10000
 
@@ -406,9 +406,9 @@ func TestDisconnectedBlocks(t *testing.T) {
 		}
 		height := startingBlockHeight + i
 		if i == 5 {
-			fundingTx, _, chanID, err := createChannelEdge(ctx,
-				bitcoinKey1.SerializeCompressed(),
-				bitcoinKey2.SerializeCompressed(),
+			fundingTx, _, chanID, err := graphdb.createChannelEdge(ctx,
+				graphdb.bitcoinKey1.SerializeCompressed(),
+				graphdb.bitcoinKey2.SerializeCompressed(),
 				chanValue, height)
 			if err != nil {
 				t.Fatalf("unable create channel edge: %v", err)
@@ -437,9 +437,9 @@ func TestDisconnectedBlocks(t *testing.T) {
 		}
 		height := uint32(forkHeight) + i
 		if i == 5 {
-			fundingTx, _, chanID, err := createChannelEdge(ctx,
-				bitcoinKey1.SerializeCompressed(),
-				bitcoinKey2.SerializeCompressed(),
+			fundingTx, _, chanID, err := graphdb.createChannelEdge(ctx,
+				graphdb.bitcoinKey1.SerializeCompressed(),
+				graphdb.bitcoinKey2.SerializeCompressed(),
 				chanValue, height)
 			if err != nil {
 				t.Fatalf("unable create channel edge: %v", err)
@@ -459,8 +459,8 @@ func TestDisconnectedBlocks(t *testing.T) {
 
 	// Now add the two edges to the channel graph, and check that they
 	// correctly show up in the database.
-	node1 := createTestNode(t)
-	node2 := createTestNode(t)
+	node1 := graphdb.createTestNode(t)
+	node2 := graphdb.createTestNode(t)
 
 	edge1 := &models.ChannelEdgeInfo{
 		ChannelID:        chanID1,
@@ -469,14 +469,14 @@ func TestDisconnectedBlocks(t *testing.T) {
 		BitcoinKey1Bytes: node1.PubKeyBytes,
 		BitcoinKey2Bytes: node2.PubKeyBytes,
 		AuthProof: &models.ChannelAuthProof{
-			NodeSig1Bytes:    testSig.Serialize(),
-			NodeSig2Bytes:    testSig.Serialize(),
-			BitcoinSig1Bytes: testSig.Serialize(),
-			BitcoinSig2Bytes: testSig.Serialize(),
+			NodeSig1Bytes:    graphdb.testSig.Serialize(),
+			NodeSig2Bytes:    graphdb.testSig.Serialize(),
+			BitcoinSig1Bytes: graphdb.testSig.Serialize(),
+			BitcoinSig2Bytes: graphdb.testSig.Serialize(),
 		},
 	}
-	copy(edge1.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
-	copy(edge1.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
+	copy(edge1.BitcoinKey1Bytes[:], graphdb.bitcoinKey1.SerializeCompressed())
+	copy(edge1.BitcoinKey2Bytes[:], graphdb.bitcoinKey2.SerializeCompressed())
 
 	if err := ctx.builder.AddEdge(edge1); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
@@ -489,14 +489,14 @@ func TestDisconnectedBlocks(t *testing.T) {
 		BitcoinKey1Bytes: node1.PubKeyBytes,
 		BitcoinKey2Bytes: node2.PubKeyBytes,
 		AuthProof: &models.ChannelAuthProof{
-			NodeSig1Bytes:    testSig.Serialize(),
-			NodeSig2Bytes:    testSig.Serialize(),
-			BitcoinSig1Bytes: testSig.Serialize(),
-			BitcoinSig2Bytes: testSig.Serialize(),
+			NodeSig1Bytes:    graphdb.testSig.Serialize(),
+			NodeSig2Bytes:    graphdb.testSig.Serialize(),
+			BitcoinSig1Bytes: graphdb.testSig.Serialize(),
+			BitcoinSig2Bytes: graphdb.testSig.Serialize(),
 		},
 	}
-	copy(edge2.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
-	copy(edge2.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
+	copy(edge2.BitcoinKey1Bytes[:], graphdb.bitcoinKey1.SerializeCompressed())
+	copy(edge2.BitcoinKey2Bytes[:], graphdb.bitcoinKey2.SerializeCompressed())
 
 	if err := ctx.builder.AddEdge(edge2); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
@@ -586,7 +586,7 @@ func TestRouterChansClosedOfflinePruneGraph(t *testing.T) {
 	t.Parallel()
 
 	const startingBlockHeight = 101
-	ctx := createTestCtxSingleNode(t, startingBlockHeight)
+	ctx := graphdb.createTestCtxSingleNode(t, startingBlockHeight)
 
 	const chanValue = 10000
 
@@ -595,9 +595,9 @@ func TestRouterChansClosedOfflinePruneGraph(t *testing.T) {
 		Transactions: []*wire.MsgTx{},
 	}
 	nextHeight := startingBlockHeight + 1
-	fundingTx1, chanUTXO, chanID1, err := createChannelEdge(ctx,
-		bitcoinKey1.SerializeCompressed(),
-		bitcoinKey2.SerializeCompressed(),
+	fundingTx1, chanUTXO, chanID1, err := graphdb.createChannelEdge(ctx,
+		graphdb.bitcoinKey1.SerializeCompressed(),
+		graphdb.bitcoinKey2.SerializeCompressed(),
 		chanValue, uint32(nextHeight))
 	require.NoError(t, err, "unable create channel edge")
 	block102.Transactions = append(block102.Transactions, fundingTx1)
@@ -609,22 +609,22 @@ func TestRouterChansClosedOfflinePruneGraph(t *testing.T) {
 	// We'll now create the edges and nodes within the database required
 	// for the ChannelRouter to properly recognize the channel we added
 	// above.
-	node1 := createTestNode(t)
-	node2 := createTestNode(t)
+	node1 := graphdb.createTestNode(t)
+	node2 := graphdb.createTestNode(t)
 
 	edge1 := &models.ChannelEdgeInfo{
 		ChannelID:     chanID1.ToUint64(),
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
 		AuthProof: &models.ChannelAuthProof{
-			NodeSig1Bytes:    testSig.Serialize(),
-			NodeSig2Bytes:    testSig.Serialize(),
-			BitcoinSig1Bytes: testSig.Serialize(),
-			BitcoinSig2Bytes: testSig.Serialize(),
+			NodeSig1Bytes:    graphdb.testSig.Serialize(),
+			NodeSig2Bytes:    graphdb.testSig.Serialize(),
+			BitcoinSig1Bytes: graphdb.testSig.Serialize(),
+			BitcoinSig2Bytes: graphdb.testSig.Serialize(),
 		},
 	}
-	copy(edge1.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
-	copy(edge1.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
+	copy(edge1.BitcoinKey1Bytes[:], graphdb.bitcoinKey1.SerializeCompressed())
+	copy(edge1.BitcoinKey2Bytes[:], graphdb.bitcoinKey2.SerializeCompressed())
 	if err := ctx.builder.AddEdge(edge1); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
@@ -827,7 +827,7 @@ func TestPruneChannelGraphStaleEdges(t *testing.T) {
 		}
 
 		const startingHeight = 100
-		ctx := createTestCtxFromGraphInstance(
+		ctx := graphdb.createTestCtxFromGraphInstance(
 			t, startingHeight, testGraph, strictPruning,
 		)
 
@@ -958,7 +958,7 @@ func testPruneChannelGraphDoubleDisabled(t *testing.T, assumeValid bool) {
 	require.NoError(t, err, "unable to create test graph")
 
 	const startingHeight = 100
-	ctx := createTestCtxFromGraphInstanceAssumeValid(
+	ctx := graphdb.createTestCtxFromGraphInstanceAssumeValid(
 		t, startingHeight, testGraph, assumeValid, false,
 	)
 
@@ -996,7 +996,7 @@ func TestIsStaleNode(t *testing.T) {
 	t.Parallel()
 
 	const startingBlockHeight = 101
-	ctx := createTestCtxSingleNode(t, startingBlockHeight)
+	ctx := graphdb.createTestCtxSingleNode(t, startingBlockHeight)
 
 	// Before we can insert a node in to the database, we need to create a
 	// channel that it's linked to.
@@ -1004,12 +1004,12 @@ func TestIsStaleNode(t *testing.T) {
 		pub1 [33]byte
 		pub2 [33]byte
 	)
-	copy(pub1[:], priv1.PubKey().SerializeCompressed())
-	copy(pub2[:], priv2.PubKey().SerializeCompressed())
+	copy(pub1[:], graphdb.priv1.PubKey().SerializeCompressed())
+	copy(pub2[:], graphdb.priv2.PubKey().SerializeCompressed())
 
-	fundingTx, _, chanID, err := createChannelEdge(ctx,
-		bitcoinKey1.SerializeCompressed(),
-		bitcoinKey2.SerializeCompressed(),
+	fundingTx, _, chanID, err := graphdb.createChannelEdge(ctx,
+		graphdb.bitcoinKey1.SerializeCompressed(),
+		graphdb.bitcoinKey2.SerializeCompressed(),
 		10000, 500)
 	require.NoError(t, err, "unable to create channel edge")
 	fundingBlock := &wire.MsgBlock{
@@ -1041,13 +1041,13 @@ func TestIsStaleNode(t *testing.T) {
 	n1 := &models.LightningNode{
 		HaveNodeAnnouncement: true,
 		LastUpdate:           updateTimeStamp,
-		Addresses:            testAddrs,
+		Addresses:            graphdb.testAddrs,
 		Color:                color.RGBA{1, 2, 3, 0},
 		Alias:                "node11",
-		AuthSigBytes:         testSig.Serialize(),
-		Features:             testFeatures,
+		AuthSigBytes:         graphdb.testSig.Serialize(),
+		Features:             graphdb.testFeatures,
 	}
-	copy(n1.PubKeyBytes[:], priv1.PubKey().SerializeCompressed())
+	copy(n1.PubKeyBytes[:], graphdb.priv1.PubKey().SerializeCompressed())
 	if err := ctx.builder.AddNode(n1); err != nil {
 		t.Fatalf("could not add node: %v", err)
 	}
@@ -1072,7 +1072,7 @@ func TestIsKnownEdge(t *testing.T) {
 	t.Parallel()
 
 	const startingBlockHeight = 101
-	ctx := createTestCtxSingleNode(t, startingBlockHeight)
+	ctx := graphdb.createTestCtxSingleNode(t, startingBlockHeight)
 
 	// First, we'll create a new channel edge (just the info) and insert it
 	// into the database.
@@ -1080,12 +1080,12 @@ func TestIsKnownEdge(t *testing.T) {
 		pub1 [33]byte
 		pub2 [33]byte
 	)
-	copy(pub1[:], priv1.PubKey().SerializeCompressed())
-	copy(pub2[:], priv2.PubKey().SerializeCompressed())
+	copy(pub1[:], graphdb.priv1.PubKey().SerializeCompressed())
+	copy(pub2[:], graphdb.priv2.PubKey().SerializeCompressed())
 
-	fundingTx, _, chanID, err := createChannelEdge(ctx,
-		bitcoinKey1.SerializeCompressed(),
-		bitcoinKey2.SerializeCompressed(),
+	fundingTx, _, chanID, err := graphdb.createChannelEdge(ctx,
+		graphdb.bitcoinKey1.SerializeCompressed(),
+		graphdb.bitcoinKey2.SerializeCompressed(),
 		10000, 500)
 	require.NoError(t, err, "unable to create channel edge")
 	fundingBlock := &wire.MsgBlock{
@@ -1126,12 +1126,12 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 		pub1 [33]byte
 		pub2 [33]byte
 	)
-	copy(pub1[:], priv1.PubKey().SerializeCompressed())
-	copy(pub2[:], priv2.PubKey().SerializeCompressed())
+	copy(pub1[:], graphdb.priv1.PubKey().SerializeCompressed())
+	copy(pub2[:], graphdb.priv2.PubKey().SerializeCompressed())
 
-	fundingTx, _, chanID, err := createChannelEdge(ctx,
-		bitcoinKey1.SerializeCompressed(),
-		bitcoinKey2.SerializeCompressed(),
+	fundingTx, _, chanID, err := graphdb.createChannelEdge(ctx,
+		graphdb.bitcoinKey1.SerializeCompressed(),
+		graphdb.bitcoinKey2.SerializeCompressed(),
 		10000, 500)
 	require.NoError(t, err, "unable to create channel edge")
 	fundingBlock := &wire.MsgBlock{
@@ -1163,7 +1163,7 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 
 	// We'll also add two edge policies, one for each direction.
 	edgePolicy := &models.ChannelEdgePolicy{
-		SigBytes:                  testSig.Serialize(),
+		SigBytes:                  graphdb.testSig.Serialize(),
 		ChannelID:                 edge.ChannelID,
 		LastUpdate:                updateTimeStamp,
 		TimeLockDelta:             10,
@@ -1177,7 +1177,7 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 	}
 
 	edgePolicy = &models.ChannelEdgePolicy{
-		SigBytes:                  testSig.Serialize(),
+		SigBytes:                  graphdb.testSig.Serialize(),
 		ChannelID:                 edge.ChannelID,
 		LastUpdate:                updateTimeStamp,
 		TimeLockDelta:             10,
@@ -1230,15 +1230,15 @@ const (
 
 // newChannelEdgeInfo is a helper function used to create a new channel edge,
 // possibly skipping adding it to parts of the chain/state as well.
-func newChannelEdgeInfo(t *testing.T, ctx *testCtx, fundingHeight uint32,
+func newChannelEdgeInfo(t *testing.T, ctx *graphdb.testCtx, fundingHeight uint32,
 	ecm edgeCreationModifier) (*models.ChannelEdgeInfo, error) {
 
-	node1 := createTestNode(t)
-	node2 := createTestNode(t)
+	node1 := graphdb.createTestNode(t)
+	node2 := graphdb.createTestNode(t)
 
-	fundingTx, _, chanID, err := createChannelEdge(
-		ctx, bitcoinKey1.SerializeCompressed(),
-		bitcoinKey2.SerializeCompressed(), 100, fundingHeight,
+	fundingTx, _, chanID, err := graphdb.createChannelEdge(
+		ctx, graphdb.bitcoinKey1.SerializeCompressed(),
+		graphdb.bitcoinKey2.SerializeCompressed(), 100, fundingHeight,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create edge: %w", err)
@@ -1249,8 +1249,8 @@ func newChannelEdgeInfo(t *testing.T, ctx *testCtx, fundingHeight uint32,
 		NodeKey1Bytes: node1.PubKeyBytes,
 		NodeKey2Bytes: node2.PubKeyBytes,
 	}
-	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
-	copy(edge.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
+	copy(edge.BitcoinKey1Bytes[:], graphdb.bitcoinKey1.SerializeCompressed())
+	copy(edge.BitcoinKey2Bytes[:], graphdb.bitcoinKey2.SerializeCompressed())
 
 	if ecm == edgeCreationNoFundingTx {
 		return edge, nil
@@ -1274,7 +1274,7 @@ func newChannelEdgeInfo(t *testing.T, ctx *testCtx, fundingHeight uint32,
 	return edge, nil
 }
 
-func assertChanChainRejection(t *testing.T, ctx *testCtx,
+func assertChanChainRejection(t *testing.T, ctx *graphdb.testCtx,
 	edge *models.ChannelEdgeInfo, failCode ErrorCode) {
 
 	t.Helper()
@@ -1298,7 +1298,7 @@ func assertChanChainRejection(t *testing.T, ctx *testCtx,
 func TestChannelOnChainRejectionZombie(t *testing.T) {
 	t.Parallel()
 
-	ctx := createTestCtxSingleNode(t, 0)
+	ctx := graphdb.createTestCtxSingleNode(t, 0)
 
 	// To start,  we'll make an edge for the channel, but we won't add the
 	// funding transaction to the mock blockchain, which should cause the
@@ -1335,7 +1335,7 @@ func TestBlockDifferenceFix(t *testing.T) {
 
 	// Starting height here is set to 0, which is behind where we want to
 	// be.
-	ctx := createTestCtxSingleNode(t, initialBlockHeight)
+	ctx := graphdb.createTestCtxSingleNode(t, initialBlockHeight)
 
 	// Add initial block to our mini blockchain.
 	block := &wire.MsgBlock{
@@ -1403,14 +1403,14 @@ func TestBlockDifferenceFix(t *testing.T) {
 }
 
 func createTestCtxFromFile(t *testing.T,
-	startingHeight uint32, testGraph string) *testCtx {
+	startingHeight uint32, testGraph string) *graphdb.testCtx {
 
 	// We'll attempt to locate and parse out the file
 	// that encodes the graph that our tests should be run against.
 	graphInstance, err := parseTestGraph(t, true, testGraph)
 	require.NoError(t, err, "unable to create test graph")
 
-	return createTestCtxFromGraphInstance(
+	return graphdb.createTestCtxFromGraphInstance(
 		t, startingHeight, graphInstance, false,
 	)
 }
@@ -1418,7 +1418,7 @@ func createTestCtxFromFile(t *testing.T,
 // parseTestGraph returns a fully populated BoltStore given a path to a JSON
 // file which encodes a test graph.
 func parseTestGraph(t *testing.T, useCache bool, path string) (
-	*testGraphInstance, error) {
+	*graphdb.testGraphInstance, error) {
 
 	graphJSON, err := os.ReadFile(path)
 	if err != nil {
@@ -1444,7 +1444,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 	testAddrs = append(testAddrs, testAddr)
 
 	// Next, create a temporary graph database for usage within the test.
-	graph, graphBackend, err := makeTestGraph(t, useCache)
+	graph, graphBackend, err := graphdb.makeTestGraph(t, useCache)
 	if err != nil {
 		return nil, err
 	}
@@ -1464,11 +1464,11 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 
 		dbNode := &models.LightningNode{
 			HaveNodeAnnouncement: true,
-			AuthSigBytes:         testSig.Serialize(),
-			LastUpdate:           testTime,
+			AuthSigBytes:         graphdb.testSig.Serialize(),
+			LastUpdate:           graphdb.testTime,
 			Addresses:            testAddrs,
 			Alias:                node.Alias,
-			Features:             testFeatures,
+			Features:             graphdb.testFeatures,
 		}
 		copy(dbNode.PubKeyBytes[:], pubBytes)
 
@@ -1575,7 +1575,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 		// nodes.
 		edgeInfo := models.ChannelEdgeInfo{
 			ChannelID:    edge.ChannelID,
-			AuthProof:    &testAuthProof,
+			AuthProof:    &graphdb.testAuthProof,
 			ChannelPoint: fundingPoint,
 			Capacity:     btcutil.Amount(edge.Capacity),
 		}
@@ -1605,13 +1605,13 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 		}
 
 		edgePolicy := &models.ChannelEdgePolicy{
-			SigBytes: testSig.Serialize(),
+			SigBytes: graphdb.testSig.Serialize(),
 			MessageFlags: lnwire.ChanUpdateMsgFlags(
 				edge.MessageFlags,
 			),
 			ChannelFlags:  channelFlags,
 			ChannelID:     edge.ChannelID,
-			LastUpdate:    testTime,
+			LastUpdate:    graphdb.testTime,
 			TimeLockDelta: edge.Expiry,
 			MinHTLC: lnwire.MilliSatoshi(
 				edge.MinHTLC,
@@ -1653,7 +1653,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 		channelIDs[node2Vertex][node1Vertex] = edge.ChannelID
 	}
 
-	return &testGraphInstance{
+	return &graphdb.testGraphInstance{
 		graph:        graph,
 		graphBackend: graphBackend,
 		aliasMap:     aliasMap,
@@ -1808,7 +1808,7 @@ type testChannelPolicy struct {
 // required and derived from the channel data. The goal is to keep instantiating
 // a test channel graph as light weight as possible.
 func createTestGraphFromChannels(t *testing.T, useCache bool,
-	testChannels []*testChannel, source string) (*testGraphInstance,
+	testChannels []*testChannel, source string) (*graphdb.testGraphInstance,
 	error) {
 
 	// We'll use this fake address for the IP address of all the nodes in
@@ -1822,7 +1822,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 	testAddrs = append(testAddrs, testAddr)
 
 	// Next, create a temporary graph database for usage within the test.
-	graph, graphBackend, err := makeTestGraph(t, useCache)
+	graph, graphBackend, err := graphdb.makeTestGraph(t, useCache)
 	if err != nil {
 		return nil, err
 	}
@@ -1849,8 +1849,8 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 
 		dbNode := &models.LightningNode{
 			HaveNodeAnnouncement: true,
-			AuthSigBytes:         testSig.Serialize(),
-			LastUpdate:           testTime,
+			AuthSigBytes:         graphdb.testSig.Serialize(),
+			LastUpdate:           graphdb.testTime,
 			Addresses:            testAddrs,
 			Alias:                alias,
 			Features:             features,
@@ -1944,7 +1944,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 		// nodes.
 		edgeInfo := models.ChannelEdgeInfo{
 			ChannelID:    channelID,
-			AuthProof:    &testAuthProof,
+			AuthProof:    &graphdb.testAuthProof,
 			ChannelPoint: *fundingPoint,
 			Capacity:     testChannel.Capacity,
 
@@ -1985,7 +1985,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 			}
 
 			edgePolicy := &models.ChannelEdgePolicy{
-				SigBytes:                  testSig.Serialize(),
+				SigBytes:                  graphdb.testSig.Serialize(),
 				MessageFlags:              msgFlags,
 				ChannelFlags:              channelFlags,
 				ChannelID:                 channelID,
@@ -2016,7 +2016,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 			channelFlags |= lnwire.ChanUpdateDirection
 
 			edgePolicy := &models.ChannelEdgePolicy{
-				SigBytes:                  testSig.Serialize(),
+				SigBytes:                  graphdb.testSig.Serialize(),
 				MessageFlags:              msgFlags,
 				ChannelFlags:              channelFlags,
 				ChannelID:                 channelID,
@@ -2038,7 +2038,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 		channelID++ //nolint:ineffassign
 	}
 
-	return &testGraphInstance{
+	return &graphdb.testGraphInstance{
 		graph:        graph,
 		graphBackend: graphBackend,
 		aliasMap:     aliasMap,

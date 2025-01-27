@@ -1,23 +1,20 @@
-package graph
+package graphdb
 
 import (
 	"bytes"
-	"encoding/hex"
 	"fmt"
 	"image/color"
 	prand "math/rand"
-	"net"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/chainntnfs"
-	graphdb "github.com/lightningnetwork/lnd/graph/db"
+	graph2 "github.com/lightningnetwork/lnd/graph"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/input"
@@ -32,21 +29,6 @@ import (
 )
 
 var (
-	testAddr = &net.TCPAddr{IP: (net.IP)([]byte{0xA, 0x0, 0x0, 0x1}),
-		Port: 9000}
-	testAddrs = []net.Addr{testAddr}
-
-	testFeatures = lnwire.NewFeatureVector(nil, lnwire.Features)
-
-	testHash = [32]byte{
-		0xb7, 0x94, 0x38, 0x5f, 0x2d, 0x1e, 0xf7, 0xab,
-		0x4d, 0x92, 0x73, 0xd1, 0x90, 0x63, 0x81, 0xb4,
-		0x4f, 0x2f, 0x6f, 0x25, 0x88, 0xa3, 0xef, 0xb9,
-		0x6a, 0x49, 0x18, 0x83, 0x31, 0x98, 0x47, 0x53,
-	}
-
-	testTime = time.Date(2018, time.January, 9, 14, 00, 00, 0, time.UTC)
-
 	priv1, _    = btcec.NewPrivateKey()
 	bitcoinKey1 = priv1.PubKey()
 
@@ -54,27 +36,6 @@ var (
 	bitcoinKey2 = priv2.PubKey()
 
 	timeout = time.Second * 5
-
-	testRBytes, _ = hex.DecodeString(
-		"8ce2bc69281ce27da07e6683571319d18e949ddfa2965fb6caa1bf03" +
-			"14f882d7",
-	)
-	testSBytes, _ = hex.DecodeString(
-		"299105481d63e0f4bc2a88121167221b6700d72a0ead154c03be696a2" +
-			"92d24ae",
-	)
-	testRScalar = new(btcec.ModNScalar)
-	testSScalar = new(btcec.ModNScalar)
-	_           = testRScalar.SetByteSlice(testRBytes)
-	_           = testSScalar.SetByteSlice(testSBytes)
-	testSig     = ecdsa.NewSignature(testRScalar, testSScalar)
-
-	testAuthProof = models.ChannelAuthProof{
-		NodeSig1Bytes:    testSig.Serialize(),
-		NodeSig2Bytes:    testSig.Serialize(),
-		BitcoinSig1Bytes: testSig.Serialize(),
-		BitcoinSig2Bytes: testSig.Serialize(),
-	}
 )
 
 func createTestNode(t *testing.T) *models.LightningNode {
@@ -480,7 +441,7 @@ func TestEdgeUpdateNotification(t *testing.T) {
 	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
 	copy(edge.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
 
-	if err := ctx.builder.AddEdge(edge); err != nil {
+	if err := ctx.builder.AddChannelEdge(edge); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
@@ -499,10 +460,10 @@ func TestEdgeUpdateNotification(t *testing.T) {
 	require.NoError(t, err, "unable to create a random chan policy")
 	edge2.ChannelFlags = 1
 
-	if err := ctx.builder.UpdateEdge(edge1); err != nil {
+	if err := ctx.builder.UpdateEdgePolicy(edge1); err != nil {
 		t.Fatalf("unable to add edge update: %v", err)
 	}
-	if err := ctx.builder.UpdateEdge(edge2); err != nil {
+	if err := ctx.builder.UpdateEdgePolicy(edge2); err != nil {
 		t.Fatalf("unable to add edge update: %v", err)
 	}
 
@@ -669,7 +630,7 @@ func TestNodeUpdateNotification(t *testing.T) {
 
 	// Adding the edge will add the nodes to the graph, but with no info
 	// except the pubkey known.
-	if err := ctx.builder.AddEdge(edge); err != nil {
+	if err := ctx.builder.AddChannelEdge(edge); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
@@ -679,10 +640,10 @@ func TestNodeUpdateNotification(t *testing.T) {
 
 	// Change network topology by adding the updated info for the two nodes
 	// to the channel router.
-	if err := ctx.builder.AddNode(node1); err != nil {
+	if err := ctx.builder.AddLightningNode(node1); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
-	if err := ctx.builder.AddNode(node2); err != nil {
+	if err := ctx.builder.AddLightningNode(node2); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
 
@@ -776,7 +737,7 @@ func TestNodeUpdateNotification(t *testing.T) {
 	nodeUpdateAnn.LastUpdate = node1.LastUpdate.Add(300 * time.Millisecond)
 
 	// Add new node topology update to the channel router.
-	if err := ctx.builder.AddNode(&nodeUpdateAnn); err != nil {
+	if err := ctx.builder.AddLightningNode(&nodeUpdateAnn); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
 
@@ -850,15 +811,15 @@ func TestNotificationCancellation(t *testing.T) {
 	}
 	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
 	copy(edge.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
-	if err := ctx.builder.AddEdge(edge); err != nil {
+	if err := ctx.builder.AddChannelEdge(edge); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
-	if err := ctx.builder.AddNode(node1); err != nil {
+	if err := ctx.builder.AddLightningNode(node1); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
 
-	if err := ctx.builder.AddNode(node2); err != nil {
+	if err := ctx.builder.AddLightningNode(node2); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
 
@@ -919,7 +880,7 @@ func TestChannelCloseNotification(t *testing.T) {
 	}
 	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
 	copy(edge.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
-	if err := ctx.builder.AddEdge(edge); err != nil {
+	if err := ctx.builder.AddChannelEdge(edge); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
@@ -1017,9 +978,9 @@ func TestEncodeHexColor(t *testing.T) {
 }
 
 type testCtx struct {
-	builder *Builder
+	builder *ChannelGraph
 
-	graph *graphdb.BoltStore
+	graph *BoltStore
 
 	aliases map[string]route.Vertex
 
@@ -1063,7 +1024,7 @@ func (c *testCtx) RestartBuilder(t *testing.T) {
 
 	// With the chainView reset, we'll now re-create the builder itself, and
 	// start it.
-	builder, err := NewBuilder(&Config{
+	builder, err := graph2.NewBuilder(&graph2.Config{
 		SelfNode:            selfNode.PubKeyBytes,
 		Graph:               c.graph,
 		Chain:               c.chain,
@@ -1088,7 +1049,7 @@ func (c *testCtx) RestartBuilder(t *testing.T) {
 
 // makeTestGraph creates a new instance of a channeldb.BoltStore for testing
 // purposes.
-func makeTestGraph(t *testing.T, useCache bool) (*graphdb.BoltStore,
+func makeTestGraph(t *testing.T, useCache bool) (*BoltStore,
 	kvdb.Backend, error) {
 
 	// Create channelgraph for the first time.
@@ -1099,8 +1060,8 @@ func makeTestGraph(t *testing.T, useCache bool) (*graphdb.BoltStore,
 
 	t.Cleanup(backendCleanup)
 
-	graph, err := graphdb.NewBoltStore(
-		backend, graphdb.WithUseGraphCache(useCache),
+	graph, err := NewBoltStore(
+		backend, WithUseGraphCache(useCache),
 	)
 	if err != nil {
 		return nil, nil, err
@@ -1110,7 +1071,7 @@ func makeTestGraph(t *testing.T, useCache bool) (*graphdb.BoltStore,
 }
 
 type testGraphInstance struct {
-	graph        *graphdb.BoltStore
+	graph        *BoltStore
 	graphBackend kvdb.Backend
 
 	// aliasMap is a map from a node's alias to its public key. This type is
@@ -1158,7 +1119,7 @@ func createTestCtxFromGraphInstanceAssumeValid(t *testing.T,
 	selfnode, err := graphInstance.graph.SourceNode()
 	require.NoError(t, err)
 
-	graphBuilder, err := NewBuilder(&Config{
+	graphBuilder, err := graph2.NewBuilder(&graph2.Config{
 		SelfNode:            selfnode.PubKeyBytes,
 		Graph:               graphInstance.graph,
 		Chain:               chain,

@@ -378,7 +378,7 @@ type server struct {
 // updatePersistentPeerAddrs subscribes to topology changes and stores
 // advertised addresses for any NodeAnnouncements from our persisted peers.
 func (s *server) updatePersistentPeerAddrs() error {
-	graphSub, err := s.graphBuilder.SubscribeTopology()
+	graphSub, err := s.chanGraph.SubscribeTopology()
 	if err != nil {
 		return err
 	}
@@ -2336,18 +2336,24 @@ func (s *server) Start() error {
 			return
 		}
 
-		cleanup = cleanup.add(s.graphBuilder.Stop)
-		if err := s.graphBuilder.Start(); err != nil {
-			startErr = err
-			return
-		}
-
 		if s.remoteGraphCli != nil {
 			cleanup = cleanup.add(s.remoteGraphCli.Stop)
 			if err := s.remoteGraphCli.Start(context.Background()); err != nil {
 				startErr = err
 				return
 			}
+		}
+
+		cleanup = cleanup.add(s.chanGraph.Stop)
+		if err := s.chanGraph.Start(context.TODO()); err != nil {
+			startErr = err
+			return
+		}
+
+		cleanup = cleanup.add(s.graphBuilder.Stop)
+		if err := s.graphBuilder.Start(); err != nil {
+			startErr = err
+			return
 		}
 
 		cleanup = cleanup.add(s.chanRouter.Stop)
@@ -2644,6 +2650,9 @@ func (s *server) Stop() error {
 		}
 		if err := s.graphBuilder.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop graphBuilder %v", err)
+		}
+		if err := s.chanGraph.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop chanGraph %v", err)
 		}
 		if s.remoteGraphCli != nil {
 			if err := s.remoteGraphCli.Stop(); err != nil {
