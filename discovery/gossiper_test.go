@@ -85,7 +85,6 @@ type mockGraphSource struct {
 	edges         map[uint64][]models.ChannelEdgePolicy
 	zombies       map[uint64][][33]byte
 	chansToReject map[uint64]struct{}
-	addEdgeErr    error
 }
 
 func newMockRouter(height uint32) *mockGraphSource {
@@ -133,10 +132,6 @@ func (r *mockGraphSource) AddEdge(info *models.ChannelEdgeInfo,
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.addEdgeErr != nil {
-		return r.addEdgeErr
-	}
-
 	if _, ok := r.infos[info.ChannelID]; ok {
 		return errors.New("info already exist")
 	}
@@ -147,14 +142,6 @@ func (r *mockGraphSource) AddEdge(info *models.ChannelEdgeInfo,
 
 	r.infos[info.ChannelID] = *info
 	return nil
-}
-
-func (r *mockGraphSource) resetAddEdgeErr() {
-	r.addEdgeErr = nil
-}
-
-func (r *mockGraphSource) setAddEdgeErr(err error) {
-	r.addEdgeErr = err
 }
 
 func (r *mockGraphSource) queueValidationFail(chanID uint64) {
@@ -603,7 +590,7 @@ func createUpdateAnnouncement(blockHeight uint32,
 
 	var err error
 
-	htlcMinMsat := lnwire.MilliSatoshi(prand.Int63())
+	htlcMinMsat := lnwire.MilliSatoshi(100)
 	a := &lnwire.ChannelUpdate1{
 		ShortChannelID: lnwire.ShortChannelID{
 			BlockHeight: blockHeight,
@@ -3685,6 +3672,11 @@ func TestProcessChannelAnnouncementOptionalMsgFields(t *testing.T) {
 	ctx, err := createTestCtx(t, 0, false)
 	require.NoError(t, err, "unable to create test context")
 
+	// We set AssumeValid to true for this test so that the full validation
+	// of a funding transaction is not done and ie, we don't fetch the
+	// channel capacity from the on-chain transaction.
+	ctx.gossiper.cfg.AssumeChannelValid = true
+
 	chanAnn1 := ctx.createAnnouncementWithoutProof(
 		100, selfKeyDesc.PubKey, remoteKeyPub1,
 	)
@@ -4314,21 +4306,23 @@ func TestChanAnnBanningNonChanPeer(t *testing.T) {
 		remoteKeyPriv2.PubKey(), nil, nil, atomic.Bool{},
 	}
 
-	ctx.router.setAddEdgeErr(graph.ErrInvalidFundingOutput)
-
 	// Loop 100 times to get nodePeer banned.
 	for i := 0; i < 100; i++ {
+		height := uint32(i)
+
 		// Craft a valid channel announcement for a channel we don't
 		// have. We will ensure that it fails validation by modifying
-		// the router.
-		ca, err := ctx.createRemoteChannelAnnouncement(uint32(i))
+		// the tx script.
+		ca, err := ctx.createRemoteChannelAnnouncement(
+			height, withModifier(edgeCreationBadScript),
+		)
 		require.NoError(t, err, "can't create channel announcement")
 
 		select {
 		case err = <-ctx.gossiper.ProcessRemoteAnnouncement(
 			ca, nodePeer1,
 		):
-			require.ErrorIs(t, err, graph.ErrInvalidFundingOutput)
+			require.ErrorIs(t, err, ErrInvalidFundingOutput)
 
 		case <-time.After(2 * time.Second):
 			t.Fatalf("remote announcement not processed")
@@ -4341,16 +4335,16 @@ func TestChanAnnBanningNonChanPeer(t *testing.T) {
 	// Assert that nodePeer has been disconnected.
 	require.True(t, nodePeer1.disconnected.Load())
 
-	ca, err := ctx.createRemoteChannelAnnouncement(101)
-	require.NoError(t, err, "can't create channel announcement")
-
-	// Set the error to ErrChannelSpent so that we can test that the
-	// gossiper ignores closed channels.
-	ctx.router.setAddEdgeErr(graph.ErrChannelSpent)
+	// Mark the UTXO as spent so that we get the ErrChannelSpent error and
+	// can thus tests that the gossiper ignores closed channels.
+	ca, err := ctx.createRemoteChannelAnnouncement(
+		101, withModifier(edgeCreationSpentUTXO), withValue(10001),
+	)
+	require.NoError(t, err)
 
 	select {
 	case err = <-ctx.gossiper.ProcessRemoteAnnouncement(ca, nodePeer2):
-		require.ErrorIs(t, err, graph.ErrChannelSpent)
+		require.ErrorIs(t, err, ErrChannelSpent)
 
 	case <-time.After(2 * time.Second):
 		t.Fatalf("remote announcement not processed")
@@ -4371,13 +4365,21 @@ func TestChanAnnBanningNonChanPeer(t *testing.T) {
 
 	ctx.gossiper.recentRejects.Delete(key)
 
-	// Reset the AddEdge error and pass the same announcement again. An
-	// error should be returned even though AddEdge won't fail.
-	ctx.router.resetAddEdgeErr()
+	// The validateFundingTransaction method will mark this channel
+	// as a zombie if any error occurs in the chanvalidate.Validate call.
+	// For the sake of the rest of the test, however, we mark it as live
+	// here.
+	_ = ctx.router.MarkEdgeLive(ca.ShortChannelID)
+
+	// Create the same announcement again but this time with no modifiers
+	// that would cause validation failure. We do, however, still expect
+	// an error later on since the channel is already closed.
+	ca, err = ctx.createRemoteChannelAnnouncement(101, withValue(10001))
+	require.NoError(t, err)
 
 	select {
 	case err = <-ctx.gossiper.ProcessRemoteAnnouncement(ca, nodePeer2):
-		require.NotNil(t, err)
+		require.ErrorContains(t, err, "ignoring closed channel")
 
 	case <-time.After(2 * time.Second):
 		t.Fatalf("remote announcement not processed")
@@ -4394,21 +4396,23 @@ func TestChanAnnBanningChanPeer(t *testing.T) {
 
 	nodePeer := &mockPeer{remoteKeyPriv1.PubKey(), nil, nil, atomic.Bool{}}
 
-	ctx.router.setAddEdgeErr(graph.ErrInvalidFundingOutput)
-
 	// Loop 100 times to get nodePeer banned.
 	for i := 0; i < 100; i++ {
+		height := uint32(i)
+
 		// Craft a valid channel announcement for a channel we don't
 		// have. We will ensure that it fails validation by modifying
 		// the router.
-		ca, err := ctx.createRemoteChannelAnnouncement(uint32(i))
+		ca, err := ctx.createRemoteChannelAnnouncement(
+			height, withModifier(edgeCreationBadScript),
+		)
 		require.NoError(t, err, "can't create channel announcement")
 
 		select {
 		case err = <-ctx.gossiper.ProcessRemoteAnnouncement(
 			ca, nodePeer,
 		):
-			require.ErrorIs(t, err, graph.ErrInvalidFundingOutput)
+			require.ErrorIs(t, err, ErrInvalidFundingOutput)
 
 		case <-time.After(2 * time.Second):
 			t.Fatalf("remote announcement not processed")
@@ -4420,6 +4424,78 @@ func TestChanAnnBanningChanPeer(t *testing.T) {
 
 	// Assert that the peer wasn't disconnected.
 	require.False(t, nodePeer.disconnected.Load())
+}
+
+// TestChannelOnChainRejectionZombie tests that if we fail validating a channel
+// due to some sort of on-chain rejection (no funding transaction, or invalid
+// UTXO), then we'll mark the channel as a zombie.
+func TestChannelOnChainRejectionZombie(t *testing.T) {
+	t.Parallel()
+
+	ctx, err := createTestCtx(t, 1000, true)
+	require.NoError(t, err)
+
+	// To start,  we'll make an edge for the channel, but we won't add the
+	// funding transaction to the mock blockchain, which should cause the
+	// validation to fail below.
+	chanAnn, err := ctx.createRemoteChannelAnnouncement(
+		1, withModifier(edgeCreationNoFundingTx), withValue(1000),
+	)
+	require.NoError(t, err)
+
+	// We expect this to fail as the transaction isn't present in the
+	// chain (nor the block).
+	assertChanChainRejection(t, ctx, chanAnn, ErrNoFundingTransaction)
+
+	// Next, we'll make another channel edge, but actually add it to the
+	// graph this time.
+	chanAnn, err = ctx.createRemoteChannelAnnouncement(
+		2, withModifier(edgeCreationSpentUTXO), withValue(10001),
+	)
+	require.NoError(t, err)
+
+	// Instead now, we'll remove it from the set of UTXOs which should
+	// cause the spentness validation to fail.
+	assertChanChainRejection(t, ctx, chanAnn, ErrChannelSpent)
+
+	// If we cause the funding transaction the chain to fail validation, we
+	// should see similar behavior.
+	chanAnn, err = ctx.createRemoteChannelAnnouncement(
+		3, withModifier(edgeCreationBadScript), withValue(10002),
+	)
+	require.NoError(t, err)
+	assertChanChainRejection(t, ctx, chanAnn, ErrInvalidFundingOutput)
+}
+
+func assertChanChainRejection(t *testing.T, ctx *testCtx,
+	edge *lnwire.ChannelAnnouncement1, expectedErr error) {
+
+	t.Helper()
+
+	nodePeer := &mockPeer{bitcoinKeyPub2, nil, nil, atomic.Bool{}}
+	errChan := make(chan error, 1)
+	nMsg := &networkMsg{
+		msg:      edge,
+		isRemote: true,
+		peer:     nodePeer,
+		source:   nodePeer.IdentityKey(),
+		err:      errChan,
+	}
+
+	_, added := ctx.gossiper.handleChanAnnouncement(nMsg, edge)
+	require.False(t, added)
+
+	select {
+	case err := <-errChan:
+		require.ErrorIs(t, err, expectedErr)
+	case <-time.After(2 * time.Second):
+		t.Fatal("channel announcement not processed")
+	}
+
+	// This channel should now be present in the zombie channel index.
+	isZombie, err := ctx.router.IsZombieEdge(edge.ShortChannelID)
+	require.NoError(t, err)
+	require.True(t, isZombie, "edge should be marked as zombie")
 }
 
 type mockChain struct {
