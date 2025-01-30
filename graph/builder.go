@@ -1273,8 +1273,7 @@ func (b *Builder) addEdge(edge *models.ChannelEdgeInfo,
 		default:
 		}
 
-		return NewErrf(ErrNoFundingTransaction, "unable to "+
-			"locate funding tx: %v", err)
+		return fmt.Errorf("%w: %w", ErrNoFundingTransaction, err)
 	}
 
 	// Recreate witness output to be sure that declared in channel edge
@@ -1307,8 +1306,7 @@ func (b *Builder) addEdge(edge *models.ChannelEdgeInfo,
 			return err
 		}
 
-		return NewErrf(ErrInvalidFundingOutput, "output failed "+
-			"validation: %w", err)
+		return fmt.Errorf("%w: %w", ErrInvalidFundingOutput, err)
 	}
 
 	// Now that we have the funding outpoint of the channel, ensure
@@ -1325,8 +1323,8 @@ func (b *Builder) addEdge(edge *models.ChannelEdgeInfo,
 			}
 		}
 
-		return NewErrf(ErrChannelSpent, "unable to fetch utxo for "+
-			"chan_id=%v, chan_point=%v: %v", edge.ChannelID,
+		return fmt.Errorf("%w: unable to fetch utxo for chan_id=%v, "+
+			"chan_point=%v: %w", ErrChannelSpent, scid.ToUint64(),
 			fundingPoint, err)
 	}
 
