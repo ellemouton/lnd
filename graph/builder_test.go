@@ -65,8 +65,8 @@ func TestAddProof(t *testing.T) {
 	// After utxo was recreated adding the edge without the proof.
 	edge := &models.ChannelEdgeInfo{
 		ChannelID:     chanID.ToUint64(),
-		NodeKey1Bytes: node1.PubKeyBytes,
-		NodeKey2Bytes: node2.PubKeyBytes,
+		NodeKey1Bytes: node1.NodeID,
+		NodeKey2Bytes: node2.NodeID,
 		AuthProof:     nil,
 	}
 	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
@@ -93,18 +93,24 @@ func TestIgnoreNodeAnnouncement(t *testing.T) {
 	ctx := createTestCtxFromFile(t, startingBlockHeight, basicGraphFilePath)
 
 	pub := priv1.PubKey()
-	node := &models.LightningNode{
-		HaveNodeAnnouncement: true,
-		LastUpdate:           time.Unix(123, 0),
-		Addresses:            testAddrs,
-		Color:                color.RGBA{1, 2, 3, 0},
-		Alias:                "node11",
-		AuthSigBytes:         testSig.Serialize(),
-		Features:             testFeatures,
-	}
-	copy(node.PubKeyBytes[:], pub.SerializeCompressed())
 
-	err := ctx.builder.AddNode(node)
+	sig, err := lnwire.NewSigFromSignature(testSig)
+	require.NoError(t, err)
+
+	alias, err := lnwire.NewNodeAlias("node11")
+	require.NoError(t, err)
+
+	node := &lnwire.NodeAnnouncement{
+		Signature: sig,
+		Features:  testFeatures.RawFeatureVector,
+		Timestamp: 123,
+		RGBColor:  color.RGBA{R: 1, G: 2, B: 3},
+		Alias:     alias,
+		Addresses: testAddrs,
+	}
+	copy(node.NodeID[:], pub.SerializeCompressed())
+
+	err = ctx.builder.AddNode(node)
 	if !IsError(err, ErrIgnored) {
 		t.Fatalf("expected to get ErrIgnore, instead got: %v", err)
 	}
@@ -261,8 +267,8 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 
 	edge1 := &models.ChannelEdgeInfo{
 		ChannelID:     chanID1,
-		NodeKey1Bytes: node1.PubKeyBytes,
-		NodeKey2Bytes: node2.PubKeyBytes,
+		NodeKey1Bytes: node1.NodeID,
+		NodeKey2Bytes: node2.NodeID,
 		AuthProof: &models.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
@@ -279,8 +285,8 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 
 	edge2 := &models.ChannelEdgeInfo{
 		ChannelID:     chanID2,
-		NodeKey1Bytes: node1.PubKeyBytes,
-		NodeKey2Bytes: node2.PubKeyBytes,
+		NodeKey1Bytes: node1.NodeID,
+		NodeKey2Bytes: node2.NodeID,
 		AuthProof: &models.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
@@ -461,10 +467,10 @@ func TestDisconnectedBlocks(t *testing.T) {
 
 	edge1 := &models.ChannelEdgeInfo{
 		ChannelID:        chanID1,
-		NodeKey1Bytes:    node1.PubKeyBytes,
-		NodeKey2Bytes:    node2.PubKeyBytes,
-		BitcoinKey1Bytes: node1.PubKeyBytes,
-		BitcoinKey2Bytes: node2.PubKeyBytes,
+		NodeKey1Bytes:    node1.NodeID,
+		NodeKey2Bytes:    node2.NodeID,
+		BitcoinKey1Bytes: node1.NodeID,
+		BitcoinKey2Bytes: node2.NodeID,
 		AuthProof: &models.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
@@ -481,10 +487,10 @@ func TestDisconnectedBlocks(t *testing.T) {
 
 	edge2 := &models.ChannelEdgeInfo{
 		ChannelID:        chanID2,
-		NodeKey1Bytes:    node1.PubKeyBytes,
-		NodeKey2Bytes:    node2.PubKeyBytes,
-		BitcoinKey1Bytes: node1.PubKeyBytes,
-		BitcoinKey2Bytes: node2.PubKeyBytes,
+		NodeKey1Bytes:    node1.NodeID,
+		NodeKey2Bytes:    node2.NodeID,
+		BitcoinKey1Bytes: node1.NodeID,
+		BitcoinKey2Bytes: node2.NodeID,
 		AuthProof: &models.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
@@ -611,8 +617,8 @@ func TestRouterChansClosedOfflinePruneGraph(t *testing.T) {
 
 	edge1 := &models.ChannelEdgeInfo{
 		ChannelID:     chanID1.ToUint64(),
-		NodeKey1Bytes: node1.PubKeyBytes,
-		NodeKey2Bytes: node2.PubKeyBytes,
+		NodeKey1Bytes: node1.NodeID,
+		NodeKey2Bytes: node2.NodeID,
 		AuthProof: &models.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
@@ -1034,18 +1040,25 @@ func TestIsStaleNode(t *testing.T) {
 		t.Fatalf("incorrectly detected node as stale")
 	}
 
+	sig, err := lnwire.NewSigFromSignature(testSig)
+	require.NoError(t, err)
+
+	alias, err := lnwire.NewNodeAlias("node11")
+	require.NoError(t, err)
+
 	// With the node stub in the database, we'll add the fully node
 	// announcement to the database.
-	n1 := &models.LightningNode{
-		HaveNodeAnnouncement: true,
-		LastUpdate:           updateTimeStamp,
-		Addresses:            testAddrs,
-		Color:                color.RGBA{1, 2, 3, 0},
-		Alias:                "node11",
-		AuthSigBytes:         testSig.Serialize(),
-		Features:             testFeatures,
+	n1 := &lnwire.NodeAnnouncement{
+		Signature:       sig,
+		Features:        testFeatures.RawFeatureVector,
+		Timestamp:       uint32(updateTimeStamp.Unix()),
+		RGBColor:        color.RGBA{R: 1, G: 2, B: 3},
+		Alias:           alias,
+		Addresses:       testAddrs,
+		ExtraOpaqueData: nil,
 	}
-	copy(n1.PubKeyBytes[:], priv1.PubKey().SerializeCompressed())
+	copy(n1.NodeID[:], priv1.PubKey().SerializeCompressed())
+
 	if err := ctx.builder.AddNode(n1); err != nil {
 		t.Fatalf("could not add node: %v", err)
 	}

@@ -76,29 +76,35 @@ var (
 	}
 )
 
-func createTestNode(t *testing.T) *models.LightningNode {
+func createTestNode(t *testing.T) *lnwire.NodeAnnouncement {
 	updateTime := prand.Int63()
 
 	priv, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 
 	pub := priv.PubKey().SerializeCompressed()
-	n := &models.LightningNode{
-		HaveNodeAnnouncement: true,
-		LastUpdate:           time.Unix(updateTime, 0),
-		Addresses:            testAddrs,
-		Color:                color.RGBA{1, 2, 3, 0},
-		Alias:                "kek" + string(pub[:]),
-		AuthSigBytes:         testSig.Serialize(),
-		Features:             testFeatures,
+
+	sig, err := lnwire.NewSigFromSignature(testSig)
+	require.NoError(t, err)
+
+	alias, err := lnwire.NewNodeAlias("kek" + hex.EncodeToString(pub[:10]))
+	require.NoError(t, err)
+
+	n := &lnwire.NodeAnnouncement{
+		Signature: sig,
+		Features:  testFeatures.RawFeatureVector,
+		Timestamp: uint32(updateTime),
+		RGBColor:  color.RGBA{R: 1, G: 2, B: 3},
+		Alias:     alias,
+		Addresses: testAddrs,
 	}
-	copy(n.PubKeyBytes[:], pub)
+	copy(n.NodeID[:], pub)
 
 	return n
 }
 
 func randEdgePolicy(chanID *lnwire.ShortChannelID,
-	node *models.LightningNode) (*models.ChannelEdgePolicy, error) {
+	node *lnwire.NodeAnnouncement) (*models.ChannelEdgePolicy, error) {
 
 	InboundFee := models.InboundFee{
 		Base: prand.Int31() * -1,
@@ -120,7 +126,7 @@ func randEdgePolicy(chanID *lnwire.ShortChannelID,
 		MaxHTLC:                   lnwire.MilliSatoshi(prand.Int31()),
 		FeeBaseMSat:               lnwire.MilliSatoshi(prand.Int31()),
 		FeeProportionalMillionths: lnwire.MilliSatoshi(prand.Int31()),
-		ToNode:                    node.PubKeyBytes,
+		ToNode:                    node.NodeID,
 		ExtraOpaqueData:           extraOpaqueData,
 	}, nil
 }
@@ -439,8 +445,8 @@ func TestEdgeUpdateNotification(t *testing.T) {
 	// update to announce the created channel between the two nodes.
 	edge := &models.ChannelEdgeInfo{
 		ChannelID:     chanID.ToUint64(),
-		NodeKey1Bytes: node1.PubKeyBytes,
-		NodeKey2Bytes: node2.PubKeyBytes,
+		NodeKey1Bytes: node1.NodeID,
+		NodeKey2Bytes: node2.NodeID,
 		AuthProof: &models.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
@@ -529,13 +535,13 @@ func TestEdgeUpdateNotification(t *testing.T) {
 	// Create lookup map for notifications we are intending to receive. Entries
 	// are removed from the map when the anticipated notification is received.
 	var waitingFor = map[route.Vertex]int{
-		route.Vertex(node1.PubKeyBytes): 1,
-		route.Vertex(node2.PubKeyBytes): 2,
+		route.Vertex(node1.NodeID): 1,
+		route.Vertex(node2.NodeID): 2,
 	}
 
-	node1Pub, err := node1.PubKey()
+	node1Pub, err := btcec.ParsePubKey(node1.NodeID[:])
 	require.NoError(t, err, "unable to encode key")
-	node2Pub, err := node2.PubKey()
+	node2Pub, err := btcec.ParsePubKey(node2.NodeID[:])
 	require.NoError(t, err, "unable to encode key")
 
 	const numEdgePolicies = 2
@@ -628,8 +634,8 @@ func TestNodeUpdateNotification(t *testing.T) {
 
 	edge := &models.ChannelEdgeInfo{
 		ChannelID:     chanID.ToUint64(),
-		NodeKey1Bytes: node1.PubKeyBytes,
-		NodeKey2Bytes: node2.PubKeyBytes,
+		NodeKey1Bytes: node1.NodeID,
+		NodeKey2Bytes: node2.NodeID,
 		AuthProof: &models.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
@@ -659,20 +665,22 @@ func TestNodeUpdateNotification(t *testing.T) {
 		t.Fatalf("unable to add node: %v", err)
 	}
 
-	assertNodeNtfnCorrect := func(t *testing.T, ann *models.LightningNode,
-		nodeUpdate *NetworkNodeUpdate) {
+	assertNodeNtfnCorrect := func(t *testing.T,
+		ann *lnwire.NodeAnnouncement, nodeUpdate *NetworkNodeUpdate) {
 
-		nodeKey, _ := ann.PubKey()
+		nodeKey, _ := btcec.ParsePubKey(ann.NodeID[:])
 
 		// The notification received should directly map the
 		// announcement originally sent.
 		if nodeUpdate.Addresses[0] != ann.Addresses[0] {
-			t.Fatalf("node address doesn't match: expected %v, got %v",
-				nodeUpdate.Addresses[0], ann.Addresses[0])
+			t.Fatalf("node address doesn't match: expected %v, "+
+				"got %v", nodeUpdate.Addresses[0],
+				ann.Addresses[0])
 		}
 		if !nodeUpdate.IdentityKey.IsEqual(nodeKey) {
-			t.Fatalf("node identity keys don't match: expected %x, "+
-				"got %x", nodeKey.SerializeCompressed(),
+			t.Fatalf("node identity keys don't match: "+
+				"expected %x, got %x",
+				nodeKey.SerializeCompressed(),
 				nodeUpdate.IdentityKey.SerializeCompressed())
 		}
 
@@ -683,21 +691,22 @@ func TestNodeUpdateNotification(t *testing.T) {
 			t, testFeaturesBuf.Bytes(), featuresBuf.Bytes(),
 		)
 
-		if nodeUpdate.Alias != ann.Alias {
-			t.Fatalf("node alias doesn't match: expected %v, got %v",
-				ann.Alias, nodeUpdate.Alias)
+		if nodeUpdate.Alias != ann.Alias.String() {
+			t.Fatalf("node alias doesn't match: expected %v, "+
+				"got %v", ann.Alias, nodeUpdate.Alias)
 		}
-		if nodeUpdate.Color != EncodeHexColor(ann.Color) {
-			t.Fatalf("node color doesn't match: expected %v, got %v",
-				EncodeHexColor(ann.Color), nodeUpdate.Color)
+		if nodeUpdate.Color != EncodeHexColor(ann.RGBColor) {
+			t.Fatalf("node color doesn't match: expected %v, "+
+				"got %v", EncodeHexColor(ann.RGBColor),
+				nodeUpdate.Color)
 		}
 	}
 
 	// Create lookup map for notifications we are intending to receive. Entries
 	// are removed from the map when the anticipated notification is received.
 	var waitingFor = map[route.Vertex]int{
-		route.Vertex(node1.PubKeyBytes): 1,
-		route.Vertex(node2.PubKeyBytes): 2,
+		route.Vertex(node1.NodeID): 1,
+		route.Vertex(node2.NodeID): 2,
 	}
 
 	// Exactly two notifications should be sent, each corresponding to the
@@ -746,7 +755,7 @@ func TestNodeUpdateNotification(t *testing.T) {
 	// then it should trigger a new notification.
 	// TODO(roasbeef): assume monotonic time.
 	nodeUpdateAnn := *node1
-	nodeUpdateAnn.LastUpdate = node1.LastUpdate.Add(300 * time.Millisecond)
+	nodeUpdateAnn.Timestamp = node1.Timestamp + 300
 
 	// Add new node topology update to the channel router.
 	if err := ctx.builder.AddNode(&nodeUpdateAnn); err != nil {
@@ -812,8 +821,8 @@ func TestNotificationCancellation(t *testing.T) {
 
 	edge := &models.ChannelEdgeInfo{
 		ChannelID:     chanID.ToUint64(),
-		NodeKey1Bytes: node1.PubKeyBytes,
-		NodeKey2Bytes: node2.PubKeyBytes,
+		NodeKey1Bytes: node1.NodeID,
+		NodeKey2Bytes: node2.NodeID,
 		AuthProof: &models.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
@@ -883,8 +892,8 @@ func TestChannelCloseNotification(t *testing.T) {
 	// announcement to announce the created channel between the two nodes.
 	edge := &models.ChannelEdgeInfo{
 		ChannelID:     chanID.ToUint64(),
-		NodeKey1Bytes: node1.PubKeyBytes,
-		NodeKey2Bytes: node2.PubKeyBytes,
+		NodeKey1Bytes: node1.NodeID,
+		NodeKey2Bytes: node2.NodeID,
 		AuthProof: &models.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
@@ -1018,9 +1027,9 @@ func createTestCtxSingleNode(t *testing.T,
 
 	sourceNode := createTestNode(t)
 
-	require.NoError(t,
-		graph.SetSourceNode(sourceNode), "failed to set source node",
-	)
+	node := chanAnnWireToModels(sourceNode)
+
+	require.NoError(t, graph.SetSourceNode(node))
 
 	graphInstance := &testGraphInstance{
 		graph:        graph,

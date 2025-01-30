@@ -1148,10 +1148,29 @@ func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 // be ignored.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) AddNode(node *models.LightningNode,
+func (b *Builder) AddNode(msg *lnwire.NodeAnnouncement,
 	op ...batch.SchedulerOption) error {
 
+	node := chanAnnWireToModels(msg)
+
 	return b.handleNetworkUpdate(node, op...)
+}
+
+func chanAnnWireToModels(msg *lnwire.NodeAnnouncement) *models.LightningNode {
+	timestamp := time.Unix(int64(msg.Timestamp), 0)
+	features := lnwire.NewFeatureVector(msg.Features, lnwire.Features)
+
+	return &models.LightningNode{
+		HaveNodeAnnouncement: true,
+		LastUpdate:           timestamp,
+		Addresses:            msg.Addresses,
+		PubKeyBytes:          msg.NodeID,
+		Alias:                msg.Alias.String(),
+		AuthSigBytes:         msg.Signature.ToSignatureBytes(),
+		Features:             features,
+		Color:                msg.RGBColor,
+		ExtraOpaqueData:      msg.ExtraOpaqueData,
+	}
 }
 
 func (b *Builder) addNode(node *models.LightningNode,
