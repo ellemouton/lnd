@@ -807,8 +807,8 @@ func FetchFundingTx(chain BlockChainIO,
 	// As a sanity check, ensure that the advertised transaction index is
 	// within the bounds of the total number of transactions within a
 	// block.
-	numTxns := uint32(len(fundingBlock.Transactions))
-	if chanID.TxIndex > numTxns-1 {
+	numTxns := len(fundingBlock.Transactions)
+	if int(chanID.TxIndex) > numTxns-1 {
 		return nil, fmt.Errorf("tx_index=#%v "+
 			"is out of range (max_index=%v), network_chan_id=%v",
 			chanID.TxIndex, numTxns-1, chanID)
