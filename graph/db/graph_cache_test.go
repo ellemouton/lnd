@@ -43,7 +43,7 @@ func (n *node) Features() *lnwire.FeatureVector {
 
 func (n *node) ForEachChannel(tx kvdb.RTx,
 	cb func(kvdb.RTx, *models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
-		*models.ChannelEdgePolicy) error) error {
+	*models.ChannelEdgePolicy) error) error {
 
 	for idx := range n.edgeInfos {
 		err := cb(
@@ -121,7 +121,7 @@ func TestGraphCacheAddNode(t *testing.T) {
 		assertCachedPolicyEqual(t, outPolicy1, toChannels[0].InPolicy)
 
 		// Now that we've inserted two nodes into the graph, check that
-		// we'll recover the same set of channels during ForEachNode.
+		// we'll recover the same set of channels during forEachNode.
 		nodes := make(map[route.Vertex]struct{})
 		chans := make(map[uint64]struct{})
 		_ = cache.ForEachNode(func(node route.Vertex,

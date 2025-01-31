@@ -604,7 +604,7 @@ func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
 	// We'll iterate over each node, then the set of channels for each
 	// node, and construct a similar callback functiopn signature as the
 	// main funcotin expects.
-	return c.ForEachNode(func(tx kvdb.RTx,
+	return c.forEachNode(func(tx kvdb.RTx,
 		node *models.LightningNode) error {
 
 		channels := make(map[uint64]*DirectedChannel)
@@ -716,11 +716,24 @@ func (c *ChannelGraph) DisabledChannelIDs() ([]uint64, error) {
 // ForEachNode iterates through all the stored vertices/nodes in the graph,
 // executing the passed callback with each node encountered. If the callback
 // returns an error, then the transaction is aborted and the iteration stops
+// early. Any operations performed on the NodeTx passed to the call-back are
+// executed under the same read transaction.
+func (c *ChannelGraph) ForEachNode(cb func(tx NodeTx) error) error {
+	return c.forEachNode(func(tx kvdb.RTx,
+		node *models.LightningNode) error {
+
+		return cb(newChanGraphNodeTx(tx, c, node))
+	})
+}
+
+// forEachNode iterates through all the stored vertices/nodes in the graph,
+// executing the passed callback with each node encountered. If the callback
+// returns an error, then the transaction is aborted and the iteration stops
 // early.
 //
 // TODO(roasbeef): add iterator interface to allow for memory efficient graph
 // traversal when graph gets mega
-func (c *ChannelGraph) ForEachNode(
+func (c *ChannelGraph) forEachNode(
 	cb func(kvdb.RTx, *models.LightningNode) error) error {
 
 	traversal := func(tx kvdb.RTx) error {
@@ -4715,6 +4728,65 @@ func deserializeChanEdgePolicyRaw(r io.Reader) (*models.ChannelEdgePolicy,
 	}
 
 	return edge, nil
+}
+
+// chanGraphNodeTx is an implementation of the NodeTx interface backed by the
+// ChannelGraph and a kvdb.RTx.
+type chanGraphNodeTx struct {
+	tx   kvdb.RTx
+	db   *ChannelGraph
+	node *models.LightningNode
+}
+
+// A compile-time constraint to ensure chanGraphNodeTx implements the NodeTx
+// interface.
+var _ NodeTx = (*chanGraphNodeTx)(nil)
+
+func newChanGraphNodeTx(tx kvdb.RTx, db *ChannelGraph,
+	node *models.LightningNode) *chanGraphNodeTx {
+
+	return &chanGraphNodeTx{
+		tx:   tx,
+		db:   db,
+		node: node,
+	}
+}
+
+// Node returns the raw information of the node.
+//
+// NOTE: This is a part of the NodeTx interface.
+func (c *chanGraphNodeTx) Node() *models.LightningNode {
+	return c.node
+}
+
+// FetchNode fetches the node with the given pub key under the same transaction
+// used to fetch the current node. The returned node is also a NodeTx and any
+// operations on that NodeTx will also be done under the same transaction.
+//
+// NOTE: This is a part of the NodeTx interface.
+func (c *chanGraphNodeTx) FetchNode(nodePub route.Vertex) (NodeTx, error) {
+	node, err := c.db.FetchLightningNodeTx(c.tx, nodePub)
+	if err != nil {
+		return nil, err
+	}
+
+	return newChanGraphNodeTx(c.tx, c.db, node), nil
+}
+
+// ForEachChannel can be used to iterate over the node's channels under
+// the same transaction used to fetch the node.
+//
+// NOTE: This is a part of the NodeTx interface.
+func (c *chanGraphNodeTx) ForEachChannel(f func(*models.ChannelEdgeInfo,
+	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
+
+	return c.db.ForEachNodeChannelTx(c.tx, c.node.PubKeyBytes,
+		func(_ kvdb.RTx, info *models.ChannelEdgeInfo, policy,
+			policy2 *models.ChannelEdgePolicy) error {
+
+			return f(info, policy, policy2)
+		},
+	)
 }
 
 // MakeTestGraph creates a new instance of the ChannelGraph for testing

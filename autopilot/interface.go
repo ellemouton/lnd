@@ -6,6 +6,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/wire"
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
 
@@ -215,4 +216,8 @@ type ChannelController interface {
 	//
 	// TODO(roasbeef): add force option?
 	CloseChannel(chanPoint *wire.OutPoint) error
+}
+
+type Graph interface {
+	ForEachNode(func(graphdb.NodeTx) error) error
 }
