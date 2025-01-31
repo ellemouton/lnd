@@ -1403,10 +1403,15 @@ func (b *Builder) GetChannelByID(chanID lnwire.ShortChannelID) (
 // within the graph.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) FetchLightningNode(
-	node route.Vertex) (*models.LightningNode, error) {
+func (b *Builder) FetchLightningNode(pub route.Vertex) (
+	*lnwire.NodeAnnouncement, error) {
 
-	return b.cfg.Graph.FetchLightningNode(node)
+	node, err := b.cfg.Graph.FetchLightningNode(pub)
+	if err != nil {
+		return nil, err
+	}
+
+	return node.NodeAnnouncement(true)
 }
 
 // ForAllOutgoingChannels is used to iterate over all outgoing channels owned by

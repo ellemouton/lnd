@@ -2180,19 +2180,6 @@ func (d *AuthenticatedGossiper) processZombieUpdate(
 	return nil
 }
 
-// fetchNodeAnn fetches the latest signed node announcement from our point of
-// view for the node with the given public key.
-func (d *AuthenticatedGossiper) fetchNodeAnn(
-	pubKey [33]byte) (*lnwire.NodeAnnouncement, error) {
-
-	node, err := d.cfg.Graph.FetchLightningNode(pubKey)
-	if err != nil {
-		return nil, err
-	}
-
-	return node.NodeAnnouncement(true)
-}
-
 // isMsgStale determines whether a message retrieved from the backing
 // MessageStore is seen as stale by the current graph.
 func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
@@ -3603,7 +3590,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 	// it since the source gets skipped. This isn't necessary for channel
 	// updates and announcement signatures since we send those directly to
 	// our channel counterparty through the gossiper's reliable sender.
-	node1Ann, err := d.fetchNodeAnn(chanInfo.NodeKey1Bytes)
+	node1Ann, err := d.cfg.Graph.FetchLightningNode(chanInfo.NodeKey1Bytes)
 	if err != nil {
 		log.Debugf("Unable to fetch node announcement for %x: %v",
 			chanInfo.NodeKey1Bytes, err)
@@ -3617,7 +3604,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(nMsg *networkMsg,
 		}
 	}
 
-	node2Ann, err := d.fetchNodeAnn(chanInfo.NodeKey2Bytes)
+	node2Ann, err := d.cfg.Graph.FetchLightningNode(chanInfo.NodeKey2Bytes)
 	if err != nil {
 		log.Debugf("Unable to fetch node announcement for %x: %v",
 			chanInfo.NodeKey2Bytes, err)
