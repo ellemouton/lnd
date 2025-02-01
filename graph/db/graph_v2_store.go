@@ -8,6 +8,8 @@ import (
 	"net"
 	"strconv"
 
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/graph/db/models"
@@ -34,6 +36,14 @@ type GossipV2Store interface {
 	DeleteNode(ctx context.Context, pubKey route.Vertex) error
 	SetSourceNode(ctx context.Context, node *models.Node2) error
 	GetSourceNode(ctx context.Context) (*models.Node2, error)
+	IsNodePublic(ctx context.Context, pubKey route.Vertex) (bool, error)
+	ListNodeChannels(ctx context.Context, pubKey route.Vertex) ([]*models.Channel2, error)
+
+	AddChannel(ctx context.Context, edge *models.Channel2) error
+	UpdateAnnouncedChannel(ctx context.Context, chanID uint64, sig []byte, signedFields map[uint64][]byte) error
+	GetChannelByChanID(ctx context.Context, chanID uint64) (*models.Channel2, error)
+	GetChannelByOutpoint(ctx context.Context, outpoint wire.OutPoint) (*models.Channel2, error)
+	DeleteChannels(ctx context.Context, chanID ...uint64) error
 }
 
 // V2Queries is a subset of the sqlc.Querier interface containing all the V2
@@ -61,6 +71,23 @@ type V2Queries interface {
 
 	GetSourceNode(ctx context.Context) (int64, error)
 	SetSourceNode(ctx context.Context, nodeID int64) error
+
+	InsertChannel(ctx context.Context, arg sqlc.InsertChannelParams) (int64, error)
+	GetChannel(ctx context.Context, id int64) (sqlc.Channel, error)
+	GetChannelByChanID(ctx context.Context, channelID int64) (sqlc.Channel, error)
+	GetChannelByOutpoint(ctx context.Context, outpoint string) (sqlc.Channel, error)
+	IsPublicNode(ctx context.Context, nodeID1 int64) (bool, error)
+	ListNodeChannels(ctx context.Context, nodeID1 int64) ([]sqlc.Channel, error)
+	AddChannelSignature(ctx context.Context, arg sqlc.AddChannelSignatureParams) error
+	DeleteChannel(ctx context.Context, channelID int64) error
+
+	InsertChannelFeature(ctx context.Context, arg sqlc.InsertChannelFeatureParams) error
+	GetChannelFeatures(ctx context.Context, channelID int64) ([]sqlc.ChannelFeature, error)
+	DeleteChannelFeature(ctx context.Context, arg sqlc.DeleteChannelFeatureParams) error
+
+	UpsertChannelExtraType(ctx context.Context, arg sqlc.UpsertChannelExtraTypeParams) error
+	GetExtraChannelTypes(ctx context.Context, channelID int64) ([]sqlc.ChannelExtraType, error)
+	DeleteExtraChannelType(ctx context.Context, arg sqlc.DeleteExtraChannelTypeParams) error
 }
 
 // BatchedV2Queries is a version of the V2Queries that's capable of batched
@@ -254,6 +281,301 @@ func (s *V2Store) GetSourceNode(ctx context.Context) (*models.Node2, error) {
 	}
 
 	return node, nil
+}
+
+func (s *V2Store) AddChannel(ctx context.Context, edge *models.Channel2) error {
+	var writeTxOpts V2QueriesTxOptions
+	err := s.db.ExecTx(ctx, &writeTxOpts, func(db V2Queries) error {
+		// Make sure that this channel does not already exist in the
+		// database.
+		_, err := db.GetChannelByChanID(ctx, int64(edge.ChannelID))
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err == nil {
+			return ErrEdgeAlreadyExist
+		}
+
+		return s.insertChannel(ctx, db, edge)
+	}, func() {})
+	if err != nil {
+		return fmt.Errorf("unable to add channel: %w", err)
+	}
+
+	return nil
+}
+
+func (s *V2Store) ListNodeChannels(ctx context.Context,
+	pubKey route.Vertex) ([]*models.Channel2, error) {
+
+	var (
+		readTx = NewV2QueryReadTx()
+		edges  []*models.Channel2
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db V2Queries) error {
+		node, err := db.GetNodeByPubKey(ctx, pubKey[:])
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrGraphNodeNotFound
+		} else if err != nil {
+			return fmt.Errorf("unable to fetch node: %w", err)
+		}
+
+		dbEdges, err := db.ListNodeChannels(ctx, node.ID)
+		if err != nil {
+			return fmt.Errorf("unable to fetch node channels: %w",
+				err)
+		}
+
+		for _, dbEdge := range dbEdges {
+			edge, err := buildChannel(ctx, db, dbEdge)
+			if err != nil {
+				return fmt.Errorf("unable to fetch "+
+					"channel(%d): %w", dbEdge.ChannelID,
+					err)
+			}
+
+			edges = append(edges, edge)
+		}
+
+		return nil
+	}, func() {
+		edges = nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch node channels: %w", err)
+	}
+
+	return edges, nil
+}
+
+func (s *V2Store) UpdateAnnouncedChannel(ctx context.Context, chanID uint64,
+	sig []byte, signedFields map[uint64][]byte) error {
+
+	var writeTxOpts V2QueriesTxOptions
+	err := s.db.ExecTx(ctx, &writeTxOpts, func(db V2Queries) error {
+		// Make sure that this channel does already exist in the
+		// database.
+		channel, err := db.GetChannelByChanID(ctx, int64(chanID))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrEdgeNotFound
+		} else if err != nil {
+			return err
+		}
+
+		if len(channel.Signature) != 0 {
+			return fmt.Errorf("channel(%d) already has an "+
+				"announcement signature", chanID)
+		}
+
+		err = db.AddChannelSignature(
+			ctx, sqlc.AddChannelSignatureParams{
+				ID:        channel.ID,
+				Signature: sig,
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("unable to add channel signature: %w",
+				err)
+		}
+
+		return upsertChannelExtraSignedFields(
+			ctx, db, channel.ID, signedFields,
+		)
+	}, func() {})
+	if err != nil {
+		return fmt.Errorf("unable to add channel: %w", err)
+	}
+
+	return nil
+}
+
+func (s *V2Store) GetChannelByChanID(ctx context.Context, chanID uint64) (
+	*models.Channel2, error) {
+
+	var (
+		readTx  = NewV2QueryReadTx()
+		channel *models.Channel2
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db V2Queries) error {
+		dbChan, err := db.GetChannelByChanID(ctx, int64(chanID))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrEdgeNotFound
+		} else if err != nil {
+			return fmt.Errorf("could not fetch channel "+
+				"using channel ID(%d): %w", chanID, err)
+		}
+
+		channel, err = buildChannel(ctx, db, dbChan)
+		if err != nil {
+			return fmt.Errorf("could not fetch channel(%d): %w",
+				chanID, err)
+		}
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch channel: %w", err)
+	}
+
+	return channel, nil
+}
+
+func (s *V2Store) GetChannelByOutpoint(ctx context.Context,
+	outpoint wire.OutPoint) (*models.Channel2, error) {
+
+	var (
+		readTx  = NewV2QueryReadTx()
+		channel *models.Channel2
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db V2Queries) error {
+		dbChan, err := db.GetChannelByOutpoint(ctx, outpoint.String())
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrEdgeNotFound
+		} else if err != nil {
+			return fmt.Errorf("could not fetch channel DB ID "+
+				"using outpoint(%s): %w", outpoint, err)
+		}
+
+		channel, err = buildChannel(ctx, db, dbChan)
+		if err != nil {
+			return fmt.Errorf("could not fetch channel(%s): %w",
+				outpoint, err)
+		}
+
+		return err
+	}, func() {})
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch node: %w", err)
+	}
+
+	return channel, nil
+}
+
+func maybeCreateShellNode(ctx context.Context, db V2Queries,
+	pubKey route.Vertex) (int64, error) {
+
+	nodeID, err := db.GetNodeIDByPubKey(ctx, pubKey[:])
+	// The node exists. Return the ID.
+	if err == nil {
+		return nodeID, nil
+	}
+
+	// Some other error occurred, return it.
+	if !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+
+	// Otherwise, the node does not exist, so we create a shell entry for
+	// it.
+	return db.InsertNode(ctx, sqlc.InsertNodeParams{
+		PubKey: pubKey[:],
+	})
+}
+
+func (s *V2Store) insertChannel(ctx context.Context, db V2Queries,
+	edge *models.Channel2) error {
+
+	// Make sure that at least a "shell" entry for each node is present in
+	// the nodes table.
+	node1DBID, err := maybeCreateShellNode(ctx, db, edge.Node1Key)
+	if err != nil {
+		return fmt.Errorf("unable to create shell node: %w", err)
+	}
+
+	node2DBID, err := maybeCreateShellNode(ctx, db, edge.Node2Key)
+	if err != nil {
+		return fmt.Errorf("unable to create shell node: %w", err)
+	}
+
+	var signature []byte
+	edge.Signature.WhenSome(func(s []byte) {
+		signature = s
+	})
+
+	dbChanID, err := db.InsertChannel(ctx, sqlc.InsertChannelParams{
+		ChannelID: int64(edge.ChannelID),
+		Outpoint:  edge.Outpoint.String(),
+		NodeID1:   node1DBID,
+		NodeID2:   node2DBID,
+		Capacity:  int64(edge.Capacity),
+		Signature: signature,
+		CreatedAt: s.clock.Now().UTC(),
+	})
+	if err != nil {
+		return fmt.Errorf("unable to insert channel: %w", err)
+	}
+
+	if edge.Features != nil {
+		for feature := range edge.Features.Features() {
+			err := db.InsertChannelFeature(
+				ctx, sqlc.InsertChannelFeatureParams{
+					ChannelID: dbChanID,
+					Feature:   int32(feature),
+				})
+			if err != nil {
+				return fmt.Errorf("unable to insert "+
+					"channel(%d) feature(%v): %w", dbChanID,
+					feature, err)
+			}
+		}
+	}
+
+	if err := upsertChannelExtraSignedFields(
+		ctx, db, dbChanID, edge.ExtraSignedFields,
+	); err != nil {
+		return fmt.Errorf("unable to insert channel extra "+
+			"types: %w", err)
+	}
+
+	return nil
+}
+
+func (s *V2Store) DeleteChannels(ctx context.Context, chanIDs ...uint64) error {
+	var writeTxOpts V2QueriesTxOptions
+	err := s.db.ExecTx(ctx, &writeTxOpts, func(db V2Queries) error {
+		for _, chanID := range chanIDs {
+			err := db.DeleteChannel(ctx, int64(chanID))
+			if err != nil {
+				return fmt.Errorf("could not delete "+
+					"channel %d: %w", chanID, err)
+			}
+		}
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return fmt.Errorf("unable to delete channel: %w", err)
+	}
+
+	return nil
+}
+
+func (s *V2Store) IsNodePublic(ctx context.Context, pubKey route.Vertex) (bool,
+	error) {
+
+	var (
+		readTx   = NewV2QueryReadTx()
+		isPublic bool
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db V2Queries) error {
+		nodeID, err := db.GetNodeIDByPubKey(ctx, pubKey[:])
+		if err != nil {
+			return fmt.Errorf("unable to fetch node ID: %w", err)
+		}
+
+		isPublic, err = db.IsPublicNode(ctx, nodeID)
+		if err != nil {
+			return fmt.Errorf("unable to fetch node public "+
+				"status: %w", err)
+		}
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return false, err
+	}
+
+	return isPublic, nil
 }
 
 func fetchNodeByID(ctx context.Context, db V2Queries, id int64) (*models.Node2,
@@ -742,4 +1064,147 @@ func upsertNodeExtraSignedFields(ctx context.Context, db V2Queries,
 	}
 
 	return nil
+}
+
+func upsertChannelExtraSignedFields(ctx context.Context, db V2Queries,
+	channelID int64, extraFields map[uint64][]byte) error {
+
+	// Get any existing extra signed fields for the channel.
+	existingFields, err := db.GetExtraChannelTypes(ctx, channelID)
+	if err != nil {
+		return err
+	}
+
+	// Make a lookup map of the existing field types so that we can use it
+	// to keep track of any fields we should delete.
+	m := make(map[uint64]bool)
+	for _, field := range existingFields {
+		m[uint64(field.Type)] = true
+	}
+
+	// For all the new fields, we'll upsert them and remove them from the
+	// map of existing fields.
+	for tlvType, value := range extraFields {
+		err = db.UpsertChannelExtraType(
+			ctx, sqlc.UpsertChannelExtraTypeParams{
+				ChannelID: channelID,
+				Type:      int64(tlvType),
+				Value:     value,
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("unable to upsert channel(%d) extra "+
+				"signed field(%v): %w", channelID, tlvType, err)
+		}
+
+		// Remove the field from the map of existing fields if it was
+		// present.
+		delete(m, tlvType)
+	}
+
+	// For all the fields that are left in the map of existing fields, we'll
+	// delete them as they are no longer present in the new set of fields.
+	for tlvType := range m {
+		err = db.DeleteExtraChannelType(
+			ctx, sqlc.DeleteExtraChannelTypeParams{
+				ChannelID: channelID,
+				Type:      int64(tlvType),
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("unable to delete channel(%d) extra "+
+				"signed field(%v): %w", channelID, tlvType, err)
+		}
+	}
+
+	return nil
+}
+
+func buildChannel(ctx context.Context, db V2Queries,
+	dbChan sqlc.Channel) (*models.Channel2, error) {
+
+	op, err := wire.NewOutPointFromString(dbChan.Outpoint)
+	if err != nil {
+		return nil, err
+	}
+
+	node1, err := db.GetNode(ctx, dbChan.NodeID1)
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch node(%d) pub key: %w",
+			dbChan.NodeID1, err)
+	}
+	node1Vertex, err := route.NewVertexFromBytes(node1.PubKey)
+	if err != nil {
+		return nil, err
+	}
+
+	node2, err := db.GetNode(ctx, dbChan.NodeID2)
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch node(%d) pub key: %w",
+			dbChan.NodeID2, err)
+	}
+	node2Vertex, err := route.NewVertexFromBytes(node2.PubKey)
+	if err != nil {
+		return nil, err
+	}
+
+	features, err := getChanFeatures(ctx, db, dbChan.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	extraTypes, err := getChannelExtraSignedFields(ctx, db, dbChan.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	var sig fn.Option[[]byte]
+	if dbChan.Signature != nil {
+		sig = fn.Some(dbChan.Signature)
+	}
+
+	return &models.Channel2{
+		ChannelID:         uint64(dbChan.ChannelID),
+		Outpoint:          *op,
+		Node1Key:          node1Vertex,
+		Node2Key:          node2Vertex,
+		Capacity:          btcutil.Amount(dbChan.Capacity),
+		Features:          features,
+		ExtraSignedFields: extraTypes,
+		Signature:         sig,
+	}, nil
+}
+
+func getChanFeatures(ctx context.Context, db V2Queries,
+	chanDBID int64) (*lnwire.FeatureVector, error) {
+
+	rows, err := db.GetChannelFeatures(ctx, chanDBID)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get channel(%d) features: %w",
+			chanDBID, err)
+	}
+
+	features := lnwire.EmptyFeatureVector()
+	for _, feature := range rows {
+		features.Set(lnwire.FeatureBit(feature.Feature))
+	}
+
+	return features, nil
+}
+
+func getChannelExtraSignedFields(ctx context.Context, db V2Queries,
+	nodeID int64) (map[uint64][]byte, error) {
+
+	fields, err := db.GetExtraChannelTypes(ctx, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get channel(%d) extra "+
+			"signed fields: %w", nodeID, err)
+	}
+
+	extraFields := make(map[uint64][]byte)
+	for _, field := range fields {
+		extraFields[uint64(field.Type)] = field.Value
+	}
+
+	return extraFields, nil
 }

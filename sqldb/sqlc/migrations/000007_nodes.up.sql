@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     -- is a shell node. This can be the case if we receive a channel
     -- announcement for a channel that is connected to a node that we
     -- have not yet received a node announcement for.
-    signature BYTEA,
+    signature BLOB,
 
     -- The timestamp that this node record was created. This is metadata
     -- about the record and is not present in the protocol message.

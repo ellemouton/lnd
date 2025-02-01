@@ -75,6 +75,11 @@ var (
 			Version:       8,
 			SchemaVersion: 7,
 		},
+		{
+			Name:          "000008_channels",
+			Version:       9,
+			SchemaVersion: 8,
+		},
 	}
 )
 
