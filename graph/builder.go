@@ -1172,7 +1172,7 @@ func (b *Builder) processUpdate(msg interface{},
 		// the channel ID.
 		channelID := lnwire.NewShortChanIDFromInt(msg.ChannelID)
 		fundingTx, err := lnwallet.FetchFundingTxWrapper(
-			b.cfg.Chain, &channelID, b.quit,
+			b.cfg.Chain, channelID, b.quit,
 		)
 		if err != nil {
 			//nolint:ll
@@ -1569,18 +1569,6 @@ func (b *Builder) FetchLightningNode(
 	return b.cfg.Graph.FetchLightningNode(node)
 }
 
-// ForEachNode is used to iterate over every node in router topology.
-//
-// NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) ForEachNode(
-	cb func(*models.LightningNode) error) error {
-
-	return b.cfg.Graph.ForEachNode(
-		func(_ kvdb.RTx, n *models.LightningNode) error {
-			return cb(n)
-		})
-}
-
 // ForAllOutgoingChannels is used to iterate over all outgoing channels owned by
 // the router.
 //
@@ -1610,14 +1598,7 @@ func (b *Builder) ForAllOutgoingChannels(cb func(*models.ChannelEdgeInfo,
 func (b *Builder) AddProof(chanID lnwire.ShortChannelID,
 	proof *models.ChannelAuthProof) error {
 
-	info, _, _, err := b.cfg.Graph.FetchChannelEdgesByID(chanID.ToUint64())
-	if err != nil {
-		return err
-	}
-
-	info.AuthProof = proof
-
-	return b.cfg.Graph.UpdateChannelEdge(info)
+	return b.cfg.Graph.AddEdgeProof(chanID, proof)
 }
 
 // IsStaleNode returns true if the graph source has a node announcement for the

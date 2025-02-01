@@ -9,6 +9,8 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/fn/v2"
+	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing/route"
 )
 
 // ChannelEdgeInfo represents a fully authenticated channel along with all its
@@ -190,4 +192,15 @@ func (c *ChannelEdgeInfo) OtherNodeKeyBytes(thisNodeKey []byte) (
 		return [33]byte{}, fmt.Errorf("node not participating in " +
 			"this channel")
 	}
+}
+
+type Channel2 struct {
+	ChannelID         uint64
+	Outpoint          wire.OutPoint
+	Node1Key          route.Vertex
+	Node2Key          route.Vertex
+	Capacity          btcutil.Amount
+	Features          *lnwire.FeatureVector
+	Signature         fn.Option[[]byte]
+	ExtraSignedFields map[uint64][]byte
 }

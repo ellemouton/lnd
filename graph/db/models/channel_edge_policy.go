@@ -5,7 +5,9 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing/route"
 )
 
 // ChannelEdgePolicy represents a *directed* edge within the channel graph. For
@@ -120,4 +122,20 @@ func (c *ChannelEdgePolicy) String() string {
 	return fmt.Sprintf("ChannelID=%v, MessageFlags=%v, ChannelFlags=%v, "+
 		"LastUpdate=%v", c.ChannelID, c.MessageFlags, c.ChannelFlags,
 		c.LastUpdate)
+}
+
+type ChannelPolicy2 struct {
+	ChannelID                 uint64
+	BlockHeight               uint32
+	TimeLockDelta             uint16
+	MinHTLC                   lnwire.MilliSatoshi
+	MaxHTLC                   lnwire.MilliSatoshi
+	FeeBaseMSat               lnwire.MilliSatoshi
+	FeeProportionalMillionths lnwire.MilliSatoshi
+	SecondPeer                bool
+	ToNode                    route.Vertex
+	Flags                     lnwire.ChanUpdateDisableFlags
+
+	Signature         fn.Option[[]byte]
+	ExtraSignedFields map[uint64][]byte
 }

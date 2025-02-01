@@ -85,9 +85,6 @@ type ChannelGraphSource interface {
 	// public key. channeldb.ErrGraphNodeNotFound is returned if the node
 	// doesn't exist within the graph.
 	FetchLightningNode(route.Vertex) (*models.LightningNode, error)
-
-	// ForEachNode is used to iterate over every node in the known graph.
-	ForEachNode(func(node *models.LightningNode) error) error
 }
 
 // DB is an interface describing a persisted Lightning Network graph.
@@ -261,12 +258,10 @@ type DB interface {
 		*models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error
 
-	// UpdateChannelEdge retrieves and update edge of the graph database.
-	// Method only reserved for updating an edge info after its already been
-	// created. In order to maintain this constraints, we return an error in
-	// the scenario that an edge info hasn't yet been created yet, but
-	// someone attempts to update it.
-	UpdateChannelEdge(edge *models.ChannelEdgeInfo) error
+	// AddEdgeProof retrieves and updates the proof of an existing edge in
+	// the graph database.
+	AddEdgeProof(chanID lnwire.ShortChannelID,
+		proof *models.ChannelAuthProof) error
 
 	// IsPublicNode is a helper method that determines whether the node with
 	// the given public key is seen as a public node in the graph from the
