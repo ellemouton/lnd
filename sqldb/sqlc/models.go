@@ -50,6 +50,28 @@ type ChannelFeature struct {
 	Feature   int32
 }
 
+type ChannelPolicy struct {
+	ID           int64
+	ChannelID    int64
+	SecondPeer   bool
+	BlockHeight  int32
+	DisableFlags int32
+	Timelock     int32
+	FeePpm       int64
+	BaseFeeMsat  int64
+	MaxHtlcMsat  int64
+	MinHtlcMsat  int64
+	Signature    []byte
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+type ChannelPolicyExtraType struct {
+	ChannelPolicyID int64
+	Type            int64
+	Value           []byte
+}
+
 type Invoice struct {
 	ID                 int64
 	Hash               []byte

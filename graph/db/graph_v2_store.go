@@ -41,9 +41,11 @@ type GossipV2Store interface {
 
 	AddChannel(ctx context.Context, edge *models.Channel2) error
 	UpdateAnnouncedChannel(ctx context.Context, chanID uint64, sig []byte, signedFields map[uint64][]byte) error
-	GetChannelByChanID(ctx context.Context, chanID uint64) (*models.Channel2, error)
-	GetChannelByOutpoint(ctx context.Context, outpoint wire.OutPoint) (*models.Channel2, error)
+	GetChannelByChanID(ctx context.Context, chanID uint64) (*models.Channel2, *models.ChannelPolicy2, *models.ChannelPolicy2, error)
+	GetChannelByOutpoint(ctx context.Context, outpoint wire.OutPoint) (*models.Channel2, *models.ChannelPolicy2, *models.ChannelPolicy2, error)
 	DeleteChannels(ctx context.Context, chanID ...uint64) error
+
+	UpdateChannelPolicy(ctx context.Context, policy *models.ChannelPolicy2) error
 }
 
 // V2Queries is a subset of the sqlc.Querier interface containing all the V2
@@ -88,6 +90,14 @@ type V2Queries interface {
 	UpsertChannelExtraType(ctx context.Context, arg sqlc.UpsertChannelExtraTypeParams) error
 	GetExtraChannelTypes(ctx context.Context, channelID int64) ([]sqlc.ChannelExtraType, error)
 	DeleteExtraChannelType(ctx context.Context, arg sqlc.DeleteExtraChannelTypeParams) error
+
+	InsertChannelPolicy(ctx context.Context, arg sqlc.InsertChannelPolicyParams) (int64, error)
+	GetChannelPolicy(ctx context.Context, arg sqlc.GetChannelPolicyParams) (sqlc.ChannelPolicy, error)
+	UpdateChannelPolicy(ctx context.Context, arg sqlc.UpdateChannelPolicyParams) error
+
+	UpsertChanPolicyExtraType(ctx context.Context, arg sqlc.UpsertChanPolicyExtraTypeParams) error
+	GetExtraChanPolicyTypes(ctx context.Context, channelPolicyID int64) ([]sqlc.ChannelPolicyExtraType, error)
+	DeleteExtraChanPolicyType(ctx context.Context, arg sqlc.DeleteExtraChanPolicyTypeParams) error
 }
 
 // BatchedV2Queries is a version of the V2Queries that's capable of batched
@@ -327,7 +337,7 @@ func (s *V2Store) ListNodeChannels(ctx context.Context,
 		}
 
 		for _, dbEdge := range dbEdges {
-			edge, err := buildChannel(ctx, db, dbEdge)
+			edge, _, _, err := buildChannel(ctx, db, dbEdge)
 			if err != nil {
 				return fmt.Errorf("unable to fetch "+
 					"channel(%d): %w", dbEdge.ChannelID,
@@ -389,12 +399,15 @@ func (s *V2Store) UpdateAnnouncedChannel(ctx context.Context, chanID uint64,
 	return nil
 }
 
-func (s *V2Store) GetChannelByChanID(ctx context.Context, chanID uint64) (
-	*models.Channel2, error) {
+func (s *V2Store) GetChannelByChanID(ctx context.Context,
+	chanID uint64) (*models.Channel2, *models.ChannelPolicy2,
+	*models.ChannelPolicy2, error) {
 
 	var (
 		readTx  = NewV2QueryReadTx()
 		channel *models.Channel2
+		p1      *models.ChannelPolicy2
+		p2      *models.ChannelPolicy2
 	)
 	err := s.db.ExecTx(ctx, &readTx, func(db V2Queries) error {
 		dbChan, err := db.GetChannelByChanID(ctx, int64(chanID))
@@ -405,27 +418,35 @@ func (s *V2Store) GetChannelByChanID(ctx context.Context, chanID uint64) (
 				"using channel ID(%d): %w", chanID, err)
 		}
 
-		channel, err = buildChannel(ctx, db, dbChan)
+		channel, p1, p2, err = buildChannel(ctx, db, dbChan)
 		if err != nil {
 			return fmt.Errorf("could not fetch channel(%d): %w",
 				chanID, err)
 		}
 
 		return nil
-	}, func() {})
+	}, func() {
+		channel = nil
+		p1 = nil
+		p2 = nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("unable to fetch channel: %w", err)
+		return nil, nil, nil,
+			fmt.Errorf("unable to fetch channel: %w", err)
 	}
 
-	return channel, nil
+	return channel, p1, p2, nil
 }
 
 func (s *V2Store) GetChannelByOutpoint(ctx context.Context,
-	outpoint wire.OutPoint) (*models.Channel2, error) {
+	outpoint wire.OutPoint) (*models.Channel2, *models.ChannelPolicy2,
+	*models.ChannelPolicy2, error) {
 
 	var (
 		readTx  = NewV2QueryReadTx()
 		channel *models.Channel2
+		p1      *models.ChannelPolicy2
+		p2      *models.ChannelPolicy2
 	)
 	err := s.db.ExecTx(ctx, &readTx, func(db V2Queries) error {
 		dbChan, err := db.GetChannelByOutpoint(ctx, outpoint.String())
@@ -436,19 +457,24 @@ func (s *V2Store) GetChannelByOutpoint(ctx context.Context,
 				"using outpoint(%s): %w", outpoint, err)
 		}
 
-		channel, err = buildChannel(ctx, db, dbChan)
+		channel, p1, p2, err = buildChannel(ctx, db, dbChan)
 		if err != nil {
 			return fmt.Errorf("could not fetch channel(%s): %w",
 				outpoint, err)
 		}
 
 		return err
-	}, func() {})
+	}, func() {
+		channel = nil
+		p1 = nil
+		p2 = nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("unable to fetch node: %w", err)
+		return nil, nil, nil,
+			fmt.Errorf("unable to fetch node: %w", err)
 	}
 
-	return channel, nil
+	return channel, p1, p2, nil
 }
 
 func maybeCreateShellNode(ctx context.Context, db V2Queries,
@@ -576,6 +602,122 @@ func (s *V2Store) IsNodePublic(ctx context.Context, pubKey route.Vertex) (bool,
 	}
 
 	return isPublic, nil
+}
+
+func (s *V2Store) UpdateChannelPolicy(ctx context.Context,
+	policy *models.ChannelPolicy2) error {
+
+	var writeTxOpts V2QueriesTxOptions
+	err := s.db.ExecTx(ctx, &writeTxOpts, func(db V2Queries) error {
+		dbChan, err := db.GetChannelByChanID(
+			ctx, int64(policy.ChannelID),
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrEdgeNotFound
+		}
+
+		// First, check if a record for this policy already exists.
+		dbPolicy, err := db.GetChannelPolicy(
+			ctx, sqlc.GetChannelPolicyParams{
+				ChannelID:  dbChan.ID,
+				SecondPeer: policy.SecondPeer,
+			},
+		)
+		switch {
+		// The policy does not yet exist in the DB, so we insert a
+		// fresh record.
+		case errors.Is(err, sql.ErrNoRows):
+			err := s.insertChanPolicy(ctx, db, policy)
+			if err != nil {
+				return fmt.Errorf("unable to insert new "+
+					"policy: %w", err)
+			}
+
+			return nil
+
+		case err != nil:
+			return fmt.Errorf("unable to fetch channel "+
+				"policy: %w", err)
+
+		// The policy already exists, so we update the existing policy
+		// info.
+		default:
+			return s.updateChanPolicy(ctx, db, dbPolicy.ID, policy)
+		}
+	}, func() {})
+	if err != nil {
+		return fmt.Errorf("unable to update channel policy: %w", err)
+	}
+
+	return nil
+}
+
+func (s *V2Store) updateChanPolicy(ctx context.Context, db V2Queries,
+	dbID int64, policy *models.ChannelPolicy2) error {
+
+	var signature []byte
+	policy.Signature.WhenSome(func(s []byte) {
+		signature = s
+	})
+
+	err := db.UpdateChannelPolicy(ctx, sqlc.UpdateChannelPolicyParams{
+		ID:           dbID,
+		BlockHeight:  int32(policy.BlockHeight),
+		DisableFlags: int32(policy.Flags),
+		Timelock:     int32(policy.TimeLockDelta),
+		FeePpm:       int64(policy.FeeProportionalMillionths),
+		BaseFeeMsat:  int64(policy.FeeBaseMSat),
+		MaxHtlcMsat:  int64(policy.MaxHTLC),
+		MinHtlcMsat:  int64(policy.MinHTLC),
+		Signature:    signature,
+		UpdatedAt:    s.clock.Now().UTC(),
+	})
+	if err != nil {
+		return fmt.Errorf("unable to update channel policy: %w", err)
+	}
+
+	return upsertChanPolicyExtraSignedFields(
+		ctx, db, dbID, policy.ExtraSignedFields,
+	)
+}
+
+func (s *V2Store) insertChanPolicy(ctx context.Context, db V2Queries,
+	policy *models.ChannelPolicy2) error {
+
+	// First, check if the channel exists.
+	dbChan, err := db.GetChannelByChanID(ctx, int64(policy.ChannelID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrEdgeNotFound
+	} else if err != nil {
+		return fmt.Errorf("unable to fetch channel: %w", err)
+	}
+
+	var signature []byte
+	policy.Signature.WhenSome(func(s []byte) {
+		signature = s
+	})
+
+	id, err := db.InsertChannelPolicy(ctx, sqlc.InsertChannelPolicyParams{
+		ChannelID:    dbChan.ID,
+		BlockHeight:  int32(policy.BlockHeight),
+		SecondPeer:   policy.SecondPeer,
+		Timelock:     int32(policy.TimeLockDelta),
+		DisableFlags: int32(policy.Flags),
+		FeePpm:       int64(policy.FeeProportionalMillionths),
+		BaseFeeMsat:  int64(policy.FeeBaseMSat),
+		MaxHtlcMsat:  int64(policy.MaxHTLC),
+		MinHtlcMsat:  int64(policy.MinHTLC),
+		Signature:    signature,
+		CreatedAt:    s.clock.Now().UTC(),
+		UpdatedAt:    s.clock.Now().UTC(),
+	})
+	if err != nil {
+		return fmt.Errorf("unable to insert channel update: %w", err)
+	}
+
+	return upsertChanPolicyExtraSignedFields(
+		ctx, db, id, policy.ExtraSignedFields,
+	)
 }
 
 func fetchNodeByID(ctx context.Context, db V2Queries, id int64) (*models.Node2,
@@ -1012,6 +1154,62 @@ func getNodeExtraSignedFields(ctx context.Context, db V2Queries,
 	return extraFields, nil
 }
 
+func upsertChanPolicyExtraSignedFields(ctx context.Context, db V2Queries,
+	chanPolicyID int64, extraFields map[uint64][]byte) error {
+
+	// Get any existing extra signed fields for the channel policy.
+	existingFields, err := db.GetExtraChanPolicyTypes(ctx, chanPolicyID)
+	if err != nil {
+		return err
+	}
+
+	// Make a lookup map of the existing field types so that we can use it
+	// to keep track of any fields we should delete.
+	m := make(map[uint64]bool)
+	for _, field := range existingFields {
+		m[uint64(field.Type)] = true
+	}
+
+	// For all the new fields, we'll upsert them and remove them from the
+	// map of existing fields.
+	for tlvType, value := range extraFields {
+		err = db.UpsertChanPolicyExtraType(
+			ctx, sqlc.UpsertChanPolicyExtraTypeParams{
+				ChannelPolicyID: chanPolicyID,
+				Type:            int64(tlvType),
+				Value:           value,
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("unable to upsert "+
+				"channel_policy(%d) extra signed field(%v): %w",
+				chanPolicyID, tlvType, err)
+		}
+
+		// Remove the field from the map of existing fields if it was
+		// present.
+		delete(m, tlvType)
+	}
+
+	// For all the fields that are left in the map of existing fields, we'll
+	// delete them as they are no longer present in the new set of fields.
+	for tlvType := range m {
+		err = db.DeleteExtraChanPolicyType(
+			ctx, sqlc.DeleteExtraChanPolicyTypeParams{
+				ChannelPolicyID: chanPolicyID,
+				Type:            int64(tlvType),
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("unable to delete "+
+				"channel_policy(%d) extra signed field(%v): %w",
+				chanPolicyID, tlvType, err)
+		}
+	}
+
+	return nil
+}
+
 func upsertNodeExtraSignedFields(ctx context.Context, db V2Queries,
 	nodeID int64, extraFields map[uint64][]byte) error {
 
@@ -1121,46 +1319,61 @@ func upsertChannelExtraSignedFields(ctx context.Context, db V2Queries,
 }
 
 func buildChannel(ctx context.Context, db V2Queries,
-	dbChan sqlc.Channel) (*models.Channel2, error) {
+	dbChan sqlc.Channel) (*models.Channel2, *models.ChannelPolicy2,
+	*models.ChannelPolicy2, error) {
 
 	op, err := wire.NewOutPointFromString(dbChan.Outpoint)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
 	node1, err := db.GetNode(ctx, dbChan.NodeID1)
 	if err != nil {
-		return nil, fmt.Errorf("unable to fetch node(%d) pub key: %w",
-			dbChan.NodeID1, err)
+		return nil, nil, nil, fmt.Errorf("unable to fetch node(%d) "+
+			"pub key: %w", dbChan.NodeID1, err)
 	}
 	node1Vertex, err := route.NewVertexFromBytes(node1.PubKey)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
 	node2, err := db.GetNode(ctx, dbChan.NodeID2)
 	if err != nil {
-		return nil, fmt.Errorf("unable to fetch node(%d) pub key: %w",
-			dbChan.NodeID2, err)
+		return nil, nil, nil, fmt.Errorf("unable to fetch node(%d) "+
+			"pub key: %w", dbChan.NodeID2, err)
 	}
 	node2Vertex, err := route.NewVertexFromBytes(node2.PubKey)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
 	features, err := getChanFeatures(ctx, db, dbChan.ID)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
 	extraTypes, err := getChannelExtraSignedFields(ctx, db, dbChan.ID)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
 	var sig fn.Option[[]byte]
 	if dbChan.Signature != nil {
 		sig = fn.Some(dbChan.Signature)
+	}
+
+	node1Policy, err := getChanPolicy(
+		ctx, db, dbChan, false, node1Vertex, node2Vertex,
+	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	node2Policy, err := getChanPolicy(
+		ctx, db, dbChan, true, node1Vertex, node2Vertex,
+	)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 
 	return &models.Channel2{
@@ -1172,6 +1385,55 @@ func buildChannel(ctx context.Context, db V2Queries,
 		Features:          features,
 		ExtraSignedFields: extraTypes,
 		Signature:         sig,
+	}, node1Policy, node2Policy, nil
+}
+
+func getChanPolicy(ctx context.Context, db V2Queries, channel sqlc.Channel,
+	secondPeer bool, node1, node2 route.Vertex) (*models.ChannelPolicy2,
+	error) {
+
+	policy, err := db.GetChannelPolicy(
+		ctx, sqlc.GetChannelPolicyParams{
+			ChannelID:  channel.ID,
+			SecondPeer: secondPeer,
+		},
+	)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("unable to fetch node policy "+
+			"(second_peer=%v): %w", secondPeer, err)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+
+	toNode := node2
+	if secondPeer {
+		toNode = node1
+	}
+
+	extra, err := getChanPolicyExtraSignedFields(ctx, db, policy.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	var signature fn.Option[[]byte]
+	if policy.Signature != nil {
+		signature = fn.Some(policy.Signature)
+	}
+
+	return &models.ChannelPolicy2{
+		ChannelID:                 uint64(channel.ChannelID),
+		BlockHeight:               uint32(policy.BlockHeight),
+		TimeLockDelta:             uint16(policy.Timelock),
+		MinHTLC:                   lnwire.MilliSatoshi(policy.MinHtlcMsat),
+		MaxHTLC:                   lnwire.MilliSatoshi(policy.MaxHtlcMsat),
+		FeeBaseMSat:               lnwire.MilliSatoshi(policy.BaseFeeMsat),
+		FeeProportionalMillionths: lnwire.MilliSatoshi(policy.FeePpm),
+		SecondPeer:                policy.SecondPeer,
+		ToNode:                    toNode,
+		Flags:                     lnwire.ChanUpdateDisableFlags(policy.DisableFlags),
+		Signature:                 signature,
+		ExtraSignedFields:         extra,
 	}, nil
 }
 
@@ -1196,6 +1458,23 @@ func getChannelExtraSignedFields(ctx context.Context, db V2Queries,
 	nodeID int64) (map[uint64][]byte, error) {
 
 	fields, err := db.GetExtraChannelTypes(ctx, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get channel(%d) extra "+
+			"signed fields: %w", nodeID, err)
+	}
+
+	extraFields := make(map[uint64][]byte)
+	for _, field := range fields {
+		extraFields[uint64(field.Type)] = field.Value
+	}
+
+	return extraFields, nil
+}
+
+func getChanPolicyExtraSignedFields(ctx context.Context, db V2Queries,
+	nodeID int64) (map[uint64][]byte, error) {
+
+	fields, err := db.GetExtraChanPolicyTypes(ctx, nodeID)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get channel(%d) extra "+
 			"signed fields: %w", nodeID, err)

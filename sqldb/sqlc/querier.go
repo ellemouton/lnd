@@ -16,6 +16,7 @@ type Querier interface {
 	DeleteCanceledInvoices(ctx context.Context) (sql.Result, error)
 	DeleteChannel(ctx context.Context, channelID int64) error
 	DeleteChannelFeature(ctx context.Context, arg DeleteChannelFeatureParams) error
+	DeleteExtraChanPolicyType(ctx context.Context, arg DeleteExtraChanPolicyTypeParams) error
 	DeleteExtraChannelType(ctx context.Context, arg DeleteExtraChannelTypeParams) error
 	DeleteExtraNodeType(ctx context.Context, arg DeleteExtraNodeTypeParams) error
 	DeleteInvoice(ctx context.Context, arg DeleteInvoiceParams) (sql.Result, error)
@@ -31,7 +32,9 @@ type Querier interface {
 	GetChannelByChanID(ctx context.Context, channelID int64) (Channel, error)
 	GetChannelByOutpoint(ctx context.Context, outpoint string) (Channel, error)
 	GetChannelFeatures(ctx context.Context, channelID int64) ([]ChannelFeature, error)
+	GetChannelPolicy(ctx context.Context, arg GetChannelPolicyParams) (ChannelPolicy, error)
 	GetDatabaseVersion(ctx context.Context) (int32, error)
+	GetExtraChanPolicyTypes(ctx context.Context, channelPolicyID int64) ([]ChannelPolicyExtraType, error)
 	GetExtraChannelTypes(ctx context.Context, channelID int64) ([]ChannelExtraType, error)
 	GetExtraNodeTypes(ctx context.Context, nodeID int64) ([]NodeExtraType, error)
 	// This method may return more than one invoice if filter using multiple fields
@@ -56,6 +59,7 @@ type Querier interface {
 	InsertAMPSubInvoiceHTLC(ctx context.Context, arg InsertAMPSubInvoiceHTLCParams) error
 	InsertChannel(ctx context.Context, arg InsertChannelParams) (int64, error)
 	InsertChannelFeature(ctx context.Context, arg InsertChannelFeatureParams) error
+	InsertChannelPolicy(ctx context.Context, arg InsertChannelPolicyParams) (int64, error)
 	InsertInvoice(ctx context.Context, arg InsertInvoiceParams) (int64, error)
 	InsertInvoiceFeature(ctx context.Context, arg InsertInvoiceFeatureParams) error
 	InsertInvoiceHTLC(ctx context.Context, arg InsertInvoiceHTLCParams) (int64, error)
@@ -79,12 +83,14 @@ type Querier interface {
 	SetSourceNode(ctx context.Context, nodeID int64) error
 	UpdateAMPSubInvoiceHTLCPreimage(ctx context.Context, arg UpdateAMPSubInvoiceHTLCPreimageParams) (sql.Result, error)
 	UpdateAMPSubInvoiceState(ctx context.Context, arg UpdateAMPSubInvoiceStateParams) error
+	UpdateChannelPolicy(ctx context.Context, arg UpdateChannelPolicyParams) error
 	UpdateInvoiceAmountPaid(ctx context.Context, arg UpdateInvoiceAmountPaidParams) (sql.Result, error)
 	UpdateInvoiceHTLC(ctx context.Context, arg UpdateInvoiceHTLCParams) error
 	UpdateInvoiceHTLCs(ctx context.Context, arg UpdateInvoiceHTLCsParams) error
 	UpdateInvoiceState(ctx context.Context, arg UpdateInvoiceStateParams) (sql.Result, error)
 	UpdateNode(ctx context.Context, arg UpdateNodeParams) error
 	UpsertAMPSubInvoice(ctx context.Context, arg UpsertAMPSubInvoiceParams) (sql.Result, error)
+	UpsertChanPolicyExtraType(ctx context.Context, arg UpsertChanPolicyExtraTypeParams) error
 	UpsertChannelExtraType(ctx context.Context, arg UpsertChannelExtraTypeParams) error
 	UpsertNodeExtraType(ctx context.Context, arg UpsertNodeExtraTypeParams) error
 }
