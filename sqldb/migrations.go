@@ -70,6 +70,11 @@ var (
 			// schema. This is optional and can be disabled by the
 			// user if necessary.
 		},
+		{
+			Name:          "000007_nodes",
+			Version:       8,
+			SchemaVersion: 7,
+		},
 	}
 )
 
