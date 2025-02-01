@@ -188,12 +188,6 @@ func (r *mockGraphSource) AddProof(chanID lnwire.ShortChannelID,
 	return nil
 }
 
-func (r *mockGraphSource) ForEachNode(
-	func(node *models.LightningNode) error) error {
-
-	return nil
-}
-
 func (r *mockGraphSource) ForAllOutgoingChannels(cb func(
 	i *models.ChannelEdgeInfo, c *models.ChannelEdgePolicy) error) error {
 
