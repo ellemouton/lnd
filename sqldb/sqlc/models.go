@@ -72,6 +72,11 @@ type ChannelPolicyExtraType struct {
 	Value           []byte
 }
 
+type ClosedScid struct {
+	ChannelID int64
+	CreatedAt time.Time
+}
+
 type Invoice struct {
 	ID                 int64
 	Hash               []byte
@@ -176,4 +181,11 @@ type NodeFeature struct {
 
 type SourceNode struct {
 	NodeID int64
+}
+
+type ZombieChannel struct {
+	ChannelID int64
+	NodeKey1  []byte
+	NodeKey2  []byte
+	CreatedAt time.Time
 }

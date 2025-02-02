@@ -53,14 +53,14 @@ func TestV2Store(t *testing.T) {
 		test func(t *testing.T, makeDB func(t *testing.T,
 			clock clock.Clock) GossipV2Store)
 	}{
-		//{
-		//	name: "Node CRUD",
-		//	test: testNodeCRUD,
-		//},
-		//{
-		//	name: "Channel CRUD",
-		//	test: testChannelCRUD,
-		//},
+		{
+			name: "Node CRUD",
+			test: testNodeCRUD,
+		},
+		{
+			name: "Channel CRUD",
+			test: testChannelCRUD,
+		},
 		{
 			name: "Channel Policy CRUD",
 			test: testChannelPolicyCRUD,
@@ -103,14 +103,14 @@ func TestV2Store(t *testing.T) {
 				return makeSQLDB(t, clock, true)
 			})
 		})
-		//
-		//t.Run(test.name+"_Postgres", func(t *testing.T) {
-		//	test.test(t, func(t *testing.T,
-		//		clock clock.Clock) GossipV2Store {
-		//
-		//		return makeSQLDB(t, clock, false)
-		//	})
-		//})
+
+		t.Run(test.name+"_Postgres", func(t *testing.T) {
+			test.test(t, func(t *testing.T,
+				clock clock.Clock) GossipV2Store {
+
+				return makeSQLDB(t, clock, false)
+			})
+		})
 	}
 }
 
@@ -152,6 +152,10 @@ func testChannelCRUD(t *testing.T, makeDB func(t *testing.T,
 	require.ErrorIs(t, err, ErrEdgeNotFound)
 	_, _, _, err = db.GetChannelByOutpoint(ctx, testChanPoint1)
 	require.ErrorIs(t, err, ErrEdgeNotFound)
+	_, _, known, zombie, err := db.HasChannel(ctx, chanID1)
+	require.NoError(t, err)
+	require.False(t, known)
+	require.False(t, zombie)
 
 	// Also show that a node record for node 1 exists but not yet for node
 	// 2.
@@ -174,6 +178,12 @@ func testChannelCRUD(t *testing.T, makeDB func(t *testing.T,
 	// Show that a record for the second node has been inserted.
 	_, err = db.GetNode(ctx, testPub2)
 	require.NoError(t, err)
+
+	// HasChannel should also now reflect the channel.
+	_, _, known, zombie, err = db.HasChannel(ctx, chanID1)
+	require.NoError(t, err)
+	require.True(t, known)
+	require.False(t, zombie)
 
 	// Now, fetch the channel and ensure that it matches the one we
 	// inserted.
@@ -237,7 +247,7 @@ func testChannelCRUD(t *testing.T, makeDB func(t *testing.T,
 	assertChannelsEqual(t, channel1, channels[0])
 
 	// Delete the added channel and assert that it can no longer be found.
-	require.NoError(t, db.DeleteChannels(ctx, chanID1))
+	require.NoError(t, db.DeleteChannels(ctx, false, true, chanID1))
 
 	_, _, _, err = db.GetChannelByChanID(ctx, chanID1)
 	require.ErrorIs(t, err, ErrEdgeNotFound)
@@ -246,6 +256,12 @@ func testChannelCRUD(t *testing.T, makeDB func(t *testing.T,
 	isPublic, err = db.IsNodePublic(ctx, testPub)
 	require.NoError(t, err)
 	require.False(t, isPublic)
+
+	// HasChannel should reflect that the channel is unknown and a zombie.
+	_, _, known, zombie, err = db.HasChannel(ctx, chanID1)
+	require.NoError(t, err)
+	require.False(t, known)
+	require.True(t, zombie)
 }
 
 func testNodeCRUD(t *testing.T, makeDB func(t *testing.T,

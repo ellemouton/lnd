@@ -143,6 +143,10 @@ func (a *ChannelAnnouncement1) MsgType() MessageType {
 	return MsgChannelAnnouncement
 }
 
+func (a *ChannelAnnouncement1) Protocol() Protocol {
+	return V1Protocol
+}
+
 // DataToSign is used to retrieve part of the announcement message which should
 // be signed.
 func (a *ChannelAnnouncement1) DataToSign() ([]byte, error) {

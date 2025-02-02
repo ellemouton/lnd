@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/lightninglabs/neutrino/cache"
 	"github.com/lightninglabs/neutrino/cache/lru"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
 
@@ -55,10 +57,12 @@ type ClosedChannelTracker interface {
 type GraphCloser interface {
 	// PutClosedScid marks a channel as closed so that we won't validate
 	// channel announcements for it again.
-	PutClosedScid(lnwire.ShortChannelID) error
+	PutClosedScid(context.Context, models.Protocol,
+		lnwire.ShortChannelID) error
 
 	// IsClosedScid checks if a short channel id is closed.
-	IsClosedScid(lnwire.ShortChannelID) (bool, error)
+	IsClosedScid(context.Context, models.Protocol,
+		lnwire.ShortChannelID) (bool, error)
 }
 
 // NodeInfoInquirier handles queries relating to specific nodes and channels
@@ -72,7 +76,7 @@ type NodeInfoInquirer interface {
 // ScidCloserMan helps the gossiper handle closed channels that are in the
 // ChannelGraph.
 type ScidCloserMan struct {
-	graph     GraphCloser
+	GraphCloser
 	channelDB NodeInfoInquirer
 }
 
@@ -81,23 +85,9 @@ func NewScidCloserMan(graph GraphCloser,
 	channelDB NodeInfoInquirer) *ScidCloserMan {
 
 	return &ScidCloserMan{
-		graph:     graph,
-		channelDB: channelDB,
+		GraphCloser: graph,
+		channelDB:   channelDB,
 	}
-}
-
-// PutClosedScid marks scid as closed so the gossiper can ignore this channel
-// in the future.
-func (s *ScidCloserMan) PutClosedScid(scid lnwire.ShortChannelID) error {
-	return s.graph.PutClosedScid(scid)
-}
-
-// IsClosedScid checks whether scid is closed so that the gossiper can ignore
-// it.
-func (s *ScidCloserMan) IsClosedScid(scid lnwire.ShortChannelID) (bool,
-	error) {
-
-	return s.graph.IsClosedScid(scid)
 }
 
 // IsChannelPeer checks whether we have a channel with the peer.

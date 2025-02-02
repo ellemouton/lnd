@@ -57,3 +57,22 @@ CREATE TABLE IF NOT EXISTS channel_extra_types (
     UNIQUE (type, channel_id)
 );
 CREATE INDEX IF NOT EXISTS channel_extra_types_channel_id_idx ON channel_extra_types(channel_id);
+
+CREATE TABLE IF NOT EXISTS zombie_channels (
+    -- The channel id (short channel id) of the channel.
+    channel_id BIGINT NOT NULL UNIQUE,
+
+    node_key_1 BYTEA,
+    node_key_2 BYTEA,
+
+    -- The timestamp that this zombie record was created.
+    created_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS closed_scids (
+    -- The short channel id of the channel.
+    channel_id BIGINT NOT NULL UNIQUE,
+
+    -- The timestamp that this record was created at.
+    created_at TIMESTAMP NOT NULL
+);

@@ -1101,7 +1101,9 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		return nil, err
 	}
 
-	scidCloserMan := discovery.NewScidCloserMan(s.graphDB, s.chanStateDB)
+	scidCloserMan := discovery.NewScidCloserMan(
+		s.graphBuilder, s.chanStateDB,
+	)
 
 	s.authGossiper = discovery.New(discovery.Config{
 		Graph:                 s.graphBuilder,

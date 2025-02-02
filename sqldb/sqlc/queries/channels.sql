@@ -75,3 +75,36 @@ SELECT EXISTS (
     WHERE (node_id_1 = $1 OR node_id_2 = $1)
       AND signature IS NOT NULL
 ) AS is_public;
+
+-- name: UpsertZombieChannel :exec
+INSERT INTO zombie_channels (channel_id, node_key_1, node_key_2, created_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (channel_id)
+DO UPDATE SET
+    node_key_1 = COALESCE(EXCLUDED.node_key_1, zombie_channels.node_key_1),
+    node_key_2 = COALESCE(EXCLUDED.node_key_2, zombie_channels.node_key_2);
+
+-- name: DeleteZombieChannel :exec
+DELETE FROM zombie_channels
+WHERE channel_id = $1;
+
+-- name: CountZombieChannels :one
+SELECT COUNT(*) FROM zombie_channels;
+
+-- name: IsZombieChannel :one
+SELECT EXISTS (
+    SELECT 1
+    FROM zombie_channels
+    WHERE channel_id = $1
+) AS is_zombie;
+
+-- name: AddClosedSCID :exec
+INSERT INTO closed_scids (channel_id, created_at)
+VALUES ($1, $2);
+
+-- name: IsClosedSCID :one
+SELECT EXISTS (
+    SELECT 1
+    FROM closed_scids
+    WHERE channel_id = $1
+) AS is_closed;

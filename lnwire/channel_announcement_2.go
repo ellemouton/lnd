@@ -66,6 +66,10 @@ type ChannelAnnouncement2 struct {
 	ExtraSignedFields
 }
 
+func (c *ChannelAnnouncement2) Protocol() Protocol {
+	return V2Protocol
+}
+
 // Encode serializes the target AnnounceSignatures1 into the passed io.Writer
 // observing the protocol version specified.
 //

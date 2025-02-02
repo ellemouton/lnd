@@ -76,6 +76,16 @@ type ChannelEdgePolicy struct {
 	ExtraOpaqueData lnwire.ExtraOpaqueData
 }
 
+func (c *ChannelEdgePolicy) Before(policy ChannelPolicy) (bool, error) {
+	other, ok := policy.(*ChannelEdgePolicy)
+	if !ok {
+		return false, fmt.Errorf("expected ChannelEdgePolicy, got %T",
+			policy)
+	}
+
+	return c.LastUpdate.Before(other.LastUpdate), nil
+}
+
 func (c *ChannelEdgePolicy) GetInboundFee() (lnwire.Fee, error) {
 	var inboundFee lnwire.Fee
 	_, err := c.ExtraOpaqueData.ExtractRecords(&inboundFee)
@@ -183,6 +193,15 @@ type ChannelPolicy2 struct {
 	ExtraSignedFields map[uint64][]byte
 }
 
+func (c *ChannelPolicy2) Before(o ChannelPolicy) (bool, error) {
+	other, ok := o.(*ChannelPolicy2)
+	if !ok {
+		return false, fmt.Errorf("expected ChannelPolicy2, got %T", o)
+	}
+
+	return c.BlockHeight < other.BlockHeight, nil
+}
+
 func (c *ChannelPolicy2) CachedPolicy() *CachedEdgePolicy {
 	return &CachedEdgePolicy{
 		ChannelID:                 c.ChannelID,
@@ -225,4 +244,5 @@ type ChannelPolicy interface {
 	IsEdge1() bool
 	CachedPolicy() *CachedEdgePolicy
 	GetInboundFee() (lnwire.Fee, error)
+	Before(policy ChannelPolicy) (bool, error)
 }

@@ -26,6 +26,32 @@ func (q *Queries) AddChannelSignature(ctx context.Context, arg AddChannelSignatu
 	return err
 }
 
+const addClosedSCID = `-- name: AddClosedSCID :exec
+INSERT INTO closed_scids (channel_id, created_at)
+VALUES ($1, $2)
+`
+
+type AddClosedSCIDParams struct {
+	ChannelID int64
+	CreatedAt time.Time
+}
+
+func (q *Queries) AddClosedSCID(ctx context.Context, arg AddClosedSCIDParams) error {
+	_, err := q.db.ExecContext(ctx, addClosedSCID, arg.ChannelID, arg.CreatedAt)
+	return err
+}
+
+const countZombieChannels = `-- name: CountZombieChannels :one
+SELECT COUNT(*) FROM zombie_channels
+`
+
+func (q *Queries) CountZombieChannels(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countZombieChannels)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteChannel = `-- name: DeleteChannel :exec
 DELETE FROM channels
 WHERE channel_id = $1
@@ -65,6 +91,16 @@ type DeleteExtraChannelTypeParams struct {
 
 func (q *Queries) DeleteExtraChannelType(ctx context.Context, arg DeleteExtraChannelTypeParams) error {
 	_, err := q.db.ExecContext(ctx, deleteExtraChannelType, arg.ChannelID, arg.Type)
+	return err
+}
+
+const deleteZombieChannel = `-- name: DeleteZombieChannel :exec
+DELETE FROM zombie_channels
+WHERE channel_id = $1
+`
+
+func (q *Queries) DeleteZombieChannel(ctx context.Context, channelID int64) error {
+	_, err := q.db.ExecContext(ctx, deleteZombieChannel, channelID)
 	return err
 }
 
@@ -243,6 +279,21 @@ func (q *Queries) InsertChannelFeature(ctx context.Context, arg InsertChannelFea
 	return err
 }
 
+const isClosedSCID = `-- name: IsClosedSCID :one
+SELECT EXISTS (
+    SELECT 1
+    FROM closed_scids
+    WHERE channel_id = $1
+) AS is_closed
+`
+
+func (q *Queries) IsClosedSCID(ctx context.Context, channelID int64) (bool, error) {
+	row := q.db.QueryRowContext(ctx, isClosedSCID, channelID)
+	var is_closed bool
+	err := row.Scan(&is_closed)
+	return is_closed, err
+}
+
 const isPublicNode = `-- name: IsPublicNode :one
 SELECT EXISTS (
     SELECT 1
@@ -257,6 +308,21 @@ func (q *Queries) IsPublicNode(ctx context.Context, nodeID1 int64) (bool, error)
 	var is_public bool
 	err := row.Scan(&is_public)
 	return is_public, err
+}
+
+const isZombieChannel = `-- name: IsZombieChannel :one
+SELECT EXISTS (
+    SELECT 1
+    FROM zombie_channels
+    WHERE channel_id = $1
+) AS is_zombie
+`
+
+func (q *Queries) IsZombieChannel(ctx context.Context, channelID int64) (bool, error) {
+	row := q.db.QueryRowContext(ctx, isZombieChannel, channelID)
+	var is_zombie bool
+	err := row.Scan(&is_zombie)
+	return is_zombie, err
 }
 
 const listNodeChannels = `-- name: ListNodeChannels :many
@@ -313,5 +379,31 @@ type UpsertChannelExtraTypeParams struct {
 
 func (q *Queries) UpsertChannelExtraType(ctx context.Context, arg UpsertChannelExtraTypeParams) error {
 	_, err := q.db.ExecContext(ctx, upsertChannelExtraType, arg.ChannelID, arg.Type, arg.Value)
+	return err
+}
+
+const upsertZombieChannel = `-- name: UpsertZombieChannel :exec
+INSERT INTO zombie_channels (channel_id, node_key_1, node_key_2, created_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (channel_id)
+DO UPDATE SET
+    node_key_1 = COALESCE(EXCLUDED.node_key_1, zombie_channels.node_key_1),
+    node_key_2 = COALESCE(EXCLUDED.node_key_2, zombie_channels.node_key_2)
+`
+
+type UpsertZombieChannelParams struct {
+	ChannelID int64
+	NodeKey1  []byte
+	NodeKey2  []byte
+	CreatedAt time.Time
+}
+
+func (q *Queries) UpsertZombieChannel(ctx context.Context, arg UpsertZombieChannelParams) error {
+	_, err := q.db.ExecContext(ctx, upsertZombieChannel,
+		arg.ChannelID,
+		arg.NodeKey1,
+		arg.NodeKey2,
+		arg.CreatedAt,
+	)
 	return err
 }

@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"context"
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -54,7 +55,8 @@ type ChannelGraphSource interface {
 
 	// IsKnownEdge returns true if the graph source already knows of the
 	// passed channel ID either as a live or zombie edge.
-	IsKnownEdge(chanID lnwire.ShortChannelID) bool
+	IsKnownEdge(ctx context.Context, p Protocol,
+		chanID lnwire.ShortChannelID) (bool, error)
 
 	// IsStaleEdgePolicy returns true if the graph source has a channel
 	// edge for the passed channel ID (and flags) that have a more recent
@@ -91,6 +93,9 @@ type ChannelGraphSource interface {
 //
 //nolint:interfacebloat
 type DB interface {
+	PutClosedScid(scid lnwire.ShortChannelID) error
+	IsClosedScid(scid lnwire.ShortChannelID) (bool, error)
+
 	// PruneTip returns the block height and hash of the latest block that
 	// has been used to prune channels in the graph. Knowing the "prune tip"
 	// allows callers to tell if the graph is currently in sync with the

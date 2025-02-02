@@ -213,13 +213,15 @@ func (c *ChannelEdgeInfo) OtherNodeKeyBytes(thisNodeKey []byte) (
 var _ Channel = (*ChannelEdgeInfo)(nil)
 
 type Channel2 struct {
-	ChannelID         uint64
-	Outpoint          wire.OutPoint
-	Node1Key          route.Vertex
-	Node2Key          route.Vertex
-	Capacity          btcutil.Amount
-	Features          *lnwire.FeatureVector
-	Signature         fn.Option[[]byte]
+	ChannelID uint64
+	Outpoint  wire.OutPoint
+	Node1Key  route.Vertex
+	Node2Key  route.Vertex
+	Capacity  btcutil.Amount
+	Features  *lnwire.FeatureVector
+	Signature fn.Option[[]byte]
+
+	// TODO: rename to just be AllFields or something like that.
 	ExtraSignedFields map[uint64][]byte
 }
 

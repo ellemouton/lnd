@@ -12,7 +12,9 @@ import (
 
 type Querier interface {
 	AddChannelSignature(ctx context.Context, arg AddChannelSignatureParams) error
+	AddClosedSCID(ctx context.Context, arg AddClosedSCIDParams) error
 	ClearKVInvoiceHashIndex(ctx context.Context) error
+	CountZombieChannels(ctx context.Context) (int64, error)
 	DeleteCanceledInvoices(ctx context.Context) (sql.Result, error)
 	DeleteChannel(ctx context.Context, channelID int64) error
 	DeleteChannelFeature(ctx context.Context, arg DeleteChannelFeatureParams) error
@@ -23,6 +25,7 @@ type Querier interface {
 	DeleteNode(ctx context.Context, id int64) error
 	DeleteNodeAddress(ctx context.Context, arg DeleteNodeAddressParams) error
 	DeleteNodeFeature(ctx context.Context, arg DeleteNodeFeatureParams) error
+	DeleteZombieChannel(ctx context.Context, channelID int64) error
 	FetchAMPSubInvoiceHTLCs(ctx context.Context, arg FetchAMPSubInvoiceHTLCsParams) ([]FetchAMPSubInvoiceHTLCsRow, error)
 	FetchAMPSubInvoices(ctx context.Context, arg FetchAMPSubInvoicesParams) ([]AmpSubInvoice, error)
 	FetchSettledAMPSubInvoices(ctx context.Context, arg FetchSettledAMPSubInvoicesParams) ([]FetchSettledAMPSubInvoicesRow, error)
@@ -69,7 +72,9 @@ type Querier interface {
 	InsertNode(ctx context.Context, arg InsertNodeParams) (int64, error)
 	InsertNodeAddress(ctx context.Context, arg InsertNodeAddressParams) error
 	InsertNodeFeature(ctx context.Context, arg InsertNodeFeatureParams) error
+	IsClosedSCID(ctx context.Context, channelID int64) (bool, error)
 	IsPublicNode(ctx context.Context, nodeID1 int64) (bool, error)
+	IsZombieChannel(ctx context.Context, channelID int64) (bool, error)
 	ListNodeChannels(ctx context.Context, nodeID1 int64) ([]Channel, error)
 	NextInvoiceSettleIndex(ctx context.Context) (int64, error)
 	OnAMPSubInvoiceCanceled(ctx context.Context, arg OnAMPSubInvoiceCanceledParams) error
@@ -93,6 +98,7 @@ type Querier interface {
 	UpsertChanPolicyExtraType(ctx context.Context, arg UpsertChanPolicyExtraTypeParams) error
 	UpsertChannelExtraType(ctx context.Context, arg UpsertChannelExtraTypeParams) error
 	UpsertNodeExtraType(ctx context.Context, arg UpsertNodeExtraTypeParams) error
+	UpsertZombieChannel(ctx context.Context, arg UpsertZombieChannelParams) error
 }
 
 var _ Querier = (*Queries)(nil)

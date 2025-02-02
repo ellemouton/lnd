@@ -2,6 +2,7 @@ package graph
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -63,7 +64,8 @@ type Config struct {
 
 	// Graph is the channel graph that the ChannelRouter will use to gather
 	// metrics from and also to carry out path finding queries.
-	Graph DB
+	Graph   DB
+	GraphV2 *graphdb.V2Store
 
 	// Chain is the router's source to the most up-to-date blockchain data.
 	// All incoming advertised channels will be checked against the chain
@@ -1631,12 +1633,57 @@ func (b *Builder) IsPublicNode(node route.Vertex) (bool, error) {
 // channel ID either as a live or zombie edge.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsKnownEdge(chanID lnwire.ShortChannelID) bool {
-	_, _, exists, isZombie, _ := b.cfg.Graph.HasChannelEdge(
-		chanID.ToUint64(),
-	)
+func (b *Builder) IsKnownEdge(ctx context.Context, p Protocol,
+	chanID lnwire.ShortChannelID) (bool, error) {
 
-	return exists || isZombie
+	switch p {
+	case V1Protocol:
+		_, _, exists, isZombie, err := b.cfg.Graph.HasChannelEdge(
+			chanID.ToUint64(),
+		)
+
+		return exists || isZombie, err
+
+	case V2Protocol:
+		_, _, exists, isZombie, err := b.cfg.GraphV2.HasChannel(
+			ctx, chanID.ToUint64(),
+		)
+
+		return exists || isZombie, err
+	}
+
+	return false, fmt.Errorf("unknown protocol: %v", p)
+}
+
+// PutClosedScid marks a channel as closed so that we won't validate
+// channel announcements for it again.
+func (b *Builder) PutClosedScid(ctx context.Context, p Protocol,
+	scid lnwire.ShortChannelID) error {
+
+	switch p {
+	case V1Protocol:
+		return b.cfg.Graph.PutClosedScid(scid)
+
+	case V2Protocol:
+		return b.cfg.GraphV2.AddClosedSCID(ctx, scid)
+	}
+
+	return fmt.Errorf("unknown protocol: %v", p)
+}
+
+// IsClosedScid checks if a short channel id is closed.
+func (b *Builder) IsClosedScid(ctx context.Context, p Protocol,
+	scid lnwire.ShortChannelID) (bool, error) {
+
+	switch p {
+	case V1Protocol:
+		return b.cfg.Graph.IsClosedScid(scid)
+
+	case V2Protocol:
+		return b.cfg.GraphV2.IsClosedSCID(ctx, scid)
+	}
+
+	return false, fmt.Errorf("unknown protocol: %v", p)
 }
 
 // IsStaleEdgePolicy returns true if the graph source has a channel edge for

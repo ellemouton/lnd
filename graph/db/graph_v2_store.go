@@ -43,9 +43,15 @@ type GossipV2Store interface {
 	UpdateAnnouncedChannel(ctx context.Context, chanID uint64, sig []byte, signedFields map[uint64][]byte) error
 	GetChannelByChanID(ctx context.Context, chanID uint64) (*models.Channel2, *models.ChannelPolicy2, *models.ChannelPolicy2, error)
 	GetChannelByOutpoint(ctx context.Context, outpoint wire.OutPoint) (*models.Channel2, *models.ChannelPolicy2, *models.ChannelPolicy2, error)
-	DeleteChannels(ctx context.Context, chanID ...uint64) error
+	DeleteChannels(ctx context.Context, strictZombiePruning,
+		markZombie bool, chanID ...uint64) error
+	HasChannel(ctx context.Context, chanID uint64) (uint32, uint32, bool,
+		bool, error)
 
 	UpdateChannelPolicy(ctx context.Context, policy *models.ChannelPolicy2) error
+
+	IsClosedSCID(ctx context.Context, chanID uint64) (bool, error)
+	AddClosedSCID(ctx context.Context, chanID uint64) error
 }
 
 // V2Queries is a subset of the sqlc.Querier interface containing all the V2
@@ -98,6 +104,14 @@ type V2Queries interface {
 	UpsertChanPolicyExtraType(ctx context.Context, arg sqlc.UpsertChanPolicyExtraTypeParams) error
 	GetExtraChanPolicyTypes(ctx context.Context, channelPolicyID int64) ([]sqlc.ChannelPolicyExtraType, error)
 	DeleteExtraChanPolicyType(ctx context.Context, arg sqlc.DeleteExtraChanPolicyTypeParams) error
+
+	UpsertZombieChannel(ctx context.Context, arg sqlc.UpsertZombieChannelParams) error
+	DeleteZombieChannel(ctx context.Context, channelID int64) error
+	CountZombieChannels(ctx context.Context) (int64, error)
+	IsZombieChannel(ctx context.Context, channelID int64) (bool, error)
+
+	AddClosedSCID(ctx context.Context, arg sqlc.AddClosedSCIDParams) error
+	IsClosedSCID(ctx context.Context, channelID int64) (bool, error)
 }
 
 // BatchedV2Queries is a version of the V2Queries that's capable of batched
@@ -132,6 +146,10 @@ func NewV2QueryReadTx() V2QueriesTxOptions {
 type V2Store struct {
 	db    BatchedV2Queries
 	clock clock.Clock
+
+	// TODO: use these caches.
+	// rejectCache *rejectCache
+	// chanCache   *channelCache
 }
 
 // NewV2Store creates a new V2Store instance given an open BatchedSQLQueries
@@ -477,6 +495,68 @@ func (s *V2Store) GetChannelByOutpoint(ctx context.Context,
 	return channel, p1, p2, nil
 }
 
+// HasChannel returns true if the database knows of a channel edge with the
+// passed channel ID, and false otherwise. If an edge with that ID is found
+// within the graph, then two block heights representing the last time the edge
+// was updated for both directed edges are returned along with the boolean. If
+// it is not found, then the zombie index is checked and its result is returned
+// as the second boolean.
+func (s *V2Store) HasChannel(ctx context.Context, chanID uint64) (uint32,
+	uint32, bool, bool, error) {
+
+	var (
+		readTx             = NewV2QueryReadTx()
+		policy1BlockHeight uint32
+		policy2BlockHeight uint32
+		exists             bool
+		isZombie           bool
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db V2Queries) error {
+		dbChan, err := db.GetChannelByChanID(ctx, int64(chanID))
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("could not fetch channel "+
+				"using channel ID(%d): %w", chanID, err)
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			isZombie, err = db.IsZombieChannel(ctx, int64(chanID))
+			if err != nil {
+				return fmt.Errorf("could not check if channel "+
+					"is a zombie: %w", err)
+			}
+
+			return nil
+		}
+
+		exists = true
+		isZombie = false
+
+		_, p1, p2, err := buildChannel(ctx, db, dbChan)
+		if err != nil {
+			return fmt.Errorf("could not fetch channel(%d): %w",
+				chanID, err)
+		}
+
+		if p1 != nil {
+			policy1BlockHeight = p1.BlockHeight
+		}
+		if p2 != nil {
+			policy2BlockHeight = p2.BlockHeight
+		}
+
+		return nil
+	}, func() {
+		policy1BlockHeight = 0
+		policy2BlockHeight = 0
+		isZombie = false
+		exists = false
+	})
+	if err != nil {
+		return 0, 0, false, false, err
+	}
+
+	return policy1BlockHeight, policy2BlockHeight, exists, isZombie, nil
+}
+
 func maybeCreateShellNode(ctx context.Context, db V2Queries,
 	pubKey route.Vertex) (int64, error) {
 
@@ -556,15 +636,71 @@ func (s *V2Store) insertChannel(ctx context.Context, db V2Queries,
 	return nil
 }
 
-func (s *V2Store) DeleteChannels(ctx context.Context, chanIDs ...uint64) error {
+func (s *V2Store) DeleteChannels(ctx context.Context, strictZombiePruning,
+	markZombie bool, chanIDs ...uint64) error {
+
 	var writeTxOpts V2QueriesTxOptions
 	err := s.db.ExecTx(ctx, &writeTxOpts, func(db V2Queries) error {
 		for _, chanID := range chanIDs {
-			err := db.DeleteChannel(ctx, int64(chanID))
+			dbChan, err := db.GetChannelByChanID(ctx, int64(chanID))
+			if err != nil {
+				return fmt.Errorf("could not fetch channel "+
+					"using channel ID(%d): %w", chanID, err)
+			}
+
+			edge, policy1, policy2, err := buildChannel(
+				ctx, db, dbChan,
+			)
+			if err != nil {
+				return err
+			}
+
+			err = db.DeleteChannel(ctx, int64(chanID))
 			if err != nil {
 				return fmt.Errorf("could not delete "+
 					"channel %d: %w", chanID, err)
 			}
+
+			if !markZombie {
+				continue
+			}
+
+			var nodeKey1, nodeKey2 []byte
+			if strictZombiePruning {
+				var e1, e2 fn.Option[models.ChannelPolicy]
+				if policy1 != nil {
+					e1 = fn.Some[models.ChannelPolicy](policy1)
+				}
+				if policy2 != nil {
+					e2 = fn.Some[models.ChannelPolicy](policy2)
+				}
+				nodeKey1Opt, nodeKey2Opt, err := makeZombiePubkeys(
+					edge, e1, e2,
+				)
+				if err != nil {
+					return err
+				}
+
+				nodeKey1Opt.WhenSome(func(nodeKey1Val route.Vertex) {
+					nodeKey1 = nodeKey1Val[:]
+				})
+
+				nodeKey2Opt.WhenSome(func(nodeKey2Val route.Vertex) {
+					nodeKey2 = nodeKey2Val[:]
+				})
+			} else {
+				nodeKey1 = edge.Node1Key[:]
+				nodeKey2 = edge.Node2Key[:]
+			}
+
+			return db.UpsertZombieChannel(
+				ctx, sqlc.UpsertZombieChannelParams{
+					ChannelID: int64(chanID),
+					NodeKey1:  nodeKey1,
+					NodeKey2:  nodeKey2,
+					CreatedAt: s.clock.Now().UTC(),
+				},
+			)
 		}
 
 		return nil
@@ -647,6 +783,45 @@ func (s *V2Store) UpdateChannelPolicy(ctx context.Context,
 	}, func() {})
 	if err != nil {
 		return fmt.Errorf("unable to update channel policy: %w", err)
+	}
+
+	return nil
+}
+
+func (s *V2Store) IsClosedSCID(ctx context.Context,
+	chanID lnwire.ShortChannelID) (bool, error) {
+
+	var (
+		readTx   = NewV2QueryReadTx()
+		isClosed bool
+		err      error
+	)
+	err = s.db.ExecTx(ctx, &readTx, func(db V2Queries) error {
+		isClosed, err = db.IsClosedSCID(ctx, int64(chanID.ToUint64()))
+		if err != nil {
+			return fmt.Errorf("unable to check if SCID is "+
+				"closed: %w", err)
+		}
+
+		return nil
+	}, func() {
+		isClosed = false
+	})
+
+	return isClosed, err
+}
+
+func (s *V2Store) AddClosedSCID(ctx context.Context,
+	chanID lnwire.ShortChannelID) error {
+
+	var writeTxOpts V2QueriesTxOptions
+	err := s.db.ExecTx(ctx, &writeTxOpts, func(db V2Queries) error {
+		return db.AddClosedSCID(ctx, sqlc.AddClosedSCIDParams{
+			ChannelID: int64(chanID.ToUint64()),
+		})
+	}, func() {})
+	if err != nil {
+		return fmt.Errorf("unable to add closed SCID: %w", err)
 	}
 
 	return nil
