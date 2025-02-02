@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/lightningnetwork/lnd/graph/db/models"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/stretchr/testify/require"
@@ -41,14 +40,12 @@ func (n *node) Features() *lnwire.FeatureVector {
 	return n.features
 }
 
-func (n *node) ForEachChannel(tx kvdb.RTx,
-	cb func(kvdb.RTx, *models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
-		*models.ChannelEdgePolicy) error) error {
+func (n *node) ForEachChannel(cb func(models.Channel,
+	models.ChannelPolicy, models.ChannelPolicy) error) error {
 
 	for idx := range n.edgeInfos {
 		err := cb(
-			tx, n.edgeInfos[idx], n.outPolicies[idx],
-			n.inPolicies[idx],
+			n.edgeInfos[idx], n.outPolicies[idx], n.inPolicies[idx],
 		)
 		if err != nil {
 			return err
@@ -99,7 +96,7 @@ func TestGraphCacheAddNode(t *testing.T) {
 			inPolicies:  []*models.ChannelEdgePolicy{inPolicy1},
 		}
 		cache := NewGraphCache(10)
-		require.NoError(t, cache.AddNode(nil, node))
+		require.NoError(t, cache.AddNode(node))
 
 		var fromChannels, toChannels []*DirectedChannel
 		_ = cache.ForEachChannel(nodeA, func(c *DirectedChannel) error {
@@ -153,12 +150,14 @@ func TestGraphCacheAddNode(t *testing.T) {
 	runTest(pubKey2, pubKey1)
 }
 
-func assertCachedPolicyEqual(t *testing.T, original *models.ChannelEdgePolicy,
+func assertCachedPolicyEqual(t *testing.T, og models.ChannelPolicy,
 	cached *models.CachedEdgePolicy) {
 
+	original := og.CachedPolicy()
+
 	require.Equal(t, original.ChannelID, cached.ChannelID)
-	require.Equal(t, original.MessageFlags, cached.MessageFlags)
-	require.Equal(t, original.ChannelFlags, cached.ChannelFlags)
+	require.Equal(t, original.HasMaxHTLC, cached.HasMaxHTLC)
+	require.Equal(t, original.IsDisabled, cached.IsDisabled)
 	require.Equal(t, original.TimeLockDelta, cached.TimeLockDelta)
 	require.Equal(t, original.MinHTLC, cached.MinHTLC)
 	require.Equal(t, original.MaxHTLC, cached.MaxHTLC)
@@ -167,7 +166,5 @@ func assertCachedPolicyEqual(t *testing.T, original *models.ChannelEdgePolicy,
 		t, original.FeeProportionalMillionths,
 		cached.FeeProportionalMillionths,
 	)
-	require.Equal(
-		t, route.Vertex(original.ToNode), cached.ToNodePubKey(),
-	)
+	require.Equal(t, og.OtherNode(), cached.ToNodePubKey())
 }

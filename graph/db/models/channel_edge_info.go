@@ -79,6 +79,22 @@ type ChannelEdgeInfo struct {
 	ExtraOpaqueData []byte
 }
 
+func (c *ChannelEdgeInfo) Node1() route.Vertex {
+	return c.NodeKey1Bytes
+}
+
+func (c *ChannelEdgeInfo) Node2() route.Vertex {
+	return c.NodeKey2Bytes
+}
+
+func (c *ChannelEdgeInfo) ChanID() uint64 {
+	return c.ChannelID
+}
+
+func (c *ChannelEdgeInfo) Cap() btcutil.Amount {
+	return c.Capacity
+}
+
 // AddNodeKeys is a setter-like method that can be used to replace the set of
 // keys for the target ChannelEdgeInfo.
 func (c *ChannelEdgeInfo) AddNodeKeys(nodeKey1, nodeKey2, bitcoinKey1,
@@ -194,6 +210,8 @@ func (c *ChannelEdgeInfo) OtherNodeKeyBytes(thisNodeKey []byte) (
 	}
 }
 
+var _ Channel = (*ChannelEdgeInfo)(nil)
+
 type Channel2 struct {
 	ChannelID         uint64
 	Outpoint          wire.OutPoint
@@ -203,4 +221,29 @@ type Channel2 struct {
 	Features          *lnwire.FeatureVector
 	Signature         fn.Option[[]byte]
 	ExtraSignedFields map[uint64][]byte
+}
+
+func (c *Channel2) Node1() route.Vertex {
+	return c.Node1Key
+}
+
+func (c *Channel2) Node2() route.Vertex {
+	return c.Node2Key
+}
+
+func (c *Channel2) ChanID() uint64 {
+	return c.ChannelID
+}
+
+func (c *Channel2) Cap() btcutil.Amount {
+	return c.Capacity
+}
+
+var _ Channel = (*Channel2)(nil)
+
+type Channel interface {
+	Node1() route.Vertex
+	Node2() route.Vertex
+	ChanID() uint64
+	Cap() btcutil.Amount
 }

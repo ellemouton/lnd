@@ -76,6 +76,44 @@ type ChannelEdgePolicy struct {
 	ExtraOpaqueData lnwire.ExtraOpaqueData
 }
 
+func (c *ChannelEdgePolicy) GetInboundFee() (lnwire.Fee, error) {
+	var inboundFee lnwire.Fee
+	_, err := c.ExtraOpaqueData.ExtractRecords(&inboundFee)
+
+	return inboundFee, err
+}
+
+func (c *ChannelEdgePolicy) ChanID() uint64 {
+	return c.ChannelID
+}
+
+func (c *ChannelEdgePolicy) Disabled() bool {
+	return c.ChannelFlags.IsDisabled()
+}
+
+func (c *ChannelEdgePolicy) OtherNode() route.Vertex {
+	return c.ToNode
+}
+
+func (c *ChannelEdgePolicy) IsEdge1() bool {
+	return c.ChannelFlags&lnwire.ChanUpdateDirection == 0
+}
+
+func (c *ChannelEdgePolicy) CachedPolicy() *CachedEdgePolicy {
+	isDisabled := c.ChannelFlags&lnwire.ChanUpdateDisabled != 0
+
+	return &CachedEdgePolicy{
+		ChannelID:                 c.ChannelID,
+		HasMaxHTLC:                c.MessageFlags.HasMaxHtlc(),
+		IsDisabled:                isDisabled,
+		TimeLockDelta:             c.TimeLockDelta,
+		MinHTLC:                   c.MinHTLC,
+		MaxHTLC:                   c.MaxHTLC,
+		FeeBaseMSat:               c.FeeBaseMSat,
+		FeeProportionalMillionths: c.FeeProportionalMillionths,
+	}
+}
+
 // Signature is a channel announcement signature, which is needed for proper
 // edge policy announcement.
 //
@@ -124,6 +162,8 @@ func (c *ChannelEdgePolicy) String() string {
 		c.LastUpdate)
 }
 
+var _ ChannelPolicy = (*ChannelEdgePolicy)(nil)
+
 type ChannelPolicy2 struct {
 	ChannelID                 uint64
 	BlockHeight               uint32
@@ -136,6 +176,53 @@ type ChannelPolicy2 struct {
 	ToNode                    route.Vertex
 	Flags                     lnwire.ChanUpdateDisableFlags
 
+	// TODO(elle): add to lnwire message & add column to db.
+	InboundFee lnwire.Fee
+
 	Signature         fn.Option[[]byte]
 	ExtraSignedFields map[uint64][]byte
+}
+
+func (c *ChannelPolicy2) CachedPolicy() *CachedEdgePolicy {
+	return &CachedEdgePolicy{
+		ChannelID:                 c.ChannelID,
+		HasMaxHTLC:                true,
+		IsDisabled:                !c.Flags.IsEnabled(),
+		TimeLockDelta:             c.TimeLockDelta,
+		MinHTLC:                   c.MinHTLC,
+		MaxHTLC:                   c.MaxHTLC,
+		FeeBaseMSat:               c.FeeBaseMSat,
+		FeeProportionalMillionths: c.FeeProportionalMillionths,
+	}
+}
+
+func (c *ChannelPolicy2) GetInboundFee() (lnwire.Fee, error) {
+	return c.InboundFee, nil
+}
+
+var _ ChannelPolicy = (*ChannelPolicy2)(nil)
+
+func (c *ChannelPolicy2) Disabled() bool {
+	return !c.Flags.IsEnabled()
+}
+
+func (c *ChannelPolicy2) ChanID() uint64 {
+	return c.ChannelID
+}
+
+func (c *ChannelPolicy2) OtherNode() route.Vertex {
+	return c.ToNode
+}
+
+func (c *ChannelPolicy2) IsEdge1() bool {
+	return !c.SecondPeer
+}
+
+type ChannelPolicy interface {
+	ChanID() uint64
+	Disabled() bool
+	OtherNode() route.Vertex
+	IsEdge1() bool
+	CachedPolicy() *CachedEdgePolicy
+	GetInboundFee() (lnwire.Fee, error)
 }
