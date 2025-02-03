@@ -30,13 +30,12 @@ type ChannelGraphSource interface {
 	// AddEdge is used to add edge/channel to the topology of the router,
 	// after all information about channel will be gathered this
 	// edge/channel might be used in construction of payment path.
-	AddEdge(edge *models.ChannelEdgeInfo,
-		op ...batch.SchedulerOption) error
+	AddEdge(edge models.Channel, op ...batch.SchedulerOption) error
 
 	// AddProof updates the channel edge info with proof which is needed to
 	// properly announce the edge to the rest of the network.
-	AddProof(chanID lnwire.ShortChannelID,
-		proof *models.ChannelAuthProof) error
+	AddProof(ctx context.Context, chanID lnwire.ShortChannelID,
+		proof models.ChanAuthProof) error
 
 	// UpdateEdge is used to update edge information, without this message
 	// edge considered as not fully constructed.
@@ -55,7 +54,7 @@ type ChannelGraphSource interface {
 
 	// IsKnownEdge returns true if the graph source already knows of the
 	// passed channel ID either as a live or zombie edge.
-	IsKnownEdge(ctx context.Context, p Protocol,
+	IsKnownEdge(ctx context.Context, p lnwire.Protocol,
 		chanID lnwire.ShortChannelID) (bool, error)
 
 	// IsStaleEdgePolicy returns true if the graph source has a channel

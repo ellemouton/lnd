@@ -5,10 +5,13 @@ import (
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/fn/v2"
+	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -77,6 +80,63 @@ type ChannelEdgeInfo struct {
 	// and ensure we're able to make upgrades to the network in a forwards
 	// compatible manner.
 	ExtraOpaqueData []byte
+}
+
+func (c *ChannelEdgeInfo) FundingScript() ([]byte, error) {
+	legecy := func() ([]byte, error) {
+		witnessScript, err := input.GenMultiSigScript(
+			c.BitcoinKey1Bytes[:], c.BitcoinKey2Bytes[:],
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		return input.WitnessScriptHash(witnessScript)
+	}
+
+	if len(c.Features) == 0 {
+		return legecy()
+	}
+
+	// In order to make the correct funding script, we'll need to parse the
+	// chanFeatures bytes into a feature vector we can interact with.
+	rawFeatures := lnwire.NewRawFeatureVector()
+	err := rawFeatures.Decode(bytes.NewReader(c.Features))
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse chan feature "+
+			"bits: %w", err)
+	}
+
+	// TODO(elle): remove once funding manager no longer uses the legacy
+	// announcement message for taproot channels.
+	chanFeatureBits := lnwire.NewFeatureVector(rawFeatures, lnwire.Features)
+	if !chanFeatureBits.HasFeature(
+		lnwire.SimpleTaprootChannelsOptionalStaging,
+	) {
+		return legecy()
+	}
+
+	pubKey1, err := btcec.ParsePubKey(c.BitcoinKey1Bytes[:])
+	if err != nil {
+		return nil, err
+	}
+	pubKey2, err := btcec.ParsePubKey(c.BitcoinKey2Bytes[:])
+	if err != nil {
+		return nil, err
+	}
+
+	fundingScript, _, err := input.GenTaprootFundingScript(
+		pubKey1, pubKey2, 0, c.TapscriptRoot,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return fundingScript, nil
+}
+
+func (c *ChannelEdgeInfo) Protocol() lnwire.Protocol {
+	return lnwire.V1Protocol
 }
 
 func (c *ChannelEdgeInfo) Node1() route.Vertex {
@@ -217,12 +277,107 @@ type Channel2 struct {
 	Outpoint  wire.OutPoint
 	Node1Key  route.Vertex
 	Node2Key  route.Vertex
-	Capacity  btcutil.Amount
-	Features  *lnwire.FeatureVector
-	Signature fn.Option[[]byte]
+
+	Bitcoin1Key    fn.Option[route.Vertex]
+	Bitcoin2Key    fn.Option[route.Vertex]
+	MerkleRootHash fn.Option[chainhash.Hash]
+
+	Capacity btcutil.Amount
+	Features *lnwire.FeatureVector
+
+	AuthProof fn.Option[*ChannelAuthProof2]
+
+	// FundingPkScript is the funding transaction's pk script. We persist
+	// this since there are some cases in which this will not be derivable
+	// using the contents of the announcement. In that case, we still want
+	// quick access to the funding script so that we can register for spend
+	// notifications.
+	FundingPkScript fn.Option[[]byte]
 
 	// TODO: rename to just be AllFields or something like that.
-	ExtraSignedFields map[uint64][]byte
+	AllSignedFields map[uint64][]byte
+}
+
+func (c *Channel2) FundingScript() ([]byte, error) {
+	var (
+		pubKey1 *btcec.PublicKey
+		pubKey2 *btcec.PublicKey
+		err     error
+	)
+	c.Bitcoin1Key.WhenSome(func(key route.Vertex) {
+		pubKey1, err = btcec.ParsePubKey(key[:])
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	c.Bitcoin2Key.WhenSome(func(key route.Vertex) {
+		pubKey2, err = btcec.ParsePubKey(key[:])
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// If both bitcoin keys are not present in the announcement, then we
+	// should previously have stored the funding script found on-chain.
+	if pubKey1 == nil || pubKey2 == nil {
+		return c.FundingPkScript.UnwrapOrErr(fmt.Errorf(
+			"expected a funding pk script since no bitcoin keys " +
+				"were provided",
+		))
+	}
+
+	// Initially we set the tweak to an empty byte array. If a merkle root
+	// hash is provided in the announcement then we use that to set the
+	// tweak but otherwise, the empty tweak will have the same effect as a
+	// BIP86 tweak.
+	var tweak []byte
+	c.MerkleRootHash.WhenSome(func(hash chainhash.Hash) {
+		tweak = hash[:]
+	})
+
+	// Calculate the internal key by computing the MuSig2 combination of the
+	// two public keys.
+	internalKey, _, _, err := musig2.AggregateKeys(
+		[]*btcec.PublicKey{pubKey1, pubKey2}, true,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Now, determine the tweak to be added to the internal key. If the
+	// tweak is empty, then this will effectively be a BIP86 tweak.
+	tapTweakHash := chainhash.TaggedHash(
+		chainhash.TagTapTweak, schnorr.SerializePubKey(
+			internalKey.FinalKey,
+		), tweak,
+	)
+
+	// Compute the final output key.
+	combinedKey, _, _, err := musig2.AggregateKeys(
+		[]*btcec.PublicKey{pubKey1, pubKey2}, true,
+		musig2.WithKeyTweaks(musig2.KeyTweakDesc{
+			Tweak:   *tapTweakHash,
+			IsXOnly: true,
+		}),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Now that we have the combined key, we can create a taproot pkScript
+	// from this, and then make the txout given the amount.
+	fundingScript, err := input.PayToTaprootScript(combinedKey.FinalKey)
+	if err != nil {
+		return nil, fmt.Errorf("unable to make taproot pkscript: %w",
+			err)
+	}
+
+	return fundingScript, nil
+}
+
+func (c *Channel2) Protocol() lnwire.Protocol {
+	return lnwire.V2Protocol
 }
 
 func (c *Channel2) Node1() route.Vertex {
@@ -248,4 +403,6 @@ type Channel interface {
 	Node2() route.Vertex
 	ChanID() uint64
 	Cap() btcutil.Amount
+	Protocol() lnwire.Protocol
+	FundingScript() ([]byte, error)
 }

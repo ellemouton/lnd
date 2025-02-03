@@ -8,6 +8,7 @@ import (
 	"net"
 	"strconv"
 
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/clock"
@@ -376,10 +377,14 @@ func (s *V2Store) ListNodeChannels(ctx context.Context,
 	return edges, nil
 }
 
-func (s *V2Store) UpdateAnnouncedChannel(ctx context.Context, chanID uint64,
-	sig []byte, signedFields map[uint64][]byte) error {
+// TODO(elle): update to take new set of signed fields?
+func (s *V2Store) AddProof(ctx context.Context, scid lnwire.ShortChannelID,
+	proof *models.ChannelAuthProof2) error {
 
-	var writeTxOpts V2QueriesTxOptions
+	var (
+		writeTxOpts V2QueriesTxOptions
+		chanID      = scid.ToUint64()
+	)
 	err := s.db.ExecTx(ctx, &writeTxOpts, func(db V2Queries) error {
 		// Make sure that this channel does already exist in the
 		// database.
@@ -398,7 +403,7 @@ func (s *V2Store) UpdateAnnouncedChannel(ctx context.Context, chanID uint64,
 		err = db.AddChannelSignature(
 			ctx, sqlc.AddChannelSignatureParams{
 				ID:        channel.ID,
-				Signature: sig,
+				Signature: proof.SchnorrSigBytes,
 			},
 		)
 		if err != nil {
@@ -406,9 +411,12 @@ func (s *V2Store) UpdateAnnouncedChannel(ctx context.Context, chanID uint64,
 				err)
 		}
 
-		return upsertChannelExtraSignedFields(
-			ctx, db, channel.ID, signedFields,
-		)
+		return nil
+		/*
+			return upsertChannelExtraSignedFields(
+				ctx, db, channel.ID, signedFields,
+			)
+		*/
 	}, func() {})
 	if err != nil {
 		return fmt.Errorf("unable to add channel: %w", err)
@@ -594,18 +602,24 @@ func (s *V2Store) insertChannel(ctx context.Context, db V2Queries,
 	}
 
 	var signature []byte
-	edge.Signature.WhenSome(func(s []byte) {
-		signature = s
+	edge.AuthProof.WhenSome(func(s *models.ChannelAuthProof2) {
+		signature = s.SchnorrSigBytes
+	})
+
+	var fundingScript []byte
+	edge.FundingPkScript.WhenSome(func(s []byte) {
+		fundingScript = s
 	})
 
 	dbChanID, err := db.InsertChannel(ctx, sqlc.InsertChannelParams{
-		ChannelID: int64(edge.ChannelID),
-		Outpoint:  edge.Outpoint.String(),
-		NodeID1:   node1DBID,
-		NodeID2:   node2DBID,
-		Capacity:  int64(edge.Capacity),
-		Signature: signature,
-		CreatedAt: s.clock.Now().UTC(),
+		ChannelID:       int64(edge.ChannelID),
+		Outpoint:        edge.Outpoint.String(),
+		NodeID1:         node1DBID,
+		NodeID2:         node2DBID,
+		Capacity:        int64(edge.Capacity),
+		Signature:       signature,
+		FundingPkScript: fundingScript,
+		CreatedAt:       s.clock.Now().UTC(),
 	})
 	if err != nil {
 		return fmt.Errorf("unable to insert channel: %w", err)
@@ -627,10 +641,31 @@ func (s *V2Store) insertChannel(ctx context.Context, db V2Queries,
 	}
 
 	if err := upsertChannelExtraSignedFields(
-		ctx, db, dbChanID, edge.ExtraSignedFields,
+		ctx, db, dbChanID, edge.AllSignedFields,
 	); err != nil {
 		return fmt.Errorf("unable to insert channel extra "+
 			"types: %w", err)
+	}
+
+	return nil
+}
+
+func (s *V2Store) MarkZombieEdge(ctx context.Context, chanID uint64,
+	pub1, pub2 route.Vertex) error {
+
+	var writeTxOpts V2QueriesTxOptions
+	err := s.db.ExecTx(ctx, &writeTxOpts, func(db V2Queries) error {
+		return db.UpsertZombieChannel(
+			ctx, sqlc.UpsertZombieChannelParams{
+				ChannelID: int64(chanID),
+				NodeKey1:  pub1[:],
+				NodeKey2:  pub2[:],
+				CreatedAt: s.clock.Now().UTC(),
+			},
+		)
+	}, func() {})
+	if err != nil {
+		return fmt.Errorf("unable to mark edge as zombie: %w", err)
 	}
 
 	return nil
@@ -830,11 +865,6 @@ func (s *V2Store) AddClosedSCID(ctx context.Context,
 func (s *V2Store) updateChanPolicy(ctx context.Context, db V2Queries,
 	dbID int64, policy *models.ChannelPolicy2) error {
 
-	var signature []byte
-	policy.Signature.WhenSome(func(s []byte) {
-		signature = s
-	})
-
 	err := db.UpdateChannelPolicy(ctx, sqlc.UpdateChannelPolicyParams{
 		ID:           dbID,
 		BlockHeight:  int32(policy.BlockHeight),
@@ -844,7 +874,7 @@ func (s *V2Store) updateChanPolicy(ctx context.Context, db V2Queries,
 		BaseFeeMsat:  int64(policy.FeeBaseMSat),
 		MaxHtlcMsat:  int64(policy.MaxHTLC),
 		MinHtlcMsat:  int64(policy.MinHTLC),
-		Signature:    signature,
+		Signature:    policy.Signature.Serialize(),
 		UpdatedAt:    s.clock.Now().UTC(),
 	})
 	if err != nil {
@@ -852,7 +882,7 @@ func (s *V2Store) updateChanPolicy(ctx context.Context, db V2Queries,
 	}
 
 	return upsertChanPolicyExtraSignedFields(
-		ctx, db, dbID, policy.ExtraSignedFields,
+		ctx, db, dbID, policy.AllSignedFields,
 	)
 }
 
@@ -867,11 +897,6 @@ func (s *V2Store) insertChanPolicy(ctx context.Context, db V2Queries,
 		return fmt.Errorf("unable to fetch channel: %w", err)
 	}
 
-	var signature []byte
-	policy.Signature.WhenSome(func(s []byte) {
-		signature = s
-	})
-
 	id, err := db.InsertChannelPolicy(ctx, sqlc.InsertChannelPolicyParams{
 		ChannelID:    dbChan.ID,
 		BlockHeight:  int32(policy.BlockHeight),
@@ -882,7 +907,7 @@ func (s *V2Store) insertChanPolicy(ctx context.Context, db V2Queries,
 		BaseFeeMsat:  int64(policy.FeeBaseMSat),
 		MaxHtlcMsat:  int64(policy.MaxHTLC),
 		MinHtlcMsat:  int64(policy.MinHTLC),
-		Signature:    signature,
+		Signature:    policy.Signature.Serialize(),
 		CreatedAt:    s.clock.Now().UTC(),
 		UpdatedAt:    s.clock.Now().UTC(),
 	})
@@ -891,7 +916,7 @@ func (s *V2Store) insertChanPolicy(ctx context.Context, db V2Queries,
 	}
 
 	return upsertChanPolicyExtraSignedFields(
-		ctx, db, id, policy.ExtraSignedFields,
+		ctx, db, id, policy.AllSignedFields,
 	)
 }
 
@@ -1532,9 +1557,11 @@ func buildChannel(ctx context.Context, db V2Queries,
 		return nil, nil, nil, err
 	}
 
-	var sig fn.Option[[]byte]
+	var sig fn.Option[*models.ChannelAuthProof2]
 	if dbChan.Signature != nil {
-		sig = fn.Some(dbChan.Signature)
+		sig = fn.Some(&models.ChannelAuthProof2{
+			SchnorrSigBytes: dbChan.Signature,
+		})
 	}
 
 	node1Policy, err := getChanPolicy(
@@ -1552,14 +1579,14 @@ func buildChannel(ctx context.Context, db V2Queries,
 	}
 
 	return &models.Channel2{
-		ChannelID:         uint64(dbChan.ChannelID),
-		Outpoint:          *op,
-		Node1Key:          node1Vertex,
-		Node2Key:          node2Vertex,
-		Capacity:          btcutil.Amount(dbChan.Capacity),
-		Features:          features,
-		ExtraSignedFields: extraTypes,
-		Signature:         sig,
+		ChannelID:       uint64(dbChan.ChannelID),
+		Outpoint:        *op,
+		Node1Key:        node1Vertex,
+		Node2Key:        node2Vertex,
+		Capacity:        btcutil.Amount(dbChan.Capacity),
+		Features:        features,
+		AllSignedFields: extraTypes,
+		AuthProof:       sig,
 	}, node1Policy, node2Policy, nil
 }
 
@@ -1591,9 +1618,9 @@ func getChanPolicy(ctx context.Context, db V2Queries, channel sqlc.Channel,
 		return nil, err
 	}
 
-	var signature fn.Option[[]byte]
-	if policy.Signature != nil {
-		signature = fn.Some(policy.Signature)
+	sig, err := schnorr.ParseSignature(policy.Signature)
+	if err != nil {
+		return nil, err
 	}
 
 	return &models.ChannelPolicy2{
@@ -1607,8 +1634,8 @@ func getChanPolicy(ctx context.Context, db V2Queries, channel sqlc.Channel,
 		SecondPeer:                policy.SecondPeer,
 		ToNode:                    toNode,
 		Flags:                     lnwire.ChanUpdateDisableFlags(policy.DisableFlags),
-		Signature:                 signature,
-		ExtraSignedFields:         extra,
+		Signature:                 sig,
+		AllSignedFields:           extra,
 	}, nil
 }
 

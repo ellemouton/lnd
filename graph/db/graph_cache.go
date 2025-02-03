@@ -159,8 +159,12 @@ func (c *GraphCache) AddChannel(info models.Channel,
 		return
 	}
 
-	if policy1 != nil && policy1.Disabled() &&
-		policy2 != nil && policy2.Disabled() {
+	policyNil := func(policy models.ChannelPolicy) bool {
+		return policy == nil || policy.Nil()
+	}
+
+	if !policyNil(policy1) && policy1.Disabled() &&
+		!policyNil(policy2) && policy2.Disabled() {
 
 		return
 	}
@@ -183,14 +187,14 @@ func (c *GraphCache) AddChannel(info models.Channel,
 
 	// The policy's node is always the to_node. So if policy 1 has to_node
 	// of node 2 then we have the policy 1 as seen from node 1.
-	if policy1 != nil {
+	if !policyNil(policy1) {
 		fromNode, toNode := info.Node1(), info.Node2()
 		if policy1.OtherNode() != info.Node2() {
 			fromNode, toNode = toNode, fromNode
 		}
 		c.UpdatePolicy(policy1, fromNode, toNode)
 	}
-	if policy2 != nil {
+	if !policyNil(policy2) {
 		fromNode, toNode := info.Node2(), info.Node1()
 		if policy2.OtherNode() != info.Node1() {
 			fromNode, toNode = toNode, fromNode

@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS channels (
 
     capacity BIGINT NOT NULL,
 
+    funding_pk_script BLOB,
+
     -- The signature of the channel announcement. If this is null, then the
     -- channel belongs to the source node and the channel has not been
     -- announced yet.

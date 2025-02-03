@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
-	"github.com/lightningnetwork/lnd/fn/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -84,6 +84,10 @@ func (c *ChannelEdgePolicy) Before(policy ChannelPolicy) (bool, error) {
 	}
 
 	return c.LastUpdate.Before(other.LastUpdate), nil
+}
+
+func (c *ChannelEdgePolicy) Nil() bool {
+	return c == nil
 }
 
 func (c *ChannelEdgePolicy) GetInboundFee() (lnwire.Fee, error) {
@@ -189,8 +193,12 @@ type ChannelPolicy2 struct {
 	// TODO(elle): add to lnwire message & add column to db.
 	InboundFee lnwire.Fee
 
-	Signature         fn.Option[[]byte]
-	ExtraSignedFields map[uint64][]byte
+	Signature       *schnorr.Signature
+	AllSignedFields map[uint64][]byte
+}
+
+func (c *ChannelPolicy2) Nil() bool {
+	return c == nil
 }
 
 func (c *ChannelPolicy2) Before(o ChannelPolicy) (bool, error) {
@@ -245,4 +253,5 @@ type ChannelPolicy interface {
 	CachedPolicy() *CachedEdgePolicy
 	GetInboundFee() (lnwire.Fee, error)
 	Before(policy ChannelPolicy) (bool, error)
+	Nil() bool
 }

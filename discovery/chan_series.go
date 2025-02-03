@@ -125,8 +125,8 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 		}
 
 		chanAnn, edge1, edge2, err := netann.CreateChanAnnouncement(
-			channel.Info.AuthProof, channel.Info, channel.Policy1,
-			channel.Policy2,
+			chain, channel.Info.AuthProof, channel.Info,
+			channel.Policy1, channel.Policy2,
 		)
 		if err != nil {
 			return nil, err
@@ -269,8 +269,8 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 		}
 
 		chanAnn, edge1, edge2, err := netann.CreateChanAnnouncement(
-			channel.Info.AuthProof, channel.Info, channel.Policy1,
-			channel.Policy2,
+			chain, channel.Info.AuthProof, channel.Info,
+			channel.Policy1, channel.Policy2,
 		)
 		if err != nil {
 			return nil, err
@@ -328,16 +328,14 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 func (c *ChanSeries) FetchChanUpdates(chain chainhash.Hash,
 	shortChanID lnwire.ShortChannelID) ([]*lnwire.ChannelUpdate1, error) {
 
-	chanInfo, e1, e2, err := c.graph.FetchChannelEdgesByID(
-		shortChanID.ToUint64(),
-	)
+	_, e1, e2, err := c.graph.FetchChannelEdgesByID(shortChanID.ToUint64())
 	if err != nil {
 		return nil, err
 	}
 
 	chanUpdates := make([]*lnwire.ChannelUpdate1, 0, 2)
 	if e1 != nil {
-		chanUpdate, err := netann.ChannelUpdateFromEdge(chanInfo, e1)
+		chanUpdate, err := netann.ChannelUpdate1FromEdge(chain, e1)
 		if err != nil {
 			return nil, err
 		}
@@ -345,7 +343,7 @@ func (c *ChanSeries) FetchChanUpdates(chain chainhash.Hash,
 		chanUpdates = append(chanUpdates, chanUpdate)
 	}
 	if e2 != nil {
-		chanUpdate, err := netann.ChannelUpdateFromEdge(chanInfo, e2)
+		chanUpdate, err := netann.ChannelUpdate1FromEdge(chain, e2)
 		if err != nil {
 			return nil, err
 		}

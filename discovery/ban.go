@@ -10,7 +10,6 @@ import (
 	"github.com/lightninglabs/neutrino/cache"
 	"github.com/lightninglabs/neutrino/cache/lru"
 	"github.com/lightningnetwork/lnd/channeldb"
-	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
 
@@ -57,11 +56,11 @@ type ClosedChannelTracker interface {
 type GraphCloser interface {
 	// PutClosedScid marks a channel as closed so that we won't validate
 	// channel announcements for it again.
-	PutClosedScid(context.Context, models.Protocol,
+	PutClosedScid(context.Context, lnwire.Protocol,
 		lnwire.ShortChannelID) error
 
 	// IsClosedScid checks if a short channel id is closed.
-	IsClosedScid(context.Context, models.Protocol,
+	IsClosedScid(context.Context, lnwire.Protocol,
 		lnwire.ShortChannelID) (bool, error)
 }
 

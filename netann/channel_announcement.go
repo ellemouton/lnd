@@ -35,10 +35,85 @@ const (
 // function is used to transform out database structs into the corresponding wire
 // structs for announcing new channels to other peers, or simply syncing up a
 // peer's initial routing table upon connect.
-func CreateChanAnnouncement(chanProof *models.ChannelAuthProof,
+func CreateChanAnnouncement(chainHash chainhash.Hash,
+	chanProof models.ChanAuthProof,
+	chanInfo models.Channel,
+	edge1, edge2 models.ChannelPolicy) (lnwire.ChannelAnnouncement,
+	lnwire.ChannelUpdate, lnwire.ChannelUpdate, error) {
+
+	switch proof := chanProof.(type) {
+	case *models.ChannelAuthProof:
+		info, ok := chanInfo.(*models.ChannelEdgeInfo)
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("expected type "+
+				"ChannelEdgeInfo1 to be paired with "+
+				"ChannelAuthProof1, got: %T", chanInfo)
+		}
+
+		var e1, e2 *models.ChannelEdgePolicy
+		if edge1 != nil {
+			e1, ok = edge1.(*models.ChannelEdgePolicy)
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("expected "+
+					"type ChannelEdgePolicy1 to be "+
+					"paired with ChannelEdgeInfo1, "+
+					"got: %T", edge1)
+			}
+		}
+
+		if edge2 != nil {
+			e2, ok = edge2.(*models.ChannelEdgePolicy)
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("expected "+
+					"type ChannelEdgePolicy1 to be "+
+					"paired with ChannelEdgeInfo1, "+
+					"got: %T", edge2)
+			}
+		}
+
+		return createChanAnnouncement1(proof, info, e1, e2)
+
+	case *models.ChannelAuthProof2:
+		info, ok := chanInfo.(*models.Channel2)
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("expected type "+
+				"ChannelEdgeInfo2 to be paired with "+
+				"ChannelAuthProof2, got: %T", chanInfo)
+		}
+
+		var e1, e2 *models.ChannelPolicy2
+		if edge1 != nil {
+			e1, ok = edge1.(*models.ChannelPolicy2)
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("expected "+
+					"type ChannelEdgePolicy2 to be "+
+					"paired with ChannelEdgeInfo2, "+
+					"got: %T", edge1)
+			}
+		}
+
+		if edge2 != nil {
+			e2, ok = edge2.(*models.ChannelPolicy2)
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("expected "+
+					"type ChannelEdgePolicy2 to be "+
+					"paired with ChannelEdgeInfo2, "+
+					"got: %T", edge2)
+			}
+		}
+
+		return createChanAnnouncement2(chainHash, proof, info, e1, e2)
+
+	default:
+		return nil, nil, nil, fmt.Errorf("unhandled "+
+			"models.ChannelAuthProof type: %T", chanProof)
+	}
+}
+
+func createChanAnnouncement1(chanProof *models.ChannelAuthProof,
 	chanInfo *models.ChannelEdgeInfo,
 	e1, e2 *models.ChannelEdgePolicy) (*lnwire.ChannelAnnouncement1,
-	*lnwire.ChannelUpdate1, *lnwire.ChannelUpdate1, error) {
+	lnwire.ChannelUpdate, lnwire.ChannelUpdate, error) {
 
 	// First, using the parameters of the channel, along with the channel
 	// authentication chanProof, we'll create re-create the original
@@ -91,21 +166,66 @@ func CreateChanAnnouncement(chanProof *models.ChannelAuthProof,
 	// Since it's up to a node's policy as to whether they advertise the
 	// edge in a direction, we don't create an advertisement if the edge is
 	// nil.
-	var edge1Ann, edge2Ann *lnwire.ChannelUpdate1
+	var edge1Ann, edge2Ann lnwire.ChannelUpdate
 	if e1 != nil {
-		edge1Ann, err = ChannelUpdateFromEdge(chanInfo, e1)
+		edge1Ann, err = ChannelUpdateFromEdge(chanInfo.ChainHash, e1)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 	}
 	if e2 != nil {
-		edge2Ann, err = ChannelUpdateFromEdge(chanInfo, e2)
+		edge2Ann, err = ChannelUpdateFromEdge(chanInfo.ChainHash, e2)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 	}
 
 	return chanAnn, edge1Ann, edge2Ann, nil
+}
+
+func createChanAnnouncement2(chainHash chainhash.Hash,
+	chanProof *models.ChannelAuthProof2, chanInfo *models.Channel2,
+	e1, e2 *models.ChannelPolicy2) (lnwire.ChannelAnnouncement,
+	lnwire.ChannelUpdate, lnwire.ChannelUpdate, error) {
+
+	// Recreate the protocol message with all the signed fields.
+	var ann lnwire.ChannelAnnouncement2
+	err := lnwire.DecodePureTLVFromRecords(&ann, chanInfo.AllSignedFields)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// Set the signature field.
+	// TODO: make part of DecodeFromRecords?? Or add separate Sig method?
+	ann.Signature.Val, err = lnwire.NewSigFromSchnorrRawSignature(
+		chanProof.SchnorrSigBytes,
+	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// We'll unconditionally queue the channel's existence chanProof as it
+	// will need to be processed before either of the channel update
+	// networkMsgs.
+
+	// Since it's up to a node's policy as to whether they advertise the
+	// edge in a direction, we don't create an advertisement if the edge is
+	// nil.
+	var edge1Ann, edge2Ann lnwire.ChannelUpdate
+	if e1 != nil {
+		edge1Ann, err = ChannelUpdateFromEdge(chainHash, e1)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	if e2 != nil {
+		edge2Ann, err = ChannelUpdateFromEdge(chainHash, e2)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+
+	return &ann, edge1Ann, edge2Ann, nil
 }
 
 // FetchPkScript defines a function that can be used to fetch the output script

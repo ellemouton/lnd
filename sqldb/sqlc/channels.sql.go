@@ -105,7 +105,7 @@ func (q *Queries) DeleteZombieChannel(ctx context.Context, channelID int64) erro
 }
 
 const getChannel = `-- name: GetChannel :one
-SELECT id, channel_id, outpoint, node_id_1, node_id_2, capacity, signature, created_at
+SELECT id, channel_id, outpoint, node_id_1, node_id_2, capacity, funding_pk_script, signature, created_at
 FROM channels
 WHERE id = $1
 `
@@ -120,6 +120,7 @@ func (q *Queries) GetChannel(ctx context.Context, id int64) (Channel, error) {
 		&i.NodeID1,
 		&i.NodeID2,
 		&i.Capacity,
+		&i.FundingPkScript,
 		&i.Signature,
 		&i.CreatedAt,
 	)
@@ -127,7 +128,7 @@ func (q *Queries) GetChannel(ctx context.Context, id int64) (Channel, error) {
 }
 
 const getChannelByChanID = `-- name: GetChannelByChanID :one
-SELECT id, channel_id, outpoint, node_id_1, node_id_2, capacity, signature, created_at
+SELECT id, channel_id, outpoint, node_id_1, node_id_2, capacity, funding_pk_script, signature, created_at
 FROM channels
 WHERE channel_id = $1
 `
@@ -142,6 +143,7 @@ func (q *Queries) GetChannelByChanID(ctx context.Context, channelID int64) (Chan
 		&i.NodeID1,
 		&i.NodeID2,
 		&i.Capacity,
+		&i.FundingPkScript,
 		&i.Signature,
 		&i.CreatedAt,
 	)
@@ -149,7 +151,7 @@ func (q *Queries) GetChannelByChanID(ctx context.Context, channelID int64) (Chan
 }
 
 const getChannelByOutpoint = `-- name: GetChannelByOutpoint :one
-SELECT id, channel_id, outpoint, node_id_1, node_id_2, capacity, signature, created_at
+SELECT id, channel_id, outpoint, node_id_1, node_id_2, capacity, funding_pk_script, signature, created_at
 FROM channels
 WHERE outpoint = $1
 `
@@ -164,6 +166,7 @@ func (q *Queries) GetChannelByOutpoint(ctx context.Context, outpoint string) (Ch
 		&i.NodeID1,
 		&i.NodeID2,
 		&i.Capacity,
+		&i.FundingPkScript,
 		&i.Signature,
 		&i.CreatedAt,
 	)
@@ -230,20 +233,21 @@ func (q *Queries) GetExtraChannelTypes(ctx context.Context, channelID int64) ([]
 
 const insertChannel = `-- name: InsertChannel :one
 INSERT INTO channels (
-    channel_id, outpoint, node_id_1, node_id_2, capacity, signature, created_at
+    channel_id, outpoint, node_id_1, node_id_2, funding_pk_script, capacity, signature, created_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7
+    $1, $2, $3, $4, $5, $6, $7, $8
 ) RETURNING id
 `
 
 type InsertChannelParams struct {
-	ChannelID int64
-	Outpoint  string
-	NodeID1   int64
-	NodeID2   int64
-	Capacity  int64
-	Signature []byte
-	CreatedAt time.Time
+	ChannelID       int64
+	Outpoint        string
+	NodeID1         int64
+	NodeID2         int64
+	FundingPkScript []byte
+	Capacity        int64
+	Signature       []byte
+	CreatedAt       time.Time
 }
 
 func (q *Queries) InsertChannel(ctx context.Context, arg InsertChannelParams) (int64, error) {
@@ -252,6 +256,7 @@ func (q *Queries) InsertChannel(ctx context.Context, arg InsertChannelParams) (i
 		arg.Outpoint,
 		arg.NodeID1,
 		arg.NodeID2,
+		arg.FundingPkScript,
 		arg.Capacity,
 		arg.Signature,
 		arg.CreatedAt,
@@ -326,7 +331,7 @@ func (q *Queries) IsZombieChannel(ctx context.Context, channelID int64) (bool, e
 }
 
 const listNodeChannels = `-- name: ListNodeChannels :many
-SELECT id, channel_id, outpoint, node_id_1, node_id_2, capacity, signature, created_at
+SELECT id, channel_id, outpoint, node_id_1, node_id_2, capacity, funding_pk_script, signature, created_at
 FROM channels
 WHERE node_id_1 = $1
    OR node_id_2 = $1
@@ -348,6 +353,7 @@ func (q *Queries) ListNodeChannels(ctx context.Context, nodeID1 int64) ([]Channe
 			&i.NodeID1,
 			&i.NodeID2,
 			&i.Capacity,
+			&i.FundingPkScript,
 			&i.Signature,
 			&i.CreatedAt,
 		); err != nil {

@@ -126,7 +126,7 @@ func ExtractChannelUpdate(ownerPubKey []byte,
 	// Extract the channel update from the policy we own, if any.
 	for _, edge := range policies {
 		if edge != nil && bytes.Equal(ownerPubKey, owner(edge)) {
-			return ChannelUpdateFromEdge(info, edge)
+			return ChannelUpdate1FromEdge(info.ChainHash, edge)
 		}
 	}
 
@@ -153,22 +153,93 @@ func UnsignedChannelUpdateFromEdge(info *models.ChannelEdgeInfo,
 	}
 }
 
-// ChannelUpdateFromEdge reconstructs a signed ChannelUpdate from the given edge
-// info and policy.
-func ChannelUpdateFromEdge(info *models.ChannelEdgeInfo,
+func ChannelUpdate1FromEdge(chainHash chainhash.Hash,
 	policy *models.ChannelEdgePolicy) (*lnwire.ChannelUpdate1, error) {
 
-	update := UnsignedChannelUpdateFromEdge(info, policy)
-
-	var err error
-	update.Signature, err = lnwire.NewSigFromECDSARawSignature(
-		policy.SigBytes,
-	)
+	sig, err := policy.Signature()
 	if err != nil {
 		return nil, err
 	}
 
+	s, err := lnwire.NewSigFromSignature(sig)
+	if err != nil {
+		return nil, err
+	}
+
+	update := unsignedChanPolicy1ToUpdate(chainHash, policy)
+	update.Signature = s
+
 	return update, nil
+}
+
+// ChannelUpdateFromEdge reconstructs a signed ChannelUpdate from the given
+// edge info and policy.
+func ChannelUpdateFromEdge(chainHash chainhash.Hash,
+	policy models.ChannelPolicy) (lnwire.ChannelUpdate, error) {
+
+	return signedChannelUpdateFromEdge(chainHash, policy)
+}
+
+func signedChannelUpdateFromEdge(chainHash chainhash.Hash,
+	policy models.ChannelPolicy) (lnwire.ChannelUpdate, error) {
+
+	switch p := policy.(type) {
+	case *models.ChannelEdgePolicy:
+		sig, err := p.Signature()
+		if err != nil {
+			return nil, err
+		}
+
+		s, err := lnwire.NewSigFromSignature(sig)
+		if err != nil {
+			return nil, err
+		}
+
+		update := unsignedChanPolicy1ToUpdate(chainHash, p)
+		update.Signature = s
+
+		return update, nil
+
+	case *models.ChannelPolicy2:
+		sig, err := lnwire.NewSigFromSignature(p.Signature)
+		if err != nil {
+			return nil, err
+		}
+
+		var update lnwire.ChannelUpdate2
+		err = lnwire.DecodePureTLVFromRecords(
+			&update, p.AllSignedFields,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		update.Signature.Val = sig
+
+		return &update, nil
+
+	default:
+		return nil, fmt.Errorf("unhandled implementation of the "+
+			"models.ChanelEdgePolicy interface: %T", policy)
+	}
+}
+
+func unsignedChanPolicy1ToUpdate(chainHash chainhash.Hash,
+	policy *models.ChannelEdgePolicy) *lnwire.ChannelUpdate1 {
+
+	return &lnwire.ChannelUpdate1{
+		ChainHash:       chainHash,
+		ShortChannelID:  lnwire.NewShortChanIDFromInt(policy.ChannelID),
+		Timestamp:       uint32(policy.LastUpdate.Unix()),
+		ChannelFlags:    policy.ChannelFlags,
+		MessageFlags:    policy.MessageFlags,
+		TimeLockDelta:   policy.TimeLockDelta,
+		HtlcMinimumMsat: policy.MinHTLC,
+		HtlcMaximumMsat: policy.MaxHTLC,
+		BaseFee:         uint32(policy.FeeBaseMSat),
+		FeeRate:         uint32(policy.FeeProportionalMillionths),
+		ExtraOpaqueData: policy.ExtraOpaqueData,
+	}
 }
 
 // ValidateChannelUpdateAnn validates the channel update announcement by

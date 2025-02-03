@@ -207,7 +207,7 @@ func testChannelCRUD(t *testing.T, makeDB func(t *testing.T,
 
 	// Update our in-memory expected channel.
 	channel1.Signature = fn.Some([]byte("sig"))
-	channel1.ExtraSignedFields = map[uint64][]byte{
+	channel1.AllSignedFields = map[uint64][]byte{
 		1: []byte("custom field"),
 	}
 
@@ -470,7 +470,7 @@ func testChannelPolicyCRUD(t *testing.T,
 	chan1P1.MinHTLC = 2
 	chan1P1.MaxHTLC = 4
 	chan1P1.Flags = 0
-	chan1P1.ExtraSignedFields = map[uint64][]byte{
+	chan1P1.AllSignedFields = map[uint64][]byte{
 		1: []byte("custom field"),
 	}
 	chan1P1.Signature = fn.Some([]byte{4, 3, 2, 1})
@@ -513,22 +513,22 @@ func assertChannelsEqual(t *testing.T, n1, n2 *models.Channel2) {
 		n2.Features = lnwire.EmptyFeatureVector()
 	}
 
-	if n1.ExtraSignedFields == nil {
-		n1.ExtraSignedFields = make(map[uint64][]byte)
+	if n1.AllSignedFields == nil {
+		n1.AllSignedFields = make(map[uint64][]byte)
 	}
-	if n2.ExtraSignedFields == nil {
-		n2.ExtraSignedFields = make(map[uint64][]byte)
+	if n2.AllSignedFields == nil {
+		n2.AllSignedFields = make(map[uint64][]byte)
 	}
 
 	require.Equal(t, n1, n2)
 }
 
 func assertChannelPoliciesEqual(t *testing.T, n1, n2 *models.ChannelPolicy2) {
-	if n1.ExtraSignedFields == nil {
-		n1.ExtraSignedFields = make(map[uint64][]byte)
+	if n1.AllSignedFields == nil {
+		n1.AllSignedFields = make(map[uint64][]byte)
 	}
-	if n2.ExtraSignedFields == nil {
-		n2.ExtraSignedFields = make(map[uint64][]byte)
+	if n2.AllSignedFields == nil {
+		n2.AllSignedFields = make(map[uint64][]byte)
 	}
 
 	require.Equal(t, n1, n2)

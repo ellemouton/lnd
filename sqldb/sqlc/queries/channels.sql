@@ -1,8 +1,8 @@
 -- name: InsertChannel :one
 INSERT INTO channels (
-    channel_id, outpoint, node_id_1, node_id_2, capacity, signature, created_at
+    channel_id, outpoint, node_id_1, node_id_2, funding_pk_script, capacity, signature, created_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7
+    $1, $2, $3, $4, $5, $6, $7, $8
 ) RETURNING id;
 
 -- name: AddChannelSignature :exec

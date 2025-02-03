@@ -29,14 +29,15 @@ type AmpSubInvoiceHtlc struct {
 }
 
 type Channel struct {
-	ID        int64
-	ChannelID int64
-	Outpoint  string
-	NodeID1   int64
-	NodeID2   int64
-	Capacity  int64
-	Signature []byte
-	CreatedAt time.Time
+	ID              int64
+	ChannelID       int64
+	Outpoint        string
+	NodeID1         int64
+	NodeID2         int64
+	Capacity        int64
+	FundingPkScript []byte
+	Signature       []byte
+	CreatedAt       time.Time
 }
 
 type ChannelExtraType struct {

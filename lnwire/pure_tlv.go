@@ -30,11 +30,23 @@ type PureTLVMessage interface {
 	// include all the records we know about along with any that we don't
 	// know about but that fall in the signed TLV range.
 	AllRecords() []tlv.Record
+
+	Message
 }
 
 // EncodePureTLVMessage encodes the given PureTLVMessage to the given buffer.
 func EncodePureTLVMessage(msg PureTLVMessage, buf *bytes.Buffer) error {
 	return EncodeRecordsTo(buf, msg.AllRecords())
+}
+
+func DecodePureTLVFromRecords(msg PureTLVMessage, r map[uint64][]byte) error {
+	// TODO(elle): this is an inefficient hack.
+	b, err := EncodeRecords(tlv.MapToRecords(r))
+	if err != nil {
+		return err
+	}
+
+	return msg.Decode(bytes.NewReader(b), 0)
 }
 
 // SerialiseFieldsToSign serialises all the records from the given
