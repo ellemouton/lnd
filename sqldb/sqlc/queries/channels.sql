@@ -15,6 +15,10 @@ SELECT *
 FROM channels
 WHERE id = $1;
 
+-- name: ListAllChannels :many
+SELECT *
+FROM channels;
+
 -- name: GetChannelByChanID :one
 SELECT *
 FROM channels

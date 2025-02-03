@@ -88,6 +88,10 @@ func (c *ChannelUpdate2) Encode(w *bytes.Buffer, _ uint32) error {
 	return EncodePureTLVMessage(c, w)
 }
 
+func (c *ChannelUpdate2) Protocol() Protocol {
+	return V2Protocol
+}
+
 // Decode deserializes a serialized ChannelUpdate2 stored in the passed
 // io.Reader observing the specified protocol version.
 //
@@ -152,66 +156,6 @@ func (c *ChannelUpdate2) Decode(r io.Reader, _ uint32) error {
 	c.ExtraSignedFields = ExtraSignedFieldsFromTypeMap(typeMap)
 
 	return nil
-}
-
-// AllRecords returns all the TLV records for the message. This will include all
-// the records we know about along with any that we don't know about but that
-// fall in the signed TLV range.
-//
-// NOTE: this is part of the PureTLVMessage interface.
-func (c *ChannelUpdate2) AllRecords() []tlv.Record {
-	var recordProducers []tlv.RecordProducer
-
-	// The chain-hash record is only included if it is _not_ equal to the
-	// bitcoin mainnet genisis block hash.
-	if !c.ChainHash.Val.IsEqual(chaincfg.MainNetParams.GenesisHash) {
-		hash := tlv.ZeroRecordT[tlv.TlvType0, [32]byte]()
-		hash.Val = c.ChainHash.Val
-
-		recordProducers = append(recordProducers, &hash)
-	}
-
-	recordProducers = append(recordProducers,
-		&c.ShortChannelID, &c.BlockHeight, &c.Signature,
-	)
-
-	// Only include the disable flags if any bit is set.
-	if !c.DisabledFlags.Val.IsEnabled() {
-		recordProducers = append(recordProducers, &c.DisabledFlags)
-	}
-
-	// We only need to encode the second peer boolean if it is true
-	c.SecondPeer.WhenSome(func(r tlv.RecordT[tlv.TlvType8, TrueBoolean]) {
-		recordProducers = append(recordProducers, &r)
-	})
-
-	// We only encode the cltv expiry delta if it is not equal to the
-	// default.
-	if c.CLTVExpiryDelta.Val != defaultCltvExpiryDelta {
-		recordProducers = append(recordProducers, &c.CLTVExpiryDelta)
-	}
-
-	if c.HTLCMinimumMsat.Val != defaultHtlcMinMsat {
-		recordProducers = append(recordProducers, &c.HTLCMinimumMsat)
-	}
-
-	recordProducers = append(recordProducers, &c.HTLCMaximumMsat)
-
-	if c.FeeBaseMsat.Val != defaultFeeBaseMsat {
-		recordProducers = append(recordProducers, &c.FeeBaseMsat)
-	}
-
-	if c.FeeProportionalMillionths.Val != defaultFeeProportionalMillionths {
-		recordProducers = append(
-			recordProducers, &c.FeeProportionalMillionths,
-		)
-	}
-
-	recordProducers = append(recordProducers, RecordsAsProducers(
-		tlv.MapToRecords(c.ExtraSignedFields),
-	)...)
-
-	return ProduceRecordsSorted(recordProducers...)
 }
 
 // MsgType returns the integer uniquely identifying this message type on the
@@ -313,6 +257,78 @@ func (c *ChannelUpdate2) SetDisabledFlag(disabled bool) {
 		c.DisabledFlags.Val &^= ChanUpdateDisableIncoming
 		c.DisabledFlags.Val &^= ChanUpdateDisableOutgoing
 	}
+}
+
+// AllRecords returns all the TLV records for the message. This will include all
+// the records we know about along with any that we don't know about but that
+// fall in the signed TLV range.
+//
+// NOTE: this is part of the PureTLVMessage interface.
+func (c *ChannelUpdate2) AllRecords() []tlv.Record {
+	recordProducers := append(
+		c.allNonSignatureRecordProducers(), &c.Signature,
+	)
+
+	return ProduceRecordsSorted(recordProducers...)
+}
+
+func (c *ChannelUpdate2) AllSignedRecords() []tlv.Record {
+	return ProduceRecordsSorted(c.allNonSignatureRecordProducers()...)
+}
+
+func (c *ChannelUpdate2) allNonSignatureRecordProducers() []tlv.RecordProducer {
+	var recordProducers []tlv.RecordProducer
+
+	// The chain-hash record is only included if it is _not_ equal to the
+	// bitcoin mainnet genisis block hash.
+	if !c.ChainHash.Val.IsEqual(chaincfg.MainNetParams.GenesisHash) {
+		hash := tlv.ZeroRecordT[tlv.TlvType0, [32]byte]()
+		hash.Val = c.ChainHash.Val
+
+		recordProducers = append(recordProducers, &hash)
+	}
+
+	recordProducers = append(recordProducers,
+		&c.ShortChannelID, &c.BlockHeight,
+	)
+
+	// Only include the disable flags if any bit is set.
+	if !c.DisabledFlags.Val.IsEnabled() {
+		recordProducers = append(recordProducers, &c.DisabledFlags)
+	}
+
+	// We only need to encode the second peer boolean if it is true
+	c.SecondPeer.WhenSome(func(r tlv.RecordT[tlv.TlvType8, TrueBoolean]) {
+		recordProducers = append(recordProducers, &r)
+	})
+
+	// We only encode the cltv expiry delta if it is not equal to the
+	// default.
+	if c.CLTVExpiryDelta.Val != defaultCltvExpiryDelta {
+		recordProducers = append(recordProducers, &c.CLTVExpiryDelta)
+	}
+
+	if c.HTLCMinimumMsat.Val != defaultHtlcMinMsat {
+		recordProducers = append(recordProducers, &c.HTLCMinimumMsat)
+	}
+
+	recordProducers = append(recordProducers, &c.HTLCMaximumMsat)
+
+	if c.FeeBaseMsat.Val != defaultFeeBaseMsat {
+		recordProducers = append(recordProducers, &c.FeeBaseMsat)
+	}
+
+	if c.FeeProportionalMillionths.Val != defaultFeeProportionalMillionths {
+		recordProducers = append(
+			recordProducers, &c.FeeProportionalMillionths,
+		)
+	}
+
+	recordProducers = append(recordProducers, RecordsAsProducers(
+		tlv.MapToRecords(c.ExtraSignedFields),
+	)...)
+
+	return recordProducers
 }
 
 // SetSCID can be used to overwrite the SCID of the update.

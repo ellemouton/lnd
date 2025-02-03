@@ -75,6 +75,7 @@ type Querier interface {
 	IsClosedSCID(ctx context.Context, channelID int64) (bool, error)
 	IsPublicNode(ctx context.Context, nodeID1 int64) (bool, error)
 	IsZombieChannel(ctx context.Context, channelID int64) (bool, error)
+	ListAllChannels(ctx context.Context) ([]Channel, error)
 	ListNodeChannels(ctx context.Context, nodeID1 int64) ([]Channel, error)
 	NextInvoiceSettleIndex(ctx context.Context) (int64, error)
 	OnAMPSubInvoiceCanceled(ctx context.Context, arg OnAMPSubInvoiceCanceledParams) error

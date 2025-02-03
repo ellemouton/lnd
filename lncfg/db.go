@@ -31,6 +31,7 @@ const (
 	SqliteNeutrinoDBName = "neutrino.sqlite"
 	SqliteTowerDBName    = "watchtower.sqlite"
 	SqliteNativeDBName   = "lnd.sqlite"
+	SqliteGraphDBName    = "graph.sqlite"
 
 	BoltBackend                = "bolt"
 	EtcdBackend                = "etcd"
@@ -204,7 +205,8 @@ type DatabaseBackends struct {
 	// GraphDB points to the database backend that contains the less
 	// critical data that is accessed often, such as the channel graph and
 	// chain height hints.
-	GraphDB kvdb.Backend
+	GraphDB   kvdb.Backend
+	GraphV2DB sqldb.DB
 
 	// ChanStateDB points to a possibly networked replicated backend that
 	// contains the critical channel state related data.
@@ -291,6 +293,10 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 			_ = closeFunc()
 		}
 	}()
+
+	if db.Backend != SqliteBackend {
+		panic("TODO(elle): sort out DB stuff")
+	}
 
 	switch db.Backend {
 	case EtcdBackend:
@@ -589,6 +595,17 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 			closeFuncs[SqliteBackend] = nativeSQLiteStore.Close
 		}
 
+		graphSqlite, err := sqldb.NewSqliteStore(
+			db.Sqlite,
+			path.Join(chanDBPath, SqliteGraphDBName),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error opening "+
+				"graph SQLite store: %v", err)
+		}
+
+		closeFuncs[SqliteGraphDBName] = graphSqlite.Close
+
 		// Warn if the user is trying to switch over to a sqlite DB
 		// while there is a wallet or channel bbolt DB still present.
 		warnExistingBoltDBs(
@@ -617,6 +634,7 @@ func (db *DB) GetBackends(ctx context.Context, chanDBPath,
 				sqliteWalletBackend,
 			),
 			NativeSQLStore: nativeSQLStore,
+			GraphV2DB:      graphSqlite,
 			CloseFuncs:     closeFuncs,
 		}, nil
 	}

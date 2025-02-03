@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS node_extra_types (
     type BIGINT NOT NULL,
 
     -- The value field.
-    value BYTEA NOT NULL,
+    value BLOB,
 
     -- Each node can only have one entry per type.
     UNIQUE (type, node_id)

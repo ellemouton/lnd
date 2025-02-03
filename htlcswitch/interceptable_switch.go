@@ -1,6 +1,7 @@
 package htlcswitch
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"sync"
@@ -779,7 +780,7 @@ func (f *interceptedForward) FailWithCode(code lnwire.FailCode) error {
 			// Fallback to the original, non-alias behavior.
 			var err error
 			update, err = f.htlcSwitch.cfg.FetchLastChannelUpdate(
-				f.packet.incomingChanID,
+				context.TODO(), f.packet.incomingChanID,
 			)
 			if err != nil {
 				return err
@@ -790,13 +791,13 @@ func (f *interceptedForward) FailWithCode(code lnwire.FailCode) error {
 
 	case lnwire.CodeExpiryTooSoon:
 		update, err := f.htlcSwitch.cfg.FetchLastChannelUpdate(
-			f.packet.incomingChanID,
+			context.TODO(), f.packet.incomingChanID,
 		)
 		if err != nil {
 			return err
 		}
 
-		failureMsg = lnwire.NewExpiryTooSoon(*update)
+		failureMsg = lnwire.NewExpiryTooSoon(update)
 
 	default:
 		return ErrUnsupportedFailureCode

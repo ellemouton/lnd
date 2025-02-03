@@ -8,6 +8,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
+	"github.com/lightningnetwork/lnd/tlv"
 )
 
 // ChannelEdgePolicy represents a *directed* edge within the channel graph. For
@@ -254,4 +255,57 @@ type ChannelPolicy interface {
 	GetInboundFee() (lnwire.Fee, error)
 	Before(policy ChannelPolicy) (bool, error)
 	Nil() bool
+}
+
+func ChanPolicyFromUpdate(update lnwire.ChannelUpdate) (ChannelPolicy, error) {
+	switch upd := update.(type) {
+	case *lnwire.ChannelUpdate1:
+		return &ChannelEdgePolicy{
+			SigBytes:                  upd.Signature.ToSignatureBytes(),
+			ChannelID:                 upd.ShortChannelID.ToUint64(),
+			LastUpdate:                time.Unix(int64(upd.Timestamp), 0),
+			MessageFlags:              upd.MessageFlags,
+			ChannelFlags:              upd.ChannelFlags,
+			TimeLockDelta:             upd.TimeLockDelta,
+			MinHTLC:                   upd.HtlcMinimumMsat,
+			MaxHTLC:                   upd.HtlcMaximumMsat,
+			FeeBaseMSat:               lnwire.MilliSatoshi(upd.BaseFee),
+			FeeProportionalMillionths: lnwire.MilliSatoshi(upd.FeeRate),
+			ExtraOpaqueData:           upd.ExtraOpaqueData,
+		}, nil
+	case *lnwire.ChannelUpdate2:
+		allSignedFields, err := tlv.RecordsToMap(upd.AllSignedRecords())
+		if err != nil {
+			return nil, err
+		}
+
+		var secondPeer bool
+		if upd.SecondPeer.IsSome() {
+			secondPeer = true
+		}
+
+		sig, err := schnorr.ParseSignature(upd.Signature.Val.ToSignatureBytes())
+		if err != nil {
+			return nil, err
+		}
+
+		return &ChannelPolicy2{
+			ChannelID:                 upd.ShortChannelID.Val.ToUint64(),
+			BlockHeight:               upd.BlockHeight.Val,
+			TimeLockDelta:             upd.CLTVExpiryDelta.Val,
+			MinHTLC:                   upd.HTLCMaximumMsat.Val,
+			MaxHTLC:                   upd.HTLCMaximumMsat.Val,
+			FeeBaseMSat:               lnwire.MilliSatoshi(upd.FeeBaseMsat.Val),
+			FeeProportionalMillionths: lnwire.MilliSatoshi(upd.FeeProportionalMillionths.Val),
+			SecondPeer:                secondPeer,
+			ToNode:                    route.Vertex{},
+			Flags:                     upd.DisabledFlags.Val,
+			InboundFee:                lnwire.Fee{}, // TODO(elle): add to announcement
+			Signature:                 sig,
+			AllSignedFields:           allSignedFields,
+		}, nil
+	}
+
+	return nil, fmt.Errorf("unhandled lnwire.ChannelUpdate "+
+		"implementation: %T", update)
 }

@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"context"
 	"fmt"
 	"image/color"
 	"net"
@@ -310,7 +311,7 @@ type ChannelEdgeUpdate struct {
 // constitutes. This function will also fetch any required auxiliary
 // information required to create the topology change update from the graph
 // database.
-func addToTopologyChange(graph DB, update *TopologyChange,
+func (b *Builder) addToTopologyChange(update *TopologyChange,
 	msg interface{}) error {
 
 	switch m := msg.(type) {
@@ -336,7 +337,7 @@ func addToTopologyChange(graph DB, update *TopologyChange,
 
 	// We ignore initial channel announcements as we'll only send out
 	// updates once the individual edges themselves have been updated.
-	case *models.ChannelEdgeInfo:
+	case models.Channel:
 		return nil
 
 	// Any new ChannelUpdateAnnouncements will generate a corresponding
@@ -345,7 +346,7 @@ func addToTopologyChange(graph DB, update *TopologyChange,
 		// We'll need to fetch the edge's information from the database
 		// in order to get the information concerning which nodes are
 		// being connected.
-		edgeInfo, _, _, err := graph.FetchChannelEdgesByID(m.ChannelID)
+		edgeInfo, _, _, err := b.cfg.Graph.FetchChannelEdgesByID(m.ChannelID)
 		if err != nil {
 			return errors.Errorf("unable fetch channel edge: %v",
 				err)
@@ -382,6 +383,57 @@ func addToTopologyChange(graph DB, update *TopologyChange,
 			ConnectingNode:  cNode,
 			Disabled:        m.ChannelFlags&lnwire.ChanUpdateDisabled != 0,
 			ExtraOpaqueData: m.ExtraOpaqueData,
+		}
+
+		// TODO(roasbeef): add bit to toggle
+		update.ChannelEdgeUpdates = append(update.ChannelEdgeUpdates,
+			edgeUpdate)
+		return nil
+
+	case *models.ChannelPolicy2:
+		// We'll need to fetch the edge's information from the database
+		// in order to get the information concerning which nodes are
+		// being connected.
+		edgeInfo, _, _, err := b.cfg.GraphV2.FetchChannelEdgesByID(context.TODO(), m.ChannelID)
+		if err != nil {
+			return errors.Errorf("unable fetch channel edge: %v",
+				err)
+		}
+
+		// If the flag is one, then the advertising node is actually
+		// the second node.
+		sourceNode := edgeInfo.Node1()
+		connectingNode := edgeInfo.Node2()
+		if !m.IsEdge1() {
+			sourceNode = edgeInfo.Node2()
+			connectingNode = edgeInfo.Node1()
+		}
+
+		aNode, err := btcec.ParsePubKey(sourceNode[:])
+		if err != nil {
+			return err
+		}
+
+		cNode, err := btcec.ParsePubKey(connectingNode[:])
+		if err != nil {
+			return err
+		}
+
+		edgeUpdate := &ChannelEdgeUpdate{
+			ChanID:          m.ChannelID,
+			ChanPoint:       edgeInfo.Outpoint,
+			TimeLockDelta:   m.TimeLockDelta,
+			Capacity:        edgeInfo.Capacity,
+			MinHTLC:         m.MinHTLC,
+			MaxHTLC:         m.MaxHTLC,
+			BaseFee:         m.FeeBaseMSat,
+			FeeRate:         m.FeeProportionalMillionths,
+			AdvertisingNode: aNode,
+			ConnectingNode:  cNode,
+			Disabled:        m.Disabled(),
+
+			// TODO(elle): fix
+			// ExtraOpaqueData: m.ExtraOpaqueData,
 		}
 
 		// TODO(roasbeef): add bit to toggle

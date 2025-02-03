@@ -68,11 +68,6 @@ type ChannelEdgeInfo struct {
 	// the value output in the outpoint that created this channel.
 	Capacity btcutil.Amount
 
-	// TapscriptRoot is the optional Merkle root of the tapscript tree if
-	// this channel is a taproot channel that also commits to a tapscript
-	// tree (custom channel).
-	TapscriptRoot fn.Option[chainhash.Hash]
-
 	// ExtraOpaqueData is the set of data that was appended to this
 	// message, some of which we may not actually know how to iterate or
 	// parse. By holding onto this data, we ensure that we're able to
@@ -82,57 +77,27 @@ type ChannelEdgeInfo struct {
 	ExtraOpaqueData []byte
 }
 
+func (c *ChannelEdgeInfo) GetOutpoint() wire.OutPoint {
+	return c.ChannelPoint
+}
+
+func (c *ChannelEdgeInfo) GetChainHash() (chainhash.Hash, error) {
+	return c.ChainHash, nil
+}
+
+func (c *ChannelEdgeInfo) HaveSig() bool {
+	return c.AuthProof != nil
+}
+
 func (c *ChannelEdgeInfo) FundingScript() ([]byte, error) {
-	legecy := func() ([]byte, error) {
-		witnessScript, err := input.GenMultiSigScript(
-			c.BitcoinKey1Bytes[:], c.BitcoinKey2Bytes[:],
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		return input.WitnessScriptHash(witnessScript)
-	}
-
-	if len(c.Features) == 0 {
-		return legecy()
-	}
-
-	// In order to make the correct funding script, we'll need to parse the
-	// chanFeatures bytes into a feature vector we can interact with.
-	rawFeatures := lnwire.NewRawFeatureVector()
-	err := rawFeatures.Decode(bytes.NewReader(c.Features))
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse chan feature "+
-			"bits: %w", err)
-	}
-
-	// TODO(elle): remove once funding manager no longer uses the legacy
-	// announcement message for taproot channels.
-	chanFeatureBits := lnwire.NewFeatureVector(rawFeatures, lnwire.Features)
-	if !chanFeatureBits.HasFeature(
-		lnwire.SimpleTaprootChannelsOptionalStaging,
-	) {
-		return legecy()
-	}
-
-	pubKey1, err := btcec.ParsePubKey(c.BitcoinKey1Bytes[:])
-	if err != nil {
-		return nil, err
-	}
-	pubKey2, err := btcec.ParsePubKey(c.BitcoinKey2Bytes[:])
-	if err != nil {
-		return nil, err
-	}
-
-	fundingScript, _, err := input.GenTaprootFundingScript(
-		pubKey1, pubKey2, 0, c.TapscriptRoot,
+	witnessScript, err := input.GenMultiSigScript(
+		c.BitcoinKey1Bytes[:], c.BitcoinKey2Bytes[:],
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	return fundingScript, nil
+	return input.WitnessScriptHash(witnessScript)
 }
 
 func (c *ChannelEdgeInfo) Protocol() lnwire.Protocol {
@@ -298,6 +263,26 @@ type Channel2 struct {
 	AllSignedFields map[uint64][]byte
 }
 
+func (c *Channel2) GetOutpoint() wire.OutPoint {
+	return c.Outpoint
+}
+
+func (c *Channel2) GetChainHash() (chainhash.Hash, error) {
+	// TODO(elle): remove hack. inefficient. Maybe cache the announcement so
+	// we have easy access to any field?
+	var chanAnn lnwire.ChannelAnnouncement2
+	err := lnwire.DecodePureTLVFromRecords(&chanAnn, c.AllSignedFields)
+	if err != nil {
+		return chainhash.Hash{}, err
+	}
+
+	return chanAnn.ChainHash.Val, nil
+}
+
+func (c *Channel2) HaveSig() bool {
+	return c.AuthProof.IsSome()
+}
+
 func (c *Channel2) FundingScript() ([]byte, error) {
 	var (
 		pubKey1 *btcec.PublicKey
@@ -405,4 +390,7 @@ type Channel interface {
 	Cap() btcutil.Amount
 	Protocol() lnwire.Protocol
 	FundingScript() ([]byte, error)
+	GetOutpoint() wire.OutPoint
+	HaveSig() bool
+	GetChainHash() (chainhash.Hash, error)
 }

@@ -125,3 +125,7 @@ func (a *AnnounceSignatures2) SCID() ShortChannelID {
 func (a *AnnounceSignatures2) ChanID() ChannelID {
 	return a.ChannelID.Val
 }
+
+func (a *AnnounceSignatures2) Protocol() Protocol {
+	return V2Protocol
+}

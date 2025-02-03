@@ -849,6 +849,8 @@ func (p *paymentLifecycle) failPaymentAndAttempt(
 func (p *paymentLifecycle) handleSwitchErr(attempt *channeldb.HTLCAttempt,
 	sendErr error) (*attemptResult, error) {
 
+	ctx := context.TODO()
+
 	internalErrorReason := channeldb.FailureReasonError
 	attemptID := attempt.AttemptID
 
@@ -932,7 +934,7 @@ func (p *paymentLifecycle) handleSwitchErr(attempt *channeldb.HTLCAttempt,
 	// route, the failure message will be nil.
 	failureMessage := rtErr.WireMessage()
 	err := p.handleFailureMessage(
-		&attempt.Route, failureSourceIdx, failureMessage,
+		ctx, &attempt.Route, failureSourceIdx, failureMessage,
 	)
 	if err != nil {
 		return p.failPaymentAndAttempt(
@@ -948,8 +950,9 @@ func (p *paymentLifecycle) handleSwitchErr(attempt *channeldb.HTLCAttempt,
 
 // handleFailureMessage tries to apply a channel update present in the failure
 // message if any.
-func (p *paymentLifecycle) handleFailureMessage(rt *route.Route,
-	errorSourceIdx int, failure lnwire.FailureMessage) error {
+func (p *paymentLifecycle) handleFailureMessage(ctx context.Context,
+	rt *route.Route, errorSourceIdx int,
+	failure lnwire.FailureMessage) error {
 
 	if failure == nil {
 		return nil
@@ -993,7 +996,7 @@ func (p *paymentLifecycle) handleFailureMessage(rt *route.Route,
 	// SendToRoute where there's no payment lifecycle.
 	if p.paySession != nil {
 		policy = p.paySession.GetAdditionalEdgePolicy(
-			errSource, update.ShortChannelID.ToUint64(),
+			errSource, update.SCID().ToUint64(),
 		)
 		if policy != nil {
 			isAdditionalEdge = true
@@ -1012,10 +1015,12 @@ func (p *paymentLifecycle) handleFailureMessage(rt *route.Route,
 	}
 
 	// Apply channel update to the channel edge policy in our db.
-	if !p.router.cfg.ApplyChannelUpdate(update) {
+	err = p.router.cfg.ApplyChannelUpdate(ctx, update)
+	if err != nil {
 		log.Debugf("Invalid channel update received: node=%v",
 			errVertex)
 	}
+
 	return nil
 }
 

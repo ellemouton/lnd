@@ -2,6 +2,7 @@ package peer
 
 import (
 	"bytes"
+	"context"
 	crand "crypto/rand"
 	"encoding/binary"
 	"io"
@@ -19,6 +20,7 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channelnotifier"
 	"github.com/lightningnetwork/lnd/fn/v2"
+	"github.com/lightningnetwork/lnd/graph"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/input"
@@ -618,6 +620,9 @@ func createTestPeer(t *testing.T) *peerTestCtx {
 	dbAliceGraph, err := graphdb.NewChannelGraph(graphBackend)
 	require.NoError(t, err)
 
+	builder, err := graph.NewBuilder(&graph.Config{Graph: dbAliceGraph})
+	require.NoError(t, err)
+
 	dbAliceChannel := channeldb.OpenForTesting(t, dbPath)
 
 	nodeSignerAlice := netann.NewNodeSigner(aliceKeySigner)
@@ -628,14 +633,14 @@ func createTestPeer(t *testing.T) *peerTestCtx {
 		ChanEnableTimeout:        chanActiveTimeout,
 		ChanDisableTimeout:       2 * time.Minute,
 		DB:                       dbAliceChannel.ChannelStateDB(),
-		Graph:                    dbAliceGraph,
+		Graph:                    builder,
 		MessageSigner:            nodeSignerAlice,
 		OurPubKey:                aliceKeyPub,
 		OurKeyLoc:                testKeyLoc,
 		IsChannelActive: func(lnwire.ChannelID) bool {
 			return true
 		},
-		ApplyChannelUpdate: func(*lnwire.ChannelUpdate1,
+		ApplyChannelUpdate: func(lnwire.ChannelUpdate,
 			*wire.OutPoint, bool) error {
 
 			return nil
@@ -742,8 +747,8 @@ func createTestPeer(t *testing.T) *peerTestCtx {
 			return nil
 		},
 		PongBuf: make([]byte, lnwire.MaxPongBytes),
-		FetchLastChanUpdate: func(chanID lnwire.ShortChannelID,
-		) (*lnwire.ChannelUpdate1, error) {
+		FetchLastChanUpdate: func(ctx context.Context,
+			chanID lnwire.ShortChannelID) (lnwire.ChannelUpdate, error) {
 
 			return &lnwire.ChannelUpdate1{}, nil
 		},

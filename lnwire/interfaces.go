@@ -22,6 +22,7 @@ type AnnounceSignatures interface {
 	// ChanID returns the ChannelID identifying the channel.
 	ChanID() ChannelID
 
+	GossipMessage
 	Message
 }
 
@@ -100,6 +101,7 @@ type ChannelUpdate interface {
 	// SetSCID can be used to overwrite the SCID of the update.
 	SetSCID(scid ShortChannelID)
 
+	GossipMessage
 	Message
 }
 

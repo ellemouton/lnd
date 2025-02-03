@@ -1573,7 +1573,7 @@ func marshallWireError(msg lnwire.FailureMessage,
 
 	case *lnwire.FailExpiryTooSoon:
 		response.Code = lnrpc.Failure_EXPIRY_TOO_SOON
-		response.ChannelUpdate = marshallChannelUpdate(&onionErr.Update)
+		response.ChannelUpdate = marshallChannelUpdate(onionErr.Update)
 
 	case *lnwire.FailExpiryTooFar:
 		response.Code = lnrpc.Failure_EXPIRY_TOO_FAR
@@ -1592,22 +1592,22 @@ func marshallWireError(msg lnwire.FailureMessage,
 
 	case *lnwire.FailAmountBelowMinimum:
 		response.Code = lnrpc.Failure_AMOUNT_BELOW_MINIMUM
-		response.ChannelUpdate = marshallChannelUpdate(&onionErr.Update)
+		response.ChannelUpdate = marshallChannelUpdate(onionErr.Update)
 		response.HtlcMsat = uint64(onionErr.HtlcMsat)
 
 	case *lnwire.FailFeeInsufficient:
 		response.Code = lnrpc.Failure_FEE_INSUFFICIENT
-		response.ChannelUpdate = marshallChannelUpdate(&onionErr.Update)
+		response.ChannelUpdate = marshallChannelUpdate(onionErr.Update)
 		response.HtlcMsat = uint64(onionErr.HtlcMsat)
 
 	case *lnwire.FailIncorrectCltvExpiry:
 		response.Code = lnrpc.Failure_INCORRECT_CLTV_EXPIRY
-		response.ChannelUpdate = marshallChannelUpdate(&onionErr.Update)
+		response.ChannelUpdate = marshallChannelUpdate(onionErr.Update)
 		response.CltvExpiry = onionErr.CltvExpiry
 
 	case *lnwire.FailChannelDisabled:
 		response.Code = lnrpc.Failure_CHANNEL_DISABLED
-		response.ChannelUpdate = marshallChannelUpdate(&onionErr.Update)
+		response.ChannelUpdate = marshallChannelUpdate(onionErr.Update)
 		response.Flags = uint32(onionErr.Flags)
 
 	case *lnwire.FailTemporaryChannelFailure:
@@ -1654,25 +1654,48 @@ func marshallWireError(msg lnwire.FailureMessage,
 
 // marshallChannelUpdate marshalls a channel update as received over the wire to
 // the router rpc format.
-func marshallChannelUpdate(update *lnwire.ChannelUpdate1) *lnrpc.ChannelUpdate {
+func marshallChannelUpdate(update lnwire.ChannelUpdate) *lnrpc.ChannelUpdate {
 	if update == nil {
 		return nil
 	}
 
-	return &lnrpc.ChannelUpdate{
-		Signature:       update.Signature.RawBytes(),
-		ChainHash:       update.ChainHash[:],
-		ChanId:          update.ShortChannelID.ToUint64(),
-		Timestamp:       update.Timestamp,
-		MessageFlags:    uint32(update.MessageFlags),
-		ChannelFlags:    uint32(update.ChannelFlags),
-		TimeLockDelta:   uint32(update.TimeLockDelta),
-		HtlcMinimumMsat: uint64(update.HtlcMinimumMsat),
-		BaseFee:         update.BaseFee,
-		FeeRate:         update.FeeRate,
-		HtlcMaximumMsat: uint64(update.HtlcMaximumMsat),
-		ExtraOpaqueData: update.ExtraOpaqueData,
+	switch upd := update.(type) {
+	case *lnwire.ChannelUpdate1:
+		return &lnrpc.ChannelUpdate{
+			Signature:       upd.Signature.RawBytes(),
+			ChainHash:       upd.ChainHash[:],
+			ChanId:          upd.ShortChannelID.ToUint64(),
+			Timestamp:       upd.Timestamp,
+			MessageFlags:    uint32(upd.MessageFlags),
+			ChannelFlags:    uint32(upd.ChannelFlags),
+			TimeLockDelta:   uint32(upd.TimeLockDelta),
+			HtlcMinimumMsat: uint64(upd.HtlcMinimumMsat),
+			BaseFee:         upd.BaseFee,
+			FeeRate:         upd.FeeRate,
+			HtlcMaximumMsat: uint64(upd.HtlcMaximumMsat),
+			ExtraOpaqueData: upd.ExtraOpaqueData,
+		}
+
+	case *lnwire.ChannelUpdate2:
+		// TODO(elle): expand existing RPC message or create a new one
+		// to reflect V2 channel updates.
+		return &lnrpc.ChannelUpdate{
+			Signature: upd.Signature.Val.RawBytes(),
+			ChainHash: upd.ChainHash.Val[:],
+			ChanId:    upd.ShortChannelID.Val.ToUint64(),
+			// Timestamp:       upd.Timestamp,
+			// MessageFlags:    uint32(upd.MessageFlags),
+			// ChannelFlags:    uint32(upd.ChannelFlags),
+			TimeLockDelta:   uint32(upd.CLTVExpiryDelta.Val),
+			HtlcMinimumMsat: uint64(upd.HTLCMinimumMsat.Val),
+			BaseFee:         upd.FeeBaseMsat.Val,
+			FeeRate:         upd.FeeProportionalMillionths.Val,
+			HtlcMaximumMsat: uint64(upd.HTLCMaximumMsat.Val),
+			// ExtraOpaqueData: upd.ExtraOpaqueData,
+		}
 	}
+
+	return nil
 }
 
 // MarshallPayment marshall a payment to its rpc representation.

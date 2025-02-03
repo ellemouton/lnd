@@ -912,7 +912,9 @@ func (d *RPCSignerWalletImpl) BuildChainControl(
 type DatabaseInstances struct {
 	// GraphDB is the database that stores the channel graph used for path
 	// finding.
-	GraphDB *graphdb.ChannelGraph
+	GraphDB   *graphdb.ChannelGraph
+	GraphDBV2 *graphdb.V2Store
+	GraphV2   sqldb.DB
 
 	// ChanStateDB is the database that stores all of our node's channel
 	// state.
@@ -1006,6 +1008,7 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		DecayedLogDB:   databaseBackends.DecayedLogDB,
 		WalletDB:       databaseBackends.WalletDB,
 		NativeSQLStore: databaseBackends.NativeSQLStore,
+		GraphV2:        databaseBackends.GraphV2DB,
 	}
 	cleanUp := func() {
 		// We can just close the returned close functions directly. Even
@@ -1087,6 +1090,24 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		d.logger.Error(err)
 		return nil, nil, err
 	}
+
+	err = dbs.GraphV2.ApplyAllMigrations(ctx, sqldb.GetMigrations())
+	if err != nil {
+		cleanUp()
+		err = fmt.Errorf("faild to run migrations for the "+
+			"graph SQL store: %w", err)
+		d.logger.Error(err)
+
+		return nil, nil, err
+	}
+	baseGraphDB := dbs.GraphV2.GetBaseDB()
+	executor := sqldb.NewTransactionExecutor(
+		baseGraphDB, func(tx *sql.Tx) graphdb.V2Queries {
+			return baseGraphDB.WithTx(tx)
+		},
+	)
+
+	dbs.GraphDBV2 = graphdb.NewV2Store(executor, clock.NewDefaultClock())
 
 	// Instantiate a native SQL store if the flag is set.
 	if d.cfg.DB.UseNativeSQL {

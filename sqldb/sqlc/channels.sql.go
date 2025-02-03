@@ -330,6 +330,44 @@ func (q *Queries) IsZombieChannel(ctx context.Context, channelID int64) (bool, e
 	return is_zombie, err
 }
 
+const listAllChannels = `-- name: ListAllChannels :many
+SELECT id, channel_id, outpoint, node_id_1, node_id_2, capacity, funding_pk_script, signature, created_at
+FROM channels
+`
+
+func (q *Queries) ListAllChannels(ctx context.Context) ([]Channel, error) {
+	rows, err := q.db.QueryContext(ctx, listAllChannels)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Channel
+	for rows.Next() {
+		var i Channel
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChannelID,
+			&i.Outpoint,
+			&i.NodeID1,
+			&i.NodeID2,
+			&i.Capacity,
+			&i.FundingPkScript,
+			&i.Signature,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listNodeChannels = `-- name: ListNodeChannels :many
 SELECT id, channel_id, outpoint, node_id_1, node_id_2, capacity, funding_pk_script, signature, created_at
 FROM channels

@@ -146,7 +146,7 @@ type PaymentSession interface {
 	// (private channels) and applies the update from the message. Returns
 	// a boolean to indicate whether the update has been applied without
 	// error.
-	UpdateAdditionalEdge(msg *lnwire.ChannelUpdate1,
+	UpdateAdditionalEdge(msg lnwire.ChannelUpdate,
 		pubKey *btcec.PublicKey, policy *models.CachedEdgePolicy) bool
 
 	// GetAdditionalEdgePolicy uses the public key and channel ID to query
@@ -436,7 +436,7 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 // validates the message signature and checks it's up to date, then applies the
 // updates to the supplied policy. It returns a boolean to indicate whether
 // there's an error when applying the updates.
-func (p *paymentSession) UpdateAdditionalEdge(msg *lnwire.ChannelUpdate1,
+func (p *paymentSession) UpdateAdditionalEdge(msg lnwire.ChannelUpdate,
 	pubKey *btcec.PublicKey, policy *models.CachedEdgePolicy) bool {
 
 	// Validate the message signature.
@@ -448,9 +448,17 @@ func (p *paymentSession) UpdateAdditionalEdge(msg *lnwire.ChannelUpdate1,
 	}
 
 	// Update channel policy for the additional edge.
-	policy.TimeLockDelta = msg.TimeLockDelta
-	policy.FeeBaseMSat = lnwire.MilliSatoshi(msg.BaseFee)
-	policy.FeeProportionalMillionths = lnwire.MilliSatoshi(msg.FeeRate)
+	switch m := msg.(type) {
+	case *lnwire.ChannelUpdate1:
+		policy.TimeLockDelta = m.TimeLockDelta
+		policy.FeeBaseMSat = lnwire.MilliSatoshi(m.BaseFee)
+		policy.FeeProportionalMillionths = lnwire.MilliSatoshi(m.FeeRate)
+
+	case *lnwire.ChannelUpdate2:
+		policy.TimeLockDelta = m.CLTVExpiryDelta.Val
+		policy.FeeBaseMSat = lnwire.MilliSatoshi(m.FeeBaseMsat.Val)
+		policy.FeeProportionalMillionths = lnwire.MilliSatoshi(m.FeeProportionalMillionths.Val)
+	}
 
 	log.Debugf("New private channel update applied: %v",
 		lnutils.SpewLogClosure(msg))

@@ -89,6 +89,7 @@ type V2Queries interface {
 	ListNodeChannels(ctx context.Context, nodeID1 int64) ([]sqlc.Channel, error)
 	AddChannelSignature(ctx context.Context, arg sqlc.AddChannelSignatureParams) error
 	DeleteChannel(ctx context.Context, channelID int64) error
+	ListAllChannels(ctx context.Context) ([]sqlc.Channel, error)
 
 	InsertChannelFeature(ctx context.Context, arg sqlc.InsertChannelFeatureParams) error
 	GetChannelFeatures(ctx context.Context, channelID int64) ([]sqlc.ChannelFeature, error)
@@ -310,6 +311,36 @@ func (s *V2Store) GetSourceNode(ctx context.Context) (*models.Node2, error) {
 	}
 
 	return node, nil
+}
+
+func (s *V2Store) ForEachChannel(ctx context.Context,
+	cb func(info *models.Channel2, policy,
+		policy2 *models.ChannelPolicy2) error) error {
+
+	var (
+		readTx = NewV2QueryReadTx()
+	)
+	return s.db.ExecTx(ctx, &readTx, func(db V2Queries) error {
+		chans, err := db.ListAllChannels(ctx)
+		if err != nil {
+			return fmt.Errorf("unable to fetch all channels: %w", err)
+		}
+
+		for _, dbChan := range chans {
+			edge, p1, p2, err := buildChannel(ctx, db, dbChan)
+			if err != nil {
+				return fmt.Errorf("unable to fetch channel(%d): %w",
+					dbChan.ChannelID, err)
+			}
+
+			if err := cb(edge, p1, p2); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}, func() {})
+
 }
 
 func (s *V2Store) AddChannel(ctx context.Context, edge *models.Channel2) error {
@@ -565,7 +596,7 @@ func (s *V2Store) HasChannel(ctx context.Context, chanID uint64) (uint32,
 	return policy1BlockHeight, policy2BlockHeight, exists, isZombie, nil
 }
 
-func maybeCreateShellNode(ctx context.Context, db V2Queries,
+func (s *V2Store) maybeCreateShellNode(ctx context.Context, db V2Queries,
 	pubKey route.Vertex) (int64, error) {
 
 	nodeID, err := db.GetNodeIDByPubKey(ctx, pubKey[:])
@@ -582,7 +613,9 @@ func maybeCreateShellNode(ctx context.Context, db V2Queries,
 	// Otherwise, the node does not exist, so we create a shell entry for
 	// it.
 	return db.InsertNode(ctx, sqlc.InsertNodeParams{
-		PubKey: pubKey[:],
+		PubKey:    pubKey[:],
+		CreatedAt: s.clock.Now().UTC(),
+		UpdatedAt: s.clock.Now().UTC(),
 	})
 }
 
@@ -591,12 +624,12 @@ func (s *V2Store) insertChannel(ctx context.Context, db V2Queries,
 
 	// Make sure that at least a "shell" entry for each node is present in
 	// the nodes table.
-	node1DBID, err := maybeCreateShellNode(ctx, db, edge.Node1Key)
+	node1DBID, err := s.maybeCreateShellNode(ctx, db, edge.Node1Key)
 	if err != nil {
 		return fmt.Errorf("unable to create shell node: %w", err)
 	}
 
-	node2DBID, err := maybeCreateShellNode(ctx, db, edge.Node2Key)
+	node2DBID, err := s.maybeCreateShellNode(ctx, db, edge.Node2Key)
 	if err != nil {
 		return fmt.Errorf("unable to create shell node: %w", err)
 	}
@@ -650,6 +683,84 @@ func (s *V2Store) insertChannel(ctx context.Context, db V2Queries,
 	return nil
 }
 
+func (s *V2Store) FetchChannelEdgesByOutpoint(ctx context.Context,
+	op *wire.OutPoint) (*models.Channel2, *models.ChannelPolicy2,
+	*models.ChannelPolicy2, error) {
+
+	var (
+		readTx  = NewV2QueryReadTx()
+		channel *models.Channel2
+		p1      *models.ChannelPolicy2
+		p2      *models.ChannelPolicy2
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db V2Queries) error {
+		dbChan, err := db.GetChannelByOutpoint(ctx, op.String())
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrEdgeNotFound
+		} else if err != nil {
+			return fmt.Errorf("could not fetch channel "+
+				"using outpoint(%s): %w", op, err)
+		}
+
+		channel, p1, p2, err = buildChannel(ctx, db, dbChan)
+		if err != nil {
+			return fmt.Errorf("could not fetch channel(%s): %w",
+				op, err)
+		}
+
+		return nil
+	}, func() {
+		channel = nil
+		p1 = nil
+		p2 = nil
+	})
+	if err != nil {
+		return nil, nil, nil,
+			fmt.Errorf("unable to fetch channel: %w", err)
+	}
+
+	return channel, p1, p2, nil
+}
+
+func (s *V2Store) FetchChannelEdgesByID(ctx context.Context, chanID uint64) (
+	*models.Channel2, *models.ChannelPolicy2,
+	*models.ChannelPolicy2, error) {
+
+	var (
+		readTx  = NewV2QueryReadTx()
+		channel *models.Channel2
+		p1      *models.ChannelPolicy2
+		p2      *models.ChannelPolicy2
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db V2Queries) error {
+		dbChan, err := db.GetChannelByChanID(ctx, int64(chanID))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrEdgeNotFound
+		} else if err != nil {
+			return fmt.Errorf("could not fetch channel "+
+				"using channel ID(%d): %w", chanID, err)
+		}
+
+		channel, p1, p2, err = buildChannel(ctx, db, dbChan)
+		if err != nil {
+			return fmt.Errorf("could not fetch channel(%d): %w",
+				chanID, err)
+		}
+
+		return nil
+	}, func() {
+		channel = nil
+		p1 = nil
+		p2 = nil
+	})
+	if err != nil {
+		return nil, nil, nil,
+			fmt.Errorf("unable to fetch channel: %w", err)
+	}
+
+	return channel, p1, p2, nil
+}
+
 func (s *V2Store) MarkZombieEdge(ctx context.Context, chanID uint64,
 	pub1, pub2 route.Vertex) error {
 
@@ -663,6 +774,18 @@ func (s *V2Store) MarkZombieEdge(ctx context.Context, chanID uint64,
 				CreatedAt: s.clock.Now().UTC(),
 			},
 		)
+	}, func() {})
+	if err != nil {
+		return fmt.Errorf("unable to mark edge as zombie: %w", err)
+	}
+
+	return nil
+}
+
+func (s *V2Store) MarkEdgeLive(ctx context.Context, chanID uint64) error {
+	var writeTxOpts V2QueriesTxOptions
+	err := s.db.ExecTx(ctx, &writeTxOpts, func(db V2Queries) error {
+		return db.DeleteZombieChannel(ctx, int64(chanID))
 	}, func() {})
 	if err != nil {
 		return fmt.Errorf("unable to mark edge as zombie: %w", err)

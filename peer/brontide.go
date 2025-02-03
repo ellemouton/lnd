@@ -3,6 +3,7 @@ package peer
 import (
 	"bytes"
 	"container/list"
+	"context"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -317,8 +318,8 @@ type Config struct {
 
 	// FetchLastChanUpdate fetches our latest channel update for a target
 	// channel.
-	FetchLastChanUpdate func(lnwire.ShortChannelID) (*lnwire.ChannelUpdate1,
-		error)
+	FetchLastChanUpdate func(context.Context, lnwire.ShortChannelID) (
+		lnwire.ChannelUpdate, error)
 
 	// FundingManager is an implementation of the funding.Controller interface.
 	FundingManager funding.Controller
@@ -713,6 +714,8 @@ func (p *Brontide) Start() error {
 	// carry out other relevant changes.
 	defer close(p.startReady)
 
+	ctx := context.TODO()
+
 	p.log.Tracef("starting with conn[%v->%v]",
 		p.cfg.Conn.LocalAddr(), p.cfg.Conn.RemoteAddr())
 
@@ -867,7 +870,7 @@ func (p *Brontide) Start() error {
 	// announcements through their timestamps.
 	p.wg.Add(2)
 	go p.maybeSendNodeAnn(activeChans)
-	go p.maybeSendChannelUpdates()
+	go p.maybeSendChannelUpdates(ctx)
 
 	return nil
 }
@@ -1384,7 +1387,7 @@ func (p *Brontide) maybeSendNodeAnn(channels []*channeldb.OpenChannel) {
 
 // maybeSendChannelUpdates sends our channel updates to the remote peer if we
 // have any active channels with them.
-func (p *Brontide) maybeSendChannelUpdates() {
+func (p *Brontide) maybeSendChannelUpdates(ctx context.Context) {
 	defer p.wg.Done()
 
 	// If we don't have any active channels, then we can exit early.
@@ -1418,7 +1421,7 @@ func (p *Brontide) maybeSendChannelUpdates() {
 		// to fetch the update to send to the remote peer. If the
 		// channel is pending, and not a zero conf channel, we'll get
 		// an error here which we'll ignore.
-		chanUpd, err := p.cfg.FetchLastChanUpdate(scid)
+		chanUpd, err := p.cfg.FetchLastChanUpdate(ctx, scid)
 		if err != nil {
 			p.log.Debugf("Unable to fetch channel update for "+
 				"ChannelPoint(%v), scid=%v: %v",
@@ -2060,8 +2063,8 @@ out:
 					nextMsg.MsgType())
 			}
 
-		case *lnwire.ChannelUpdate1,
-			*lnwire.ChannelAnnouncement1,
+		case lnwire.ChannelUpdate,
+			lnwire.ChannelAnnouncement,
 			*lnwire.NodeAnnouncement,
 			*lnwire.AnnounceSignatures1,
 			*lnwire.GossipTimestampRange,

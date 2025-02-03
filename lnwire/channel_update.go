@@ -124,6 +124,10 @@ type ChannelUpdate1 struct {
 // interface.
 var _ Message = (*ChannelUpdate1)(nil)
 
+func (a *ChannelUpdate1) Protocol() Protocol {
+	return V1Protocol
+}
+
 // Decode deserializes a serialized ChannelUpdate stored in the passed
 // io.Reader observing the specified protocol version.
 //

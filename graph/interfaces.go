@@ -39,7 +39,7 @@ type ChannelGraphSource interface {
 
 	// UpdateEdge is used to update edge information, without this message
 	// edge considered as not fully constructed.
-	UpdateEdge(policy *models.ChannelEdgePolicy,
+	UpdateEdge(policy models.ChannelPolicy,
 		op ...batch.SchedulerOption) error
 
 	// IsStaleNode returns true if the graph source has a node announcement
@@ -61,11 +61,16 @@ type ChannelGraphSource interface {
 	// edge for the passed channel ID (and flags) that have a more recent
 	// timestamp.
 	IsStaleEdgePolicy(chanID lnwire.ShortChannelID, timestamp time.Time,
-		flags lnwire.ChanUpdateChanFlags) bool
+		isNode1, isDisabled bool) bool
+
+	IsStaleV2EdgePolicy(ctx context.Context,
+		chanID lnwire.ShortChannelID, blockHeight uint32, node1,
+		disabled bool) (bool, error)
 
 	// MarkEdgeLive clears an edge from our zombie index, deeming it as
 	// live.
-	MarkEdgeLive(chanID lnwire.ShortChannelID) error
+	MarkEdgeLive(ctx context.Context, protocol lnwire.Protocol,
+		chanID lnwire.ShortChannelID) error
 
 	// ForAllOutgoingChannels is used to iterate over all channels
 	// emanating from the "source" node which is the center of the
@@ -78,9 +83,9 @@ type ChannelGraphSource interface {
 	CurrentBlockHeight() (uint32, error)
 
 	// GetChannelByID return the channel by the channel id.
-	GetChannelByID(chanID lnwire.ShortChannelID) (
-		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
-		*models.ChannelEdgePolicy, error)
+	GetChannelByID(ctx context.Context, protocol lnwire.Protocol,
+		chanID lnwire.ShortChannelID) (models.Channel,
+		models.ChannelPolicy, models.ChannelPolicy, error)
 
 	// FetchLightningNode attempts to look up a target node by its identity
 	// public key. channeldb.ErrGraphNodeNotFound is returned if the node
@@ -194,6 +199,10 @@ type DB interface {
 	FetchChannelEdgesByID(chanID uint64) (*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error)
 
+	FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, error)
+
 	// AddLightningNode adds a vertex/node to the graph database. If the
 	// node is not in the database from before, this will add a new,
 	// unconnected one to the graph. If it is present from before, this will
@@ -261,6 +270,9 @@ type DB interface {
 		*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error
+
+	ForEachChannel(cb func(*models.ChannelEdgeInfo,
+		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error
 
 	// AddEdgeProof retrieves and updates the proof of an existing edge in
 	// the graph database.

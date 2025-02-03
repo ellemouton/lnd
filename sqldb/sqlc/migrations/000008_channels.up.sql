@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS channel_extra_types (
     type BIGINT NOT NULL,
 
     -- The value field.
-    value BYTEA NOT NULL,
+    value BLOB,
 
     -- Each channel announcement can only have one entry per type.
     UNIQUE (type, channel_id)
