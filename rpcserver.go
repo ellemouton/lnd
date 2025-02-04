@@ -1710,7 +1710,7 @@ func (r *rpcServer) SignMessage(_ context.Context,
 	}
 
 	in.Msg = append(signedMsgPrefix, in.Msg...)
-	sigBytes, err := r.server.nodeSigner.SignMessageCompact(
+	sigBytes, err := r.server.nodeSigner.SignMessageCompactNoKeyLoc(
 		in.Msg, !in.SingleHash,
 	)
 	if err != nil {
@@ -6528,12 +6528,13 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// Obtain the pointer to the global singleton channel graph, this will
 	// provide a consistent view of the graph due to bolt db's
 	// transactional model.
-	graph := r.server.graphDB
+	graph := r.server.graphBuilder
 
 	// First iterate through all the known nodes (connected or unconnected
 	// within the graph), collating their current state into the RPC
 	// response.
-	err := graph.ForEachNode(func(_ kvdb.RTx,
+	// TODO(elle): fix to mux both stores.
+	err := r.server.graphDB.ForEachNode(func(_ kvdb.RTx,
 		node *models.LightningNode) error {
 
 		lnNode := marshalNode(node)
@@ -6549,14 +6550,14 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// Next, for each active channel we know of within the graph, create a
 	// similar response which details both the edge information as well as
 	// the routing policies of th nodes connecting the two edges.
-	err = graph.ForEachChannel(func(edgeInfo *models.ChannelEdgeInfo,
-		c1, c2 *models.ChannelEdgePolicy) error {
+	err = graph.ForEachChannel(ctx, func(edgeInfo models.Channel,
+		c1, c2 models.ChannelPolicy) error {
 
 		// Do not include unannounced channels unless specifically
 		// requested. Unannounced channels include both private channels as
 		// well as public channels whose authentication proof were not
 		// confirmed yet, hence were not announced.
-		if !includeUnannounced && edgeInfo.AuthProof == nil {
+		if !includeUnannounced && !edgeInfo.HaveSig() {
 			return nil
 		}
 
@@ -6622,36 +6623,36 @@ func extractInboundFeeSafe(data lnwire.ExtraOpaqueData) lnwire.Fee {
 	return inboundFee
 }
 
-func marshalDBEdge(edgeInfo *models.ChannelEdgeInfo,
-	c1, c2 *models.ChannelEdgePolicy) *lnrpc.ChannelEdge {
+func marshalDBEdge(edgeInfo models.Channel, c1,
+	c2 models.ChannelPolicy) *lnrpc.ChannelEdge {
 
 	// Make sure the policies match the node they belong to. c1 should point
 	// to the policy for NodeKey1, and c2 for NodeKey2.
-	if c1 != nil && c1.ChannelFlags&lnwire.ChanUpdateDirection == 1 ||
-		c2 != nil && c2.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
+	if (c1 != nil && !c1.Nil()) && !c1.IsEdge1() ||
+		(c2 != nil && !c2.Nil()) && c2.IsEdge1() {
 
 		c2, c1 = c1, c2
 	}
 
-	var lastUpdate int64
-	if c1 != nil {
-		lastUpdate = c1.LastUpdate.Unix()
-	}
-	if c2 != nil && c2.LastUpdate.Unix() > lastUpdate {
-		lastUpdate = c2.LastUpdate.Unix()
-	}
+	//var lastUpdate int64
+	//if c1 != nil {
+	//	lastUpdate = c1.LastUpdate.Unix()
+	//}
+	//if c2 != nil && c2.LastUpdate.Unix() > lastUpdate {
+	//	lastUpdate = c2.LastUpdate.Unix()
+	//}
 
-	customRecords := marshalExtraOpaqueData(edgeInfo.ExtraOpaqueData)
+	//customRecords := marshalExtraOpaqueData(edgeInfo.ExtraOpaqueData)
 
 	edge := &lnrpc.ChannelEdge{
-		ChannelId: edgeInfo.ChannelID,
-		ChanPoint: edgeInfo.ChannelPoint.String(),
+		ChannelId: edgeInfo.ChanID(),
+		ChanPoint: edgeInfo.GetOutpoint().String(),
 		// TODO(roasbeef): update should be on edge info itself
-		LastUpdate:    uint32(lastUpdate),
-		Node1Pub:      hex.EncodeToString(edgeInfo.NodeKey1Bytes[:]),
-		Node2Pub:      hex.EncodeToString(edgeInfo.NodeKey2Bytes[:]),
-		Capacity:      int64(edgeInfo.Capacity),
-		CustomRecords: customRecords,
+		// LastUpdate:    uint32(lastUpdate),
+		Node1Pub: edgeInfo.Node1().String(),
+		Node2Pub: edgeInfo.Node2().String(),
+		Capacity: int64(edgeInfo.Cap()),
+		//CustomRecords: customRecords,
 	}
 
 	if c1 != nil {
@@ -6665,26 +6666,27 @@ func marshalDBEdge(edgeInfo *models.ChannelEdgeInfo,
 	return edge
 }
 
-func marshalDBRoutingPolicy(
-	policy *models.ChannelEdgePolicy) *lnrpc.RoutingPolicy {
+func marshalDBRoutingPolicy(policy models.ChannelPolicy) *lnrpc.RoutingPolicy {
 
-	disabled := policy.ChannelFlags&lnwire.ChanUpdateDisabled != 0
+	disabled := policy.Disabled()
 
-	customRecords := marshalExtraOpaqueData(policy.ExtraOpaqueData)
-	inboundFee := extractInboundFeeSafe(policy.ExtraOpaqueData)
+	//customRecords := marshalExtraOpaqueData(policy.ExtraOpaqueData)
+	//inboundFee := extractInboundFeeSafe(policy.ExtraOpaqueData)
+
+	p := policy.CachedPolicy()
 
 	return &lnrpc.RoutingPolicy{
-		TimeLockDelta:    uint32(policy.TimeLockDelta),
-		MinHtlc:          int64(policy.MinHTLC),
-		MaxHtlcMsat:      uint64(policy.MaxHTLC),
-		FeeBaseMsat:      int64(policy.FeeBaseMSat),
-		FeeRateMilliMsat: int64(policy.FeeProportionalMillionths),
+		TimeLockDelta:    uint32(p.TimeLockDelta),
+		MinHtlc:          int64(p.MinHTLC),
+		MaxHtlcMsat:      uint64(p.MaxHTLC),
+		FeeBaseMsat:      int64(p.FeeBaseMSat),
+		FeeRateMilliMsat: int64(p.FeeProportionalMillionths),
 		Disabled:         disabled,
-		LastUpdate:       uint32(policy.LastUpdate.Unix()),
-		CustomRecords:    customRecords,
+		// LastUpdate:       uint32(policy.LastUpdate.Unix()),
+		//CustomRecords:    customRecords,
 
-		InboundFeeBaseMsat:      inboundFee.BaseFee,
-		InboundFeeRateMilliMsat: inboundFee.FeeRate,
+		//InboundFeeBaseMsat:      inboundFee.BaseFee,
+		// InboundFeeRateMilliMsat: inboundFee.FeeRate,
 	}
 }
 
@@ -6750,21 +6752,21 @@ func (r *rpcServer) GetNodeMetrics(ctx context.Context,
 // uniquely identify the location of transaction's funding output within the
 // blockchain. The former is an 8-byte integer, while the latter is a string
 // formatted as funding_txid:output_index.
-func (r *rpcServer) GetChanInfo(_ context.Context,
+func (r *rpcServer) GetChanInfo(ctx context.Context,
 	in *lnrpc.ChanInfoRequest) (*lnrpc.ChannelEdge, error) {
 
-	graph := r.server.graphDB
+	graph := r.server.graphBuilder
 
 	var (
-		edgeInfo     *models.ChannelEdgeInfo
-		edge1, edge2 *models.ChannelEdgePolicy
+		edgeInfo     models.Channel
+		edge1, edge2 models.ChannelPolicy
 		err          error
 	)
 
 	switch {
 	case in.ChanId != 0:
-		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByID(
-			in.ChanId,
+		edgeInfo, edge1, edge2, err = graph.FindChannelByID(
+			ctx, lnwire.NewShortChanIDFromInt(in.ChanId),
 		)
 
 	case in.ChanPoint != "":
@@ -6773,8 +6775,8 @@ func (r *rpcServer) GetChanInfo(_ context.Context,
 		if err != nil {
 			return nil, err
 		}
-		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByOutpoint(
-			chanPoint,
+		edgeInfo, edge1, edge2, err = graph.FindChannelByOutpoint(
+			ctx, chanPoint,
 		)
 
 	default:

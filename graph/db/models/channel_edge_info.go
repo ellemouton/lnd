@@ -5,10 +5,15 @@ import (
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/fn/v2"
+	"github.com/lightningnetwork/lnd/input"
+	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing/route"
 )
 
 // ChannelEdgeInfo represents a fully authenticated channel along with all its
@@ -63,11 +68,6 @@ type ChannelEdgeInfo struct {
 	// the value output in the outpoint that created this channel.
 	Capacity btcutil.Amount
 
-	// TapscriptRoot is the optional Merkle root of the tapscript tree if
-	// this channel is a taproot channel that also commits to a tapscript
-	// tree (custom channel).
-	TapscriptRoot fn.Option[chainhash.Hash]
-
 	// ExtraOpaqueData is the set of data that was appended to this
 	// message, some of which we may not actually know how to iterate or
 	// parse. By holding onto this data, we ensure that we're able to
@@ -75,6 +75,49 @@ type ChannelEdgeInfo struct {
 	// and ensure we're able to make upgrades to the network in a forwards
 	// compatible manner.
 	ExtraOpaqueData []byte
+}
+
+func (c *ChannelEdgeInfo) GetOutpoint() wire.OutPoint {
+	return c.ChannelPoint
+}
+
+func (c *ChannelEdgeInfo) GetChainHash() (chainhash.Hash, error) {
+	return c.ChainHash, nil
+}
+
+func (c *ChannelEdgeInfo) HaveSig() bool {
+	return c.AuthProof != nil
+}
+
+func (c *ChannelEdgeInfo) FundingScript() ([]byte, error) {
+	witnessScript, err := input.GenMultiSigScript(
+		c.BitcoinKey1Bytes[:], c.BitcoinKey2Bytes[:],
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return input.WitnessScriptHash(witnessScript)
+}
+
+func (c *ChannelEdgeInfo) Protocol() lnwire.Protocol {
+	return lnwire.V1Protocol
+}
+
+func (c *ChannelEdgeInfo) Node1() route.Vertex {
+	return c.NodeKey1Bytes
+}
+
+func (c *ChannelEdgeInfo) Node2() route.Vertex {
+	return c.NodeKey2Bytes
+}
+
+func (c *ChannelEdgeInfo) ChanID() uint64 {
+	return c.ChannelID
+}
+
+func (c *ChannelEdgeInfo) Cap() btcutil.Amount {
+	return c.Capacity
 }
 
 // AddNodeKeys is a setter-like method that can be used to replace the set of
@@ -190,4 +233,164 @@ func (c *ChannelEdgeInfo) OtherNodeKeyBytes(thisNodeKey []byte) (
 		return [33]byte{}, fmt.Errorf("node not participating in " +
 			"this channel")
 	}
+}
+
+var _ Channel = (*ChannelEdgeInfo)(nil)
+
+type Channel2 struct {
+	ChannelID uint64
+	Outpoint  wire.OutPoint
+	Node1Key  route.Vertex
+	Node2Key  route.Vertex
+
+	Bitcoin1Key    fn.Option[route.Vertex]
+	Bitcoin2Key    fn.Option[route.Vertex]
+	MerkleRootHash fn.Option[chainhash.Hash]
+
+	Capacity btcutil.Amount
+	Features *lnwire.FeatureVector
+
+	AuthProof fn.Option[*ChannelAuthProof2]
+
+	// FundingPkScript is the funding transaction's pk script. We persist
+	// this since there are some cases in which this will not be derivable
+	// using the contents of the announcement. In that case, we still want
+	// quick access to the funding script so that we can register for spend
+	// notifications.
+	FundingPkScript fn.Option[[]byte]
+
+	// TODO: rename to just be AllFields or something like that.
+	AllSignedFields map[uint64][]byte
+}
+
+func (c *Channel2) GetOutpoint() wire.OutPoint {
+	return c.Outpoint
+}
+
+func (c *Channel2) GetChainHash() (chainhash.Hash, error) {
+	// TODO(elle): remove hack. inefficient. Maybe cache the announcement so
+	// we have easy access to any field?
+	var chanAnn lnwire.ChannelAnnouncement2
+	err := lnwire.DecodePureTLVFromRecords(&chanAnn, c.AllSignedFields)
+	if err != nil {
+		return chainhash.Hash{}, err
+	}
+
+	return chanAnn.ChainHash.Val, nil
+}
+
+func (c *Channel2) HaveSig() bool {
+	return c.AuthProof.IsSome()
+}
+
+func (c *Channel2) FundingScript() ([]byte, error) {
+	var (
+		pubKey1 *btcec.PublicKey
+		pubKey2 *btcec.PublicKey
+		err     error
+	)
+	c.Bitcoin1Key.WhenSome(func(key route.Vertex) {
+		pubKey1, err = btcec.ParsePubKey(key[:])
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	c.Bitcoin2Key.WhenSome(func(key route.Vertex) {
+		pubKey2, err = btcec.ParsePubKey(key[:])
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// If both bitcoin keys are not present in the announcement, then we
+	// should previously have stored the funding script found on-chain.
+	if pubKey1 == nil || pubKey2 == nil {
+		return c.FundingPkScript.UnwrapOrErr(fmt.Errorf(
+			"expected a funding pk script since no bitcoin keys " +
+				"were provided",
+		))
+	}
+
+	// Initially we set the tweak to an empty byte array. If a merkle root
+	// hash is provided in the announcement then we use that to set the
+	// tweak but otherwise, the empty tweak will have the same effect as a
+	// BIP86 tweak.
+	var tweak []byte
+	c.MerkleRootHash.WhenSome(func(hash chainhash.Hash) {
+		tweak = hash[:]
+	})
+
+	// Calculate the internal key by computing the MuSig2 combination of the
+	// two public keys.
+	internalKey, _, _, err := musig2.AggregateKeys(
+		[]*btcec.PublicKey{pubKey1, pubKey2}, true,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Now, determine the tweak to be added to the internal key. If the
+	// tweak is empty, then this will effectively be a BIP86 tweak.
+	tapTweakHash := chainhash.TaggedHash(
+		chainhash.TagTapTweak, schnorr.SerializePubKey(
+			internalKey.FinalKey,
+		), tweak,
+	)
+
+	// Compute the final output key.
+	combinedKey, _, _, err := musig2.AggregateKeys(
+		[]*btcec.PublicKey{pubKey1, pubKey2}, true,
+		musig2.WithKeyTweaks(musig2.KeyTweakDesc{
+			Tweak:   *tapTweakHash,
+			IsXOnly: true,
+		}),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Now that we have the combined key, we can create a taproot pkScript
+	// from this, and then make the txout given the amount.
+	fundingScript, err := input.PayToTaprootScript(combinedKey.FinalKey)
+	if err != nil {
+		return nil, fmt.Errorf("unable to make taproot pkscript: %w",
+			err)
+	}
+
+	return fundingScript, nil
+}
+
+func (c *Channel2) Protocol() lnwire.Protocol {
+	return lnwire.V2Protocol
+}
+
+func (c *Channel2) Node1() route.Vertex {
+	return c.Node1Key
+}
+
+func (c *Channel2) Node2() route.Vertex {
+	return c.Node2Key
+}
+
+func (c *Channel2) ChanID() uint64 {
+	return c.ChannelID
+}
+
+func (c *Channel2) Cap() btcutil.Amount {
+	return c.Capacity
+}
+
+var _ Channel = (*Channel2)(nil)
+
+type Channel interface {
+	Node1() route.Vertex
+	Node2() route.Vertex
+	ChanID() uint64
+	Cap() btcutil.Amount
+	Protocol() lnwire.Protocol
+	FundingScript() ([]byte, error)
+	GetOutpoint() wire.OutPoint
+	HaveSig() bool
+	GetChainHash() (chainhash.Hash, error)
 }

@@ -22,10 +22,6 @@ const (
 // HTLCs and other parameters. This message is also used to redeclare initially
 // set channel parameters.
 type ChannelUpdate2 struct {
-	// Signature is used to validate the announced data and prove the
-	// ownership of node id.
-	Signature Sig
-
 	// ChainHash denotes the target chain that this channel was opened
 	// within. This value should be the genesis hash of the target chain.
 	// Along with the short channel ID, this uniquely identifies the
@@ -74,10 +70,26 @@ type ChannelUpdate2 struct {
 	// millionth of a satoshi.
 	FeeProportionalMillionths tlv.RecordT[tlv.TlvType18, uint32]
 
-	// ExtraOpaqueData is the set of data that was appended to this message
-	// to fill out the full maximum transport message size. These fields can
-	// be used to specify optional data such as custom TLV fields.
-	ExtraOpaqueData ExtraOpaqueData
+	// Signature is used to validate the announced data and prove the
+	// ownership of node id.
+	Signature tlv.RecordT[tlv.TlvType160, Sig]
+
+	// Any extra fields in the signed range that we do not yet know about,
+	// but we need to keep them for signature validation and to produce a
+	// valid message.
+	ExtraSignedFields
+}
+
+// Encode serializes the target ChannelUpdate2 into the passed io.Writer
+// observing the protocol version specified.
+//
+// This is part of the lnwire.Message interface.
+func (c *ChannelUpdate2) Encode(w *bytes.Buffer, _ uint32) error {
+	return EncodePureTLVMessage(c, w)
+}
+
+func (c *ChannelUpdate2) Protocol() Protocol {
+	return V2Protocol
 }
 
 // Decode deserializes a serialized ChannelUpdate2 stored in the passed
@@ -85,17 +97,6 @@ type ChannelUpdate2 struct {
 //
 // This is part of the lnwire.Message interface.
 func (c *ChannelUpdate2) Decode(r io.Reader, _ uint32) error {
-	err := ReadElement(r, &c.Signature)
-	if err != nil {
-		return err
-	}
-	c.Signature.ForceSchnorr()
-
-	return c.DecodeTLVRecords(r)
-}
-
-// DecodeTLVRecords decodes only the TLV section of the message.
-func (c *ChannelUpdate2) DecodeTLVRecords(r io.Reader) error {
 	// First extract into extra opaque data.
 	var tlvRecords ExtraOpaqueData
 	if err := ReadElements(r, &tlvRecords); err != nil {
@@ -111,10 +112,12 @@ func (c *ChannelUpdate2) DecodeTLVRecords(r io.Reader) error {
 		&secondPeer, &c.CLTVExpiryDelta, &c.HTLCMinimumMsat,
 		&c.HTLCMaximumMsat, &c.FeeBaseMsat,
 		&c.FeeProportionalMillionths,
+		&c.Signature,
 	)
 	if err != nil {
 		return err
 	}
+	c.Signature.Val.ForceSchnorr()
 
 	// By default, the chain-hash is the bitcoin mainnet genesis block hash.
 	c.ChainHash.Val = *chaincfg.MainNetParams.GenesisHash
@@ -150,87 +153,9 @@ func (c *ChannelUpdate2) DecodeTLVRecords(r io.Reader) error {
 		c.FeeProportionalMillionths.Val = defaultFeeProportionalMillionths //nolint:ll
 	}
 
-	if len(tlvRecords) != 0 {
-		c.ExtraOpaqueData = tlvRecords
-	}
+	c.ExtraSignedFields = ExtraSignedFieldsFromTypeMap(typeMap)
 
 	return nil
-}
-
-// Encode serializes the target ChannelUpdate2 into the passed io.Writer
-// observing the protocol version specified.
-//
-// This is part of the lnwire.Message interface.
-func (c *ChannelUpdate2) Encode(w *bytes.Buffer, _ uint32) error {
-	_, err := w.Write(c.Signature.RawBytes())
-	if err != nil {
-		return err
-	}
-
-	_, err = c.DataToSign()
-	if err != nil {
-		return err
-	}
-
-	return WriteBytes(w, c.ExtraOpaqueData)
-}
-
-// DataToSign is used to retrieve part of the announcement message which should
-// be signed. For the ChannelUpdate2 message, this includes the serialised TLV
-// records.
-func (c *ChannelUpdate2) DataToSign() ([]byte, error) {
-	// The chain-hash record is only included if it is _not_ equal to the
-	// bitcoin mainnet genisis block hash.
-	var recordProducers []tlv.RecordProducer
-	if !c.ChainHash.Val.IsEqual(chaincfg.MainNetParams.GenesisHash) {
-		hash := tlv.ZeroRecordT[tlv.TlvType0, [32]byte]()
-		hash.Val = c.ChainHash.Val
-
-		recordProducers = append(recordProducers, &hash)
-	}
-
-	recordProducers = append(recordProducers,
-		&c.ShortChannelID, &c.BlockHeight,
-	)
-
-	// Only include the disable flags if any bit is set.
-	if !c.DisabledFlags.Val.IsEnabled() {
-		recordProducers = append(recordProducers, &c.DisabledFlags)
-	}
-
-	// We only need to encode the second peer boolean if it is true
-	c.SecondPeer.WhenSome(func(r tlv.RecordT[tlv.TlvType8, TrueBoolean]) {
-		recordProducers = append(recordProducers, &r)
-	})
-
-	// We only encode the cltv expiry delta if it is not equal to the
-	// default.
-	if c.CLTVExpiryDelta.Val != defaultCltvExpiryDelta {
-		recordProducers = append(recordProducers, &c.CLTVExpiryDelta)
-	}
-
-	if c.HTLCMinimumMsat.Val != defaultHtlcMinMsat {
-		recordProducers = append(recordProducers, &c.HTLCMinimumMsat)
-	}
-
-	recordProducers = append(recordProducers, &c.HTLCMaximumMsat)
-
-	if c.FeeBaseMsat.Val != defaultFeeBaseMsat {
-		recordProducers = append(recordProducers, &c.FeeBaseMsat)
-	}
-
-	if c.FeeProportionalMillionths.Val != defaultFeeProportionalMillionths {
-		recordProducers = append(
-			recordProducers, &c.FeeProportionalMillionths,
-		)
-	}
-
-	err := EncodeMessageExtraData(&c.ExtraOpaqueData, recordProducers...)
-	if err != nil {
-		return nil, err
-	}
-
-	return c.ExtraOpaqueData, nil
 }
 
 // MsgType returns the integer uniquely identifying this message type on the
@@ -241,8 +166,14 @@ func (c *ChannelUpdate2) MsgType() MessageType {
 	return MsgChannelUpdate2
 }
 
-func (c *ChannelUpdate2) ExtraData() ExtraOpaqueData {
-	return c.ExtraOpaqueData
+func (c *ChannelUpdate2) ExtraData() (ExtraOpaqueData, error) {
+	var buf *bytes.Buffer
+	err := EncodeRecordsTo(buf, tlv.MapToRecords(c.ExtraSignedFields))
+	if err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
 }
 
 // A compile time check to ensure ChannelUpdate2 implements the
@@ -326,6 +257,78 @@ func (c *ChannelUpdate2) SetDisabledFlag(disabled bool) {
 		c.DisabledFlags.Val &^= ChanUpdateDisableIncoming
 		c.DisabledFlags.Val &^= ChanUpdateDisableOutgoing
 	}
+}
+
+// AllRecords returns all the TLV records for the message. This will include all
+// the records we know about along with any that we don't know about but that
+// fall in the signed TLV range.
+//
+// NOTE: this is part of the PureTLVMessage interface.
+func (c *ChannelUpdate2) AllRecords() []tlv.Record {
+	recordProducers := append(
+		c.allNonSignatureRecordProducers(), &c.Signature,
+	)
+
+	return ProduceRecordsSorted(recordProducers...)
+}
+
+func (c *ChannelUpdate2) AllSignedRecords() []tlv.Record {
+	return ProduceRecordsSorted(c.allNonSignatureRecordProducers()...)
+}
+
+func (c *ChannelUpdate2) allNonSignatureRecordProducers() []tlv.RecordProducer {
+	var recordProducers []tlv.RecordProducer
+
+	// The chain-hash record is only included if it is _not_ equal to the
+	// bitcoin mainnet genisis block hash.
+	if !c.ChainHash.Val.IsEqual(chaincfg.MainNetParams.GenesisHash) {
+		hash := tlv.ZeroRecordT[tlv.TlvType0, [32]byte]()
+		hash.Val = c.ChainHash.Val
+
+		recordProducers = append(recordProducers, &hash)
+	}
+
+	recordProducers = append(recordProducers,
+		&c.ShortChannelID, &c.BlockHeight,
+	)
+
+	// Only include the disable flags if any bit is set.
+	if !c.DisabledFlags.Val.IsEnabled() {
+		recordProducers = append(recordProducers, &c.DisabledFlags)
+	}
+
+	// We only need to encode the second peer boolean if it is true
+	c.SecondPeer.WhenSome(func(r tlv.RecordT[tlv.TlvType8, TrueBoolean]) {
+		recordProducers = append(recordProducers, &r)
+	})
+
+	// We only encode the cltv expiry delta if it is not equal to the
+	// default.
+	if c.CLTVExpiryDelta.Val != defaultCltvExpiryDelta {
+		recordProducers = append(recordProducers, &c.CLTVExpiryDelta)
+	}
+
+	if c.HTLCMinimumMsat.Val != defaultHtlcMinMsat {
+		recordProducers = append(recordProducers, &c.HTLCMinimumMsat)
+	}
+
+	recordProducers = append(recordProducers, &c.HTLCMaximumMsat)
+
+	if c.FeeBaseMsat.Val != defaultFeeBaseMsat {
+		recordProducers = append(recordProducers, &c.FeeBaseMsat)
+	}
+
+	if c.FeeProportionalMillionths.Val != defaultFeeProportionalMillionths {
+		recordProducers = append(
+			recordProducers, &c.FeeProportionalMillionths,
+		)
+	}
+
+	recordProducers = append(recordProducers, RecordsAsProducers(
+		tlv.MapToRecords(c.ExtraSignedFields),
+	)...)
+
+	return recordProducers
 }
 
 // SetSCID can be used to overwrite the SCID of the update.

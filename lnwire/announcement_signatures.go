@@ -43,6 +43,10 @@ type AnnounceSignatures1 struct {
 	ExtraOpaqueData ExtraOpaqueData
 }
 
+func (a *AnnounceSignatures1) Protocol() Protocol {
+	return V1Protocol
+}
+
 // A compile time check to ensure AnnounceSignatures1 implements the
 // lnwire.Message interface.
 var _ Message = (*AnnounceSignatures1)(nil)

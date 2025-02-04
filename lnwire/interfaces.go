@@ -2,6 +2,17 @@ package lnwire
 
 import "github.com/btcsuite/btcd/chaincfg/chainhash"
 
+type Protocol uint8
+
+const (
+	V1Protocol Protocol = 1
+	V2Protocol Protocol = 2
+)
+
+type GossipMessage interface {
+	Protocol() Protocol
+}
+
 // AnnounceSignatures is an interface that represents a message used to
 // exchange signatures of a ChannelAnnouncment message during the funding flow.
 type AnnounceSignatures interface {
@@ -11,6 +22,7 @@ type AnnounceSignatures interface {
 	// ChanID returns the ChannelID identifying the channel.
 	ChanID() ChannelID
 
+	GossipMessage
 	Message
 }
 
@@ -33,6 +45,7 @@ type ChannelAnnouncement interface {
 	Node2KeyBytes() [33]byte
 
 	Message
+	GossipMessage
 }
 
 // CompareResult represents the result after comparing two things.
@@ -88,6 +101,7 @@ type ChannelUpdate interface {
 	// SetSCID can be used to overwrite the SCID of the update.
 	SetSCID(scid ShortChannelID)
 
+	GossipMessage
 	Message
 }
 

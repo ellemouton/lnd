@@ -6,7 +6,6 @@ import (
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/lightningnetwork/lnd/graph/db/models"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -27,10 +26,8 @@ type GraphCacheNode interface {
 	// incoming edge *from* the connecting node. If the callback returns an
 	// error, then the iteration is halted with the error propagated back up
 	// to the caller.
-	ForEachChannel(kvdb.RTx,
-		func(kvdb.RTx, *models.ChannelEdgeInfo,
-			*models.ChannelEdgePolicy,
-			*models.ChannelEdgePolicy) error) error
+	ForEachChannel(func(models.Channel, models.ChannelPolicy,
+		models.ChannelPolicy) error) error
 }
 
 // DirectedChannel is a type that stores the channel information as seen from
@@ -138,71 +135,71 @@ func (c *GraphCache) AddNodeFeatures(node GraphCacheNode) {
 
 // AddNode adds a graph node, including all the (directed) channels of that
 // node.
-func (c *GraphCache) AddNode(tx kvdb.RTx, node GraphCacheNode) error {
+func (c *GraphCache) AddNode(node GraphCacheNode) error {
 	c.AddNodeFeatures(node)
 
-	return node.ForEachChannel(
-		tx, func(tx kvdb.RTx, info *models.ChannelEdgeInfo,
-			outPolicy *models.ChannelEdgePolicy,
-			inPolicy *models.ChannelEdgePolicy) error {
+	return node.ForEachChannel(func(info models.Channel,
+		outPolicy models.ChannelPolicy,
+		inPolicy models.ChannelPolicy) error {
 
-			c.AddChannel(info, outPolicy, inPolicy)
+		c.AddChannel(info, outPolicy, inPolicy)
 
-			return nil
-		},
-	)
+		return nil
+	})
 }
 
 // AddChannel adds a non-directed channel, meaning that the order of policy 1
 // and policy 2 does not matter, the directionality is extracted from the info
 // and policy flags automatically. The policy will be set as the outgoing policy
 // on one node and the incoming policy on the peer's side.
-func (c *GraphCache) AddChannel(info *models.ChannelEdgeInfo,
-	policy1 *models.ChannelEdgePolicy, policy2 *models.ChannelEdgePolicy) {
+func (c *GraphCache) AddChannel(info models.Channel,
+	policy1 models.ChannelPolicy, policy2 models.ChannelPolicy) {
 
 	if info == nil {
 		return
 	}
 
-	if policy1 != nil && policy1.IsDisabled() &&
-		policy2 != nil && policy2.IsDisabled() {
+	policyNil := func(policy models.ChannelPolicy) bool {
+		return policy == nil || policy.Nil()
+	}
+
+	if !policyNil(policy1) && policy1.Disabled() &&
+		!policyNil(policy2) && policy2.Disabled() {
 
 		return
 	}
 
 	// Create the edge entry for both nodes.
 	c.mtx.Lock()
-	c.updateOrAddEdge(info.NodeKey1Bytes, &DirectedChannel{
-		ChannelID: info.ChannelID,
+	c.updateOrAddEdge(info.Node1(), &DirectedChannel{
+		ChannelID: info.ChanID(),
 		IsNode1:   true,
-		OtherNode: info.NodeKey2Bytes,
-		Capacity:  info.Capacity,
+		OtherNode: info.Node2(),
+		Capacity:  info.Cap(),
 	})
-	c.updateOrAddEdge(info.NodeKey2Bytes, &DirectedChannel{
-		ChannelID: info.ChannelID,
+	c.updateOrAddEdge(info.Node2(), &DirectedChannel{
+		ChannelID: info.ChanID(),
 		IsNode1:   false,
-		OtherNode: info.NodeKey1Bytes,
-		Capacity:  info.Capacity,
+		OtherNode: info.Node1(),
+		Capacity:  info.Cap(),
 	})
 	c.mtx.Unlock()
 
 	// The policy's node is always the to_node. So if policy 1 has to_node
 	// of node 2 then we have the policy 1 as seen from node 1.
-	if policy1 != nil {
-		fromNode, toNode := info.NodeKey1Bytes, info.NodeKey2Bytes
-		if policy1.ToNode != info.NodeKey2Bytes {
+	if !policyNil(policy1) {
+		fromNode, toNode := info.Node1(), info.Node2()
+		if policy1.OtherNode() != info.Node2() {
 			fromNode, toNode = toNode, fromNode
 		}
-		isEdge1 := policy1.ChannelFlags&lnwire.ChanUpdateDirection == 0
-		c.UpdatePolicy(policy1, fromNode, toNode, isEdge1)
+		c.UpdatePolicy(policy1, fromNode, toNode)
 	}
-	if policy2 != nil {
-		fromNode, toNode := info.NodeKey2Bytes, info.NodeKey1Bytes
-		if policy2.ToNode != info.NodeKey1Bytes {
+	if !policyNil(policy2) {
+		fromNode, toNode := info.Node2(), info.Node1()
+		if policy2.OtherNode() != info.Node1() {
 			fromNode, toNode = toNode, fromNode
 		}
-		isEdge1 := policy2.ChannelFlags&lnwire.ChanUpdateDirection == 0
-		c.UpdatePolicy(policy2, fromNode, toNode, isEdge1)
+		c.UpdatePolicy(policy2, fromNode, toNode)
 	}
 }
 
@@ -220,16 +217,15 @@ func (c *GraphCache) updateOrAddEdge(node route.Vertex, edge *DirectedChannel) {
 // of the from and to node is not strictly important. But we assume that a
 // channel edge was added beforehand so that the directed channel struct already
 // exists in the cache.
-func (c *GraphCache) UpdatePolicy(policy *models.ChannelEdgePolicy, fromNode,
-	toNode route.Vertex, edge1 bool) {
+func (c *GraphCache) UpdatePolicy(policy models.ChannelPolicy, fromNode,
+	toNode route.Vertex) {
 
 	// Extract inbound fee if possible and available. If there is a decoding
 	// error, ignore this policy.
-	var inboundFee lnwire.Fee
-	_, err := policy.ExtraOpaqueData.ExtractRecords(&inboundFee)
+	inboundFee, err := policy.GetInboundFee()
 	if err != nil {
 		log.Errorf("Failed to extract records from edge policy %v: %v",
-			policy.ChannelID, err)
+			policy.ChanID(), err)
 
 		return
 	}
@@ -244,10 +240,10 @@ func (c *GraphCache) UpdatePolicy(policy *models.ChannelEdgePolicy, fromNode,
 			return
 		}
 
-		channel, ok := c.nodeChannels[nodeKey][policy.ChannelID]
+		channel, ok := c.nodeChannels[nodeKey][policy.ChanID()]
 		if !ok {
 			log.Warnf("Channel=%v not found in graph cache",
-				policy.ChannelID)
+				policy.ChanID())
 
 			return
 		}
@@ -257,20 +253,20 @@ func (c *GraphCache) UpdatePolicy(policy *models.ChannelEdgePolicy, fromNode,
 		switch {
 		// This is node 1, and it is edge 1, so this is the outgoing
 		// policy for node 1.
-		case channel.IsNode1 && edge1:
+		case channel.IsNode1 && policy.IsEdge1():
 			channel.OutPolicySet = true
 			channel.InboundFee = inboundFee
 
 		// This is node 2, and it is edge 2, so this is the outgoing
 		// policy for node 2.
-		case !channel.IsNode1 && !edge1:
+		case !channel.IsNode1 && !policy.IsEdge1():
 			channel.OutPolicySet = true
 			channel.InboundFee = inboundFee
 
 		// The other two cases left mean it's the inbound policy for the
 		// node.
 		default:
-			channel.InPolicy = models.NewCachedPolicy(policy)
+			channel.InPolicy = policy.CachedPolicy()
 		}
 	}
 
@@ -312,34 +308,6 @@ func (c *GraphCache) removeChannelIfFound(node route.Vertex, chanID uint64) {
 	}
 
 	delete(c.nodeChannels[node], chanID)
-}
-
-// UpdateChannel updates the channel edge information for a specific edge. We
-// expect the edge to already exist and be known. If it does not yet exist, this
-// call is a no-op.
-func (c *GraphCache) UpdateChannel(info *models.ChannelEdgeInfo) {
-	c.mtx.Lock()
-	defer c.mtx.Unlock()
-
-	if len(c.nodeChannels[info.NodeKey1Bytes]) == 0 ||
-		len(c.nodeChannels[info.NodeKey2Bytes]) == 0 {
-
-		return
-	}
-
-	channel, ok := c.nodeChannels[info.NodeKey1Bytes][info.ChannelID]
-	if ok {
-		// We only expect to be called when the channel is already
-		// known.
-		channel.Capacity = info.Capacity
-		channel.OtherNode = info.NodeKey2Bytes
-	}
-
-	channel, ok = c.nodeChannels[info.NodeKey2Bytes][info.ChannelID]
-	if ok {
-		channel.Capacity = info.Capacity
-		channel.OtherNode = info.NodeKey1Bytes
-	}
 }
 
 // getChannels returns a copy of the passed node's channels or nil if there

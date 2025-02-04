@@ -19,13 +19,9 @@ type CachedEdgePolicy struct {
 	// and the last 2 bytes are the output index for the channel.
 	ChannelID uint64
 
-	// MessageFlags is a bitfield which indicates the presence of optional
-	// fields (like max_htlc) in the policy.
-	MessageFlags lnwire.ChanUpdateMsgFlags
+	HasMaxHTLC bool
 
-	// ChannelFlags is a bitfield which signals the capabilities of the
-	// channel as well as the directed edge this update applies to.
-	ChannelFlags lnwire.ChanUpdateChanFlags
+	IsDisabled bool
 
 	// TimeLockDelta is the number of blocks this node will subtract from
 	// the expiry of an incoming HTLC. This value expresses the time buffer
@@ -69,18 +65,4 @@ func (c *CachedEdgePolicy) ComputeFee(
 	amt lnwire.MilliSatoshi) lnwire.MilliSatoshi {
 
 	return c.FeeBaseMSat + (amt*c.FeeProportionalMillionths)/feeRateParts
-}
-
-// NewCachedPolicy turns a full policy into a minimal one that can be cached.
-func NewCachedPolicy(policy *ChannelEdgePolicy) *CachedEdgePolicy {
-	return &CachedEdgePolicy{
-		ChannelID:                 policy.ChannelID,
-		MessageFlags:              policy.MessageFlags,
-		ChannelFlags:              policy.ChannelFlags,
-		TimeLockDelta:             policy.TimeLockDelta,
-		MinHTLC:                   policy.MinHTLC,
-		MaxHTLC:                   policy.MaxHTLC,
-		FeeBaseMSat:               policy.FeeBaseMSat,
-		FeeProportionalMillionths: policy.FeeProportionalMillionths,
-	}
 }

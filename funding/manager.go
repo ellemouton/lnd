@@ -2,6 +2,7 @@ package funding
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -11,7 +12,6 @@ import (
 
 	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -36,6 +36,8 @@ import (
 	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
 	"github.com/lightningnetwork/lnd/lnwallet/chanfunding"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/netann"
+	"github.com/lightningnetwork/lnd/tlv"
 	"golang.org/x/crypto/salsa20"
 )
 
@@ -385,20 +387,13 @@ type Config struct {
 	// ChannelDB is the database that keeps track of all channel state.
 	ChannelDB *channeldb.ChannelStateDB
 
-	// SignMessage signs an arbitrary message with a given public key. The
-	// actual digest signed is the double sha-256 of the message. In the
-	// case that the private key corresponding to the passed public key
-	// cannot be located, then an error is returned.
-	//
-	// TODO(roasbeef): should instead pass on this responsibility to a
-	// distinct sub-system?
-	SignMessage func(keyLoc keychain.KeyLocator,
-		msg []byte, doubleHash bool) (*ecdsa.Signature, error)
+	// MessageSigner can be used to sign various wire messages.
+	MessageSigner keychain.MessageSignerRing
 
 	// CurrentNodeAnnouncement should return the latest, fully signed node
 	// announcement from the backing Lightning Network node with a fresh
 	// timestamp.
-	CurrentNodeAnnouncement func() (lnwire.NodeAnnouncement, error)
+	CurrentNodeAnnouncement func() (lnwire.NodeAnnouncement1, error)
 
 	// SendAnnouncement is used by the FundingManager to send announcement
 	// messages to the Gossiper to possibly broadcast to the greater
@@ -532,8 +527,8 @@ type Config struct {
 
 	// DeleteAliasEdge allows the Manager to delete an alias channel edge
 	// from the graph. It also returns our local to-be-deleted policy.
-	DeleteAliasEdge func(scid lnwire.ShortChannelID) (
-		*models.ChannelEdgePolicy, error)
+	DeleteAliasEdge func(ctx context.Context, scid lnwire.ShortChannelID) (
+		models.ChannelPolicy, error)
 
 	// AliasManager is an implementation of the aliasHandler interface that
 	// abstracts away the handling of many alias functions.
@@ -562,6 +557,9 @@ type Config struct {
 	// AuxResolver is an optional interface that can be used to modify the
 	// way contracts are resolved.
 	AuxResolver fn.Option[lnwallet.AuxContractResolver]
+
+	// BestBlockView gives access to the current best block.
+	BestBlockView chainntnfs.BestBlockView
 }
 
 // Manager acts as an orchestrator/bridge between the wallet's
@@ -704,15 +702,17 @@ func NewFundingManager(cfg Config) (*Manager, error) {
 // Start launches all helper goroutines required for handling requests sent
 // to the funding manager.
 func (f *Manager) Start() error {
+	ctx := context.TODO()
+
 	var err error
 	f.started.Do(func() {
 		log.Info("Funding manager starting")
-		err = f.start()
+		err = f.start(ctx)
 	})
 	return err
 }
 
-func (f *Manager) start() error {
+func (f *Manager) start(ctx context.Context) error {
 	// Upon restart, the Funding Manager will check the database to load any
 	// channels that were  waiting for their funding transactions to be
 	// confirmed on the blockchain at the time when the daemon last went
@@ -766,11 +766,11 @@ func (f *Manager) start() error {
 		// confirmed on the blockchain, and transmit the messages
 		// necessary for the channel to be operational.
 		f.wg.Add(1)
-		go f.advanceFundingState(channel, chanID, nil)
+		go f.advanceFundingState(ctx, channel, chanID, nil)
 	}
 
 	f.wg.Add(1) // TODO(roasbeef): tune
-	go f.reservationCoordinator()
+	go f.reservationCoordinator(ctx)
 
 	return nil
 }
@@ -1017,7 +1017,7 @@ func (f *Manager) sendWarning(peer lnpeer.Peer, cid *chanIdentifier,
 // funding workflow between the wallet, and any outside peers or local callers.
 //
 // NOTE: This MUST be run as a goroutine.
-func (f *Manager) reservationCoordinator() {
+func (f *Manager) reservationCoordinator(ctx context.Context) {
 	defer f.wg.Done()
 
 	zombieSweepTicker := time.NewTicker(f.cfg.ZombieSweeperInterval)
@@ -1034,10 +1034,10 @@ func (f *Manager) reservationCoordinator() {
 				f.funderProcessAcceptChannel(fmsg.peer, msg)
 
 			case *lnwire.FundingCreated:
-				f.fundeeProcessFundingCreated(fmsg.peer, msg)
+				f.fundeeProcessFundingCreated(ctx, fmsg.peer, msg)
 
 			case *lnwire.FundingSigned:
-				f.funderProcessFundingSigned(fmsg.peer, msg)
+				f.funderProcessFundingSigned(ctx, fmsg.peer, msg)
 
 			case *lnwire.ChannelReady:
 				f.wg.Add(1)
@@ -1069,7 +1069,8 @@ func (f *Manager) reservationCoordinator() {
 // OpenStatusUpdates.
 //
 // NOTE: This MUST be run as a goroutine.
-func (f *Manager) advanceFundingState(channel *channeldb.OpenChannel,
+func (f *Manager) advanceFundingState(ctx context.Context,
+	channel *channeldb.OpenChannel,
 	pendingChanID PendingChanID,
 	updateChan chan<- *lnrpc.OpenStatusUpdate) {
 
@@ -1135,7 +1136,7 @@ func (f *Manager) advanceFundingState(channel *channeldb.OpenChannel,
 		// are still steps left of the setup procedure. We continue the
 		// procedure where we left off.
 		err = f.stateStep(
-			channel, lnChannel, shortChanID, pendingChanID,
+			ctx, channel, lnChannel, shortChanID, pendingChanID,
 			channelState, updateChan,
 		)
 		if err != nil {
@@ -1150,7 +1151,7 @@ func (f *Manager) advanceFundingState(channel *channeldb.OpenChannel,
 // machine. This method is synchronous and the new channel opening state will
 // have been written to the database when it successfully returns. The
 // updateChan can be set non-nil to get OpenStatusUpdates.
-func (f *Manager) stateStep(channel *channeldb.OpenChannel,
+func (f *Manager) stateStep(ctx context.Context, channel *channeldb.OpenChannel,
 	lnChannel *lnwallet.LightningChannel,
 	shortChanID *lnwire.ShortChannelID, pendingChanID PendingChanID,
 	channelState channelOpeningState,
@@ -1225,7 +1226,7 @@ func (f *Manager) stateStep(channel *channeldb.OpenChannel,
 			// If this is a zero-conf channel, then we will wait
 			// for it to be confirmed before announcing it to the
 			// greater network.
-			err := f.waitForZeroConfChannel(channel)
+			err := f.waitForZeroConfChannel(ctx, channel)
 			if err != nil {
 				return fmt.Errorf("failed waiting for zero "+
 					"channel: %v", err)
@@ -1237,7 +1238,7 @@ func (f *Manager) stateStep(channel *channeldb.OpenChannel,
 			shortChanID = &confirmedScid
 		}
 
-		err := f.annAfterSixConfs(channel, shortChanID)
+		err := f.annAfterSixConfs(ctx, channel, shortChanID)
 		if err != nil {
 			return fmt.Errorf("error sending channel "+
 				"announcement: %v", err)
@@ -1559,7 +1560,7 @@ func (f *Manager) fundeeProcessOpenChannel(peer lnpeer.Peer,
 	)
 	if err != nil {
 		// TODO(roasbeef): should be using soft errors
-		log.Errorf("channel type negotiation failed: %v", err)
+		log.Errorf("channel type negotiation failed: %v", err, msg.ChannelType, peer.LocalFeatures(), peer.RemoteFeatures())
 		f.failFundingFlow(peer, cid, err)
 		return
 	}
@@ -2442,8 +2443,8 @@ func (f *Manager) continueFundingAccept(resCtx *reservationWithCtx,
 // stage.
 //
 //nolint:funlen
-func (f *Manager) fundeeProcessFundingCreated(peer lnpeer.Peer,
-	msg *lnwire.FundingCreated) {
+func (f *Manager) fundeeProcessFundingCreated(ctx context.Context,
+	peer lnpeer.Peer, msg *lnwire.FundingCreated) {
 
 	peerKey := peer.IdentityKey()
 	pendingChanID := msg.PendingChannelID
@@ -2672,7 +2673,7 @@ func (f *Manager) fundeeProcessFundingCreated(peer lnpeer.Peer,
 	// transaction in 288 blocks (~ 48 hrs), by canceling the reservation
 	// and canceling the wait for the funding confirmation.
 	f.wg.Add(1)
-	go f.advanceFundingState(completeChan, pendingChanID, nil)
+	go f.advanceFundingState(ctx, completeChan, pendingChanID, nil)
 }
 
 // funderProcessFundingSigned processes the final message received in a single
@@ -2680,8 +2681,8 @@ func (f *Manager) fundeeProcessFundingCreated(peer lnpeer.Peer,
 // broadcast. Once the funding transaction reaches a sufficient number of
 // confirmations, a message is sent to the responding peer along with a compact
 // encoding of the location of the channel within the blockchain.
-func (f *Manager) funderProcessFundingSigned(peer lnpeer.Peer,
-	msg *lnwire.FundingSigned) {
+func (f *Manager) funderProcessFundingSigned(ctx context.Context,
+	peer lnpeer.Peer, msg *lnwire.FundingSigned) {
 
 	// As the funding signed message will reference the reservation by its
 	// permanent channel ID, we'll need to perform an intermediate look up
@@ -2881,7 +2882,9 @@ func (f *Manager) funderProcessFundingSigned(peer lnpeer.Peer,
 	// At this point we have broadcast the funding transaction and done all
 	// necessary processing.
 	f.wg.Add(1)
-	go f.advanceFundingState(completeChan, pendingChanID, resCtx.updates)
+	go f.advanceFundingState(
+		ctx, completeChan, pendingChanID, resCtx.updates,
+	)
 }
 
 // confirmedChannel wraps a confirmed funding transaction, as well as the short
@@ -3541,7 +3544,7 @@ func (f *Manager) extractAnnounceParams(c *channeldb.OpenChannel) (
 func (f *Manager) addToGraph(completeChan *channeldb.OpenChannel,
 	shortChanID *lnwire.ShortChannelID,
 	peerAlias *lnwire.ShortChannelID,
-	ourPolicy *models.ChannelEdgePolicy) error {
+	ourPolicy models.ChannelPolicy) error {
 
 	chanID := lnwire.NewChanIDFromOutPoint(completeChan.FundingOutpoint)
 
@@ -3552,7 +3555,7 @@ func (f *Manager) addToGraph(completeChan *channeldb.OpenChannel,
 		&completeChan.LocalChanCfg.MultiSigKey,
 		completeChan.RemoteChanCfg.MultiSigKey.PubKey, *shortChanID,
 		chanID, fwdMinHTLC, fwdMaxHTLC, ourPolicy,
-		completeChan.ChanType,
+		completeChan, false,
 	)
 	if err != nil {
 		return fmt.Errorf("error generating channel "+
@@ -3612,11 +3615,12 @@ func (f *Manager) addToGraph(completeChan *channeldb.OpenChannel,
 // 'addedToGraph') and the channel is ready to be used. This is the last
 // step in the channel opening process, and the opening state will be deleted
 // from the database if successful.
-func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
+func (f *Manager) annAfterSixConfs(ctx context.Context,
+	completeChan *channeldb.OpenChannel,
 	shortChanID *lnwire.ShortChannelID) error {
 
 	// If this channel is not meant to be announced to the greater network,
-	// we'll only send our NodeAnnouncement to our counterparty to ensure we
+	// we'll only send our NodeAnnouncement1 to our counterparty to ensure we
 	// don't leak any of our information.
 	announceChan := completeChan.ChannelFlags&lnwire.FFAnnounceChannel != 0
 	if !announceChan {
@@ -3638,7 +3642,7 @@ func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
 			completeChan.FundingOutpoint,
 		)
 		pubKey := peer.PubKey()
-		log.Debugf("Sending our NodeAnnouncement for "+
+		log.Debugf("Sending our NodeAnnouncement1 for "+
 			"ChannelID(%v) to %x", chanID, pubKey)
 
 		// TODO(halseth): make reliable. If the peer is not online this
@@ -3723,7 +3727,7 @@ func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
 			// addToGraph. This is because the peer may have
 			// sent us a ChannelUpdate with an alias and we don't
 			// want to relay this.
-			ourPolicy, err := f.cfg.DeleteAliasEdge(baseScid)
+			ourPolicy, err := f.cfg.DeleteAliasEdge(ctx, baseScid)
 			if err != nil {
 				return fmt.Errorf("failed deleting real edge "+
 					"for alias channel from graph: %v",
@@ -3745,7 +3749,7 @@ func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
 			f.cfg.IDKey, completeChan.IdentityPub,
 			&completeChan.LocalChanCfg.MultiSigKey,
 			completeChan.RemoteChanCfg.MultiSigKey.PubKey,
-			*shortChanID, chanID, completeChan.ChanType,
+			*shortChanID, chanID, completeChan,
 		)
 		if err != nil {
 			return fmt.Errorf("channel announcement failed: %w",
@@ -3762,7 +3766,9 @@ func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
 // waitForZeroConfChannel is called when the state is addedToGraph with
 // a zero-conf channel. This will wait for the real confirmation, add the
 // confirmed SCID to the router graph, and then announce after six confs.
-func (f *Manager) waitForZeroConfChannel(c *channeldb.OpenChannel) error {
+func (f *Manager) waitForZeroConfChannel(ctx context.Context,
+	c *channeldb.OpenChannel) error {
+
 	// First we'll check whether the channel is confirmed on-chain. If it
 	// is already confirmed, the chainntnfs subsystem will return with the
 	// confirmed tx. Otherwise, we'll wait here until confirmation occurs.
@@ -3809,7 +3815,7 @@ func (f *Manager) waitForZeroConfChannel(c *channeldb.OpenChannel) error {
 		}
 
 		// TODO: Make this atomic!
-		ourPolicy, err := f.cfg.DeleteAliasEdge(c.ShortChanID())
+		ourPolicy, err := f.cfg.DeleteAliasEdge(ctx, c.ShortChanID())
 		if err != nil {
 			return fmt.Errorf("unable to delete alias edge from "+
 				"graph: %v", err)
@@ -4291,8 +4297,8 @@ func (f *Manager) ensureInitialForwardingPolicy(chanID lnwire.ChannelID,
 // chanAnnouncement encapsulates the two authenticated announcements that we
 // send out to the network after a new channel has been created locally.
 type chanAnnouncement struct {
-	chanAnn       *lnwire.ChannelAnnouncement1
-	chanUpdateAnn *lnwire.ChannelUpdate1
+	chanAnn       lnwire.ChannelAnnouncement
+	chanUpdateAnn lnwire.ChannelUpdate
 	chanProof     *lnwire.AnnounceSignatures1
 }
 
@@ -4308,8 +4314,35 @@ func (f *Manager) newChanAnnouncement(localPubKey,
 	remotePubKey *btcec.PublicKey, localFundingKey *keychain.KeyDescriptor,
 	remoteFundingKey *btcec.PublicKey, shortChanID lnwire.ShortChannelID,
 	chanID lnwire.ChannelID, fwdMinHTLC, fwdMaxHTLC lnwire.MilliSatoshi,
-	ourPolicy *models.ChannelEdgePolicy,
-	chanType channeldb.ChannelType) (*chanAnnouncement, error) {
+	ourPolicy models.ChannelPolicy, channel *channeldb.OpenChannel,
+	withProof bool) (*chanAnnouncement, error) {
+
+	if channel.ChanType.IsTaproot() {
+		var policy *models.ChannelPolicy2
+		if ourPolicy != nil {
+			var ok bool
+			policy, ok = ourPolicy.(*models.ChannelPolicy2)
+			if !ok {
+				return nil, errors.New("expected " +
+					"ChannelPolicy2")
+			}
+		}
+
+		return f.newTaprootChanAnnouncement(
+			localPubKey, remotePubKey, localFundingKey,
+			remoteFundingKey, shortChanID, chanID, fwdMinHTLC,
+			fwdMaxHTLC, policy, channel, withProof,
+		)
+	}
+
+	var policy *models.ChannelEdgePolicy
+	if ourPolicy != nil {
+		var ok bool
+		policy, ok = ourPolicy.(*models.ChannelEdgePolicy)
+		if !ok {
+			return nil, errors.New("expected ChannelEdgePolicy")
+		}
+	}
 
 	chainHash := *f.cfg.Wallet.Cfg.NetParams.GenesisHash
 
@@ -4320,20 +4353,6 @@ func (f *Manager) newChanAnnouncement(localPubKey,
 		ShortChannelID: shortChanID,
 		Features:       lnwire.NewRawFeatureVector(),
 		ChainHash:      chainHash,
-	}
-
-	// If this is a taproot channel, then we'll set a special bit in the
-	// feature vector to indicate to the routing layer that this needs a
-	// slightly different type of validation.
-	//
-	// TODO(roasbeef): temp, remove after gossip 1.5
-	if chanType.IsTaproot() {
-		log.Debugf("Applying taproot feature bit to "+
-			"ChannelAnnouncement for %v", chanID)
-
-		chanAnn.Features.Set(
-			lnwire.SimpleTaprootChannelsRequiredStaging,
-		)
 	}
 
 	// The chanFlags field indicates which directed edge of the channel is
@@ -4413,14 +4432,14 @@ func (f *Manager) newChanAnnouncement(localPubKey,
 	case ourPolicy != nil:
 		// If ourPolicy is non-nil, modify the default parameters of the
 		// ChannelUpdate.
-		chanUpdateAnn.MessageFlags = ourPolicy.MessageFlags
-		chanUpdateAnn.ChannelFlags = ourPolicy.ChannelFlags
-		chanUpdateAnn.TimeLockDelta = ourPolicy.TimeLockDelta
-		chanUpdateAnn.HtlcMinimumMsat = ourPolicy.MinHTLC
-		chanUpdateAnn.HtlcMaximumMsat = ourPolicy.MaxHTLC
-		chanUpdateAnn.BaseFee = uint32(ourPolicy.FeeBaseMSat)
+		chanUpdateAnn.MessageFlags = policy.MessageFlags
+		chanUpdateAnn.ChannelFlags = policy.ChannelFlags
+		chanUpdateAnn.TimeLockDelta = policy.TimeLockDelta
+		chanUpdateAnn.HtlcMinimumMsat = policy.MinHTLC
+		chanUpdateAnn.HtlcMaximumMsat = policy.MaxHTLC
+		chanUpdateAnn.BaseFee = uint32(policy.FeeBaseMSat)
 		chanUpdateAnn.FeeRate = uint32(
-			ourPolicy.FeeProportionalMillionths,
+			policy.FeeProportionalMillionths,
 		)
 
 	case storedFwdingPolicy != nil:
@@ -4447,7 +4466,9 @@ func (f *Manager) newChanAnnouncement(localPubKey,
 	if err != nil {
 		return nil, err
 	}
-	sig, err := f.cfg.SignMessage(f.cfg.IDKeyLoc, chanUpdateMsg, true)
+	sig, err := f.cfg.MessageSigner.SignMessage(
+		f.cfg.IDKeyLoc, chanUpdateMsg, true,
+	)
 	if err != nil {
 		return nil, errors.Errorf("unable to generate channel "+
 			"update announcement signature: %v", err)
@@ -4469,12 +4490,14 @@ func (f *Manager) newChanAnnouncement(localPubKey,
 	if err != nil {
 		return nil, err
 	}
-	nodeSig, err := f.cfg.SignMessage(f.cfg.IDKeyLoc, chanAnnMsg, true)
+	nodeSig, err := f.cfg.MessageSigner.SignMessage(
+		f.cfg.IDKeyLoc, chanAnnMsg, true,
+	)
 	if err != nil {
 		return nil, errors.Errorf("unable to generate node "+
 			"signature for channel announcement: %v", err)
 	}
-	bitcoinSig, err := f.cfg.SignMessage(
+	bitcoinSig, err := f.cfg.MessageSigner.SignMessage(
 		localFundingKey.KeyLocator, chanAnnMsg, true,
 	)
 	if err != nil {
@@ -4505,6 +4528,174 @@ func (f *Manager) newChanAnnouncement(localPubKey,
 	}, nil
 }
 
+func (f *Manager) newTaprootChanAnnouncement(localPubKey,
+	remotePubKey *btcec.PublicKey, localFundingKey *keychain.KeyDescriptor,
+	remoteFundingKey *btcec.PublicKey, shortChanID lnwire.ShortChannelID,
+	chanID lnwire.ChannelID, fwdMinHTLC, fwdMaxHTLC lnwire.MilliSatoshi,
+	ourPolicy *models.ChannelPolicy2, channel *channeldb.OpenChannel,
+	withProof bool) (*chanAnnouncement, error) {
+
+	chainHash := *f.cfg.Wallet.Cfg.NetParams.GenesisHash
+
+	var chanAnn lnwire.ChannelAnnouncement2
+	chanAnn.ChainHash.Val = chainHash
+	chanAnn.ShortChannelID.Val = shortChanID
+	chanAnn.Features.Val = *lnwire.NewRawFeatureVector()
+	chanAnn.Capacity.Val = uint64(channel.Capacity)
+
+	channel.TapscriptRoot.WhenSome(func(root chainhash.Hash) {
+		r := tlv.NewPrimitiveRecord[tlv.TlvType16, [32]byte](root)
+		chanAnn.MerkleRootHash = tlv.SomeRecordT(r)
+	})
+
+	var direction int
+
+	// The lexicographical ordering of the two identity public keys of the
+	// nodes indicates which of the nodes is "first". If our serialized
+	// identity key is lower than theirs then we're the "first" node and
+	// second otherwise.
+	selfBytes := localPubKey.SerializeCompressed()
+	remoteBytes := remotePubKey.SerializeCompressed()
+	if bytes.Compare(selfBytes, remoteBytes) == -1 {
+		copy(chanAnn.NodeID1.Val[:], localPubKey.SerializeCompressed())
+		copy(chanAnn.NodeID2.Val[:], remotePubKey.SerializeCompressed())
+
+		btc1 := tlv.ZeroRecordT[tlv.TlvType12, [33]byte]()
+		copy(btc1.Val[:], localFundingKey.PubKey.SerializeCompressed())
+		chanAnn.BitcoinKey1 = tlv.SomeRecordT(btc1)
+
+		btc2 := tlv.ZeroRecordT[tlv.TlvType14, [33]byte]()
+		copy(btc2.Val[:], remoteFundingKey.SerializeCompressed())
+		chanAnn.BitcoinKey2 = tlv.SomeRecordT(btc2)
+
+		// If we're the first node then update the chanFlags to
+		// indicate the "direction" of the update.
+		direction = 0
+	} else {
+		copy(chanAnn.NodeID1.Val[:], remotePubKey.SerializeCompressed())
+		copy(chanAnn.NodeID2.Val[:], localPubKey.SerializeCompressed())
+
+		btc1 := tlv.ZeroRecordT[tlv.TlvType12, [33]byte]()
+		copy(btc1.Val[:], remoteFundingKey.SerializeCompressed())
+		chanAnn.BitcoinKey1 = tlv.SomeRecordT(btc1)
+
+		btc2 := tlv.ZeroRecordT[tlv.TlvType14, [33]byte]()
+		copy(btc2.Val[:], localFundingKey.PubKey.SerializeCompressed())
+		chanAnn.BitcoinKey2 = tlv.SomeRecordT(btc2)
+
+		// If we're the second node then update the chanFlags to
+		// indicate the "direction" of the update.
+		direction = 1
+	}
+
+	// We cannot glean the block timestamp from the short channel ID since
+	// that may be a zero conf alias at this point.
+	currentHeight, err := f.cfg.BestBlockView.BestHeight()
+	if err != nil {
+		return nil, err
+	}
+
+	// We announce the channel with the default values. Some of
+	// these values can later be changed by crafting a new ChannelUpdate.
+	var chanUpdateAnn lnwire.ChannelUpdate2
+	chanUpdateAnn.ChainHash.Val = chainHash
+	chanUpdateAnn.ShortChannelID.Val = shortChanID
+	chanUpdateAnn.BlockHeight.Val = currentHeight
+	chanUpdateAnn.CLTVExpiryDelta.Val = uint16(
+		f.cfg.DefaultRoutingPolicy.TimeLockDelta,
+	)
+	chanUpdateAnn.HTLCMinimumMsat.Val = fwdMinHTLC
+	chanUpdateAnn.HTLCMaximumMsat.Val = fwdMaxHTLC
+
+	if direction == 1 {
+		chanUpdateAnn.SecondPeer = tlv.SomeRecordT(
+			tlv.ZeroRecordT[tlv.TlvType8, lnwire.TrueBoolean](),
+		)
+	}
+
+	// The caller of newChanAnnouncement is expected to provide the initial
+	// forwarding policy to be announced. If no persisted initial policy
+	// values are found, then we will use the default policy values in the
+	// channel announcement.
+	storedFwdingPolicy, err := f.getInitialForwardingPolicy(chanID)
+	if err != nil && !errors.Is(err, channeldb.ErrChannelNotFound) {
+		return nil, errors.Errorf("unable to generate channel "+
+			"update announcement: %v", err)
+	}
+
+	switch {
+	case ourPolicy != nil:
+		// If ourPolicy is non-nil, modify the default parameters of the
+		// ChannelUpdate.
+		chanUpdateAnn.CLTVExpiryDelta.Val = ourPolicy.TimeLockDelta
+		chanUpdateAnn.HTLCMinimumMsat.Val = ourPolicy.MinHTLC
+		chanUpdateAnn.HTLCMaximumMsat.Val = ourPolicy.MaxHTLC
+		chanUpdateAnn.FeeBaseMsat.Val = uint32(ourPolicy.FeeBaseMSat)
+		chanUpdateAnn.FeeProportionalMillionths.Val =
+			uint32(ourPolicy.FeeProportionalMillionths)
+
+		if ourPolicy.SecondPeer {
+			chanUpdateAnn.SecondPeer = tlv.SomeRecordT(
+				tlv.ZeroRecordT[tlv.TlvType8, lnwire.TrueBoolean](),
+			)
+		} else {
+			chanUpdateAnn.SecondPeer = tlv.OptionalRecordT[
+				tlv.TlvType8, lnwire.TrueBoolean]{}
+		}
+
+	case storedFwdingPolicy != nil:
+		chanUpdateAnn.FeeBaseMsat.Val = uint32(
+			storedFwdingPolicy.BaseFee,
+		)
+		chanUpdateAnn.FeeProportionalMillionths.Val = uint32(
+			storedFwdingPolicy.FeeRate,
+		)
+
+	default:
+		log.Infof("No channel forwarding policy specified for channel "+
+			"announcement of ChannelID(%v). "+
+			"Assuming default fee parameters.", chanID)
+		chanUpdateAnn.FeeBaseMsat.Val = uint32(
+			f.cfg.DefaultRoutingPolicy.BaseFee,
+		)
+		chanUpdateAnn.FeeProportionalMillionths.Val = uint32(
+			f.cfg.DefaultRoutingPolicy.FeeRate,
+		)
+	}
+
+	// With the channel update announcement constructed, we'll generate a
+	// signature that signs a double-sha digest of the announcement.
+	// This'll serve to authenticate this announcement and any other future
+	// updates we may send.
+	chanUpdateMsg, err := lnwire.SerialiseFieldsToSign(&chanUpdateAnn)
+	if err != nil {
+		return nil, err
+	}
+	sig, err := f.cfg.MessageSigner.SignMessageSchnorr(
+		f.cfg.IDKeyLoc, chanUpdateMsg, false, nil,
+		netann.ChanUpdate2DigestTag(),
+	)
+	if err != nil {
+		return nil, errors.Errorf("unable to generate channel "+
+			"update announcement signature: %v", err)
+	}
+	chanUpdateAnn.Signature.Val, err = lnwire.NewSigFromSignature(sig)
+	if err != nil {
+		return nil, errors.Errorf("unable to generate channel "+
+			"update announcement signature: %v", err)
+	}
+
+	if !withProof {
+		return &chanAnnouncement{
+			chanAnn:       &chanAnn,
+			chanUpdateAnn: &chanUpdateAnn,
+		}, nil
+	}
+
+	// TODO(elle): add support for channel proofs for taproot channels.
+	return nil, fmt.Errorf("public taproot channels are not yet supported")
+}
+
 // announceChannel announces a newly created channel to the rest of the network
 // by crafting the two authenticated announcements required for the peers on
 // the network to recognize the legitimacy of the channel. The crafted
@@ -4515,7 +4706,7 @@ func (f *Manager) newChanAnnouncement(localPubKey,
 func (f *Manager) announceChannel(localIDKey, remoteIDKey *btcec.PublicKey,
 	localFundingKey *keychain.KeyDescriptor,
 	remoteFundingKey *btcec.PublicKey, shortChanID lnwire.ShortChannelID,
-	chanID lnwire.ChannelID, chanType channeldb.ChannelType) error {
+	chanID lnwire.ChannelID, channel *channeldb.OpenChannel) error {
 
 	// First, we'll create the batch of announcements to be sent upon
 	// initial channel creation. This includes the channel announcement
@@ -4526,7 +4717,7 @@ func (f *Manager) announceChannel(localIDKey, remoteIDKey *btcec.PublicKey,
 	// only use the channel announcement message from the returned struct.
 	ann, err := f.newChanAnnouncement(
 		localIDKey, remoteIDKey, localFundingKey, remoteFundingKey,
-		shortChanID, chanID, 0, 0, nil, chanType,
+		shortChanID, chanID, 0, 0, nil, channel, false,
 	)
 	if err != nil {
 		log.Errorf("can't generate channel announcement: %v", err)
@@ -4575,7 +4766,7 @@ func (f *Manager) announceChannel(localIDKey, remoteIDKey *btcec.PublicKey,
 				graph.ErrIgnored) {
 
 				log.Debugf("Graph rejected "+
-					"NodeAnnouncement: %v", err)
+					"NodeAnnouncement1: %v", err)
 			} else {
 				log.Errorf("Unable to send node "+
 					"announcement: %v", err)
@@ -4725,7 +4916,7 @@ func (f *Manager) handleInitFundingMsg(msg *InitFundingMsg) {
 		msg.Peer.RemoteFeatures(),
 	)
 	if err != nil {
-		log.Errorf("channel type negotiation failed: %v", err)
+		log.Errorf("channel type negotiation failed: %v", err, msg.ChannelType, msg.Peer.LocalFeatures().Features(), msg.Peer.RemoteFeatures().Features())
 		msg.Err <- err
 		return
 	}

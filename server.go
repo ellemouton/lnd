@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -260,7 +259,8 @@ type server struct {
 
 	fundingMgr *funding.Manager
 
-	graphDB *graphdb.ChannelGraph
+	graphDB   *graphdb.ChannelGraph
+	graphDBV2 *graphdb.V2Store
 
 	chanStateDB *channeldb.ChannelStateDB
 
@@ -332,7 +332,7 @@ type server struct {
 	// currentNodeAnn is the node announcement that has been broadcast to
 	// the network upon startup, if the attributes of the node (us) has
 	// changed since last start.
-	currentNodeAnn *lnwire.NodeAnnouncement
+	currentNodeAnn *lnwire.NodeAnnouncement1
 
 	// chansToRestore is the set of channels that upon starting, the server
 	// should attempt to restore/recover.
@@ -618,6 +618,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		cfg:            cfg,
 		implCfg:        implCfg,
 		graphDB:        dbs.GraphDB,
+		graphDBV2:      dbs.GraphDBV2,
 		chanStateDB:    dbs.ChanStateDB.ChannelStateDB(),
 		addrSource:     addrSource,
 		miscDB:         dbs.ChanStateDB,
@@ -782,10 +783,11 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		OurPubKey:                nodeKeyDesc.PubKey,
 		OurKeyLoc:                nodeKeyDesc.KeyLocator,
 		MessageSigner:            s.nodeSigner,
+		BestBlockView:            s.cc.BestBlockTracker,
 		IsChannelActive:          s.htlcSwitch.HasActiveLink,
 		ApplyChannelUpdate:       s.applyChannelUpdate,
 		DB:                       s.chanStateDB,
-		Graph:                    dbs.GraphDB,
+		Graph:                    s.graphBuilder,
 	}
 
 	chanStatusMgr, err := netann.NewChanStatusManager(chanStatusMgrCfg)
@@ -1057,6 +1059,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	s.graphBuilder, err = graph.NewBuilder(&graph.Config{
 		SelfNode:            selfNode.PubKeyBytes,
 		Graph:               dbs.GraphDB,
+		GraphV2:             dbs.GraphDBV2,
 		Chain:               cc.ChainIO,
 		ChainView:           cc.ChainView,
 		Notifier:            cc.ChainNotifier,
@@ -1101,19 +1104,21 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		return nil, err
 	}
 
-	scidCloserMan := discovery.NewScidCloserMan(s.graphDB, s.chanStateDB)
+	scidCloserMan := discovery.NewScidCloserMan(
+		s.graphBuilder, s.chanStateDB,
+	)
 
 	s.authGossiper = discovery.New(discovery.Config{
 		Graph:                 s.graphBuilder,
 		ChainIO:               s.cc.ChainIO,
 		Notifier:              s.cc.ChainNotifier,
-		ChainHash:             *s.cfg.ActiveNetParams.GenesisHash,
+		ChainParams:           s.cfg.ActiveNetParams.Params,
 		Broadcast:             s.BroadcastMessage,
 		ChanSeries:            chanSeries,
 		NotifyWhenOnline:      s.NotifyWhenOnline,
 		NotifyWhenOffline:     s.NotifyWhenOffline,
 		FetchSelfAnnouncement: s.getNodeAnnouncement,
-		UpdateSelfAnnouncement: func() (lnwire.NodeAnnouncement,
+		UpdateSelfAnnouncement: func() (lnwire.NodeAnnouncement1,
 			error) {
 
 			return s.genNodeAnnouncement(nil)
@@ -1399,46 +1404,6 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		return nil, err
 	}
 
-	// Wrap the DeleteChannelEdges method so that the funding manager can
-	// use it without depending on several layers of indirection.
-	deleteAliasEdge := func(scid lnwire.ShortChannelID) (
-		*models.ChannelEdgePolicy, error) {
-
-		info, e1, e2, err := s.graphDB.FetchChannelEdgesByID(
-			scid.ToUint64(),
-		)
-		if errors.Is(err, graphdb.ErrEdgeNotFound) {
-			// This is unlikely but there is a slim chance of this
-			// being hit if lnd was killed via SIGKILL and the
-			// funding manager was stepping through the delete
-			// alias edge logic.
-			return nil, nil
-		} else if err != nil {
-			return nil, err
-		}
-
-		// Grab our key to find our policy.
-		var ourKey [33]byte
-		copy(ourKey[:], nodeKeyDesc.PubKey.SerializeCompressed())
-
-		var ourPolicy *models.ChannelEdgePolicy
-		if info != nil && info.NodeKey1Bytes == ourKey {
-			ourPolicy = e1
-		} else {
-			ourPolicy = e2
-		}
-
-		if ourPolicy == nil {
-			// Something is wrong, so return an error.
-			return nil, fmt.Errorf("we don't have an edge")
-		}
-
-		err = s.graphDB.DeleteChannelEdges(
-			false, false, scid.ToUint64(),
-		)
-		return ourPolicy, err
-	}
-
 	// For the reservationTimeout and the zombieSweeperInterval different
 	// values are set in case we are in a dev environment so enhance test
 	// capacilities.
@@ -1472,11 +1437,11 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		UpdateLabel: func(hash chainhash.Hash, label string) error {
 			return cc.Wallet.LabelTransaction(hash, label, true)
 		},
-		Notifier:     cc.ChainNotifier,
-		ChannelDB:    s.chanStateDB,
-		FeeEstimator: cc.FeeEstimator,
-		SignMessage:  cc.MsgSigner.SignMessage,
-		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement,
+		Notifier:      cc.ChainNotifier,
+		ChannelDB:     s.chanStateDB,
+		FeeEstimator:  cc.FeeEstimator,
+		MessageSigner: cc.KeyRing,
+		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement1,
 			error) {
 
 			return s.genNodeAnnouncement(nil)
@@ -1631,12 +1596,13 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		EnableUpfrontShutdown:         cfg.EnableUpfrontShutdown,
 		MaxAnchorsCommitFeeRate: chainfee.SatPerKVByte(
 			s.cfg.MaxCommitFeeRateAnchors * 1000).FeePerKWeight(),
-		DeleteAliasEdge:      deleteAliasEdge,
+		DeleteAliasEdge:      s.deleteAliasEdge,
 		AliasManager:         s.aliasMgr,
 		IsSweeperOutpoint:    s.sweeper.IsSweeperOutpoint,
 		AuxFundingController: implCfg.AuxFundingController,
 		AuxSigner:            implCfg.AuxSigner,
 		AuxResolver:          implCfg.AuxContractResolver,
+		BestBlockView:        s.cc.BestBlockTracker,
 	})
 	if err != nil {
 		return nil, err
@@ -1804,7 +1770,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			AdvertisedIPs: advertisedIPs,
 			AnnounceNewIPs: netann.IPAnnouncer(
 				func(modifier ...netann.NodeAnnModifier) (
-					lnwire.NodeAnnouncement, error) {
+					lnwire.NodeAnnouncement1, error) {
 
 					return s.genNodeAnnouncement(
 						nil, modifier...,
@@ -1891,15 +1857,8 @@ func (s *server) registerBlockConsumers() {
 // signAliasUpdate takes a ChannelUpdate and returns the signature. This is
 // used for option_scid_alias channels where the ChannelUpdate to be sent back
 // may differ from what is on disk.
-func (s *server) signAliasUpdate(u *lnwire.ChannelUpdate1) (*ecdsa.Signature,
-	error) {
-
-	data, err := u.DataToSign()
-	if err != nil {
-		return nil, err
-	}
-
-	return s.cc.MsgSigner.SignMessage(s.identityKeyLoc, data, true)
+func (s *server) signAliasUpdate(u lnwire.ChannelUpdate) error {
+	return netann.SignChannelUpdate(s.cc.KeyRing, s.identityKeyLoc, u)
 }
 
 // createLivenessMonitor creates a set of health checks using our configured
@@ -3253,7 +3212,7 @@ func (s *server) createNewHiddenService() error {
 	// Now that the onion service has been created, we'll add the onion
 	// address it can be reached at to our list of advertised addresses.
 	newNodeAnn, err := s.genNodeAnnouncement(
-		nil, func(currentAnn *lnwire.NodeAnnouncement) {
+		nil, func(currentAnn *lnwire.NodeAnnouncement1) {
 			currentAnn.Addresses = append(currentAnn.Addresses, addr)
 		},
 	)
@@ -3304,7 +3263,7 @@ func (s *server) findChannel(node *btcec.PublicKey, chanID lnwire.ChannelID) (
 }
 
 // getNodeAnnouncement fetches the current, fully signed node announcement.
-func (s *server) getNodeAnnouncement() lnwire.NodeAnnouncement {
+func (s *server) getNodeAnnouncement() lnwire.NodeAnnouncement1 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -3315,7 +3274,7 @@ func (s *server) getNodeAnnouncement() lnwire.NodeAnnouncement {
 // announcement. The time stamp of the announcement will be updated in order
 // to ensure it propagates through the network.
 func (s *server) genNodeAnnouncement(features *lnwire.RawFeatureVector,
-	modifiers ...netann.NodeAnnModifier) (lnwire.NodeAnnouncement, error) {
+	modifiers ...netann.NodeAnnModifier) (lnwire.NodeAnnouncement1, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -3328,7 +3287,7 @@ func (s *server) genNodeAnnouncement(features *lnwire.RawFeatureVector,
 		}
 		err := s.featureMgr.UpdateFeatureSets(proposedFeatures)
 		if err != nil {
-			return lnwire.NodeAnnouncement{}, err
+			return lnwire.NodeAnnouncement1{}, err
 		}
 
 		// If we could successfully update our feature manager, add
@@ -3353,7 +3312,7 @@ func (s *server) genNodeAnnouncement(features *lnwire.RawFeatureVector,
 		s.nodeSigner, s.identityKeyLoc, s.currentNodeAnn,
 	)
 	if err != nil {
-		return lnwire.NodeAnnouncement{}, err
+		return lnwire.NodeAnnouncement1{}, err
 	}
 
 	return *s.currentNodeAnn, nil
@@ -3438,7 +3397,7 @@ func (s *server) establishPersistentConnections() error {
 
 	// After checking our previous connections for addresses to connect to,
 	// iterate through the nodes in our channel graph to find addresses
-	// that have been added via NodeAnnouncement messages.
+	// that have been added via NodeAnnouncement1 messages.
 	sourceNode, err := s.graphDB.SourceNode()
 	if err != nil {
 		return err
@@ -4266,7 +4225,7 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 		TowerClient:             towerClient,
 		DisconnectPeer:          s.DisconnectPeer,
 		GenNodeAnnouncement: func(...netann.NodeAnnModifier) (
-			lnwire.NodeAnnouncement, error) {
+			lnwire.NodeAnnouncement1, error) {
 
 			return s.genNodeAnnouncement(nil)
 		},
@@ -5056,12 +5015,17 @@ func (s *server) fetchNodeAdvertisedAddrs(pub *btcec.PublicKey) ([]net.Addr, err
 
 // fetchLastChanUpdate returns a function which is able to retrieve our latest
 // channel update for a target channel.
-func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
-	*lnwire.ChannelUpdate1, error) {
+func (s *server) fetchLastChanUpdate() func(context.Context,
+	lnwire.ShortChannelID) (lnwire.ChannelUpdate, error) {
 
 	ourPubKey := s.identityECDH.PubKey().SerializeCompressed()
-	return func(cid lnwire.ShortChannelID) (*lnwire.ChannelUpdate1, error) {
-		info, edge1, edge2, err := s.graphBuilder.GetChannelByID(cid)
+
+	return func(ctx context.Context, cid lnwire.ShortChannelID) (
+		lnwire.ChannelUpdate, error) {
+
+		info, edge1, edge2, err := s.graphBuilder.FindChannelByID(
+			ctx, cid,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -5075,7 +5039,7 @@ func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
 // applyChannelUpdate applies the channel update to the different sub-systems of
 // the server. The useAlias boolean denotes whether or not to send an alias in
 // place of the real SCID.
-func (s *server) applyChannelUpdate(update *lnwire.ChannelUpdate1,
+func (s *server) applyChannelUpdate(update lnwire.ChannelUpdate,
 	op *wire.OutPoint, useAlias bool) error {
 
 	var (
@@ -5263,4 +5227,73 @@ func (s *server) getStartingBeat() (*chainio.Beat, error) {
 	}
 
 	return beat, nil
+}
+
+// Wrap the DeleteChannelEdges method so that the funding manager can
+// use it without depending on several layers of indirection.
+func (s *server) deleteAliasEdge(ctx context.Context,
+	scid lnwire.ShortChannelID) (models.ChannelPolicy, error) {
+
+	// Fall back to V1 protocol
+	protocol := lnwire.V1Protocol
+
+	_, _, known, zombie, err := s.graphDBV2.HasChannel(ctx, scid.ToUint64())
+	if err != nil {
+		return nil, err
+	}
+	if known || zombie {
+		protocol = lnwire.V2Protocol
+	}
+
+	var (
+		info    models.Channel
+		policy1 models.ChannelPolicy
+		policy2 models.ChannelPolicy
+	)
+	switch protocol {
+	case lnwire.V1Protocol:
+		info, policy1, policy2, err = s.graphDB.FetchChannelEdgesByID(
+			scid.ToUint64(),
+		)
+
+	case lnwire.V2Protocol:
+		info, policy1, policy2, err = s.graphDBV2.FetchChannelEdgesByID(
+			ctx, scid.ToUint64(),
+		)
+	}
+	if errors.Is(err, graphdb.ErrEdgeNotFound) {
+		// This is unlikely but there is a slim chance of this
+		// being hit if lnd was killed via SIGKILL and the
+		// funding manager was stepping through the delete
+		// alias edge logic.
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+
+	// Grab our key to find our policy.
+	var ourKey [33]byte
+	copy(ourKey[:], s.identityECDH.PubKey().SerializeCompressed())
+
+	var ourPolicy models.ChannelPolicy
+	if info != nil && info.Node1() == ourKey {
+		ourPolicy = policy1
+	} else {
+		ourPolicy = policy2
+	}
+
+	if ourPolicy == nil {
+		// Something is wrong, so return an error.
+		return nil, fmt.Errorf("we don't have an edge")
+	}
+
+	switch protocol {
+	case lnwire.V1Protocol:
+		err = s.graphDB.DeleteChannelEdges(false, false, scid.ToUint64())
+
+	case lnwire.V2Protocol:
+		err = s.graphDBV2.DeleteChannels(ctx, false, false, scid.ToUint64())
+	}
+
+	return ourPolicy, err
 }

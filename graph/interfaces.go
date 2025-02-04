@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"context"
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -29,17 +30,16 @@ type ChannelGraphSource interface {
 	// AddEdge is used to add edge/channel to the topology of the router,
 	// after all information about channel will be gathered this
 	// edge/channel might be used in construction of payment path.
-	AddEdge(edge *models.ChannelEdgeInfo,
-		op ...batch.SchedulerOption) error
+	AddEdge(edge models.Channel, op ...batch.SchedulerOption) error
 
 	// AddProof updates the channel edge info with proof which is needed to
 	// properly announce the edge to the rest of the network.
-	AddProof(chanID lnwire.ShortChannelID,
-		proof *models.ChannelAuthProof) error
+	AddProof(ctx context.Context, chanID lnwire.ShortChannelID,
+		proof models.ChanAuthProof) error
 
 	// UpdateEdge is used to update edge information, without this message
 	// edge considered as not fully constructed.
-	UpdateEdge(policy *models.ChannelEdgePolicy,
+	UpdateEdge(policy models.ChannelPolicy,
 		op ...batch.SchedulerOption) error
 
 	// IsStaleNode returns true if the graph source has a node announcement
@@ -54,17 +54,23 @@ type ChannelGraphSource interface {
 
 	// IsKnownEdge returns true if the graph source already knows of the
 	// passed channel ID either as a live or zombie edge.
-	IsKnownEdge(chanID lnwire.ShortChannelID) bool
+	IsKnownEdge(ctx context.Context, p lnwire.Protocol,
+		chanID lnwire.ShortChannelID) (bool, error)
 
 	// IsStaleEdgePolicy returns true if the graph source has a channel
 	// edge for the passed channel ID (and flags) that have a more recent
 	// timestamp.
 	IsStaleEdgePolicy(chanID lnwire.ShortChannelID, timestamp time.Time,
-		flags lnwire.ChanUpdateChanFlags) bool
+		isNode1, isDisabled bool) bool
+
+	IsStaleV2EdgePolicy(ctx context.Context,
+		chanID lnwire.ShortChannelID, blockHeight uint32, node1,
+		disabled bool) (bool, error)
 
 	// MarkEdgeLive clears an edge from our zombie index, deeming it as
 	// live.
-	MarkEdgeLive(chanID lnwire.ShortChannelID) error
+	MarkEdgeLive(ctx context.Context, protocol lnwire.Protocol,
+		chanID lnwire.ShortChannelID) error
 
 	// ForAllOutgoingChannels is used to iterate over all channels
 	// emanating from the "source" node which is the center of the
@@ -77,23 +83,23 @@ type ChannelGraphSource interface {
 	CurrentBlockHeight() (uint32, error)
 
 	// GetChannelByID return the channel by the channel id.
-	GetChannelByID(chanID lnwire.ShortChannelID) (
-		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
-		*models.ChannelEdgePolicy, error)
+	GetChannelByID(ctx context.Context, protocol lnwire.Protocol,
+		chanID lnwire.ShortChannelID) (models.Channel,
+		models.ChannelPolicy, models.ChannelPolicy, error)
 
 	// FetchLightningNode attempts to look up a target node by its identity
 	// public key. channeldb.ErrGraphNodeNotFound is returned if the node
 	// doesn't exist within the graph.
 	FetchLightningNode(route.Vertex) (*models.LightningNode, error)
-
-	// ForEachNode is used to iterate over every node in the known graph.
-	ForEachNode(func(node *models.LightningNode) error) error
 }
 
 // DB is an interface describing a persisted Lightning Network graph.
 //
 //nolint:interfacebloat
 type DB interface {
+	PutClosedScid(scid lnwire.ShortChannelID) error
+	IsClosedScid(scid lnwire.ShortChannelID) (bool, error)
+
 	// PruneTip returns the block height and hash of the latest block that
 	// has been used to prune channels in the graph. Knowing the "prune tip"
 	// allows callers to tell if the graph is currently in sync with the
@@ -193,6 +199,10 @@ type DB interface {
 	FetchChannelEdgesByID(chanID uint64) (*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error)
 
+	FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, error)
+
 	// AddLightningNode adds a vertex/node to the graph database. If the
 	// node is not in the database from before, this will add a new,
 	// unconnected one to the graph. If it is present from before, this will
@@ -261,12 +271,13 @@ type DB interface {
 		*models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error
 
-	// UpdateChannelEdge retrieves and update edge of the graph database.
-	// Method only reserved for updating an edge info after its already been
-	// created. In order to maintain this constraints, we return an error in
-	// the scenario that an edge info hasn't yet been created yet, but
-	// someone attempts to update it.
-	UpdateChannelEdge(edge *models.ChannelEdgeInfo) error
+	ForEachChannel(cb func(*models.ChannelEdgeInfo,
+		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error
+
+	// AddEdgeProof retrieves and updates the proof of an existing edge in
+	// the graph database.
+	AddEdgeProof(chanID lnwire.ShortChannelID,
+		proof *models.ChannelAuthProof) error
 
 	// IsPublicNode is a helper method that determines whether the node with
 	// the given public key is seen as a public node in the graph from the

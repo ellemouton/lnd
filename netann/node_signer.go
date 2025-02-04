@@ -4,14 +4,60 @@ import (
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/lightningnetwork/lnd/keychain"
-	"github.com/lightningnetwork/lnd/lnwallet"
 )
 
 // NodeSigner is an implementation of the MessageSigner interface backed by the
 // identity private key of running lnd node.
 type NodeSigner struct {
 	keySigner keychain.SingleKeyMessageSigner
+}
+
+// SignMessageCompactNoKeyLoc signs a single or double sha256 digest of the msg
+// parameter under the resident node's private key. The returned signature is a
+// pubkey-recoverable signature. No key locator is required for this since the
+// NodeSigner already has the key to sign with.
+func (n *NodeSigner) SignMessageCompactNoKeyLoc(msg []byte, doubleHash bool) (
+	[]byte, error) {
+
+	return n.keySigner.SignMessageCompact(msg, doubleHash)
+}
+
+// SignMessageCompact signs the given message, single or double SHA256 hashing
+// it first, with the private key described in the key locator and returns the
+// signature in the compact, public key recoverable format.
+//
+// NOTE: this is part of the keychain.MessageSignerRing interface.
+func (n *NodeSigner) SignMessageCompact(keyLoc keychain.KeyLocator, msg []byte,
+	doubleHash bool) ([]byte, error) {
+
+	// If this isn't our identity public key, then we'll exit early with an
+	// error as we can't sign with this key.
+	if keyLoc != n.keySigner.KeyLocator() {
+		return nil, fmt.Errorf("unknown public key locator")
+	}
+
+	return n.SignMessageCompactNoKeyLoc(msg, doubleHash)
+}
+
+// SignMessageSchnorr signs the given message, single or double SHA256 hashing
+// it first, with the private key described in the key locator and the optional
+// Taproot tweak applied to the private key.
+//
+// NOTE: this is part of the keychain.MessageSignerRing interface.
+func (n *NodeSigner) SignMessageSchnorr(keyLoc keychain.KeyLocator, msg []byte,
+	doubleHash bool, taprootTweak, tag []byte) (*schnorr.Signature, error) {
+
+	// If this isn't our identity public key, then we'll exit early with an
+	// error as we can't sign with this key.
+	if keyLoc != n.keySigner.KeyLocator() {
+		return nil, fmt.Errorf("unknown public key locator")
+	}
+
+	return n.keySigner.SignMessageSchnorr(
+		keyLoc, msg, doubleHash, taprootTweak, tag,
+	)
 }
 
 // NewNodeSigner creates a new instance of the NodeSigner backed by the target
@@ -43,15 +89,6 @@ func (n *NodeSigner) SignMessage(keyLoc keychain.KeyLocator,
 	return sig, nil
 }
 
-// SignMessageCompact signs a single or double sha256 digest of the msg
-// parameter under the resident node's private key. The returned signature is a
-// pubkey-recoverable signature.
-func (n *NodeSigner) SignMessageCompact(msg []byte, doubleHash bool) ([]byte,
-	error) {
-
-	return n.keySigner.SignMessageCompact(msg, doubleHash)
-}
-
 // A compile time check to ensure that NodeSigner implements the MessageSigner
 // interface.
-var _ lnwallet.MessageSigner = (*NodeSigner)(nil)
+var _ keychain.MessageSignerRing = (*NodeSigner)(nil)

@@ -8,7 +8,9 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/txscript"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/tlv"
@@ -33,10 +35,85 @@ const (
 // function is used to transform out database structs into the corresponding wire
 // structs for announcing new channels to other peers, or simply syncing up a
 // peer's initial routing table upon connect.
-func CreateChanAnnouncement(chanProof *models.ChannelAuthProof,
+func CreateChanAnnouncement(chainHash chainhash.Hash,
+	chanProof models.ChanAuthProof,
+	chanInfo models.Channel,
+	edge1, edge2 models.ChannelPolicy) (lnwire.ChannelAnnouncement,
+	lnwire.ChannelUpdate, lnwire.ChannelUpdate, error) {
+
+	switch proof := chanProof.(type) {
+	case *models.ChannelAuthProof:
+		info, ok := chanInfo.(*models.ChannelEdgeInfo)
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("expected type "+
+				"ChannelEdgeInfo1 to be paired with "+
+				"ChannelAuthProof1, got: %T", chanInfo)
+		}
+
+		var e1, e2 *models.ChannelEdgePolicy
+		if edge1 != nil {
+			e1, ok = edge1.(*models.ChannelEdgePolicy)
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("expected "+
+					"type ChannelEdgePolicy1 to be "+
+					"paired with ChannelEdgeInfo1, "+
+					"got: %T", edge1)
+			}
+		}
+
+		if edge2 != nil {
+			e2, ok = edge2.(*models.ChannelEdgePolicy)
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("expected "+
+					"type ChannelEdgePolicy1 to be "+
+					"paired with ChannelEdgeInfo1, "+
+					"got: %T", edge2)
+			}
+		}
+
+		return createChanAnnouncement1(proof, info, e1, e2)
+
+	case *models.ChannelAuthProof2:
+		info, ok := chanInfo.(*models.Channel2)
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("expected type "+
+				"ChannelEdgeInfo2 to be paired with "+
+				"ChannelAuthProof2, got: %T", chanInfo)
+		}
+
+		var e1, e2 *models.ChannelPolicy2
+		if edge1 != nil {
+			e1, ok = edge1.(*models.ChannelPolicy2)
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("expected "+
+					"type ChannelEdgePolicy2 to be "+
+					"paired with ChannelEdgeInfo2, "+
+					"got: %T", edge1)
+			}
+		}
+
+		if edge2 != nil {
+			e2, ok = edge2.(*models.ChannelPolicy2)
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("expected "+
+					"type ChannelEdgePolicy2 to be "+
+					"paired with ChannelEdgeInfo2, "+
+					"got: %T", edge2)
+			}
+		}
+
+		return createChanAnnouncement2(chainHash, proof, info, e1, e2)
+
+	default:
+		return nil, nil, nil, fmt.Errorf("unhandled "+
+			"models.ChannelAuthProof type: %T", chanProof)
+	}
+}
+
+func createChanAnnouncement1(chanProof *models.ChannelAuthProof,
 	chanInfo *models.ChannelEdgeInfo,
 	e1, e2 *models.ChannelEdgePolicy) (*lnwire.ChannelAnnouncement1,
-	*lnwire.ChannelUpdate1, *lnwire.ChannelUpdate1, error) {
+	lnwire.ChannelUpdate, lnwire.ChannelUpdate, error) {
 
 	// First, using the parameters of the channel, along with the channel
 	// authentication chanProof, we'll create re-create the original
@@ -89,15 +166,15 @@ func CreateChanAnnouncement(chanProof *models.ChannelAuthProof,
 	// Since it's up to a node's policy as to whether they advertise the
 	// edge in a direction, we don't create an advertisement if the edge is
 	// nil.
-	var edge1Ann, edge2Ann *lnwire.ChannelUpdate1
+	var edge1Ann, edge2Ann lnwire.ChannelUpdate
 	if e1 != nil {
-		edge1Ann, err = ChannelUpdateFromEdge(chanInfo, e1)
+		edge1Ann, err = ChannelUpdateFromEdge(chanInfo.ChainHash, e1)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 	}
 	if e2 != nil {
-		edge2Ann, err = ChannelUpdateFromEdge(chanInfo, e2)
+		edge2Ann, err = ChannelUpdateFromEdge(chanInfo.ChainHash, e2)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -106,9 +183,55 @@ func CreateChanAnnouncement(chanProof *models.ChannelAuthProof,
 	return chanAnn, edge1Ann, edge2Ann, nil
 }
 
+func createChanAnnouncement2(chainHash chainhash.Hash,
+	chanProof *models.ChannelAuthProof2, chanInfo *models.Channel2,
+	e1, e2 *models.ChannelPolicy2) (lnwire.ChannelAnnouncement,
+	lnwire.ChannelUpdate, lnwire.ChannelUpdate, error) {
+
+	// Recreate the protocol message with all the signed fields.
+	var ann lnwire.ChannelAnnouncement2
+	err := lnwire.DecodePureTLVFromRecords(&ann, chanInfo.AllSignedFields)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// Set the signature field.
+	// TODO: make part of DecodeFromRecords?? Or add separate Sig method?
+	ann.Signature.Val, err = lnwire.NewSigFromSchnorrRawSignature(
+		chanProof.SchnorrSigBytes,
+	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// We'll unconditionally queue the channel's existence chanProof as it
+	// will need to be processed before either of the channel update
+	// networkMsgs.
+
+	// Since it's up to a node's policy as to whether they advertise the
+	// edge in a direction, we don't create an advertisement if the edge is
+	// nil.
+	var edge1Ann, edge2Ann lnwire.ChannelUpdate
+	if e1 != nil {
+		edge1Ann, err = ChannelUpdateFromEdge(chainHash, e1)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	if e2 != nil {
+		edge2Ann, err = ChannelUpdateFromEdge(chainHash, e2)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+
+	return &ann, edge1Ann, edge2Ann, nil
+}
+
 // FetchPkScript defines a function that can be used to fetch the output script
 // for the transaction with the given SCID.
-type FetchPkScript func(*lnwire.ShortChannelID) ([]byte, error)
+type FetchPkScript func(lnwire.ShortChannelID) (txscript.ScriptClass,
+	btcutil.Address, error)
 
 // ValidateChannelAnn validates the channel announcement.
 func ValidateChannelAnn(a lnwire.ChannelAnnouncement,
@@ -202,24 +325,124 @@ func validateChannelAnn1(a *lnwire.ChannelAnnouncement1) error {
 func validateChannelAnn2(a *lnwire.ChannelAnnouncement2,
 	fetchPkScript FetchPkScript) error {
 
+	// Next, we fetch the funding transaction's PK script. We need this so
+	// that we know what type of channel we will be validating: P2WSH or
+	// P2TR.
+	scriptClass, scriptAddr, err := fetchPkScript(a.ShortChannelID.Val)
+	if err != nil {
+		return err
+	}
+
+	var keys []*btcec.PublicKey
+
+	switch scriptClass {
+	case txscript.WitnessV0ScriptHashTy:
+		keys, err = chanAnn2P2WSHMuSig2Keys(a)
+		if err != nil {
+			return err
+		}
+	case txscript.WitnessV1TaprootTy:
+		keys, err = chanAnn2P2TRMuSig2Keys(a, scriptAddr)
+		if err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("invalid on-chain pk script type for "+
+			"channel_announcement_2: %s", scriptClass)
+	}
+
+	// Do a MuSig2 aggregation of the keys to obtain the aggregate key that
+	// the signature will be validated against.
+	aggKey, _, _, err := musig2.AggregateKeys(keys, true)
+	if err != nil {
+		return err
+	}
+
+	// Get the message that the signature should have signed.
 	dataHash, err := ChanAnn2DigestToSign(a)
 	if err != nil {
 		return err
 	}
 
-	sig, err := a.Signature.ToSignature()
+	// Obtain the signature.
+	sig, err := a.Signature.Val.ToSignature()
 	if err != nil {
 		return err
 	}
 
+	// Check that the signature is valid for the aggregate key given the
+	// message digest.
+	if !sig.Verify(dataHash.CloneBytes(), aggKey.FinalKey) {
+		return fmt.Errorf("invalid sig")
+	}
+
+	return nil
+}
+
+// chanAnn2P2WSHMuSig2Keys returns the set of keys that should be used to
+// construct the aggregate key that the signature in an
+// lnwire.ChannelAnnouncement2 message should be verified against in the case
+// where the channel being announced is a P2WSH channel.
+func chanAnn2P2WSHMuSig2Keys(a *lnwire.ChannelAnnouncement2) (
+	[]*btcec.PublicKey, error) {
+
 	nodeKey1, err := btcec.ParsePubKey(a.NodeID1.Val[:])
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	nodeKey2, err := btcec.ParsePubKey(a.NodeID2.Val[:])
 	if err != nil {
-		return err
+		return nil, err
+	}
+
+	btcKeyMissingErrString := "bitcoin key %d missing for announcement " +
+		"of a P2WSH channel"
+
+	btcKey1Bytes, err := a.BitcoinKey1.UnwrapOrErr(
+		fmt.Errorf(btcKeyMissingErrString, 1),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	btcKey1, err := btcec.ParsePubKey(btcKey1Bytes.Val[:])
+	if err != nil {
+		return nil, err
+	}
+
+	btcKey2Bytes, err := a.BitcoinKey2.UnwrapOrErr(
+		fmt.Errorf(btcKeyMissingErrString, 2),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	btcKey2, err := btcec.ParsePubKey(btcKey2Bytes.Val[:])
+	if err != nil {
+		return nil, err
+	}
+
+	return []*btcec.PublicKey{
+		nodeKey1, nodeKey2, btcKey1, btcKey2,
+	}, nil
+}
+
+// chanAnn2P2TRMuSig2Keys returns the set of keys that should be used to
+// construct the aggregate key that the signature in an
+// lnwire.ChannelAnnouncement2 message should be verified against in the case
+// where the channel being announced is a P2TR channel.
+func chanAnn2P2TRMuSig2Keys(a *lnwire.ChannelAnnouncement2,
+	scriptAddr btcutil.Address) ([]*btcec.PublicKey, error) {
+
+	nodeKey1, err := btcec.ParsePubKey(a.NodeID1.Val[:])
+	if err != nil {
+		return nil, err
+	}
+
+	nodeKey2, err := btcec.ParsePubKey(a.NodeID2.Val[:])
+	if err != nil {
+		return nil, err
 	}
 
 	keys := []*btcec.PublicKey{
@@ -240,49 +463,36 @@ func validateChannelAnn2(a *lnwire.ChannelAnnouncement2,
 
 		bitcoinKey1, err := btcec.ParsePubKey(btcKey1.Val[:])
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		bitcoinKey2, err := btcec.ParsePubKey(btcKey2.Val[:])
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		keys = append(keys, bitcoinKey1, bitcoinKey2)
 	} else {
-		// If bitcoin keys are not provided, then we need to get the
-		// on-chain output key since this will be the 3rd key in the
-		// 3-of-3 MuSig2 signature.
-		pkScript, err := fetchPkScript(&a.ShortChannelID.Val)
+		// If bitcoin keys are not provided, then the on-chain output
+		// key is considered the 3rd key in the 3-of-3 MuSig2 signature.
+		outputKey, err := schnorr.ParsePubKey(
+			scriptAddr.ScriptAddress(),
+		)
 		if err != nil {
-			return err
-		}
-
-		outputKey, err := schnorr.ParsePubKey(pkScript[2:])
-		if err != nil {
-			return err
+			return nil, err
 		}
 
 		keys = append(keys, outputKey)
 	}
 
-	aggKey, _, _, err := musig2.AggregateKeys(keys, true)
-	if err != nil {
-		return err
-	}
-
-	if !sig.Verify(dataHash.CloneBytes(), aggKey.FinalKey) {
-		return fmt.Errorf("invalid sig")
-	}
-
-	return nil
+	return keys, nil
 }
 
 // ChanAnn2DigestToSign computes the digest of the message to be signed.
 func ChanAnn2DigestToSign(a *lnwire.ChannelAnnouncement2) (*chainhash.Hash,
 	error) {
 
-	data, err := a.DataToSign()
+	data, err := lnwire.SerialiseFieldsToSign(a)
 	if err != nil {
 		return nil, err
 	}

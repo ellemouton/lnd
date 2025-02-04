@@ -28,6 +28,56 @@ type AmpSubInvoiceHtlc struct {
 	Preimage   []byte
 }
 
+type Channel struct {
+	ID              int64
+	ChannelID       int64
+	Outpoint        string
+	NodeID1         int64
+	NodeID2         int64
+	Capacity        int64
+	FundingPkScript []byte
+	Signature       []byte
+	CreatedAt       time.Time
+}
+
+type ChannelExtraType struct {
+	ChannelID int64
+	Type      int64
+	Value     []byte
+}
+
+type ChannelFeature struct {
+	ChannelID int64
+	Feature   int32
+}
+
+type ChannelPolicy struct {
+	ID           int64
+	ChannelID    int64
+	SecondPeer   bool
+	BlockHeight  int32
+	DisableFlags int32
+	Timelock     int32
+	FeePpm       int64
+	BaseFeeMsat  int64
+	MaxHtlcMsat  int64
+	MinHtlcMsat  int64
+	Signature    []byte
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+type ChannelPolicyExtraType struct {
+	ChannelPolicyID int64
+	Type            int64
+	Value           []byte
+}
+
+type ClosedScid struct {
+	ChannelID int64
+	CreatedAt time.Time
+}
+
 type Invoice struct {
 	ID                 int64
 	Hash               []byte
@@ -101,4 +151,42 @@ type InvoiceSequence struct {
 type MigrationTracker struct {
 	Version       int32
 	MigrationTime time.Time
+}
+
+type Node struct {
+	ID          int64
+	PubKey      []byte
+	Alias       sql.NullString
+	BlockHeight int64
+	Signature   []byte
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+type NodeAddress struct {
+	NodeID  int64
+	Type    int16
+	Address string
+}
+
+type NodeExtraType struct {
+	NodeID int64
+	Type   int64
+	Value  []byte
+}
+
+type NodeFeature struct {
+	NodeID  int64
+	Feature int32
+}
+
+type SourceNode struct {
+	NodeID int64
+}
+
+type ZombieChannel struct {
+	ChannelID int64
+	NodeKey1  []byte
+	NodeKey2  []byte
+	CreatedAt time.Time
 }
