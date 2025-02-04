@@ -224,11 +224,11 @@ type Config struct {
 	// FetchSelfAnnouncement retrieves our current node announcement, for
 	// use when determining whether we should update our peers about our
 	// presence in the network.
-	FetchSelfAnnouncement func() lnwire.NodeAnnouncement
+	FetchSelfAnnouncement func() lnwire.NodeAnnouncement1
 
 	// UpdateSelfAnnouncement produces a new announcement for our node with
 	// an updated timestamp which can be broadcast to our peers.
-	UpdateSelfAnnouncement func() (lnwire.NodeAnnouncement, error)
+	UpdateSelfAnnouncement func() (lnwire.NodeAnnouncement1, error)
 
 	// ProofMatureDelta the number of confirmations which is needed before
 	// exchange the channel announcement proofs.
@@ -1128,7 +1128,7 @@ func (d *deDupedAnnouncements) addMsg(message networkMsg) {
 
 	// Node announcements are identified by the Vertex field.  Use the
 	// NodeID to create the corresponding Vertex.
-	case *lnwire.NodeAnnouncement:
+	case *lnwire.NodeAnnouncement1:
 		sender := route.NewVertex(message.source)
 		deDupKey := route.Vertex(msg.NodeID)
 
@@ -1137,7 +1137,7 @@ func (d *deDupedAnnouncements) addMsg(message networkMsg) {
 		oldTimestamp := uint32(0)
 		mws, ok := d.nodeAnnouncements[deDupKey]
 		if ok {
-			oldTimestamp = mws.msg.(*lnwire.NodeAnnouncement).Timestamp
+			oldTimestamp = mws.msg.(*lnwire.NodeAnnouncement1).Timestamp
 		}
 
 		// Discard the message if it's old.
@@ -1741,7 +1741,7 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 		return nil
 	}
 
-	// We'll also check that our NodeAnnouncement is not too old.
+	// We'll also check that our NodeAnnouncement1 is not too old.
 	currentNodeAnn := d.cfg.FetchSelfAnnouncement()
 	timestamp := time.Unix(int64(currentNodeAnn.Timestamp), 0)
 	timeElapsed := now.Sub(timestamp)
@@ -1987,7 +1987,7 @@ func (d *AuthenticatedGossiper) fetchPKScript(chanID lnwire.ShortChannelID) (
 
 // addNode processes the given node announcement, and adds it to our channel
 // graph.
-func (d *AuthenticatedGossiper) addNode(msg *lnwire.NodeAnnouncement,
+func (d *AuthenticatedGossiper) addNode(msg *lnwire.NodeAnnouncement1,
 	op ...batch.SchedulerOption) error {
 
 	if err := graph.ValidateNodeAnn(msg); err != nil {
@@ -2091,7 +2091,7 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(ctx context.Context,
 	// A new node announcement has arrived which either presents new
 	// information about a node in one of the channels we know about, or a
 	// updating previously advertised information.
-	case *lnwire.NodeAnnouncement:
+	case *lnwire.NodeAnnouncement1:
 		return d.handleNodeAnnouncement(nMsg, msg, schedulerOp)
 
 	// A new channel announcement has arrived, this indicates the
@@ -2185,7 +2185,7 @@ func (d *AuthenticatedGossiper) processZombieUpdate(ctx context.Context,
 // fetchNodeAnn fetches the latest signed node announcement from our point of
 // view for the node with the given public key.
 func (d *AuthenticatedGossiper) fetchNodeAnn(
-	pubKey [33]byte) (*lnwire.NodeAnnouncement, error) {
+	pubKey [33]byte) (*lnwire.NodeAnnouncement1, error) {
 
 	node, err := d.cfg.Graph.FetchLightningNode(pubKey)
 	if err != nil {
@@ -2524,12 +2524,12 @@ func (d *AuthenticatedGossiper) latestHeight() uint32 {
 
 // handleNodeAnnouncement processes a new node announcement.
 func (d *AuthenticatedGossiper) handleNodeAnnouncement(nMsg *networkMsg,
-	nodeAnn *lnwire.NodeAnnouncement,
+	nodeAnn *lnwire.NodeAnnouncement1,
 	ops []batch.SchedulerOption) ([]networkMsg, bool) {
 
 	timestamp := time.Unix(int64(nodeAnn.Timestamp), 0)
 
-	log.Debugf("Processing NodeAnnouncement: peer=%v, timestamp=%v, "+
+	log.Debugf("Processing NodeAnnouncement1: peer=%v, timestamp=%v, "+
 		"node=%x, source=%x", nMsg.peer, timestamp, nodeAnn.NodeID,
 		nMsg.source.SerializeCompressed())
 
@@ -2588,7 +2588,7 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(nMsg *networkMsg,
 	nMsg.err <- nil
 	// TODO(roasbeef): get rid of the above
 
-	log.Debugf("Processed NodeAnnouncement: peer=%v, timestamp=%v, "+
+	log.Debugf("Processed NodeAnnouncement1: peer=%v, timestamp=%v, "+
 		"node=%x, source=%x", nMsg.peer, timestamp, nodeAnn.NodeID,
 		nMsg.source.SerializeCompressed())
 

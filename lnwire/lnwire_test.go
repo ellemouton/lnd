@@ -1069,7 +1069,7 @@ func TestLightningWireProtocol(t *testing.T) {
 		},
 		MsgNodeAnnouncement: func(v []reflect.Value, r *rand.Rand) {
 			var err error
-			req := NodeAnnouncement{
+			req := NodeAnnouncement1{
 				NodeID:    randRawKey(t),
 				Features:  randRawFeatureVector(r),
 				Timestamp: uint32(r.Int31()),
@@ -1910,7 +1910,7 @@ func TestLightningWireProtocol(t *testing.T) {
 		},
 		{
 			msgType: MsgNodeAnnouncement,
-			scenario: func(m NodeAnnouncement) bool {
+			scenario: func(m NodeAnnouncement1) bool {
 				return mainScenario(&m)
 			},
 		},
