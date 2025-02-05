@@ -88,6 +88,9 @@ type ChannelGraphSource interface {
 
 	// ForEachNode is used to iterate over every node in the known graph.
 	ForEachNode(func(node *models.LightningNode) error) error
+
+	// AddZombieEdge marks the channel with the given ID as a zombie edge.
+	AddZombieEdge(chanID uint64) error
 }
 
 // DB is an interface describing a persisted Lightning Network graph.
