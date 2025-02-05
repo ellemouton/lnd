@@ -131,11 +131,6 @@ type Builder struct {
 	// of our currently known best chain are sent over.
 	staleBlocks <-chan *chainview.FilteredBlock
 
-	// networkUpdates is a channel that carries new topology updates
-	// messages from outside the Builder to be processed by the
-	// networkHandler.
-	networkUpdates chan *routingMsg
-
 	// topologyClients maps a client's unique notification ID to a
 	// topologyClient client that contains its notification dispatch
 	// channel.
@@ -172,7 +167,6 @@ var _ ChannelGraphSource = (*Builder)(nil)
 func NewBuilder(cfg *Config) (*Builder, error) {
 	return &Builder{
 		cfg:               cfg,
-		networkUpdates:    make(chan *routingMsg),
 		topologyClients:   &lnutils.SyncMap[uint64, *topologyClient]{},
 		ntfnClientUpdates: make(chan *topologyClientUpdate),
 		channelEdgeMtx:    multimutex.NewMutex[uint64](),
@@ -666,30 +660,32 @@ func (b *Builder) pruneZombieChans() error {
 
 // handleNetworkUpdate is responsible for processing the update message and
 // notifies topology changes, if any.
-//
-// NOTE: must be run inside goroutine.
-func (b *Builder) handleNetworkUpdate(update *routingMsg) {
-	defer b.wg.Done()
+func (b *Builder) handleNetworkUpdate(msg any,
+	op ...batch.SchedulerOption) error {
+
+	select {
+	case <-b.quit:
+		return ErrGraphBuilderShuttingDown
+	default:
+	}
 
 	// Process the routing update to determine if this is either a new
 	// update from our PoV or an update to a prior vertex/edge we
 	// previously accepted.
 	var err error
-	switch msg := update.msg.(type) {
+	switch msg := msg.(type) {
 	case *models.LightningNode:
-		err = b.addNode(msg, update.op...)
+		err = b.addNode(msg, op...)
 
 	case *models.ChannelEdgeInfo:
-		err = b.addEdge(msg, update.op...)
+		err = b.addEdge(msg, op...)
 
 	case *models.ChannelEdgePolicy:
-		err = b.updateEdge(msg, update.op...)
+		err = b.updateEdge(msg, op...)
 
 	default:
-		err = errors.Errorf("wrong routing update message type")
+		return errors.Errorf("wrong routing update message type")
 	}
-	update.err <- err
-
 	// If the error is not nil here, there's no need to send topology
 	// change.
 	if err != nil {
@@ -701,28 +697,35 @@ func (b *Builder) handleNetworkUpdate(update *routingMsg) {
 			log.Errorf("process network updates got: %v", err)
 		}
 
-		return
+		return err
 	}
 
-	// Otherwise, we'll send off a new notification for the newly accepted
-	// update, if any.
-	topChange := &TopologyChange{}
-	err = addToTopologyChange(b.cfg.Graph, topChange, update.msg)
-	if err != nil {
-		log.Errorf("unable to update topology change notification: %v",
-			err)
-		return
-	}
+	b.wg.Add(1)
+	go func() {
+		defer b.wg.Done()
 
-	if !topChange.isEmpty() {
-		b.notifyTopologyChange(topChange)
-	}
+		// Otherwise, we'll send off a new notification for the newly
+		// accepted update, if any.
+		topChange := &TopologyChange{}
+		err = addToTopologyChange(b.cfg.Graph, topChange, msg)
+		if err != nil {
+			log.Errorf("unable to update topology change "+
+				"notification: %v", err)
+			return
+		}
+
+		if !topChange.isEmpty() {
+			b.notifyTopologyChange(topChange)
+		}
+	}()
+
+	return nil
 }
 
 // networkHandler is the primary goroutine for the Builder. The roles of
 // this goroutine include answering queries related to the state of the
-// network, pruning the graph on new block notification, applying network
-// updates, and registering new topology clients.
+// network, pruning the graph on new block notification and registering new
+// topology clients.
 //
 // NOTE: This MUST be run as a goroutine.
 func (b *Builder) networkHandler() {
@@ -742,17 +745,6 @@ func (b *Builder) networkHandler() {
 		}
 
 		select {
-		// A new fully validated network update has just arrived. As a
-		// result we'll modify the channel graph accordingly depending
-		// on the exact type of the message.
-		case update := <-b.networkUpdates:
-			b.wg.Add(1)
-			go b.handleNetworkUpdate(update)
-
-			// TODO(roasbeef): remove all unconnected vertexes
-			// after N blocks pass with no corresponding
-			// announcements.
-
 		case chainUpdate, ok := <-b.staleBlocks:
 			// If the channel has been closed, then this indicates
 			// the daemon is shutting down, so we exit ourselves.
@@ -1107,14 +1099,6 @@ func makeFundingScript(bitcoinKey1, bitcoinKey2 []byte, chanFeatures []byte,
 	return legacyFundingScript()
 }
 
-// routingMsg couples a routing related routing topology update to the
-// error channel.
-type routingMsg struct {
-	msg interface{}
-	op  []batch.SchedulerOption
-	err chan error
-}
-
 // ApplyChannelUpdate validates a channel update and if valid, applies it to the
 // database. It returns a bool indicating whether the updates were successful.
 func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
@@ -1176,23 +1160,7 @@ func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 func (b *Builder) AddNode(node *models.LightningNode,
 	op ...batch.SchedulerOption) error {
 
-	rMsg := &routingMsg{
-		msg: node,
-		op:  op,
-		err: make(chan error, 1),
-	}
-
-	select {
-	case b.networkUpdates <- rMsg:
-		select {
-		case err := <-rMsg.err:
-			return err
-		case <-b.quit:
-			return ErrGraphBuilderShuttingDown
-		}
-	case <-b.quit:
-		return ErrGraphBuilderShuttingDown
-	}
+	return b.handleNetworkUpdate(node, op...)
 }
 
 // addNode does some basic checks on the given LightningNode against what we
@@ -1229,23 +1197,7 @@ func (b *Builder) addNode(node *models.LightningNode,
 func (b *Builder) AddEdge(edge *models.ChannelEdgeInfo,
 	op ...batch.SchedulerOption) error {
 
-	rMsg := &routingMsg{
-		msg: edge,
-		op:  op,
-		err: make(chan error, 1),
-	}
-
-	select {
-	case b.networkUpdates <- rMsg:
-		select {
-		case err := <-rMsg.err:
-			return err
-		case <-b.quit:
-			return ErrGraphBuilderShuttingDown
-		}
-	case <-b.quit:
-		return ErrGraphBuilderShuttingDown
-	}
+	return b.handleNetworkUpdate(edge, op...)
 }
 
 // addEdge does some validation on the new channel edge against what we
@@ -1431,23 +1383,7 @@ func (b *Builder) addEdge(edge *models.ChannelEdgeInfo,
 func (b *Builder) UpdateEdge(update *models.ChannelEdgePolicy,
 	op ...batch.SchedulerOption) error {
 
-	rMsg := &routingMsg{
-		msg: update,
-		op:  op,
-		err: make(chan error, 1),
-	}
-
-	select {
-	case b.networkUpdates <- rMsg:
-		select {
-		case err := <-rMsg.err:
-			return err
-		case <-b.quit:
-			return ErrGraphBuilderShuttingDown
-		}
-	case <-b.quit:
-		return ErrGraphBuilderShuttingDown
-	}
+	return b.handleNetworkUpdate(update, op...)
 }
 
 // updateEdge validates the new edge policy against what we currently have
