@@ -7,6 +7,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcwallet/chain"
 	"github.com/btcsuite/btcwallet/waddrmgr"
+	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -15,8 +16,12 @@ type MockChain struct {
 	mock.Mock
 }
 
-// Compile-time constraint to ensure MockChain implements the Chain interface.
-var _ chain.Interface = (*MockChain)(nil)
+// Compile-time constraints to ensure MockChain implements the Chain and
+// lnwallet.BlockChainIO interfaces.
+var (
+	_ chain.Interface       = (*MockChain)(nil)
+	_ lnwallet.BlockChainIO = (*MockChain)(nil)
+)
 
 func (m *MockChain) Start() error {
 	args := m.Called()
@@ -72,6 +77,18 @@ func (m *MockChain) GetBlockHeader(hash *chainhash.Hash) (
 	}
 
 	return args.Get(0).(*wire.BlockHeader), args.Error(1)
+}
+
+func (m *MockChain) GetUtxo(op *wire.OutPoint, pkScript []byte,
+	heightHint uint32, cancel <-chan struct{}) (*wire.TxOut, error) {
+
+	args := m.Called(op, pkScript, heightHint, cancel)
+
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+
+	return args.Get(0).(*wire.TxOut), args.Error(1)
 }
 
 func (m *MockChain) IsCurrent() bool {

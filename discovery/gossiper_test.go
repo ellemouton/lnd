@@ -29,6 +29,7 @@ import (
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/keychain"
+	"github.com/lightningnetwork/lnd/lnmock"
 	"github.com/lightningnetwork/lnd/lnpeer"
 	"github.com/lightningnetwork/lnd/lntest/mock"
 	"github.com/lightningnetwork/lnd/lntest/wait"
@@ -37,6 +38,7 @@ import (
 	"github.com/lightningnetwork/lnd/netann"
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/ticker"
+	tmock "github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -634,32 +636,20 @@ func signUpdate(nodeKey *btcec.PrivateKey, a *lnwire.ChannelUpdate1) error {
 	return nil
 }
 
-// edgeCreationModifier is an enum-like type used to modify steps that are
-// skipped when creating a channel in the test context.
-type edgeCreationModifier uint8
+type fundingTxMockChainPrep int
 
 const (
-	// edgeCreationNormal is the default edge creation modifier that
-	// doesn't skip any steps.
-	edgeCreationNormal edgeCreationModifier = iota //nolint:unused
-
-	// edgeCreationNoFundingTx is used to skip adding the funding
-	// transaction of an edge to the chain.
-	edgeCreationNoFundingTx
-
-	// edgeCreationSpentUTXO is used to skip adding the UTXO of a channel to
-	// the UTXO set.
-	edgeCreationSpentUTXO
-
-	// edgeCreationBadScript is used to create the edge, but use the wrong
-	// scrip which should cause it to fail output validation.
-	edgeCreationBadScript
+	txMockChainPrepGood fundingTxMockChainPrep = iota
+	txMockChainPrepNone
+	txMockChainPrepInvalidOutput
+	txPrepNoFundingTx
+	txSpentModifier
 )
 
 type edgeCreationOpts struct {
-	extraBytes []byte
-	value      btcutil.Amount
-	modifier   edgeCreationModifier
+	extraBytes     []byte
+	value          btcutil.Amount
+	txPrepModifier fundingTxMockChainPrep
 }
 
 type edgeCreationOption func(*edgeCreationOpts)
@@ -676,10 +666,55 @@ func withValue(value btcutil.Amount) edgeCreationOption {
 	}
 }
 
-func withModifier(modifier edgeCreationModifier) edgeCreationOption {
+func withChainPrepModifier(prep fundingTxMockChainPrep) edgeCreationOption {
 	return func(opts *edgeCreationOpts) {
-		opts.modifier = modifier
+		opts.txPrepModifier = prep
 	}
+}
+
+type fundingTxInfo struct {
+	chanUtxo     *wire.OutPoint
+	fundingBlock *wire.MsgBlock
+	fundingTx    *wire.TxOut
+}
+
+func makeFundingTxInBlock(t *testing.T, value btcutil.Amount) *fundingTxInfo {
+	fundingTx := wire.NewMsgTx(2)
+	_, tx, err := input.GenFundingPkScript(
+		bitcoinKeyPub1.SerializeCompressed(),
+		bitcoinKeyPub2.SerializeCompressed(),
+		int64(value),
+	)
+	require.NoError(t, err)
+
+	fundingTx.TxOut = append(fundingTx.TxOut, tx)
+	chanUtxo := &wire.OutPoint{
+		Hash:  fundingTx.TxHash(),
+		Index: 0,
+	}
+
+	block := &wire.MsgBlock{
+		Transactions: []*wire.MsgTx{fundingTx},
+	}
+
+	return &fundingTxInfo{
+		chanUtxo:     chanUtxo,
+		fundingBlock: block,
+		fundingTx:    tx,
+	}
+	//
+	//if opts.modifier != edgeCreationSpentUTXO {
+	//	ctx.chain.addUtxo(chanUtxo, tx)
+	//} else {
+	//	ctx.chain.spendUtxo(chanUtxo)
+	//}
+	//
+	//var fundingBlock wire.MsgBlock
+	//if opts.modifier != edgeCreationBadScript {
+	//	fundingBlock.Transactions = []*wire.MsgTx{fundingTx}
+	//} else {
+	//	fundingBlock.Transactions = []*wire.MsgTx{{}}
+	//}
 }
 
 func (ctx *testCtx) createAnnouncementWithoutProof(blockHeight uint32,
@@ -693,36 +728,52 @@ func (ctx *testCtx) createAnnouncementWithoutProof(blockHeight uint32,
 		opt(opts)
 	}
 
-	fundingTx := wire.NewMsgTx(2)
-	_, tx, err := input.GenFundingPkScript(
-		bitcoinKeyPub1.SerializeCompressed(),
-		bitcoinKeyPub2.SerializeCompressed(),
-		int64(opts.value),
-	)
-	require.NoError(ctx.t, err)
+	switch opts.txPrepModifier {
+	case txMockChainPrepGood:
+		ctx.prepGoodFundingTx(blockHeight, opts.value)
 
-	fundingTx.TxOut = append(fundingTx.TxOut, tx)
-	chanUtxo := wire.OutPoint{
-		Hash:  fundingTx.TxHash(),
-		Index: 0,
+	case txMockChainPrepInvalidOutput:
+		ctx.prepInvalidFundingOutput(blockHeight)
+
+	case txSpentModifier:
+		ctx.prepSpentFundingOutput(blockHeight)
+
+	case txPrepNoFundingTx:
+		ctx.prepNoFundingTx(blockHeight)
+
+	default:
 	}
 
-	if opts.modifier != edgeCreationSpentUTXO {
-		ctx.chain.addUtxo(chanUtxo, tx)
-	} else {
-		ctx.chain.spendUtxo(chanUtxo)
-	}
-
-	var fundingBlock wire.MsgBlock
-	if opts.modifier != edgeCreationBadScript {
-		fundingBlock.Transactions = []*wire.MsgTx{fundingTx}
-	} else {
-		fundingBlock.Transactions = []*wire.MsgTx{{}}
-	}
-
-	if opts.modifier != edgeCreationNoFundingTx {
-		ctx.chain.addBlock(&fundingBlock, blockHeight, blockHeight)
-	}
+	//fundingTx := wire.NewMsgTx(2)
+	//_, tx, err := input.GenFundingPkScript(
+	//	bitcoinKeyPub1.SerializeCompressed(),
+	//	bitcoinKeyPub2.SerializeCompressed(),
+	//	int64(opts.value),
+	//)
+	//require.NoError(ctx.t, err)
+	//
+	//fundingTx.TxOut = append(fundingTx.TxOut, tx)
+	//chanUtxo := wire.OutPoint{
+	//	Hash:  fundingTx.TxHash(),
+	//	Index: 0,
+	//}
+	//
+	//if opts.modifier != edgeCreationSpentUTXO {
+	//	ctx.chain.addUtxo(chanUtxo, tx)
+	//} else {
+	//	ctx.chain.spendUtxo(chanUtxo)
+	//}
+	//
+	//var fundingBlock wire.MsgBlock
+	//if opts.modifier != edgeCreationBadScript {
+	//	fundingBlock.Transactions = []*wire.MsgTx{fundingTx}
+	//} else {
+	//	fundingBlock.Transactions = []*wire.MsgTx{{}}
+	//}
+	//
+	//if opts.modifier != edgeCreationNoFundingTx {
+	//	ctx.chain.addBlock(&fundingBlock, blockHeight, blockHeight)
+	//}
 
 	a := &lnwire.ChannelAnnouncement1{
 		ShortChannelID: lnwire.ShortChannelID{
@@ -747,6 +798,51 @@ func (ctx *testCtx) createRemoteChannelAnnouncement(blockHeight uint32,
 	return ctx.createChannelAnnouncement(
 		blockHeight, remoteKeyPriv1, remoteKeyPriv2, opts...,
 	)
+}
+
+func (ctx *testCtx) prepGoodFundingTx(height uint32, value btcutil.Amount) {
+	info := makeFundingTxInBlock(ctx.t, value)
+
+	ctx.chain.On("GetBlockHash", int64(height)).
+		Return(&chainhash.Hash{}, nil).Once()
+
+	ctx.chain.On("GetBlock", tmock.Anything).
+		Return(info.fundingBlock, nil).Once()
+
+	ctx.chain.On(
+		"GetUtxo", tmock.Anything, tmock.Anything, tmock.Anything,
+		tmock.Anything,
+	).Return(info.fundingTx, nil).Once()
+}
+
+func (ctx *testCtx) prepInvalidFundingOutput(height uint32) {
+	ctx.chain.On("GetBlockHash", int64(height)).
+		Return(&chainhash.Hash{}, nil).Once()
+	ctx.chain.On("GetBlock", tmock.Anything).
+		Return(
+			&wire.MsgBlock{Transactions: []*wire.MsgTx{{}}}, nil,
+		).Once()
+}
+
+func (ctx *testCtx) prepSpentFundingOutput(height uint32) {
+	info := makeFundingTxInBlock(ctx.t, 101)
+	ctx.chain.On("GetBlockHash", int64(height)).Return(
+		&chainhash.Hash{}, nil,
+	).Once()
+	ctx.chain.On("GetBlock", tmock.Anything).Return(
+		info.fundingBlock, nil,
+	).Once()
+	ctx.chain.On("GetUtxo", tmock.Anything, tmock.Anything, tmock.Anything,
+		tmock.Anything).Return(nil, btcwallet.ErrOutputSpent)
+}
+
+func (ctx *testCtx) prepNoFundingTx(height uint32) {
+	ctx.chain.On("GetBlockHash", int64(height)).Return(
+		&chainhash.Hash{}, nil,
+	).Once()
+	ctx.chain.On("GetBlock", tmock.Anything).Return(
+		nil, fmt.Errorf("block not found"),
+	).Once()
 }
 
 func (ctx *testCtx) createChannelAnnouncement(blockHeight uint32, key1,
@@ -812,7 +908,7 @@ type testCtx struct {
 	router             *mockGraphSource
 	notifier           *mockNotifier
 	broadcastedMessage chan msgWithSenders
-	chain              *mockChain
+	chain              *lnmock.MockChain
 }
 
 func createTestCtx(t *testing.T, startHeight uint32, isChanPeer bool) (
@@ -824,7 +920,10 @@ func createTestCtx(t *testing.T, startHeight uint32, isChanPeer bool) (
 	// broadcast functions won't be populated.
 	notifier := newMockNotifier()
 	router := newMockRouter(startHeight)
-	chain := newMockChain(startHeight)
+	chain := &lnmock.MockChain{}
+	t.Cleanup(func() {
+		chain.AssertExpectations(t)
+	})
 
 	db := channeldb.OpenForTesting(t, t.TempDir())
 
@@ -1071,7 +1170,9 @@ func TestPrematureAnnouncement(t *testing.T) {
 	// remote side, but block height of this announcement is greater than
 	// highest know to us, for that reason it should be ignored and not
 	// added to the router.
-	ca, err := ctx.createRemoteChannelAnnouncement(1)
+	ca, err := ctx.createRemoteChannelAnnouncement(
+		1, withChainPrepModifier(txMockChainPrepNone),
+	)
 	require.NoError(t, err, "can't create channel announcement")
 
 	select {
@@ -1896,7 +1997,7 @@ func TestDeDuplicatedAnnouncements(t *testing.T) {
 
 	// Ensure that remote channel announcements are properly stored
 	// and de-duplicated.
-	ca, err := ctx.createRemoteChannelAnnouncement(0)
+	ca, err := ctx.createRemoteChannelAnnouncement(0, withChainPrepModifier(txMockChainPrepNone))
 	require.NoError(t, err, "can't create remote channel announcement")
 
 	nodePeer := &mockPeer{bitcoinKeyPub2, nil, nil, atomic.Bool{}}
@@ -1912,7 +2013,7 @@ func TestDeDuplicatedAnnouncements(t *testing.T) {
 	// We'll create a second instance of the same announcement with the
 	// same channel ID. Adding this shouldn't cause an increase in the
 	// number of items as they should be de-duplicated.
-	ca2, err := ctx.createRemoteChannelAnnouncement(0)
+	ca2, err := ctx.createRemoteChannelAnnouncement(0, withChainPrepModifier(txMockChainPrepNone))
 	require.NoError(t, err, "can't create remote channel announcement")
 	announcements.AddMsgs(networkMsg{
 		msg:    ca2,
@@ -3679,9 +3780,11 @@ func TestProcessChannelAnnouncementOptionalMsgFields(t *testing.T) {
 
 	chanAnn1 := ctx.createAnnouncementWithoutProof(
 		100, selfKeyDesc.PubKey, remoteKeyPub1,
+		withChainPrepModifier(txMockChainPrepNone),
 	)
 	chanAnn2 := ctx.createAnnouncementWithoutProof(
 		101, selfKeyDesc.PubKey, remoteKeyPub1,
+		withChainPrepModifier(txMockChainPrepNone),
 	)
 
 	// assertOptionalMsgFields is a helper closure that ensures the optional
@@ -4314,7 +4417,7 @@ func TestChanAnnBanningNonChanPeer(t *testing.T) {
 		// have. We will ensure that it fails validation by modifying
 		// the tx script.
 		ca, err := ctx.createRemoteChannelAnnouncement(
-			height, withModifier(edgeCreationBadScript),
+			height, withChainPrepModifier(txMockChainPrepInvalidOutput),
 		)
 		require.NoError(t, err, "can't create channel announcement")
 
@@ -4338,7 +4441,7 @@ func TestChanAnnBanningNonChanPeer(t *testing.T) {
 	// Mark the UTXO as spent so that we get the ErrChannelSpent error and
 	// can thus tests that the gossiper ignores closed channels.
 	ca, err := ctx.createRemoteChannelAnnouncement(
-		101, withModifier(edgeCreationSpentUTXO), withValue(10001),
+		101, withValue(10001), withChainPrepModifier(txSpentModifier),
 	)
 	require.NoError(t, err)
 
@@ -4374,7 +4477,9 @@ func TestChanAnnBanningNonChanPeer(t *testing.T) {
 	// Create the same announcement again but this time with no modifiers
 	// that would cause validation failure. We do, however, still expect
 	// an error later on since the channel is already closed.
-	ca, err = ctx.createRemoteChannelAnnouncement(101, withValue(10001))
+	ca, err = ctx.createRemoteChannelAnnouncement(
+		101, withValue(10001), withChainPrepModifier(txMockChainPrepNone),
+	)
 	require.NoError(t, err)
 
 	select {
@@ -4404,7 +4509,7 @@ func TestChanAnnBanningChanPeer(t *testing.T) {
 		// have. We will ensure that it fails validation by modifying
 		// the router.
 		ca, err := ctx.createRemoteChannelAnnouncement(
-			height, withModifier(edgeCreationBadScript),
+			height, withChainPrepModifier(txMockChainPrepInvalidOutput),
 		)
 		require.NoError(t, err, "can't create channel announcement")
 
@@ -4439,7 +4544,8 @@ func TestChannelOnChainRejectionZombie(t *testing.T) {
 	// funding transaction to the mock blockchain, which should cause the
 	// validation to fail below.
 	chanAnn, err := ctx.createRemoteChannelAnnouncement(
-		1, withModifier(edgeCreationNoFundingTx), withValue(1000),
+		1, withValue(1000),
+		withChainPrepModifier(txPrepNoFundingTx),
 	)
 	require.NoError(t, err)
 
@@ -4450,7 +4556,7 @@ func TestChannelOnChainRejectionZombie(t *testing.T) {
 	// Next, we'll make another channel edge, but actually add it to the
 	// graph this time.
 	chanAnn, err = ctx.createRemoteChannelAnnouncement(
-		2, withModifier(edgeCreationSpentUTXO), withValue(10001),
+		2, withValue(10001), withChainPrepModifier(txSpentModifier),
 	)
 	require.NoError(t, err)
 
@@ -4461,7 +4567,8 @@ func TestChannelOnChainRejectionZombie(t *testing.T) {
 	// If we cause the funding transaction the chain to fail validation, we
 	// should see similar behavior.
 	chanAnn, err = ctx.createRemoteChannelAnnouncement(
-		3, withModifier(edgeCreationBadScript), withValue(10002),
+		3, withValue(10002),
+		withChainPrepModifier(txMockChainPrepInvalidOutput),
 	)
 	require.NoError(t, err)
 	assertChanChainRejection(t, ctx, chanAnn, ErrInvalidFundingOutput)
