@@ -257,6 +257,9 @@ The underlying functionality between those two options remain the same.
 
 * Log rotation can now use ZSTD
 
+* Remove redundant iteration over a node's persisted channels when updating the
+  graph cache with a new node or node update.
+
 ## Deprecations
 
 ### ⚠️ **Warning:** The following RPCs will be removed in release version **0.21**:
