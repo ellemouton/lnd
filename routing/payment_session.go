@@ -1,11 +1,13 @@
 package routing
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btclog/v2"
 	"github.com/lightningnetwork/lnd/channeldb"
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnutils"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -295,13 +297,13 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 		maxAmt = *p.payment.MaxShardAmt
 	}
 
-	for {
-		// Get a routing graph session.
-		graph, closeGraph, err := p.graphSessFactory.NewGraphSession()
-		if err != nil {
-			return nil, err
-		}
-
+	var (
+		// errPathFinding is used to distinguish path finding errors
+		// from other errors in the below findPath closure.
+		errPathFinding = fmt.Errorf("path finding error")
+		path           []*unifiedEdge
+	)
+	findPath := func(graph graphdb.CachedGraph) error {
 		// We'll also obtain a set of bandwidthHints from the lower
 		// layer for each of our outbound channels. This will allow the
 		// path finding to skip any links that aren't active or just
@@ -310,19 +312,13 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 		// attempt, because concurrent payments may change balances.
 		bandwidthHints, err := p.getBandwidthHints(graph)
 		if err != nil {
-			// Close routing graph session.
-			if graphErr := closeGraph(); graphErr != nil {
-				log.Errorf("could not close graph session: %v",
-					graphErr)
-			}
-
-			return nil, err
+			return err
 		}
 
 		p.log.Debugf("pathfinding for amt=%v", maxAmt)
 
 		// Find a route for the current amount.
-		path, _, err := p.pathFinder(
+		path, _, err = p.pathFinder(
 			&graphParams{
 				additionalEdges: p.additionalEdges,
 				bandwidthHints:  bandwidthHints,
@@ -332,14 +328,38 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 			p.selfNode, p.selfNode, p.payment.Target,
 			maxAmt, p.payment.TimePref, finalHtlcExpiry,
 		)
-
-		// Close routing graph session.
-		if err := closeGraph(); err != nil {
-			log.Errorf("could not close graph session: %v", err)
+		if err != nil {
+			// Wrap the error to distinguish path finding errors
+			// from other errors in this closure.
+			return fmt.Errorf("%w: %w", errPathFinding, err)
 		}
 
+		return nil
+	}
+
+	for {
+		// Get a routing graph session.
+		graph, closeGraph, err := p.graphSessFactory.NewGraphSession()
+		if err != nil {
+			return nil, err
+		}
+
+		err = findPath(graph)
+		// First, close routing graph session.
+		// NOTE: this will be removed in an upcoming commit.
+		if graphErr := closeGraph(); graphErr != nil {
+			log.Errorf("could not close graph session: %v",
+				graphErr)
+		}
+		// If there is an error, and it is not a path finding error, we
+		// return it immediately.
+		if err != nil && !errors.Is(err, errPathFinding) {
+			return nil, err
+		}
+
+		// Otherwise, we'll switch on the path finding error.
 		switch {
-		case err == errNoPathFound:
+		case errors.Is(err, errNoPathFound):
 			// Don't split if this is a legacy payment without mpp
 			// record. If it has a blinded path though, then we
 			// can split. Split payments to blinded paths won't have
@@ -400,7 +420,7 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 		// splitting. It won't be possible to create a complete set in
 		// any case, but the sent out partial payments would be held by
 		// the receiver until the mpp timeout.
-		case err == errInsufficientBalance:
+		case errors.Is(err, errInsufficientBalance):
 			p.log.Debug("not splitting because local balance " +
 				"is insufficient")
 
