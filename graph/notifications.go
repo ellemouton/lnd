@@ -83,14 +83,25 @@ func (b *Builder) SubscribeTopology() (*TopologyClient, error) {
 	return &TopologyClient{
 		TopologyChanges: ntfnChan,
 		Cancel: func() {
+			// Send the cancellation request.
+			cancelChan := make(chan *TopologyChange)
 			select {
 			case b.ntfnClientUpdates <- &topologyClientUpdate{
 				cancel:   true,
 				clientID: clientID,
+				ntfnChan: cancelChan,
 			}:
 			case <-b.quit:
 				return
 			}
+
+			// Block until the cancellation is complete.
+			select {
+			case <-cancelChan:
+			case <-b.quit:
+			}
+
+			return
 		},
 	}, nil
 }
