@@ -338,19 +338,7 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 	}
 
 	for {
-		// Get a routing graph session.
-		graph, closeGraph, err := p.graphSessFactory.NewGraphSession()
-		if err != nil {
-			return nil, err
-		}
-
-		err = findPath(graph)
-		// First, close routing graph session.
-		// NOTE: this will be removed in an upcoming commit.
-		if graphErr := closeGraph(); graphErr != nil {
-			log.Errorf("could not close graph session: %v",
-				graphErr)
-		}
+		err := p.graphSessFactory.GraphSession(findPath)
 		// If there is an error, and it is not a path finding error, we
 		// return it immediately.
 		if err != nil && !errors.Is(err, errPathFinding) {
