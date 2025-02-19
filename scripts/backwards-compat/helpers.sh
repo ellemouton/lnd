@@ -3,27 +3,27 @@
 BOB=bob
 
 function bitcoin() {
-  docker exec -ti -u bitcoin bitcoind bitcoin-cli -regtest -rpcuser=lightning -rpcpassword=lightning "$@"
+  docker exec -i -u bitcoin bitcoind bitcoin-cli -regtest -rpcuser=lightning -rpcpassword=lightning "$@"
 }
 
 function alice() {
-  docker exec -ti alice lncli --network regtest "$@"
+  docker exec -i alice lncli --network regtest "$@"
 }
 
 function bob() {
-  docker exec -ti bob lncli --network regtest "$@"
+  docker exec -i bob lncli --network regtest "$@"
 }
 
 function bob2() {
-  docker exec -ti bob2 lncli --network regtest "$@"
+  docker exec -i bob2 lncli --network regtest "$@"
 }
 
 function charlie() {
-  docker exec -ti charlie lncli --network regtest "$@"
+  docker exec -i charlie lncli --network regtest "$@"
 }
 
 function dave() {
-  docker exec -ti dave lncli --network regtest "$@"
+  docker exec -i dave lncli --network regtest "$@"
 }
 
 function setup() {
@@ -40,8 +40,6 @@ function setup() {
   connect_nodes
 
   mine
-
-  sleep 10
 
   ALICE=$(alice getinfo | jq .identity_pubkey -r)
   BOB_KEY=$( $BOB getinfo | jq .identity_pubkey -r)

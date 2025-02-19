@@ -6,11 +6,14 @@ set -e
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/helpers.sh"
 
-COMPOSE="docker-compose -f $DIR/network.yaml -p regtest"
+COMPOSE_ARGS="-f $DIR/network.yaml -p regtest"
+
+which docker-compose &&
+  COMPOSE="docker-compose" || COMPOSE="docker compose"
 
 # Spin up the network. The `-d` means it is spun up in detached mode
 # and so ensures that the script doesn't get stuck.
-$COMPOSE up -d
+$COMPOSE $COMPOSE_ARGS up -d
 
 # Wait for nodes to start.
 echo "waiting for nodes to start"
@@ -19,6 +22,7 @@ for container in alice $BOB charlie dave; do
   while ! $container getinfo | grep -q identity_pubkey; do
     sleep 1
   done
+  echo "$container has started"
 done
 echo "all nodes are started"
 
@@ -66,10 +70,11 @@ alice payinvoice --force "$PAY_REQ" > /dev/null
 echo "Bob can route!"
 
 # Stop this version of Bob.
-$COMPOSE stop bob
+$COMPOSE $COMPOSE_ARGS stop bob
 
 # Merge the two compose files such that Bob is now running local version.
-docker-compose -f $DIR/network.yaml -f $DIR/network2.yaml -p regtest up -d bob2
+COMPOSE_ARGS="-f $DIR/network.yaml -f $DIR/network2.yaml -p regtest"
+$COMPOSE $COMPOSE_ARGS up -d bob2
 
 # Update the BOB variable to point to the new Bob.
 BOB=bob2
@@ -125,4 +130,4 @@ PAY_REQ=$(dave addinvoice 10000 | jq .payment_request -r)
 alice payinvoice --force "$PAY_REQ" > /dev/null
 echo "Bob can still route!"
 
-$COMPOSE down --volumes --remove-orphans
+$COMPOSE $COMPOSE_ARGS down --volumes --remove-orphans
