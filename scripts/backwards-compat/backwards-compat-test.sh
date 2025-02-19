@@ -3,9 +3,10 @@
 # stop the script if an error is returned
 set -e
 
-COMPOSE="docker-compose -f network.yaml -p regtest"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$DIR/helpers.sh"
 
-source "./helpers.sh"
+COMPOSE="docker-compose -f $DIR/network.yaml -p regtest"
 
 # Spin up the network. The `-d` means it is spun up in detached mode
 # and so ensures that the script doesn't get stuck.
@@ -68,7 +69,7 @@ echo "Bob can route!"
 $COMPOSE stop bob
 
 # Merge the two compose files such that Bob is now running local version.
-docker-compose -f network.yaml -f network2.yaml -p regtest up -d bob2
+docker-compose -f $DIR/network.yaml -f $DIR/network2.yaml -p regtest up -d bob2
 
 # Update the BOB variable to point to the new Bob.
 BOB=bob2

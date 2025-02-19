@@ -363,6 +363,11 @@ help: Makefile
 	@$(call print, "Listing commands:")
 	@sed -n 's/^#?//p' $< | column -t -s ':' |  sort | sed -e 's/^/ /'
 
+backwards-compat-test:
+	@$(call print, "Running backwards compatability test")
+	./scripts/backwards-compat/backwards-compat-test.sh
+
+
 #? sqlc: Generate sql models and queries in Go
 sqlc:
 	@$(call print, "Generating sql models and queries in Go")
