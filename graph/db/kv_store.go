@@ -132,8 +132,8 @@ var (
 	//
 	// The chanID represents the channel ID of the edge and the direction is
 	// one byte representing the direction of the edge. The main purpose of
-	// this index is to allow pruning disabled channels in a fast way without
-	// the need to iterate all over the graph.
+	// this index is to allow pruning disabled channels in a fast way
+	// without the need to iterate all over the graph.
 	disabledEdgePolicyBucket = []byte("disabled-edge-policy-index")
 
 	// graphMetaBucket is a top-level bucket which stores various meta-deta
@@ -308,7 +308,7 @@ func (c *KVStore) getChannelMap(edges kvdb.RBucket) (
 		switch {
 		// If the db policy was missing an expected optional field, we
 		// return nil as if the policy was unknown.
-		case err == ErrEdgePolicyOptionalFieldNotFound:
+		case errors.Is(err, ErrEdgePolicyOptionalFieldNotFound):
 			return nil
 
 		case err != nil:
@@ -340,7 +340,9 @@ func (c *KVStore) Wipe() error {
 	err := kvdb.Update(c.db, func(tx kvdb.RwTx) error {
 		for _, tlb := range graphTopLevelBuckets {
 			err := tx.DeleteTopLevelBucket(tlb)
-			if err != nil && err != kvdb.ErrBucketNotFound {
+			if err != nil &&
+				!errors.Is(err, kvdb.ErrBucketNotFound) {
+
 				return err
 			}
 		}
@@ -550,6 +552,7 @@ func (c *KVStore) forEachNodeDirectedChannel(tx kvdb.RTx,
 
 		return cb(directedChannel)
 	}
+
 	return nodeTraversal(tx, node[:], c.db, dbCallback)
 }
 
@@ -565,14 +568,14 @@ func (c *KVStore) fetchNodeFeatures(tx kvdb.RTx,
 
 	// Fallback that uses the database.
 	targetNode, err := c.FetchLightningNodeTx(tx, node)
-	switch err {
+	switch {
 	// If the node exists and has features, return them directly.
-	case nil:
+	case err == nil:
 		return targetNode.Features, nil
 
 	// If we couldn't find a node announcement, populate a blank feature
 	// vector.
-	case ErrGraphNodeNotFound:
+	case errors.Is(err, ErrGraphNodeNotFound):
 		return lnwire.EmptyFeatureVector(), nil
 
 	// Otherwise, bubble the error up.
@@ -915,7 +918,7 @@ func (c *KVStore) SetSourceNode(node *models.LightningNode) error {
 // already present node from a node announcement, or to insert a node found in a
 // channel update.
 //
-// TODO(roasbeef): also need sig of announcement
+// TODO(roasbeef): also need sig of announcement.
 func (c *KVStore) AddLightningNode(node *models.LightningNode,
 	op ...batch.SchedulerOption) error {
 
@@ -1076,7 +1079,7 @@ func (c *KVStore) AddChannelEdge(edge *models.ChannelEdgeInfo,
 
 			// Silence ErrEdgeAlreadyExist so that the batch can
 			// succeed, but propagate the error via local state.
-			if err == ErrEdgeAlreadyExist {
+			if errors.Is(err, ErrEdgeAlreadyExist) {
 				alreadyExists = true
 				return nil
 			}
@@ -1150,7 +1153,7 @@ func (c *KVStore) addChannelEdge(tx kvdb.RwTx,
 	// public key, so subsequent validation and queries can work properly.
 	_, node1Err := fetchLightningNode(nodes, edge.NodeKey1Bytes[:])
 	switch {
-	case node1Err == ErrGraphNodeNotFound:
+	case errors.Is(node1Err, ErrGraphNodeNotFound):
 		node1Shell := models.LightningNode{
 			PubKeyBytes:          edge.NodeKey1Bytes,
 			HaveNodeAnnouncement: false,
@@ -1689,6 +1692,7 @@ func (c *KVStore) DisconnectBlockAtHeight(height uint32) (
 		//nolint:ll
 		for k, v := cursor.Seek(chanIDStart[:]); k != nil &&
 			bytes.Compare(k, chanIDEnd[:]) < 0; k, v = cursor.Next() {
+
 			edgeInfoReader := bytes.NewReader(v)
 			edgeInfo, err := deserializeChanEdgeInfo(edgeInfoReader)
 			if err != nil {
@@ -1791,8 +1795,8 @@ func (c *KVStore) PruneTip() (*chainhash.Hash, uint32, error) {
 
 		// Once we have the prune tip, the value will be the block hash,
 		// and the key the block height.
-		copy(tipHash[:], v[:])
-		tipHeight = byteOrder.Uint32(k[:])
+		copy(tipHash[:], v)
+		tipHeight = byteOrder.Uint32(k)
 
 		return nil
 	}, func() {})
@@ -1950,7 +1954,7 @@ func (c *KVStore) HighestChanID() (uint64, error) {
 	}, func() {
 		cid = 0
 	})
-	if err != nil && err != ErrGraphNoEdgesFound {
+	if err != nil && !errors.Is(err, ErrGraphNoEdgesFound) {
 		return 0, err
 	}
 
@@ -2035,7 +2039,6 @@ func (c *KVStore) ChanUpdatesInHorizon(startTime,
 		//nolint:ll
 		for indexKey, _ := updateCursor.Seek(startTimeBytes[:]); indexKey != nil &&
 			bytes.Compare(indexKey, endTimeBytes[:]) <= 0; indexKey, _ = updateCursor.Next() {
-
 			// We have a new eligible entry, so we'll slice of the
 			// chan ID so we can query it in the DB.
 			chanID := indexKey[8:]
@@ -2170,7 +2173,6 @@ func (c *KVStore) NodeUpdatesInHorizon(startTime,
 		//nolint:ll
 		for indexKey, _ := updateCursor.Seek(startTimeBytes[:]); indexKey != nil &&
 			bytes.Compare(indexKey, endTimeBytes[:]) <= 0; indexKey, _ = updateCursor.Next() {
-
 			nodePub := indexKey[8:]
 			node, err := fetchLightningNode(nodes, nodePub)
 			if err != nil {
@@ -2990,7 +2992,7 @@ func (c *KVStore) isPublic(tx kvdb.RTx, nodePub route.Vertex,
 		// Otherwise, we'll continue our search.
 		return nil
 	})
-	if err != nil && err != errDone {
+	if err != nil && !errors.Is(err, errDone) {
 		return false, err
 	}
 
@@ -3936,8 +3938,8 @@ func (c *nodeTraverserSession) FetchNodeFeatures(nodePub route.Vertex) (
 	return c.db.fetchNodeFeatures(c.tx, nodePub)
 }
 
-func putLightningNode(nodeBucket kvdb.RwBucket, aliasBucket kvdb.RwBucket, // nolint:dupl
-	updateIndex kvdb.RwBucket, node *models.LightningNode) error {
+func putLightningNode(nodeBucket, aliasBucket, updateIndex kvdb.RwBucket,
+	node *models.LightningNode) error {
 
 	var (
 		scratch [16]byte
@@ -4415,7 +4417,7 @@ func putChanEdgePolicy(edges kvdb.RwBucket, edge *models.ChannelEdgePolicy,
 	// An unknown policy value does not have a update time recorded, so
 	// it also does not need to be removed.
 	if edgeBytes := edges.Get(edgeKey[:]); edgeBytes != nil &&
-		!bytes.Equal(edgeBytes[:], unknownPolicy) {
+		!bytes.Equal(edgeBytes, unknownPolicy) {
 
 		// In order to delete the old entry, we'll need to obtain the
 		// *prior* update time in order to delete it. To do this, we'll
@@ -4457,7 +4459,7 @@ func putChanEdgePolicy(edges kvdb.RwBucket, edge *models.ChannelEdgePolicy,
 		return err
 	}
 
-	return edges.Put(edgeKey[:], b.Bytes()[:])
+	return edges.Put(edgeKey[:], b.Bytes())
 }
 
 // updateEdgePolicyDisabledIndex is used to update the disabledEdgePolicyIndex
@@ -4514,7 +4516,7 @@ func fetchChanEdgePolicy(edges kvdb.RBucket, chanID []byte,
 
 	var edgeKey [33 + 8]byte
 	copy(edgeKey[:], nodePub)
-	copy(edgeKey[33:], chanID[:])
+	copy(edgeKey[33:], chanID)
 
 	edgeBytes := edges.Get(edgeKey[:])
 	if edgeBytes == nil {
@@ -4522,7 +4524,7 @@ func fetchChanEdgePolicy(edges kvdb.RBucket, chanID []byte,
 	}
 
 	// No need to deserialize unknown policy.
-	if bytes.Equal(edgeBytes[:], unknownPolicy) {
+	if bytes.Equal(edgeBytes, unknownPolicy) {
 		return nil, nil
 	}
 
@@ -4532,7 +4534,7 @@ func fetchChanEdgePolicy(edges kvdb.RBucket, chanID []byte,
 	switch {
 	// If the db policy was missing an expected optional field, we return
 	// nil as if the policy was unknown.
-	case err == ErrEdgePolicyOptionalFieldNotFound:
+	case errors.Is(err, ErrEdgePolicyOptionalFieldNotFound):
 		return nil, nil
 
 	case err != nil:
