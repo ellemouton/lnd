@@ -3,6 +3,8 @@
 # stop the script if an error is returned
 set -e
 
+export GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/helpers.sh"
 
