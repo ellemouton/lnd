@@ -3,9 +3,7 @@ services:
   bob2:
     build:
       context: ../../
-      dockerfile: Dockerfile
-      args:
-        checkout: ${GIT_BRANCH}
+      dockerfile: dev.Dockerfile
     container_name: bob2
     restart: unless-stopped
     ports:

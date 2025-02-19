@@ -3,8 +3,6 @@
 # stop the script if an error is returned
 set -e
 
-export GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/helpers.sh"
 
@@ -76,6 +74,7 @@ $COMPOSE $COMPOSE_ARGS stop bob
 
 # Merge the two compose files such that Bob is now running local version.
 COMPOSE_ARGS="-f $DIR/network.yaml -f $DIR/network2.yaml -p regtest"
+$COMPOSE $COMPOSE_ARGS build --no-cache bob2
 $COMPOSE $COMPOSE_ARGS up -d bob2
 
 # Update the BOB variable to point to the new Bob.
