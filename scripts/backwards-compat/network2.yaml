@@ -40,3 +40,4 @@ services:
       - "--protocol.option-scid-alias"
       - "--protocol.zero-conf"
       - "--protocol.simple-taproot-chans"
+      - "--trickledelay=50"

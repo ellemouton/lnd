@@ -71,6 +71,7 @@ services:
       - "--protocol.option-scid-alias"
       - "--protocol.zero-conf"
       - "--protocol.simple-taproot-chans"
+      - "--trickledelay=50"
 
   bob:
     image: lightninglabs/lnd:v0.18.4-beta
@@ -110,6 +111,81 @@ services:
       - "--protocol.option-scid-alias"
       - "--protocol.zero-conf"
       - "--protocol.simple-taproot-chans"
+      - "--trickledelay=50"
+
+  charlie:
+    image: lightninglabs/lnd:v0.18.4-beta
+    container_name: charlie
+    restart: unless-stopped
+    ports:
+      - 10013:10009
+      - 9743:9735
+      - 8093:8080
+    networks:
+      regtest:
+        aliases:
+          - charlie
+    volumes:
+      - "charlie:/root/.lnd"
+    depends_on:
+      - bitcoind
+    command:
+      - "--logdir=/root/.lnd"
+      - "--alias=charlie"
+      - "--rpclisten=0.0.0.0:10009"
+      - "--restlisten=0.0.0.0:8080"
+      - "--color=#cccccc"
+      - "--noseedbackup"
+      - "--bitcoin.active"
+      - "--bitcoin.regtest"
+      - "--bitcoin.node=bitcoind"
+      - "--bitcoind.rpchost=bitcoind"
+      - "--bitcoind.rpcuser=lightning"
+      - "--bitcoind.rpcpass=lightning"
+      - "--bitcoind.zmqpubrawblock=tcp://bitcoind:28332"
+      - "--bitcoind.zmqpubrawtx=tcp://bitcoind:28333"
+      - "--debuglevel=debug"
+      - "--externalip=charlie"
+      - "--tlsextradomain=charlie"
+      - "--accept-keysend"
+      - "--trickledelay=50"
+
+  dave:
+    image: lightninglabs/lnd:v0.18.4-beta
+    container_name: dave
+    restart: unless-stopped
+    ports:
+      - 10014:10009
+      - 9744:9735
+      - 8094:8080
+    networks:
+      regtest:
+        aliases:
+          - dave
+    volumes:
+      - "dave:/root/.lnd"
+    depends_on:
+      - bitcoind
+    command:
+      - "--logdir=/root/.lnd"
+      - "--alias=dave"
+      - "--rpclisten=0.0.0.0:10009"
+      - "--restlisten=0.0.0.0:8080"
+      - "--color=#cccccc"
+      - "--noseedbackup"
+      - "--bitcoin.active"
+      - "--bitcoin.regtest"
+      - "--bitcoin.node=bitcoind"
+      - "--bitcoind.rpchost=bitcoind"
+      - "--bitcoind.rpcuser=lightning"
+      - "--bitcoind.rpcpass=lightning"
+      - "--bitcoind.zmqpubrawblock=tcp://bitcoind:28332"
+      - "--bitcoind.zmqpubrawtx=tcp://bitcoind:28333"
+      - "--debuglevel=debug"
+      - "--externalip=dave"
+      - "--tlsextradomain=dave"
+      - "--accept-keysend"
+      - "--trickledelay=50"
 
 networks:
   regtest:
@@ -118,3 +194,5 @@ volumes:
   bitcoind:
   alice:
   bob:
+  charlie:
+  dave:
