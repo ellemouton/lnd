@@ -13,10 +13,10 @@ which docker-compose &&
 
 # Spin up the network. The `-d` means it is spun up in detached mode
 # and so ensures that the script doesn't get stuck.
-$COMPOSE $COMPOSE_ARGS up -d
+$COMPOSE $COMPOSE_ARGS up -d > /dev/null
 
 # Wait for nodes to start.
-echo "waiting for nodes to start"
+echo "⌛ Waiting for nodes to start"
 for container in alice $BOB charlie dave; do
   echo "checking $container"
   while ! $container getinfo | grep -q identity_pubkey; do
@@ -24,27 +24,26 @@ for container in alice $BOB charlie dave; do
   done
   echo "$container has started"
 done
-echo "all nodes are started"
+echo "🏎️ All nodes have started"
 
 # Print out the commit hash of the running nodes.
-echo "Alice is running on $(alice version | jq -r '.lnd.commit_hash' | sed 's/^[ \t]*//')"
-echo "Bob is running on $( $BOB version | jq -r '.lnd.commit_hash' | sed 's/^[ \t]*//')"
+echo "ℹ️ Alice is running on $(alice version | jq -r '.lnd.commit_hash' | sed 's/^[ \t]*//')"
+echo "ℹ️ Bob is running on $( $BOB version | jq -r '.lnd.commit_hash' | sed 's/^[ \t]*//')"
 
 ## Set-up channels.
 setup
 
-echo "Wait for all nodes to see all channels"
+echo "⌛ Wait for all nodes to see all channels"
 for container in alice $BOB charlie dave; do
-  echo "Checking $container..."
-
   while :; do
     num_channels=$($container getnetworkinfo | jq -r '.num_channels')
 
     # Ensure num_channels is a valid number before proceeding
     if [[ "$num_channels" =~ ^[0-9]+$ ]]; then
-      echo "$container sees $num_channels channels..."
+      echo -ne "⌛ $container sees $num_channels channels...\r"
 
       if [[ "$num_channels" -eq 3 ]]; then
+        echo "👀 $container sees the all channels!"
         break  # Exit loop when num_channels reaches 3
       fi
     fi
@@ -52,22 +51,22 @@ for container in alice $BOB charlie dave; do
     sleep 1
   done
 done
-echo "All nodes detect the expected number of channels!"
+echo "⚡ All nodes detect the expected number of channels! ⚡"
 
 ## Let Bob send to Dave (multi-hop send test via Charlie).
 PAY_REQ=$(dave addinvoice 10000 | jq .payment_request -r)
 $BOB payinvoice --force "$PAY_REQ" > /dev/null
-echo "Bob can send!"
+echo "✅ Bob can send!"
 
 ## Let Bob receive a payment from Dave.
 PAY_REQ=$( $BOB addinvoice 10000 | jq .payment_request -r)
 dave payinvoice --force "$PAY_REQ" > /dev/null
-echo "Bob can receive!"
+echo "✅ Bob can receive!"
 
 ## Now let Bob route a payment by sending from Alice to Dave.
 PAY_REQ=$(dave addinvoice 10000 | jq .payment_request -r)
 alice payinvoice --force "$PAY_REQ" > /dev/null
-echo "Bob can route!"
+echo "✅ Bob can route!"
 
 # Stop this version of Bob.
 $COMPOSE $COMPOSE_ARGS stop bob
@@ -81,30 +80,27 @@ $COMPOSE $COMPOSE_ARGS up -d bob2
 BOB=bob2
 
 # Wait for Bob to start.
-echo "waiting for nodes to start"
-for container in $BOB; do
-  echo "checking $container"
-  while ! $container getinfo | grep -q identity_pubkey; do
-    sleep 1
-  done
+echo "Waiting for Bob to restart"
+while ! $BOB getinfo | grep -q identity_pubkey; do
+  sleep 1
 done
-echo "Bob has restarted"
+echo "♻️ Bob has restarted"
 
 # Print out the commit hash of the running nodes to show that
 # Bob is now running the local version.
-echo "Alice is running on $(alice version | jq -r '.lnd.commit_hash' | sed 's/^[ \t]*//')"
-echo "Bob is running on $( $BOB version | jq -r '.lnd.commit_hash' | sed 's/^[ \t]*//')"
+echo "ℹ️ Alice is running on $(alice version | jq -r '.lnd.commit_hash' | sed 's/^[ \t]*//')"
+echo "ℹ️ Bob is running on $( $BOB version | jq -r '.lnd.commit_hash' | sed 's/^[ \t]*//')"
 
 ## Wait for all Bob's channels to be active.
 ## Let Bob receive, send and route.
-echo "Waiting for Bob to have exactly 2 active channels..."
+echo "🟠 Waiting for Bob to have exactly 2 active channels..."
 while :; do
     # Get Bob's list of channels
     ACTIVE_COUNT=$( $BOB --network=regtest listchannels | jq '[.channels[] | select(.active == true)] | length')
 
     # Ensure ACTIVE_COUNT is a valid number
     if [[ "$ACTIVE_COUNT" =~ ^[0-9]+$ ]]; then
-        echo "Bob sees $ACTIVE_COUNT active channels..."
+        echo -ne "⌛ Bob sees $ACTIVE_COUNT active channels...\r"
 
         # Exit loop only if exactly 2 channels are active
         if [[ "$ACTIVE_COUNT" -eq 2 ]]; then
@@ -114,21 +110,23 @@ while :; do
 
     sleep 1
 done
-echo "✅ Bob now has exactly 2 active channels!"
+echo "🟢 Bob now has exactly 2 active channels!"
 
 ## Let Bob send to Dave (multi-hop send test via Charlie).
 PAY_REQ=$(dave addinvoice 10000 | jq .payment_request -r)
 $BOB payinvoice --force "$PAY_REQ" > /dev/null
-echo "Bob can still send!"
+echo "✅ Bob can still send!"
 
 ## Let Bob receive a payment from Dave.
 PAY_REQ=$( $BOB addinvoice 10000 | jq .payment_request -r)
 dave payinvoice --force "$PAY_REQ" > /dev/null
-echo "Bob can still receive!"
+echo "✅ Bob can still receive!"
 
 ## Now let Bob route a payment by sending from Alice to Dave.
 PAY_REQ=$(dave addinvoice 10000 | jq .payment_request -r)
 alice payinvoice --force "$PAY_REQ" > /dev/null
-echo "Bob can still route!"
+echo "✅ Bob can still route!"
 
-$COMPOSE $COMPOSE_ARGS down --volumes --remove-orphans
+$COMPOSE $COMPOSE_ARGS down --volumes --remove-orphans > /dev/null
+
+echo "🛡️⚔️🫡 Backwards compatibility test passed! 🫡⚔️🛡️"
