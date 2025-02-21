@@ -151,6 +151,11 @@ func encodeOpaqueAddrs(w io.Writer, addr *lnwire.OpaqueAddrs) error {
 // deserializes it into the actual address. This allows us to avoid address
 // resolution within the channeldb package.
 func DeserializeAddr(r io.Reader) (net.Addr, error) {
+	var scratch [1]byte
+	if _, err := r.Read(scratch[:]); err != nil {
+		return nil, err
+	}
+
 	var addrType [1]byte
 	if _, err := r.Read(addrType[:]); err != nil {
 		return nil, err
@@ -257,6 +262,10 @@ func DeserializeAddr(r io.Reader) (net.Addr, error) {
 // SerializeAddr serializes an address into its raw bytes representation so that
 // it can be deserialized without requiring address resolution.
 func SerializeAddr(w io.Writer, address net.Addr) error {
+	if _, err := w.Write([]byte{byte(1)}); err != nil {
+		return err
+	}
+
 	switch addr := address.(type) {
 	case *net.TCPAddr:
 		return encodeTCPAddr(w, addr)
