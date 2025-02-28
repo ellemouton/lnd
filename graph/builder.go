@@ -1240,8 +1240,8 @@ func (b *Builder) UpdateEdge(update *models.ChannelEdgePolicy,
 func (b *Builder) updateEdge(policy *models.ChannelEdgePolicy,
 	op ...batch.SchedulerOption) error {
 
-	log.Debugf("Received ChannelEdgePolicy for channel %v",
-		policy.ChannelID)
+	log.Debugf("Received ChannelEdgePolicy for channel %v: time: %v, base_fee: %v",
+		policy.ChannelID, policy.LastUpdate, policy.FeeBaseMSat)
 
 	// We make sure to hold the mutex for this channel ID, such that no
 	// other goroutine is concurrently doing database accesses for the same
