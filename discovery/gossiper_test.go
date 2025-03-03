@@ -4061,12 +4061,12 @@ func TestBroadcastAnnsAfterGraphSynced(t *testing.T) {
 	assertBroadcast(chanAnn2, true, true)
 }
 
-// TestRateLimitDeDup demonstrates a bug that currently exists in the handling
-// of channel updates. It shows that if two identical channel updates are
-// received in quick succession, then both of them might be counted towards the
-// rate limit, even though only one of them should be.
+// TestRateLimitDeDup tests that if we get the same channel update in very
+// quick succession, then these updates should not be individually considered
+// in our rate limiting logic.
 //
-// NOTE: this will be fixed in an upcoming commit.
+// NOTE: this only tests the deduplication logic. The main rate limiting logic
+// is tested by TestRateLimitChannelUpdates.
 func TestRateLimitDeDup(t *testing.T) {
 	t.Parallel()
 
@@ -4188,12 +4188,13 @@ func TestRateLimitDeDup(t *testing.T) {
 	// Now we can un-pause the thread that grabbed the mutex first.
 	close(pause)
 
-	// Currently, both updates make it to UpdateEdge.
+	// Only 1 call should have made it past the staleness check to the
+	// graph's UpdateEdge call.
 	err = wait.NoError(func() error {
 		count := ctx.router.getCallCount("UpdateEdge")
 
-		if count != 4 {
-			return fmt.Errorf("expected 4 calls to UpdateEdge, "+
+		if count != 3 {
+			return fmt.Errorf("expected 3 calls to UpdateEdge, "+
 				"got %v", count)
 		}
 
@@ -4221,14 +4222,26 @@ func TestRateLimitDeDup(t *testing.T) {
 	// Show that the last update was broadcast.
 	assertRateLimit(false)
 
-	// We should be allowed to send another update now since only one of the
-	// above duplicates should count towards the rate limit.
-	// However, this is currently not the case, and so we will be rate
-	// limited early. This will be fixed in an upcoming commit.
+	// We should be allowed to send another update now since the rate limit
+	// has still not bee met.
 	update.Timestamp++
 	update.BaseFee++
 	require.NoError(t, signUpdate(remoteKeyPriv1, &update))
 
+	select {
+	case err := <-ctx.gossiper.ProcessRemoteAnnouncement(
+		&update, nodePeer1,
+	):
+
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("remote announcement not processed")
+	}
+
+	assertRateLimit(false)
+
+	// Our rate limit should be hit now, so a new update should not be
+	// broadcast.
 	select {
 	case err := <-ctx.gossiper.ProcessRemoteAnnouncement(
 		&update, nodePeer1,

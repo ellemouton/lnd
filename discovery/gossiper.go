@@ -3142,6 +3142,22 @@ func (d *AuthenticatedGossiper) handleChanUpdate(nMsg *networkMsg,
 		edgeToUpdate = e2
 	}
 
+	// We did a staleness check before grabbing the channelMtx mutex, but we
+	// should do another one now that the mutex is obtained in-case a
+	// duplicate or newer ChannelUpdate was processed while this thread was
+	// waiting for the lock. Even though the DB `UpdateEdge` call later on
+	// would catch this too, we need to check it now so that our rate
+	// limiting logic does not get triggered by duplicate updates.
+	if edgeToUpdate != nil && !edgeToUpdate.LastUpdate.Before(timestamp) {
+		log.Debugf("Ignored stale edge policy for short_chan_id(%v): "+
+			"peer=%v, msg=%s, is_remote=%v", shortChanID,
+			nMsg.peer, nMsg.msg.MsgType(), nMsg.isRemote,
+		)
+
+		nMsg.err <- nil
+		return nil, true
+	}
+
 	log.Debugf("Validating ChannelUpdate: channel=%v, for node=%x, has "+
 		"edge policy=%v", chanInfo.ChannelID,
 		pubKey.SerializeCompressed(), edgeToUpdate != nil)
