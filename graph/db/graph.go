@@ -297,10 +297,10 @@ func (c *ChannelGraph) AddLightningNode(node *models.LightningNode,
 		)
 	}
 
-	// No need to send topology updates for shell nodes.
-	if !node.HaveNodeAnnouncement {
-		return nil
-	}
+	//// No need to send topology updates for shell nodes.
+	//if !node.HaveNodeAnnouncement {
+	//	return nil
+	//}
 
 	select {
 	case c.topologyUpdate <- node:
