@@ -135,6 +135,9 @@ func (c *ChannelGraph) handleTopologySubscriptions() {
 		// A new fully validated topology update has just arrived.
 		// We'll notify any registered clients.
 		case update := <-c.topologyUpdate:
+			// TODO(elle): change topology handling to be handled
+			// synchronously so that we can guarantee the order of
+			// notification delivery.
 			c.wg.Add(1)
 			go c.handleTopologyUpdate(update)
 
