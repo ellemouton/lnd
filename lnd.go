@@ -758,7 +758,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, implCfg *ImplementationCfg,
 	// case the startup of the subservers do not behave as expected.
 	errChan := make(chan error)
 	go func() {
-		errChan <- server.Start()
+		errChan <- server.Start(ctx)
 	}()
 
 	defer func() {

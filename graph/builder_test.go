@@ -2,6 +2,7 @@ package graph
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -189,9 +190,10 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 // confirmed on the stale chain, and resync to the main chain.
 func TestWakeUpOnStaleBranch(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	const startingBlockHeight = 101
-	ctx := createTestCtxSingleNode(t, startingBlockHeight)
+	tCtx := createTestCtxSingleNode(t, startingBlockHeight)
 
 	const chanValue = 10000
 
@@ -222,16 +224,16 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 			chanID1 = chanID.ToUint64()
 			fundingScript1 = script
 		}
-		ctx.chain.addBlock(block, height, rand.Uint32())
-		ctx.chain.setBestBlock(int32(height))
-		ctx.chainView.notifyBlock(block.BlockHash(), height,
+		tCtx.chain.addBlock(block, height, rand.Uint32())
+		tCtx.chain.setBestBlock(int32(height))
+		tCtx.chainView.notifyBlock(block.BlockHash(), height,
 			[]*wire.MsgTx{}, t)
 	}
 
 	// Give time to process new blocks
 	time.Sleep(time.Millisecond * 500)
 
-	_, forkHeight, err := ctx.chain.GetBestBlock()
+	_, forkHeight, err := tCtx.chain.GetBestBlock()
 	require.NoError(t, err, "unable to ge best block")
 
 	// Create 10 blocks on the minority chain, confirming chanID2.
@@ -254,9 +256,9 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 			chanID2 = chanID.ToUint64()
 			fundingScript2 = script
 		}
-		ctx.chain.addBlock(block, height, rand.Uint32())
-		ctx.chain.setBestBlock(int32(height))
-		ctx.chainView.notifyBlock(block.BlockHash(), height,
+		tCtx.chain.addBlock(block, height, rand.Uint32())
+		tCtx.chain.setBestBlock(int32(height))
+		tCtx.chainView.notifyBlock(block.BlockHash(), height,
 			[]*wire.MsgTx{}, t)
 	}
 	// Give time to process new blocks
@@ -282,7 +284,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 	copy(edge1.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
 	copy(edge1.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
 
-	if err := ctx.builder.AddEdge(edge1); err != nil {
+	if err := tCtx.builder.AddEdge(edge1); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
@@ -301,12 +303,12 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 	copy(edge2.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
 	copy(edge2.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
 
-	if err := ctx.builder.AddEdge(edge2); err != nil {
+	if err := tCtx.builder.AddEdge(edge2); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
 	// Check that the fundingTxs are in the graph db.
-	_, _, has, isZombie, err := ctx.graph.HasChannelEdge(chanID1)
+	_, _, has, isZombie, err := tCtx.graph.HasChannelEdge(chanID1)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID1)
 	}
@@ -317,7 +319,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		t.Fatal("edge was marked as zombie")
 	}
 
-	_, _, has, isZombie, err = ctx.graph.HasChannelEdge(chanID2)
+	_, _, has, isZombie, err = tCtx.graph.HasChannelEdge(chanID2)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID2)
 	}
@@ -329,7 +331,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 	}
 
 	// Stop the router, so we can reorg the chain while its offline.
-	if err := ctx.builder.Stop(); err != nil {
+	if err := tCtx.builder.Stop(); err != nil {
 		t.Fatalf("unable to stop router: %v", err)
 	}
 
@@ -339,22 +341,22 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 			Transactions: []*wire.MsgTx{},
 		}
 		height := uint32(forkHeight) + i
-		ctx.chain.addBlock(block, height, rand.Uint32())
-		ctx.chain.setBestBlock(int32(height))
+		tCtx.chain.addBlock(block, height, rand.Uint32())
+		tCtx.chain.setBestBlock(int32(height))
 	}
 
 	// Give time to process new blocks.
 	time.Sleep(time.Millisecond * 500)
 
-	selfNode, err := ctx.graph.SourceNode()
+	selfNode, err := tCtx.graph.SourceNode()
 	require.NoError(t, err)
 
 	// Create new router with same graph database.
 	router, err := NewBuilder(&Config{
 		SelfNode:           selfNode.PubKeyBytes,
-		Graph:              ctx.graph,
-		Chain:              ctx.chain,
-		ChainView:          ctx.chainView,
+		Graph:              tCtx.graph,
+		Chain:              tCtx.chain,
+		ChainView:          tCtx.chainView,
 		ChannelPruneExpiry: time.Hour * 24,
 		GraphPruneInterval: time.Hour * 2,
 
@@ -367,14 +369,14 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 	require.NoError(t, err)
 
 	// It should resync to the longer chain on startup.
-	if err := router.Start(); err != nil {
+	if err := router.Start(ctx); err != nil {
 		t.Fatalf("unable to start router: %v", err)
 	}
 
 	// The channel with chanID2 should not be in the database anymore,
 	// since it is not confirmed on the longest chain. chanID1 should
 	// still be.
-	_, _, has, isZombie, err = ctx.graph.HasChannelEdge(chanID1)
+	_, _, has, isZombie, err = tCtx.graph.HasChannelEdge(chanID1)
 	require.NoError(t, err)
 
 	if !has {
@@ -384,7 +386,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		t.Fatal("edge was marked as zombie")
 	}
 
-	_, _, has, isZombie, err = ctx.graph.HasChannelEdge(chanID2)
+	_, _, has, isZombie, err = tCtx.graph.HasChannelEdge(chanID2)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID2)
 	}

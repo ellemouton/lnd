@@ -2,6 +2,7 @@ package graph
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"fmt"
 	"image/color"
@@ -1077,7 +1078,7 @@ func (c *testCtx) RestartBuilder(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.NoError(t, builder.Start())
+	require.NoError(t, builder.Start(context.Background()))
 
 	// Finally, we'll swap out the pointer in the testCtx with this fresh
 	// instance of the router.
@@ -1177,7 +1178,7 @@ func createTestCtxFromGraphInstanceAssumeValid(t *testing.T,
 		},
 	})
 	require.NoError(t, err)
-	require.NoError(t, graphBuilder.Start())
+	require.NoError(t, graphBuilder.Start(context.Background()))
 
 	ctx := &testCtx{
 		builder:    graphBuilder,

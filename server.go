@@ -2216,7 +2216,7 @@ func (s *server) startLowLevelServices() error {
 // NOTE: This function is safe for concurrent access.
 //
 //nolint:funlen
-func (s *server) Start() error {
+func (s *server) Start(ctx context.Context) error {
 	// Get the current blockbeat.
 	beat, err := s.getStartingBeat()
 	if err != nil {
@@ -2374,7 +2374,7 @@ func (s *server) Start() error {
 		}
 
 		cleanup = cleanup.add(s.graphBuilder.Stop)
-		if err := s.graphBuilder.Start(); err != nil {
+		if err := s.graphBuilder.Start(ctx); err != nil {
 			startErr = err
 			return
 		}

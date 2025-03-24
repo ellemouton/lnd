@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -11,6 +12,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/lightningnetwork/lnd/batch"
 	"github.com/lightningnetwork/lnd/chainntnfs"
+	"github.com/lightningnetwork/lnd/fn/v2"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnutils"
@@ -134,8 +136,9 @@ type Builder struct {
 	// announcements over a window of defaultStatInterval.
 	stats *builderStats
 
-	quit chan struct{}
-	wg   sync.WaitGroup
+	quit   chan struct{}
+	wg     sync.WaitGroup
+	cancel fn.Option[context.CancelFunc]
 }
 
 // A compile time check to ensure Builder implements the
@@ -155,10 +158,13 @@ func NewBuilder(cfg *Config) (*Builder, error) {
 
 // Start launches all the goroutines the Builder requires to carry out its
 // duties. If the builder has already been started, then this method is a noop.
-func (b *Builder) Start() error {
+func (b *Builder) Start(ctx context.Context) error {
 	if !b.started.CompareAndSwap(false, true) {
 		return nil
 	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	b.cancel = fn.Some(cancel)
 
 	log.Info("Builder starting")
 
@@ -271,7 +277,7 @@ func (b *Builder) Start() error {
 	}
 
 	b.wg.Add(1)
-	go b.networkHandler()
+	go b.networkHandler(ctx)
 
 	log.Debug("Builder started")
 
@@ -296,6 +302,7 @@ func (b *Builder) Stop() error {
 		}
 	}
 
+	b.cancel.WhenSome(func(fn context.CancelFunc) { fn() })
 	close(b.quit)
 	b.wg.Wait()
 
@@ -641,7 +648,7 @@ func (b *Builder) pruneZombieChans() error {
 // updates, and registering new topology clients.
 //
 // NOTE: This MUST be run as a goroutine.
-func (b *Builder) networkHandler() {
+func (b *Builder) networkHandler(_ context.Context) {
 	defer b.wg.Done()
 
 	graphPruneTicker := time.NewTicker(b.cfg.GraphPruneInterval)
