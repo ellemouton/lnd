@@ -3117,6 +3117,39 @@ func nodeTraversal(tx kvdb.RTx, nodePub []byte, db kvdb.Backend,
 	return traversal(tx)
 }
 
+func (c *V1KVStore) ForEachSelfNodeChannel(cb func(chanPoint wire.OutPoint,
+	havePolicy bool, otherNode *models.LightningNode) error) error {
+
+	return kvdb.View(c.db, func(tx kvdb.RTx) error {
+		nodes := tx.ReadBucket(nodeBucket)
+		if nodes == nil {
+			return ErrGraphNotFound
+		}
+
+		node, err := c.sourceNode(nodes)
+		if err != nil {
+			return err
+		}
+
+		return nodeTraversal(tx, node.PubKeyBytes[:], c.db,
+			func(tx kvdb.RTx, info *models.ChannelEdgeInfo,
+				policy, _ *models.ChannelEdgePolicy) error {
+
+				peer, err := c.fetchOtherNode(
+					tx, info, node.PubKeyBytes[:],
+				)
+				if err != nil {
+					return err
+				}
+
+				return cb(
+					info.ChannelPoint, policy != nil, peer,
+				)
+			},
+		)
+	}, func() {})
+}
+
 // ForEachNodeChannel iterates through all channels of the given node,
 // executing the passed callback with an edge info structure and the policies
 // of each end of the channel. The first edge policy is the outgoing edge *to*
@@ -3126,10 +3159,15 @@ func nodeTraversal(tx kvdb.RTx, nodePub []byte, db kvdb.Backend,
 //
 // Unknown policies are passed into the callback as nil values.
 func (c *V1KVStore) ForEachNodeChannel(nodePub route.Vertex,
-	cb func(kvdb.RTx, *models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
 
-	return nodeTraversal(nil, nodePub[:], c.db, cb)
+	return nodeTraversal(nil, nodePub[:], c.db, func(_ kvdb.RTx,
+		info *models.ChannelEdgeInfo, policy,
+		policy2 *models.ChannelEdgePolicy) error {
+
+		return cb(info, policy, policy2)
+	})
 }
 
 // ForEachNodeChannelTx iterates through all channels of the given node,
@@ -3153,11 +3191,11 @@ func (c *V1KVStore) ForEachNodeChannelTx(tx kvdb.RTx,
 	return nodeTraversal(tx, nodePub[:], c.db, cb)
 }
 
-// FetchOtherNode attempts to fetch the full LightningNode that's opposite of
+// fetchOtherNode attempts to fetch the full LightningNode that's opposite of
 // the target node in the channel. This is useful when one knows the pubkey of
 // one of the nodes, and wishes to obtain the full LightningNode for the other
 // end of the channel.
-func (c *V1KVStore) FetchOtherNode(tx kvdb.RTx,
+func (c *V1KVStore) fetchOtherNode(tx kvdb.RTx,
 	channel *models.ChannelEdgeInfo, thisNodeKey []byte) (
 	*models.LightningNode, error) {
 

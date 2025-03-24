@@ -9,7 +9,6 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/batch"
 	"github.com/lightningnetwork/lnd/graph/db/models"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -206,7 +205,7 @@ type V1Store interface {
 		*models.LightningNode, error)
 
 	ForEachNodeChannel(nodePub route.Vertex,
-		cb func(kvdb.RTx, *models.ChannelEdgeInfo,
+		cb func(*models.ChannelEdgeInfo,
 			*models.ChannelEdgePolicy,
 			*models.ChannelEdgePolicy) error) error
 
@@ -214,9 +213,8 @@ type V1Store interface {
 
 	SetSourceNode(node *models.LightningNode) error
 
-	FetchOtherNode(tx kvdb.RTx,
-		channel *models.ChannelEdgeInfo, thisNodeKey []byte) (
-		*models.LightningNode, error)
+	ForEachSelfNodeChannel(cb func(chanPoint wire.OutPoint,
+		havePolicy bool, otherNode *models.LightningNode) error) error
 
 	PutClosedScid(scid lnwire.ShortChannelID) error
 	IsClosedScid(lnwire.ShortChannelID) (bool, error)
