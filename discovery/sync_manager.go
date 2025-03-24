@@ -206,7 +206,6 @@ type SyncManager struct {
 
 // newSyncManager constructs a new SyncManager backed by the given config.
 func newSyncManager(cfg *SyncManagerCfg) *SyncManager {
-
 	filterSema := make(chan struct{}, filterSemaSize)
 	for i := 0; i < filterSemaSize; i++ {
 		filterSema <- struct{}{}

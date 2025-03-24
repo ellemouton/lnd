@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -555,6 +556,7 @@ type AuthenticatedGossiper struct {
 	vb *ValidationBarrier
 
 	sync.Mutex
+	cancel fn.Option[context.CancelFunc]
 }
 
 // New creates a new AuthenticatedGossiper instance, initialized with the
@@ -641,16 +643,19 @@ func (d *AuthenticatedGossiper) PropagateChanPolicyUpdate(
 
 // Start spawns network messages handler goroutine and registers on new block
 // notifications in order to properly handle the premature announcements.
-func (d *AuthenticatedGossiper) Start() error {
+func (d *AuthenticatedGossiper) Start(ctx context.Context) error {
 	var err error
 	d.started.Do(func() {
 		log.Info("Authenticated Gossiper starting")
-		err = d.start()
+		ctx, cancel := context.WithCancel(ctx)
+		d.cancel = fn.Some(cancel)
+
+		err = d.start(ctx)
 	})
 	return err
 }
 
-func (d *AuthenticatedGossiper) start() error {
+func (d *AuthenticatedGossiper) start(ctx context.Context) error {
 	// First we register for new notifications of newly discovered blocks.
 	// We do this immediately so we'll later be able to consume any/all
 	// blocks which were discovered.
@@ -673,14 +678,14 @@ func (d *AuthenticatedGossiper) start() error {
 		return err
 	}
 
-	d.syncMgr.Start()
+	d.syncMgr.Start(ctx)
 
 	d.banman.start()
 
 	// Start receiving blocks in its dedicated goroutine.
 	d.wg.Add(2)
-	go d.syncBlockHeight()
-	go d.networkHandler()
+	go d.syncBlockHeight(ctx)
+	go d.networkHandler(ctx)
 
 	return nil
 }
@@ -689,7 +694,7 @@ func (d *AuthenticatedGossiper) start() error {
 // blockEpochs.
 //
 // NOTE: must be run as a goroutine.
-func (d *AuthenticatedGossiper) syncBlockHeight() {
+func (d *AuthenticatedGossiper) syncBlockHeight(_ context.Context) {
 	defer d.wg.Done()
 
 	for {
@@ -835,6 +840,7 @@ func (d *AuthenticatedGossiper) stop() {
 
 	d.banman.stop()
 
+	d.cancel.WhenSome(func(fn context.CancelFunc) { fn() })
 	close(d.quit)
 	d.wg.Wait()
 
@@ -1431,7 +1437,7 @@ func (d *AuthenticatedGossiper) sendRemoteBatch(annBatch []msgWithSenders) {
 // broadcasting our latest topology state to all connected peers.
 //
 // NOTE: This MUST be run as a goroutine.
-func (d *AuthenticatedGossiper) networkHandler() {
+func (d *AuthenticatedGossiper) networkHandler(_ context.Context) {
 	defer d.wg.Done()
 
 	// Initialize empty deDupedAnnouncements to store announcement batch.

@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"fmt"
 	prand "math/rand"
@@ -993,7 +994,7 @@ func createTestCtx(t *testing.T, startHeight uint32, isChanPeer bool) (
 		ScidCloser:            newMockScidCloser(isChanPeer),
 	}, selfKeyDesc)
 
-	if err := gossiper.Start(); err != nil {
+	if err := gossiper.Start(context.Background()); err != nil {
 		return nil, fmt.Errorf("unable to start router: %w", err)
 	}
 
@@ -1532,11 +1533,12 @@ func TestOrphanSignatureAnnouncement(t *testing.T) {
 // assembled.
 func TestSignatureAnnouncementRetryAtStartup(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
-	ctx, err := createTestCtx(t, proofMatureDelta, false)
+	tCtx, err := createTestCtx(t, proofMatureDelta, false)
 	require.NoError(t, err, "can't create context")
 
-	batch, err := ctx.createLocalAnnouncements(0)
+	batch, err := tCtx.createLocalAnnouncements(0)
 	require.NoError(t, err, "can't generate announcements")
 
 	remoteKey, err := btcec.ParsePubKey(batch.nodeAnn2.NodeID[:])
@@ -1545,7 +1547,7 @@ func TestSignatureAnnouncementRetryAtStartup(t *testing.T) {
 	// Set up a channel to intercept the messages sent to the remote peer.
 	sentToPeer := make(chan lnwire.Message, 1)
 	remotePeer := &mockPeer{
-		remoteKey, sentToPeer, ctx.gossiper.quit, atomic.Bool{},
+		remoteKey, sentToPeer, tCtx.gossiper.quit, atomic.Bool{},
 	}
 
 	// Since the reliable send to the remote peer of the local channel proof
@@ -1553,7 +1555,7 @@ func TestSignatureAnnouncementRetryAtStartup(t *testing.T) {
 	// channel through which it gets sent to control exactly when to
 	// dispatch it.
 	notifyPeers := make(chan chan<- lnpeer.Peer, 1)
-	ctx.gossiper.reliableSender.cfg.NotifyWhenOnline = func(peer [33]byte,
+	tCtx.gossiper.reliableSender.cfg.NotifyWhenOnline = func(peer [33]byte,
 		connectedChan chan<- lnpeer.Peer) {
 		notifyPeers <- connectedChan
 	}
@@ -1561,13 +1563,13 @@ func TestSignatureAnnouncementRetryAtStartup(t *testing.T) {
 	// Recreate lightning network topology. Initialize router with channel
 	// between two nodes.
 	select {
-	case err = <-ctx.gossiper.ProcessLocalAnnouncement(batch.chanAnn):
+	case err = <-tCtx.gossiper.ProcessLocalAnnouncement(batch.chanAnn):
 	case <-time.After(2 * time.Second):
 		t.Fatal("did not process local announcement")
 	}
 	require.NoError(t, err, "unable to process channel ann")
 	select {
-	case <-ctx.broadcastedMessage:
+	case <-tCtx.broadcastedMessage:
 		t.Fatal("channel announcement was broadcast")
 	case <-time.After(2 * trickleDelay):
 	}
@@ -1575,7 +1577,7 @@ func TestSignatureAnnouncementRetryAtStartup(t *testing.T) {
 	// Pretending that we receive local channel announcement from funding
 	// manager, thereby kick off the announcement exchange process.
 	select {
-	case err = <-ctx.gossiper.ProcessLocalAnnouncement(
+	case err = <-tCtx.gossiper.ProcessLocalAnnouncement(
 		batch.localProofAnn,
 	):
 	case <-time.After(2 * time.Second):
@@ -1597,7 +1599,7 @@ func TestSignatureAnnouncementRetryAtStartup(t *testing.T) {
 	// The proof should not be broadcast yet since we're still missing the
 	// remote party's.
 	select {
-	case <-ctx.broadcastedMessage:
+	case <-tCtx.broadcastedMessage:
 		t.Fatal("announcements were broadcast")
 	case <-time.After(2 * trickleDelay):
 	}
@@ -1610,7 +1612,7 @@ func TestSignatureAnnouncementRetryAtStartup(t *testing.T) {
 	}
 
 	number := 0
-	if err := ctx.gossiper.cfg.WaitingProofStore.ForAll(
+	if err := tCtx.gossiper.cfg.WaitingProofStore.ForAll(
 		func(*channeldb.WaitingProof) error {
 			number++
 			return nil
@@ -1629,7 +1631,7 @@ func TestSignatureAnnouncementRetryAtStartup(t *testing.T) {
 	// Restart the gossiper and restore its original NotifyWhenOnline and
 	// NotifyWhenOffline methods. This should trigger a new attempt to send
 	// the message to the peer.
-	ctx.gossiper.Stop()
+	tCtx.gossiper.Stop()
 
 	isAlias := func(lnwire.ShortChannelID) bool {
 		return false
@@ -1653,19 +1655,19 @@ func TestSignatureAnnouncementRetryAtStartup(t *testing.T) {
 
 	//nolint:ll
 	gossiper := New(Config{
-		Notifier:               ctx.gossiper.cfg.Notifier,
-		Broadcast:              ctx.gossiper.cfg.Broadcast,
-		NotifyWhenOnline:       ctx.gossiper.reliableSender.cfg.NotifyWhenOnline,
-		NotifyWhenOffline:      ctx.gossiper.reliableSender.cfg.NotifyWhenOffline,
-		FetchSelfAnnouncement:  ctx.gossiper.cfg.FetchSelfAnnouncement,
-		UpdateSelfAnnouncement: ctx.gossiper.cfg.UpdateSelfAnnouncement,
-		Graph:                  ctx.gossiper.cfg.Graph,
+		Notifier:               tCtx.gossiper.cfg.Notifier,
+		Broadcast:              tCtx.gossiper.cfg.Broadcast,
+		NotifyWhenOnline:       tCtx.gossiper.reliableSender.cfg.NotifyWhenOnline,
+		NotifyWhenOffline:      tCtx.gossiper.reliableSender.cfg.NotifyWhenOffline,
+		FetchSelfAnnouncement:  tCtx.gossiper.cfg.FetchSelfAnnouncement,
+		UpdateSelfAnnouncement: tCtx.gossiper.cfg.UpdateSelfAnnouncement,
+		Graph:                  tCtx.gossiper.cfg.Graph,
 		TrickleDelay:           trickleDelay,
 		RetransmitTicker:       ticker.NewForce(retransmitDelay),
 		RebroadcastInterval:    rebroadcastInterval,
 		ProofMatureDelta:       proofMatureDelta,
-		WaitingProofStore:      ctx.gossiper.cfg.WaitingProofStore,
-		MessageStore:           ctx.gossiper.cfg.MessageStore,
+		WaitingProofStore:      tCtx.gossiper.cfg.WaitingProofStore,
+		MessageStore:           tCtx.gossiper.cfg.MessageStore,
 		RotateTicker:           ticker.NewForce(DefaultSyncerRotationInterval),
 		HistoricalSyncTicker:   ticker.NewForce(DefaultHistoricalSyncInterval),
 		NumActiveSyncers:       3,
@@ -1676,11 +1678,11 @@ func TestSignatureAnnouncementRetryAtStartup(t *testing.T) {
 		FindBaseByAlias:        findBaseByAlias,
 		GetAlias:               getAlias,
 	}, &keychain.KeyDescriptor{
-		PubKey:     ctx.gossiper.selfKey,
-		KeyLocator: ctx.gossiper.selfKeyLoc,
+		PubKey:     tCtx.gossiper.selfKey,
+		KeyLocator: tCtx.gossiper.selfKeyLoc,
 	})
 	require.NoError(t, err, "unable to recreate gossiper")
-	if err := gossiper.Start(); err != nil {
+	if err := gossiper.Start(ctx); err != nil {
 		t.Fatalf("unable to start recreated gossiper: %v", err)
 	}
 	defer gossiper.Stop()
@@ -1689,8 +1691,8 @@ func TestSignatureAnnouncementRetryAtStartup(t *testing.T) {
 	// broadcast.
 	gossiper.syncMgr.markGraphSynced()
 
-	ctx.gossiper = gossiper
-	remotePeer.quit = ctx.gossiper.quit
+	tCtx.gossiper = gossiper
+	remotePeer.quit = tCtx.gossiper.quit
 
 	// After starting up, the gossiper will see that it has a proof in the
 	// WaitingProofStore, and will retry sending its part to the remote.
@@ -1728,7 +1730,7 @@ out:
 	// Now exchanging the remote channel proof, the channel announcement
 	// broadcast should continue as normal.
 	select {
-	case err = <-ctx.gossiper.ProcessRemoteAnnouncement(
+	case err = <-tCtx.gossiper.ProcessRemoteAnnouncement(
 		batch.remoteProofAnn, remotePeer,
 	):
 	case <-time.After(2 * time.Second):
@@ -1739,13 +1741,13 @@ out:
 	}
 
 	select {
-	case <-ctx.broadcastedMessage:
+	case <-tCtx.broadcastedMessage:
 	case <-time.After(time.Second):
 		t.Fatal("announcement wasn't broadcast")
 	}
 
 	number = 0
-	if err := ctx.gossiper.cfg.WaitingProofStore.ForAll(
+	if err := tCtx.gossiper.cfg.WaitingProofStore.ForAll(
 		func(*channeldb.WaitingProof) error {
 			number++
 			return nil
