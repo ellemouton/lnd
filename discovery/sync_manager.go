@@ -287,7 +287,7 @@ func (m *SyncManager) Stop() {
 //     much of the public network as possible.
 //
 // NOTE: This must be run as a goroutine.
-func (m *SyncManager) syncerHandler(_ context.Context) {
+func (m *SyncManager) syncerHandler(ctx context.Context) {
 	defer m.wg.Done()
 
 	m.cfg.RotateTicker.Resume()
@@ -385,7 +385,7 @@ func (m *SyncManager) syncerHandler(_ context.Context) {
 			}
 			m.syncersMu.Unlock()
 
-			s.Start()
+			s.Start(ctx)
 
 			// Once we create the GossipSyncer, we'll signal to the
 			// caller that they can proceed since the SyncManager's

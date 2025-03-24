@@ -387,6 +387,8 @@ type GossipSyncer struct {
 	// allows contexts that either block or cancel on those depending on
 	// the use case.
 	cg *fn.ContextGuard
+
+	cancel fn.Option[context.CancelFunc]
 }
 
 // newGossipSyncer returns a new instance of the GossipSyncer populated using
@@ -405,20 +407,23 @@ func newGossipSyncer(cfg gossipSyncerCfg, sema chan struct{}) *GossipSyncer {
 
 // Start starts the GossipSyncer and any goroutines that it needs to carry out
 // its duties.
-func (g *GossipSyncer) Start() {
+func (g *GossipSyncer) Start(ctx context.Context) {
 	g.started.Do(func() {
 		log.Debugf("Starting GossipSyncer(%x)", g.cfg.peerPub[:])
+
+		ctx, cancel := context.WithCancel(ctx)
+		g.cancel = fn.Some(cancel)
 
 		// TODO(conner): only spawn channelGraphSyncer if remote
 		// supports gossip queries, and only spawn replyHandler if we
 		// advertise support
 		if !g.cfg.noSyncChannels {
 			g.cg.WgAdd(1)
-			go g.channelGraphSyncer()
+			go g.channelGraphSyncer(ctx)
 		}
 		if !g.cfg.noReplyQueries {
 			g.cg.WgAdd(1)
-			go g.replyHandler()
+			go g.replyHandler(ctx)
 		}
 	})
 }
@@ -431,6 +436,7 @@ func (g *GossipSyncer) Stop() {
 		defer log.Debugf("GossipSyncer(%x) stopped", g.cfg.peerPub[:])
 
 		g.cg.Quit()
+		g.cancel.WhenSome(func(fn context.CancelFunc) { fn() })
 	})
 }
 
@@ -471,7 +477,7 @@ func (g *GossipSyncer) handleSyncingChans() {
 // channelGraphSyncer is the main goroutine responsible for ensuring that we
 // properly channel graph state with the remote peer, and also that we only
 // send them messages which actually pass their defined update horizon.
-func (g *GossipSyncer) channelGraphSyncer() {
+func (g *GossipSyncer) channelGraphSyncer(_ context.Context) {
 	defer g.cg.WgDone()
 
 	for {
@@ -630,7 +636,7 @@ func (g *GossipSyncer) channelGraphSyncer() {
 // from the state machine maintained on the same node.
 //
 // NOTE: This method MUST be run as a goroutine.
-func (g *GossipSyncer) replyHandler() {
+func (g *GossipSyncer) replyHandler(_ context.Context) {
 	defer g.cg.WgDone()
 
 	for {
