@@ -720,7 +720,7 @@ func (t *testNodeTx) Node() *models.LightningNode {
 func (t *testNodeTx) ForEachChannel(f func(*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
 
-	return t.db.db.ForEachNodeChannel(t.node.PubKeyBytes, func(_ kvdb.RTx,
+	return t.db.db.ForEachNodeChannel(t.node.PubKeyBytes, func(
 		edge *models.ChannelEdgeInfo, policy1,
 		policy2 *models.ChannelEdgePolicy) error {
 
