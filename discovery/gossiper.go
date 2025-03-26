@@ -101,6 +101,13 @@ var (
 	// chain.
 	ErrChannelSpent = errors.New("channel output has been spent")
 
+	// ErrUnexpectedGossipQueries is an error that is returned if we receive
+	// gossip queries from a peer when we have disabled gossip syncing and
+	// in other words have not advertised that we support gossip queries.
+	ErrUnexpectedGossipQueries = errors.New(
+		"unexpected gossip queries received",
+	)
+
 	// emptyPubkey is used to compare compressed pubkeys against an empty
 	// byte array.
 	emptyPubkey [33]byte
@@ -399,6 +406,11 @@ type Config struct {
 	// MsgBurstBytes is the allotted burst amount in bytes. This is the
 	// number of starting tokens in our token bucket algorithm.
 	MsgBurstBytes uint64
+
+	// NoGossipSync is true if gossip syncing has been disabled. It
+	// indicates that we have not advertised the gossip queries feature bit,
+	// and so we should not receive any gossip queries from our peers.
+	NoGossipSync bool
 }
 
 // processedNetworkMsg is a wrapper around networkMsg and a boolean. It is
@@ -865,6 +877,25 @@ func (d *AuthenticatedGossiper) ProcessRemoteAnnouncement(ctx context.Context,
 	msg lnwire.Message, peer lnpeer.Peer) chan error {
 
 	errChan := make(chan error, 1)
+
+	// If gossip syncing has been disabled, we expect not to receive any
+	// gossip queries from our peer.
+	if d.cfg.NoGossipSync {
+		switch m := msg.(type) {
+		case *lnwire.QueryShortChanIDs,
+			*lnwire.QueryChannelRange,
+			*lnwire.ReplyChannelRange,
+			*lnwire.ReplyShortChanIDsEnd,
+			*lnwire.GossipTimestampRange:
+
+			log.Warnf("Gossip syncing was disabled, "+
+				"skipping message: %v", m)
+			errChan <- ErrUnexpectedGossipQueries
+
+			return errChan
+		default:
+		}
+	}
 
 	// For messages in the known set of channel series queries, we'll
 	// dispatch the message directly to the GossipSyncer, and skip the main
