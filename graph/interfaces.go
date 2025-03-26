@@ -92,6 +92,11 @@ type ChannelGraphSource interface {
 	// IsZombieEdge returns true if the edge with the given channel ID is
 	// currently marked as a zombie edge.
 	IsZombieEdge(chanID lnwire.ShortChannelID) (bool, error)
+
+	// IsZombieChannel takes the timestamps of the latest channel updates
+	// for a channel and returns true if the channel should be considered a
+	// zombie based on these timestamps.
+	IsZombieChannel(updateTime1, updateTime2 time.Time) bool
 }
 
 // DB is an interface describing a persisted Lightning Network graph.

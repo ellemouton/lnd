@@ -381,11 +381,6 @@ type Config struct {
 	FindChannel func(node *btcec.PublicKey, chanID lnwire.ChannelID) (
 		*channeldb.OpenChannel, error)
 
-	// IsStillZombieChannel takes the timestamps of the latest channel
-	// updates for a channel and returns true if the channel should be
-	// considered a zombie based on these timestamps.
-	IsStillZombieChannel func(time.Time, time.Time) bool
-
 	// AssumeChannelValid toggles whether the gossiper will check for
 	// spent-ness of channel outpoints. For neutrino, this saves long
 	// rescans from blocking initial usage of the daemon.
@@ -591,7 +586,7 @@ func New(cfg Config, selfKeyDesc *keychain.KeyDescriptor) *AuthenticatedGossiper
 		IgnoreHistoricalFilters:  cfg.IgnoreHistoricalFilters,
 		BestHeight:               gossiper.latestHeight,
 		PinnedSyncers:            cfg.PinnedSyncers,
-		IsStillZombieChannel:     cfg.IsStillZombieChannel,
+		IsStillZombieChannel:     cfg.Graph.IsZombieChannel,
 		AllotedMsgBytesPerSecond: cfg.MsgRateBytes,
 		AllotedMsgBytesBurst:     cfg.MsgBurstBytes,
 	})
