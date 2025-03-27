@@ -1049,6 +1049,7 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 	dbs.GraphDB, err = graphdb.NewChannelGraph(&graphdb.Config{
 		KVDB:        databaseBackends.GraphDB,
 		KVStoreOpts: graphDBOptions,
+		RemoteGraph: cfg.RemoteGraph,
 	}, chanGraphOpts...)
 	if err != nil {
 		cleanUp()
