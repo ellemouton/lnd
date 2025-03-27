@@ -37,6 +37,8 @@ type Gossip struct {
 	MsgRateBytes uint64 `long:"msg-rate-bytes" description:"The maximum number of bytes of gossip messages that will be sent per second. This is a global limit that applies to all peers."`
 
 	MsgBurstBytes uint64 `long:"msg-burst-bytes" description:"The maximum number of bytes of gossip messages that will be sent in a burst. This is a global limit that applies to all peers. This value should be set to something greater than 130 KB"`
+
+	NoSync bool `long:"no-sync" description:"If set, lnd will not request graph updates from its peers and wont advertise the gossip queries feature bit. This is useful if LND has been provided with an external graph source that it may use for pathfinding."`
 }
 
 // Parse the pubkeys for the pinned syncers.

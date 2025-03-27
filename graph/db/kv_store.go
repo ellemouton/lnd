@@ -2,6 +2,7 @@ package graphdb
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -21,6 +22,7 @@ import (
 	"github.com/btcsuite/btcwallet/walletdb"
 	"github.com/lightningnetwork/lnd/aliasmgr"
 	"github.com/lightningnetwork/lnd/batch"
+	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/kvdb"
@@ -162,6 +164,9 @@ var (
 	//
 	// maps: scid -> []byte{}
 	closedScidBucket = []byte("closed-scid")
+
+	// byteOrder defines the preferred byte order, which is Big Endian.
+	byteOrder = binary.BigEndian
 )
 
 const (
@@ -584,7 +589,7 @@ func (c *KVStore) ForEachNodeCached(cb func(node route.Vertex,
 
 		channels := make(map[uint64]*DirectedChannel)
 
-		err := c.ForEachNodeChannelTx(tx, node.PubKeyBytes,
+		err := c.forEachNodeChannelTx(tx, node.PubKeyBytes,
 			func(tx kvdb.RTx, e *models.ChannelEdgeInfo,
 				p1 *models.ChannelEdgePolicy,
 				p2 *models.ChannelEdgePolicy) error {
@@ -1144,7 +1149,7 @@ func (c *KVStore) addChannelEdge(tx kvdb.RwTx,
 	// Finally we add it to the channel index which maps channel points
 	// (outpoints) to the shorter channel ID's.
 	var b bytes.Buffer
-	if err := WriteOutpoint(&b, &edge.ChannelPoint); err != nil {
+	if err := channeldb.WriteOutpoint(&b, &edge.ChannelPoint); err != nil {
 		return err
 	}
 
@@ -1358,7 +1363,7 @@ func (c *KVStore) PruneGraph(spentOutputs []*wire.OutPoint,
 			// if NOT if filter
 
 			var opBytes bytes.Buffer
-			err := WriteOutpoint(&opBytes, chanPoint)
+			err := channeldb.WriteOutpoint(&opBytes, chanPoint)
 			if err != nil {
 				return err
 			}
@@ -1835,7 +1840,7 @@ func (c *KVStore) ChannelID(chanPoint *wire.OutPoint) (uint64, error) {
 // getChanID returns the assigned channel ID for a given channel point.
 func getChanID(tx kvdb.RTx, chanPoint *wire.OutPoint) (uint64, error) {
 	var b bytes.Buffer
-	if err := WriteOutpoint(&b, chanPoint); err != nil {
+	if err := channeldb.WriteOutpoint(&b, chanPoint); err != nil {
 		return 0, err
 	}
 
@@ -2647,7 +2652,7 @@ func (c *KVStore) delChannelEdgeUnsafe(edges, edgeIndex, chanIndex,
 		return nil, err
 	}
 	var b bytes.Buffer
-	if err := WriteOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
+	if err := channeldb.WriteOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
 		return nil, err
 	}
 	if err := chanIndex.Delete(b.Bytes()); err != nil {
@@ -2873,7 +2878,7 @@ func (c *KVStore) isPublic(tx kvdb.RTx, nodePub route.Vertex,
 	// used to terminate the check early.
 	nodeIsPublic := false
 	errDone := errors.New("done")
-	err := c.ForEachNodeChannelTx(tx, nodePub, func(tx kvdb.RTx,
+	err := c.forEachNodeChannelTx(tx, nodePub, func(tx kvdb.RTx,
 		info *models.ChannelEdgeInfo, _ *models.ChannelEdgePolicy,
 		_ *models.ChannelEdgePolicy) error {
 
@@ -3126,13 +3131,55 @@ func nodeTraversal(tx kvdb.RTx, nodePub []byte, db kvdb.Backend,
 //
 // Unknown policies are passed into the callback as nil values.
 func (c *KVStore) ForEachNodeChannel(nodePub route.Vertex,
-	cb func(kvdb.RTx, *models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
 
-	return nodeTraversal(nil, nodePub[:], c.db, cb)
+	return nodeTraversal(nil, nodePub[:], c.db, func(_ kvdb.RTx,
+		info *models.ChannelEdgeInfo, policy,
+		policy2 *models.ChannelEdgePolicy) error {
+
+		return cb(info, policy, policy2)
+	})
 }
 
-// ForEachNodeChannelTx iterates through all channels of the given node,
+// ForEachSourceNodeChannel iterates through all channels of the source node,
+// executing the passed callback on each. The call-back is provided with the
+// channel's outpoint, whether we have a policy for the channel and the channel
+// peer's node information.
+func (c *KVStore) ForEachSourceNodeChannel(cb func(chanPoint wire.OutPoint,
+	havePolicy bool, otherNode *models.LightningNode) error) error {
+
+	return kvdb.View(c.db, func(tx kvdb.RTx) error {
+		nodes := tx.ReadBucket(nodeBucket)
+		if nodes == nil {
+			return ErrGraphNotFound
+		}
+
+		node, err := c.sourceNode(nodes)
+		if err != nil {
+			return err
+		}
+
+		return nodeTraversal(tx, node.PubKeyBytes[:], c.db,
+			func(tx kvdb.RTx, info *models.ChannelEdgeInfo,
+				policy, _ *models.ChannelEdgePolicy) error {
+
+				peer, err := c.fetchOtherNode(
+					tx, info, node.PubKeyBytes[:],
+				)
+				if err != nil {
+					return err
+				}
+
+				return cb(
+					info.ChannelPoint, policy != nil, peer,
+				)
+			},
+		)
+	}, func() {})
+}
+
+// forEachNodeChannelTx iterates through all channels of the given node,
 // executing the passed callback with an edge info structure and the policies
 // of each end of the channel. The first edge policy is the outgoing edge *to*
 // the connecting node, while the second is the incoming edge *from* the
@@ -3145,7 +3192,7 @@ func (c *KVStore) ForEachNodeChannel(nodePub route.Vertex,
 // should be passed as the first argument.  Otherwise, the first argument should
 // be nil and a fresh transaction will be created to execute the graph
 // traversal.
-func (c *KVStore) ForEachNodeChannelTx(tx kvdb.RTx,
+func (c *KVStore) forEachNodeChannelTx(tx kvdb.RTx,
 	nodePub route.Vertex, cb func(kvdb.RTx, *models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
@@ -3153,11 +3200,11 @@ func (c *KVStore) ForEachNodeChannelTx(tx kvdb.RTx,
 	return nodeTraversal(tx, nodePub[:], c.db, cb)
 }
 
-// FetchOtherNode attempts to fetch the full LightningNode that's opposite of
+// fetchOtherNode attempts to fetch the full LightningNode that's opposite of
 // the target node in the channel. This is useful when one knows the pubkey of
 // one of the nodes, and wishes to obtain the full LightningNode for the other
 // end of the channel.
-func (c *KVStore) FetchOtherNode(tx kvdb.RTx,
+func (c *KVStore) fetchOtherNode(tx kvdb.RTx,
 	channel *models.ChannelEdgeInfo, thisNodeKey []byte) (
 	*models.LightningNode, error) {
 
@@ -3265,7 +3312,7 @@ func (c *KVStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 			return ErrGraphNoEdgesFound
 		}
 		var b bytes.Buffer
-		if err := WriteOutpoint(&b, op); err != nil {
+		if err := channeldb.WriteOutpoint(&b, op); err != nil {
 			return err
 		}
 		chanID := chanIndex.Get(b.Bytes())
@@ -3518,7 +3565,9 @@ func (c *KVStore) ChannelView() ([]EdgePoint, error) {
 				)
 
 				var chanPoint wire.OutPoint
-				err := ReadOutpoint(chanPointReader, &chanPoint)
+				err := channeldb.ReadOutpoint(
+					chanPointReader, &chanPoint,
+				)
 				if err != nil {
 					return err
 				}
@@ -3895,7 +3944,7 @@ func putLightningNode(nodeBucket, aliasBucket, updateIndex kvdb.RwBucket,
 	}
 
 	for _, address := range node.Addresses {
-		if err := SerializeAddr(&b, address); err != nil {
+		if err := channeldb.SerializeAddr(&b, address); err != nil {
 			return err
 		}
 	}
@@ -4088,7 +4137,7 @@ func deserializeLightningNode(r io.Reader) (models.LightningNode, error) {
 
 	var addresses []net.Addr
 	for i := 0; i < numAddresses; i++ {
-		address, err := DeserializeAddr(r)
+		address, err := channeldb.DeserializeAddr(r)
 		if err != nil {
 			return models.LightningNode{}, err
 		}
@@ -4160,10 +4209,11 @@ func putChanEdgeInfo(edgeIndex kvdb.RwBucket,
 		return err
 	}
 
-	if err := WriteOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
+	err := channeldb.WriteOutpoint(&b, &edgeInfo.ChannelPoint)
+	if err != nil {
 		return err
 	}
-	err := binary.Write(&b, byteOrder, uint64(edgeInfo.Capacity))
+	err = binary.Write(&b, byteOrder, uint64(edgeInfo.Capacity))
 	if err != nil {
 		return err
 	}
@@ -4246,7 +4296,8 @@ func deserializeChanEdgeInfo(r io.Reader) (models.ChannelEdgeInfo, error) {
 	}
 
 	edgeInfo.ChannelPoint = wire.OutPoint{}
-	if err := ReadOutpoint(r, &edgeInfo.ChannelPoint); err != nil {
+	err = channeldb.ReadOutpoint(r, &edgeInfo.ChannelPoint)
+	if err != nil {
 		return models.ChannelEdgeInfo{}, err
 	}
 	if err := binary.Read(r, byteOrder, &edgeInfo.Capacity); err != nil {
@@ -4687,7 +4738,7 @@ func (c *chanGraphNodeTx) FetchNode(nodePub route.Vertex) (NodeRTx, error) {
 func (c *chanGraphNodeTx) ForEachChannel(f func(*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
 
-	return c.db.ForEachNodeChannelTx(c.tx, c.node.PubKeyBytes,
+	return c.db.forEachNodeChannelTx(c.tx, c.node.PubKeyBytes,
 		func(_ kvdb.RTx, info *models.ChannelEdgeInfo, policy1,
 			policy2 *models.ChannelEdgePolicy) error {
 
@@ -4723,7 +4774,7 @@ func MakeTestGraph(t testing.TB, modifiers ...KVStoreOptionModifier) (
 
 		return nil, err
 	}
-	require.NoError(t, graph.Start())
+	require.NoError(t, graph.Start(context.Background()))
 
 	t.Cleanup(func() {
 		_ = backend.Close()

@@ -55,7 +55,6 @@ import (
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/keychain"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/labels"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -6741,6 +6740,7 @@ func marshalDBEdge(edgeInfo *models.ChannelEdgeInfo,
 		Node2Pub:      hex.EncodeToString(edgeInfo.NodeKey2Bytes[:]),
 		Capacity:      int64(edgeInfo.Capacity),
 		CustomRecords: customRecords,
+		Announced:     edgeInfo.AuthProof != nil,
 	}
 
 	if c1 != nil {
@@ -6869,7 +6869,10 @@ func (r *rpcServer) GetChanInfo(_ context.Context,
 	default:
 		return nil, fmt.Errorf("specify either chan_id or chan_point")
 	}
-	if err != nil {
+	switch {
+	case errors.Is(err, graphdb.ErrEdgeNotFound):
+		return nil, status.Error(codes.NotFound, err.Error())
+	case err != nil:
 		return nil, err
 	}
 
@@ -6915,7 +6918,7 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 	)
 
 	err = graph.ForEachNodeChannel(node.PubKeyBytes,
-		func(_ kvdb.RTx, edge *models.ChannelEdgeInfo,
+		func(edge *models.ChannelEdgeInfo,
 			c1, c2 *models.ChannelEdgePolicy) error {
 
 			numChannels++
@@ -7597,7 +7600,7 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 
 	var feeReports []*lnrpc.ChannelFeeReport
 	err = channelGraph.ForEachNodeChannel(selfNode.PubKeyBytes,
-		func(_ kvdb.RTx, chanInfo *models.ChannelEdgeInfo,
+		func(chanInfo *models.ChannelEdgeInfo,
 			edgePolicy, _ *models.ChannelEdgePolicy) error {
 
 			// Self node should always have policies for its
