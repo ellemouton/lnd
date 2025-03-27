@@ -1,6 +1,7 @@
 package graphdb
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/batch"
+	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -51,8 +53,9 @@ type ChannelGraph struct {
 	*KVStore
 	*topologyManager
 
-	quit chan struct{}
-	wg   sync.WaitGroup
+	quit   chan struct{}
+	wg     sync.WaitGroup
+	cancel fn.Option[context.CancelFunc]
 }
 
 // NewChannelGraph creates a new ChannelGraph instance with the given backend.
@@ -87,15 +90,18 @@ func NewChannelGraph(cfg *Config, options ...ChanGraphOption) (*ChannelGraph,
 // Start kicks off any goroutines required for the ChannelGraph to function.
 // If the graph cache is enabled, then it will be populated with the contents of
 // the database.
-func (c *ChannelGraph) Start() error {
+func (c *ChannelGraph) Start(ctx context.Context) error {
 	if !c.started.CompareAndSwap(false, true) {
 		return nil
 	}
 	log.Debugf("ChannelGraph starting")
 	defer log.Debug("ChannelGraph started")
 
+	ctx, cancel := context.WithCancel(ctx)
+	c.cancel = fn.Some(cancel)
+
 	if c.graphCache != nil {
-		if err := c.populateCache(); err != nil {
+		if err := c.populateCache(ctx); err != nil {
 			return fmt.Errorf("could not populate the graph "+
 				"cache: %w", err)
 		}
@@ -116,6 +122,7 @@ func (c *ChannelGraph) Stop() error {
 	log.Debugf("ChannelGraph shutting down...")
 	defer log.Debug("ChannelGraph shutdown complete")
 
+	c.cancel.WhenSome(func(fn context.CancelFunc) { fn() })
 	close(c.quit)
 	c.wg.Wait()
 
@@ -179,7 +186,7 @@ func (c *ChannelGraph) handleTopologySubscriptions() {
 // populateCache loads the entire channel graph into the in-memory graph cache.
 //
 // NOTE: This should only be called if the graphCache has been constructed.
-func (c *ChannelGraph) populateCache() error {
+func (c *ChannelGraph) populateCache(_ context.Context) error {
 	startTime := time.Now()
 	log.Info("Populating in-memory channel graph, this might take a " +
 		"while...")

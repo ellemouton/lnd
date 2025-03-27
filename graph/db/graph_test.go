@@ -2,6 +2,7 @@ package graphdb
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -4104,7 +4105,7 @@ func TestGraphLoading(t *testing.T) {
 
 	graph, err := NewChannelGraph(&Config{KVDB: backend})
 	require.NoError(t, err)
-	require.NoError(t, graph.Start())
+	require.NoError(t, graph.Start(context.Background()))
 	t.Cleanup(func() {
 		require.NoError(t, graph.Stop())
 	})
@@ -4118,7 +4119,7 @@ func TestGraphLoading(t *testing.T) {
 	// populated.
 	graphReloaded, err := NewChannelGraph(&Config{KVDB: backend})
 	require.NoError(t, err)
-	require.NoError(t, graphReloaded.Start())
+	require.NoError(t, graphReloaded.Start(context.Background()))
 	t.Cleanup(func() {
 		require.NoError(t, graphReloaded.Stop())
 	})

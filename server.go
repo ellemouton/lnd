@@ -2379,7 +2379,7 @@ func (s *server) Start() error {
 		}
 
 		cleanup = cleanup.add(s.graphDB.Stop)
-		if err := s.graphDB.Start(); err != nil {
+		if err := s.graphDB.Start(context.TODO()); err != nil {
 			startErr = err
 			return
 		}

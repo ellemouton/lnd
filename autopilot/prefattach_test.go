@@ -2,6 +2,7 @@ package autopilot
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	prand "math/rand"
 	"net"
@@ -49,7 +50,7 @@ func newDiskChanGraph(t *testing.T) (testGraph, error) {
 	graphDB, err := graphdb.NewChannelGraph(&graphdb.Config{KVDB: backend})
 	require.NoError(t, err)
 
-	require.NoError(t, graphDB.Start())
+	require.NoError(t, graphDB.Start(context.Background()))
 	t.Cleanup(func() {
 		require.NoError(t, graphDB.Stop())
 	})

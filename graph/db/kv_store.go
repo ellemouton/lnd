@@ -2,6 +2,7 @@ package graphdb
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -4773,7 +4774,7 @@ func MakeTestGraph(t testing.TB, modifiers ...KVStoreOptionModifier) (
 
 		return nil, err
 	}
-	require.NoError(t, graph.Start())
+	require.NoError(t, graph.Start(context.Background()))
 
 	t.Cleanup(func() {
 		_ = backend.Close()

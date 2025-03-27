@@ -2,6 +2,7 @@ package peer
 
 import (
 	"bytes"
+	"context"
 	crand "crypto/rand"
 	"encoding/binary"
 	"io"
@@ -619,7 +620,7 @@ func createTestPeer(t *testing.T) *peerTestCtx {
 		KVDB: graphBackend,
 	})
 	require.NoError(t, err)
-	require.NoError(t, dbAliceGraph.Start())
+	require.NoError(t, dbAliceGraph.Start(context.Background()))
 	t.Cleanup(func() {
 		require.NoError(t, dbAliceGraph.Stop())
 	})
