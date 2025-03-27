@@ -21,6 +21,7 @@ import (
 	"github.com/btcsuite/btcwallet/walletdb"
 	"github.com/lightningnetwork/lnd/aliasmgr"
 	"github.com/lightningnetwork/lnd/batch"
+	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/kvdb"
@@ -162,6 +163,9 @@ var (
 	//
 	// maps: scid -> []byte{}
 	closedScidBucket = []byte("closed-scid")
+
+	// byteOrder defines the preferred byte order, which is Big Endian.
+	byteOrder = binary.BigEndian
 )
 
 const (
@@ -1144,7 +1148,7 @@ func (c *KVStore) addChannelEdge(tx kvdb.RwTx,
 	// Finally we add it to the channel index which maps channel points
 	// (outpoints) to the shorter channel ID's.
 	var b bytes.Buffer
-	if err := WriteOutpoint(&b, &edge.ChannelPoint); err != nil {
+	if err := channeldb.WriteOutpoint(&b, &edge.ChannelPoint); err != nil {
 		return err
 	}
 
@@ -1358,7 +1362,7 @@ func (c *KVStore) PruneGraph(spentOutputs []*wire.OutPoint,
 			// if NOT if filter
 
 			var opBytes bytes.Buffer
-			err := WriteOutpoint(&opBytes, chanPoint)
+			err := channeldb.WriteOutpoint(&opBytes, chanPoint)
 			if err != nil {
 				return err
 			}
@@ -1835,7 +1839,7 @@ func (c *KVStore) ChannelID(chanPoint *wire.OutPoint) (uint64, error) {
 // getChanID returns the assigned channel ID for a given channel point.
 func getChanID(tx kvdb.RTx, chanPoint *wire.OutPoint) (uint64, error) {
 	var b bytes.Buffer
-	if err := WriteOutpoint(&b, chanPoint); err != nil {
+	if err := channeldb.WriteOutpoint(&b, chanPoint); err != nil {
 		return 0, err
 	}
 
@@ -2647,7 +2651,7 @@ func (c *KVStore) delChannelEdgeUnsafe(edges, edgeIndex, chanIndex,
 		return nil, err
 	}
 	var b bytes.Buffer
-	if err := WriteOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
+	if err := channeldb.WriteOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
 		return nil, err
 	}
 	if err := chanIndex.Delete(b.Bytes()); err != nil {
@@ -3307,7 +3311,7 @@ func (c *KVStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 			return ErrGraphNoEdgesFound
 		}
 		var b bytes.Buffer
-		if err := WriteOutpoint(&b, op); err != nil {
+		if err := channeldb.WriteOutpoint(&b, op); err != nil {
 			return err
 		}
 		chanID := chanIndex.Get(b.Bytes())
@@ -3560,7 +3564,9 @@ func (c *KVStore) ChannelView() ([]EdgePoint, error) {
 				)
 
 				var chanPoint wire.OutPoint
-				err := ReadOutpoint(chanPointReader, &chanPoint)
+				err := channeldb.ReadOutpoint(
+					chanPointReader, &chanPoint,
+				)
 				if err != nil {
 					return err
 				}
@@ -3937,7 +3943,7 @@ func putLightningNode(nodeBucket, aliasBucket, updateIndex kvdb.RwBucket,
 	}
 
 	for _, address := range node.Addresses {
-		if err := SerializeAddr(&b, address); err != nil {
+		if err := channeldb.SerializeAddr(&b, address); err != nil {
 			return err
 		}
 	}
@@ -4130,7 +4136,7 @@ func deserializeLightningNode(r io.Reader) (models.LightningNode, error) {
 
 	var addresses []net.Addr
 	for i := 0; i < numAddresses; i++ {
-		address, err := DeserializeAddr(r)
+		address, err := channeldb.DeserializeAddr(r)
 		if err != nil {
 			return models.LightningNode{}, err
 		}
@@ -4202,10 +4208,11 @@ func putChanEdgeInfo(edgeIndex kvdb.RwBucket,
 		return err
 	}
 
-	if err := WriteOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
+	err := channeldb.WriteOutpoint(&b, &edgeInfo.ChannelPoint)
+	if err != nil {
 		return err
 	}
-	err := binary.Write(&b, byteOrder, uint64(edgeInfo.Capacity))
+	err = binary.Write(&b, byteOrder, uint64(edgeInfo.Capacity))
 	if err != nil {
 		return err
 	}
@@ -4288,7 +4295,8 @@ func deserializeChanEdgeInfo(r io.Reader) (models.ChannelEdgeInfo, error) {
 	}
 
 	edgeInfo.ChannelPoint = wire.OutPoint{}
-	if err := ReadOutpoint(r, &edgeInfo.ChannelPoint); err != nil {
+	err = channeldb.ReadOutpoint(r, &edgeInfo.ChannelPoint)
+	if err != nil {
 		return models.ChannelEdgeInfo{}, err
 	}
 	if err := binary.Read(r, byteOrder, &edgeInfo.Capacity); err != nil {

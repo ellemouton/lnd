@@ -14,7 +14,6 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/kvdb"
@@ -185,20 +184,21 @@ func TestMultiSourceAddrsForNode(t *testing.T) {
 	fullDB, err := MakeTestDB(t)
 	require.NoError(t, err, "unable to make test database")
 
-	graph, err := graphdb.MakeTestGraph(t)
+	// Set up a mock graph that returns a sub-set of the addresses for the
+	// node in question.
+	graph := newMockAddrSource(t)
+	t.Cleanup(func() { graph.AssertExpectations(t) })
+
+	testNode := createTestVertex(t)
+	nodePub, err := testNode.PubKey()
 	require.NoError(t, err)
 
-	// We'll make a test vertex to insert into the database, as the source
-	// node, but this node will only have half the number of addresses it
-	// usually does.
-	testNode := createTestVertex(t)
-	require.NoError(t, err, "unable to create test node")
-	testNode.Addresses = []net.Addr{testAddr}
-	require.NoError(t, graph.SetSourceNode(testNode))
+	graph.On("AddrsForNode", nodePub).Return(
+		true, []net.Addr{testAddr}, nil,
+	).Once()
 
 	// Next, we'll make a link node with the same pubkey, but with an
 	// additional address.
-	nodePub, err := testNode.PubKey()
 	require.NoError(t, err, "unable to recv node pub")
 	linkNode := NewLinkNode(
 		fullDB.channelStateDB.linkNodeDB, wire.MainNet, nodePub,
