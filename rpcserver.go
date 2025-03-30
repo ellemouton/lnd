@@ -8347,7 +8347,7 @@ func (r *rpcServer) RestoreChannelBackups(ctx context.Context,
 		// out to any peers that we know of which were our prior
 		// channel peers.
 		numRestored, err = chanbackup.UnpackAndRecoverSingles(
-			chanbackup.PackedSingles(packedBackups),
+			ctx, chanbackup.PackedSingles(packedBackups),
 			r.server.cc.KeyRing, chanRestorer, r.server,
 		)
 		if err != nil {
@@ -8364,7 +8364,7 @@ func (r *rpcServer) RestoreChannelBackups(ctx context.Context,
 		// channel peers.
 		packedMulti := chanbackup.PackedMulti(packedMultiBackup)
 		numRestored, err = chanbackup.UnpackAndRecoverMulti(
-			packedMulti, r.server.cc.KeyRing, chanRestorer,
+			ctx, packedMulti, r.server.cc.KeyRing, chanRestorer,
 			r.server,
 		)
 		if err != nil {

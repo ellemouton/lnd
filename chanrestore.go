@@ -321,8 +321,8 @@ var _ chanbackup.ChannelRestorer = (*chanDBRestorer)(nil)
 // as a persistent attempt.
 //
 // NOTE: Part of the chanbackup.PeerConnector interface.
-func (s *server) ConnectPeer(nodePub *btcec.PublicKey, addrs []net.Addr) error {
-	ctx := context.TODO()
+func (s *server) ConnectPeer(ctx context.Context, nodePub *btcec.PublicKey,
+	addrs []net.Addr) error {
 
 	// Before we connect to the remote peer, we'll remove any connections
 	// to ensure the new connection is created after this new link/channel

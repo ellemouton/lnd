@@ -2439,7 +2439,7 @@ func (s *server) Start(ctx context.Context) error {
 		}
 		if len(s.chansToRestore.PackedSingleChanBackups) != 0 {
 			_, err := chanbackup.UnpackAndRecoverSingles(
-				s.chansToRestore.PackedSingleChanBackups,
+				ctx, s.chansToRestore.PackedSingleChanBackups,
 				s.cc.KeyRing, chanRestorer, s,
 			)
 			if err != nil {
@@ -2450,7 +2450,7 @@ func (s *server) Start(ctx context.Context) error {
 		}
 		if len(s.chansToRestore.PackedMultiChanBackup) != 0 {
 			_, err := chanbackup.UnpackAndRecoverMulti(
-				s.chansToRestore.PackedMultiChanBackup,
+				ctx, s.chansToRestore.PackedMultiChanBackup,
 				s.cc.KeyRing, chanRestorer, s,
 			)
 			if err != nil {

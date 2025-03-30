@@ -1460,7 +1460,7 @@ func (s *Switch) CloseLink(ctx context.Context, chanPoint *wire.OutPoint,
 // total link capacity.
 //
 // NOTE: This MUST be run as a goroutine.
-func (s *Switch) htlcForwarder() {
+func (s *Switch) htlcForwarder(ctx context.Context) {
 	defer s.wg.Done()
 
 	defer func() {
@@ -1771,7 +1771,7 @@ func (s *Switch) Start(ctx context.Context) error {
 	s.blockEpochStream = blockEpochStream
 
 	s.wg.Add(1)
-	go s.htlcForwarder()
+	go s.htlcForwarder(ctx)
 
 	if err := s.reforwardResponses(ctx); err != nil {
 		s.Stop()
@@ -2032,6 +2032,8 @@ func (s *Switch) AddLink(link ChannelLink) error {
 	s.indexMtx.Lock()
 	defer s.indexMtx.Unlock()
 
+	ctx := context.TODO()
+
 	chanID := link.ChanID()
 
 	// First, ensure that this link is not already active in the switch.
@@ -2051,7 +2053,7 @@ func (s *Switch) AddLink(link ChannelLink) error {
 	// Attach the Switch's failAliasUpdate function to the link.
 	link.attachFailAliasUpdate(s.failAliasUpdate)
 
-	if err := link.Start(); err != nil {
+	if err := link.Start(ctx); err != nil {
 		log.Errorf("AddLink failed to start link with chanID=%v: %v",
 			chanID, err)
 		s.removeLink(chanID)
