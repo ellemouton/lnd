@@ -38,5 +38,6 @@ type NodeTraverser interface {
 		cb func(channel *DirectedChannel) error) error
 
 	// FetchNodeFeatures returns the features of the given node.
-	FetchNodeFeatures(nodePub route.Vertex) (*lnwire.FeatureVector, error)
+	FetchNodeFeatures(ctx context.Context,
+		nodePub route.Vertex) (*lnwire.FeatureVector, error)
 }

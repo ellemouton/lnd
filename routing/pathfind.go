@@ -600,7 +600,7 @@ func findPath(ctx context.Context, g *graphParams, r *RestrictParams,
 	features := r.DestFeatures
 	if features == nil {
 		var err error
-		features, err = g.graph.FetchNodeFeatures(target)
+		features, err = g.graph.FetchNodeFeatures(ctx, target)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -988,8 +988,8 @@ func findPath(ctx context.Context, g *graphParams, r *RestrictParams,
 	featureCache := make(map[route.Vertex]*lnwire.FeatureVector)
 
 	// getGraphFeatures returns (cached) node features from the graph.
-	getGraphFeatures := func(node route.Vertex) (*lnwire.FeatureVector,
-		error) {
+	getGraphFeatures := func(ctx context.Context,
+		node route.Vertex) (*lnwire.FeatureVector, error) {
 
 		// Check cache for features of the fromNode.
 		fromFeatures, ok := featureCache[node]
@@ -998,7 +998,7 @@ func findPath(ctx context.Context, g *graphParams, r *RestrictParams,
 		}
 
 		// Fetch node features fresh from the graph.
-		fromFeatures, err := g.graph.FetchNodeFeatures(node)
+		fromFeatures, err := g.graph.FetchNodeFeatures(ctx, node)
 		if err != nil {
 			return nil, err
 		}
@@ -1099,7 +1099,7 @@ func findPath(ctx context.Context, g *graphParams, r *RestrictParams,
 			}
 
 			// Get feature vector for fromNode.
-			fromFeatures, err := getGraphFeatures(fromNode)
+			fromFeatures, err := getGraphFeatures(ctx, fromNode)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -1227,12 +1227,14 @@ func findBlindedPaths(ctx context.Context, g Graph, target route.Vertex,
 	// If the node is not the destination node, then it is required that the
 	// node advertise the route blinding feature-bit in order for it to be
 	// chosen as a node on the blinded path.
-	supportsRouteBlinding := func(node route.Vertex) (bool, error) {
+	supportsRouteBlinding := func(ctx context.Context,
+		node route.Vertex) (bool, error) {
+
 		if node == target {
 			return true, nil
 		}
 
-		features, err := g.FetchNodeFeatures(node)
+		features, err := g.FetchNodeFeatures(ctx, node)
 		if err != nil {
 			return false, err
 		}
@@ -1282,7 +1284,8 @@ func findBlindedPaths(ctx context.Context, g Graph, target route.Vertex,
 // in a depth first manner searching for a set of blinded paths to the given
 // node.
 func processNodeForBlindedPath(ctx context.Context, g Graph, node route.Vertex,
-	supportsRouteBlinding func(vertex route.Vertex) (bool, error),
+	supportsRouteBlinding func(ctx context.Context,
+		vertex route.Vertex) (bool, error),
 	alreadyVisited map[route.Vertex]bool,
 	restrictions *blindedPathRestrictions) ([][]blindedHop, bool, error) {
 
@@ -1304,7 +1307,7 @@ func processNodeForBlindedPath(ctx context.Context, g Graph, node route.Vertex,
 		return nil, false, nil
 	}
 
-	supports, err := supportsRouteBlinding(node)
+	supports, err := supportsRouteBlinding(ctx, node)
 	if err != nil {
 		return nil, false, err
 	}

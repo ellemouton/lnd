@@ -244,14 +244,14 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(ctx context.Context,
 // features instead of the database.
 //
 // NOTE: this is part of the graphdb.NodeTraverser interface.
-func (c *ChannelGraph) FetchNodeFeatures(node route.Vertex) (
-	*lnwire.FeatureVector, error) {
+func (c *ChannelGraph) FetchNodeFeatures(ctx context.Context,
+	node route.Vertex) (*lnwire.FeatureVector, error) {
 
 	if c.graphCache != nil {
 		return c.graphCache.GetFeatures(node), nil
 	}
 
-	return c.KVStore.FetchNodeFeatures(node)
+	return c.KVStore.FetchNodeFeatures(ctx, node)
 }
 
 // GraphSession will provide the call-back with access to a NodeTraverser
