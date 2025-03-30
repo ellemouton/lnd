@@ -2973,7 +2973,9 @@ func (m *mockGraphBuilder) setNextReject(reject bool) {
 	m.rejectUpdate = reject
 }
 
-func (m *mockGraphBuilder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
+func (m *mockGraphBuilder) ApplyChannelUpdate(_ context.Context,
+	msg *lnwire.ChannelUpdate1) bool {
+
 	if m.rejectUpdate {
 		return false
 	}

@@ -910,7 +910,7 @@ func (p *paymentLifecycle) handleSwitchErr(ctx context.Context,
 
 // handleFailureMessage tries to apply a channel update present in the failure
 // message if any.
-func (p *paymentLifecycle) handleFailureMessage(_ context.Context,
+func (p *paymentLifecycle) handleFailureMessage(ctx context.Context,
 	rt *route.Route, errorSourceIdx int,
 	failure lnwire.FailureMessage) error {
 
@@ -975,7 +975,7 @@ func (p *paymentLifecycle) handleFailureMessage(_ context.Context,
 	}
 
 	// Apply channel update to the channel edge policy in our db.
-	if !p.router.cfg.ApplyChannelUpdate(update) {
+	if !p.router.cfg.ApplyChannelUpdate(ctx, update) {
 		log.Debugf("Invalid channel update received: node=%v",
 			errVertex)
 	}
