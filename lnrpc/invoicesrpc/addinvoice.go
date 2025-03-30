@@ -648,7 +648,7 @@ func chanCanBeHopHint(ctx context.Context, channel *HopHintInfo,
 	// channels.
 	var remotePub [33]byte
 	copy(remotePub[:], channel.RemotePubkey.SerializeCompressed())
-	isRemoteNodePublic, err := cfg.IsPublicNode(remotePub)
+	isRemoteNodePublic, err := cfg.IsPublicNode(ctx, remotePub)
 	if err != nil {
 		log.Errorf("Unable to determine if node %x "+
 			"is advertised: %v", remotePub, err)
@@ -763,7 +763,7 @@ type SelectHopHintsCfg struct {
 	// IsPublicNode is returns a bool indicating whether the node with the
 	// given public key is seen as a public node in the graph from the
 	// graph's source node's point of view.
-	IsPublicNode func(pubKey [33]byte) (bool, error)
+	IsPublicNode func(ctx context.Context, pubKey [33]byte) (bool, error)
 
 	// FetchChannelEdgesByID attempts to lookup the two directed edges for
 	// the channel identified by the channel ID.

@@ -1282,11 +1282,11 @@ func (b *Builder) FetchLightningNode(ctx context.Context,
 // the router.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) ForAllOutgoingChannels(_ context.Context,
+func (b *Builder) ForAllOutgoingChannels(ctx context.Context,
 	cb func(*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy) error) error {
 
-	return b.cfg.Graph.ForEachNodeChannel(b.cfg.SelfNode,
+	return b.cfg.Graph.ForEachNodeChannel(ctx, b.cfg.SelfNode,
 		func(c *models.ChannelEdgeInfo, e *models.ChannelEdgePolicy,
 			_ *models.ChannelEdgePolicy) error {
 
@@ -1304,10 +1304,10 @@ func (b *Builder) ForAllOutgoingChannels(_ context.Context,
 // properly announce the edge to the rest of the network.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) AddProof(_ context.Context, chanID lnwire.ShortChannelID,
+func (b *Builder) AddProof(ctx context.Context, chanID lnwire.ShortChannelID,
 	proof *models.ChannelAuthProof) error {
 
-	return b.cfg.Graph.AddEdgeProof(chanID, proof)
+	return b.cfg.Graph.AddEdgeProof(ctx, chanID, proof)
 }
 
 // IsStaleNode returns true if the graph source has a node announcement for the
@@ -1332,10 +1332,10 @@ func (b *Builder) IsStaleNode(ctx context.Context, node route.Vertex,
 // the graph from the graph's source node's point of view.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsPublicNode(_ context.Context, node route.Vertex) (bool,
+func (b *Builder) IsPublicNode(ctx context.Context, node route.Vertex) (bool,
 	error) {
 
-	return b.cfg.Graph.IsPublicNode(node)
+	return b.cfg.Graph.IsPublicNode(ctx, node)
 }
 
 // IsKnownEdge returns true if the graph source already knows of the passed

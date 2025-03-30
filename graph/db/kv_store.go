@@ -1241,7 +1241,7 @@ func (c *KVStore) HasChannelEdge(ctx context.Context,
 }
 
 // AddEdgeProof sets the proof of an existing edge in the graph database.
-func (c *KVStore) AddEdgeProof(chanID lnwire.ShortChannelID,
+func (c *KVStore) AddEdgeProof(_ context.Context, chanID lnwire.ShortChannelID,
 	proof *models.ChannelAuthProof) error {
 
 	// Construct the channel's primary key which is the 8-byte channel ID.
@@ -3106,7 +3106,7 @@ func nodeTraversal(tx kvdb.RTx, nodePub []byte, db kvdb.Backend,
 // halted with the error propagated back up to the caller.
 //
 // Unknown policies are passed into the callback as nil values.
-func (c *KVStore) ForEachNodeChannel(nodePub route.Vertex,
+func (c *KVStore) ForEachNodeChannel(_ context.Context, nodePub route.Vertex,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
 
@@ -3441,7 +3441,9 @@ func (c *KVStore) FetchChannelEdgesByID(_ context.Context, chanID uint64) (
 // IsPublicNode is a helper method that determines whether the node with the
 // given public key is seen as a public node in the graph from the graph's
 // source node's point of view.
-func (c *KVStore) IsPublicNode(pubKey [33]byte) (bool, error) {
+func (c *KVStore) IsPublicNode(_ context.Context, pubKey [33]byte) (bool,
+	error) {
+
 	var nodeIsPublic bool
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		nodes := tx.ReadBucket(nodeBucket)
