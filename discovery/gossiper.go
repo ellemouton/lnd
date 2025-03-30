@@ -674,7 +674,7 @@ func (d *AuthenticatedGossiper) start(ctx context.Context) error {
 	// Start the reliable sender. In case we had any pending messages ready
 	// to be sent when the gossiper was last shut down, we must continue on
 	// our quest to deliver them to their respective peers.
-	if err := d.reliableSender.Start(); err != nil {
+	if err := d.reliableSender.Start(ctx); err != nil {
 		return err
 	}
 
@@ -1469,7 +1469,7 @@ func (d *AuthenticatedGossiper) networkHandler(ctx context.Context) {
 			// the affected channels and also update the underlying
 			// graph with the new state.
 			newChanUpdates, err := d.processChanPolicyUpdate(
-				policyUpdate.edgesToUpdate,
+				ctx, policyUpdate.edgesToUpdate,
 			)
 			policyUpdate.errChan <- err
 			if err != nil {
@@ -1838,7 +1838,7 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
 
 // processChanPolicyUpdate generates a new set of channel updates for the
 // provided list of edges and updates the backing ChannelGraphSource.
-func (d *AuthenticatedGossiper) processChanPolicyUpdate(
+func (d *AuthenticatedGossiper) processChanPolicyUpdate(ctx context.Context,
 	edgesToUpdate []EdgeWithInfo) ([]networkMsg, error) {
 
 	var chanUpdates []networkMsg
@@ -1893,7 +1893,7 @@ func (d *AuthenticatedGossiper) processChanPolicyUpdate(
 				edgeInfo.Info, chanUpdate.ChannelFlags,
 			)
 			err := d.reliableSender.sendMessage(
-				chanUpdate, remotePubKey,
+				ctx, chanUpdate, remotePubKey,
 			)
 			if err != nil {
 				log.Errorf("Unable to reliably send %v for "+
@@ -2223,7 +2223,9 @@ func (d *AuthenticatedGossiper) fetchNodeAnn(
 
 // isMsgStale determines whether a message retrieved from the backing
 // MessageStore is seen as stale by the current graph.
-func (d *AuthenticatedGossiper) isMsgStale(msg lnwire.Message) bool {
+func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
+	msg lnwire.Message) bool {
+
 	switch msg := msg.(type) {
 	case *lnwire.AnnounceSignatures1:
 		chanInfo, _, _, err := d.cfg.Graph.GetChannelByID(
@@ -3330,7 +3332,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 		// Now we'll attempt to send the channel update message
 		// reliably to the remote peer in the background, so that we
 		// don't block if the peer happens to be offline at the moment.
-		err := d.reliableSender.sendMessage(upd, remotePubKey)
+		err := d.reliableSender.sendMessage(ctx, upd, remotePubKey)
 		if err != nil {
 			err := fmt.Errorf("unable to reliably send %v for "+
 				"channel=%v to peer=%x: %v", upd.MsgType(),
@@ -3364,7 +3366,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 }
 
 // handleAnnSig processes a new announcement signatures message.
-func (d *AuthenticatedGossiper) handleAnnSig(_ context.Context,
+func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	nMsg *networkMsg, ann *lnwire.AnnounceSignatures1) ([]networkMsg,
 	bool) {
 
@@ -3465,7 +3467,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(_ context.Context,
 		// Since the remote peer might not be online we'll call a
 		// method that will attempt to deliver the proof when it comes
 		// online.
-		err := d.reliableSender.sendMessage(ann, remotePubKey)
+		err := d.reliableSender.sendMessage(ctx, ann, remotePubKey)
 		if err != nil {
 			err := fmt.Errorf("unable to reliably send %v for "+
 				"channel=%v to peer=%x: %v", ann.MsgType(),
