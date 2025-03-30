@@ -29,7 +29,7 @@ type ChannelGraphSource interface {
 	// AddEdge is used to add edge/channel to the topology of the router,
 	// after all information about channel will be gathered this
 	// edge/channel might be used in construction of payment path.
-	AddEdge(edge *models.ChannelEdgeInfo,
+	AddEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 		op ...batch.SchedulerOption) error
 
 	// AddProof updates the channel edge info with proof which is needed to
@@ -46,25 +46,26 @@ type ChannelGraphSource interface {
 	// for the target node with a more recent timestamp. This method will
 	// also return true if we don't have an active channel announcement for
 	// the target node.
-	IsStaleNode(node route.Vertex, timestamp time.Time) bool
+	IsStaleNode(ctx context.Context, node route.Vertex,
+		timestamp time.Time) bool
 
 	// IsPublicNode determines whether the given vertex is seen as a public
 	// node in the graph from the graph's source node's point of view.
-	IsPublicNode(node route.Vertex) (bool, error)
+	IsPublicNode(ctx context.Context, node route.Vertex) (bool, error)
 
 	// IsKnownEdge returns true if the graph source already knows of the
 	// passed channel ID either as a live or zombie edge.
-	IsKnownEdge(chanID lnwire.ShortChannelID) bool
+	IsKnownEdge(ctx context.Context, chanID lnwire.ShortChannelID) bool
 
 	// IsStaleEdgePolicy returns true if the graph source has a channel
 	// edge for the passed channel ID (and flags) that have a more recent
 	// timestamp.
-	IsStaleEdgePolicy(chanID lnwire.ShortChannelID, timestamp time.Time,
-		flags lnwire.ChanUpdateChanFlags) bool
+	IsStaleEdgePolicy(ctx context.Context, chanID lnwire.ShortChannelID,
+		timestamp time.Time, flags lnwire.ChanUpdateChanFlags) bool
 
 	// MarkEdgeLive clears an edge from our zombie index, deeming it as
 	// live.
-	MarkEdgeLive(chanID lnwire.ShortChannelID) error
+	MarkEdgeLive(ctx context.Context, chanID lnwire.ShortChannelID) error
 
 	// ForAllOutgoingChannels is used to iterate over all channels
 	// emanating from the "source" node which is the center of the
@@ -78,7 +79,7 @@ type ChannelGraphSource interface {
 	CurrentBlockHeight(ctx context.Context) (uint32, error)
 
 	// GetChannelByID return the channel by the channel id.
-	GetChannelByID(chanID lnwire.ShortChannelID) (
+	GetChannelByID(ctx context.Context, chanID lnwire.ShortChannelID) (
 		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy, error)
 

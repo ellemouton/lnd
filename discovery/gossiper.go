@@ -1947,7 +1947,7 @@ func (d *AuthenticatedGossiper) processRejectedEdge(ctx context.Context,
 	// First, we'll fetch the state of the channel as we know if from the
 	// database.
 	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(
-		chanAnnMsg.ShortChannelID,
+		ctx, chanAnnMsg.ShortChannelID,
 	)
 	if err != nil {
 		return nil, err
@@ -2154,7 +2154,7 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(ctx context.Context,
 //
 // NOTE: only the NodeKey1Bytes and NodeKey2Bytes members of the ChannelEdgeInfo
 // should be inspected.
-func (d *AuthenticatedGossiper) processZombieUpdate(_ context.Context,
+func (d *AuthenticatedGossiper) processZombieUpdate(ctx context.Context,
 	chanInfo *models.ChannelEdgeInfo, scid lnwire.ShortChannelID,
 	msg *lnwire.ChannelUpdate1) error {
 
@@ -2188,7 +2188,7 @@ func (d *AuthenticatedGossiper) processZombieUpdate(_ context.Context,
 	// With the signature valid, we'll proceed to mark the
 	// edge as live and wait for the channel announcement to
 	// come through again.
-	err = d.cfg.Graph.MarkEdgeLive(scid)
+	err = d.cfg.Graph.MarkEdgeLive(ctx, scid)
 	switch {
 	case errors.Is(err, graphdb.ErrZombieEdgeNotFound):
 		log.Errorf("edge with chan_id=%v was not found in the "+
@@ -2225,13 +2225,13 @@ func (d *AuthenticatedGossiper) fetchNodeAnn(
 
 // isMsgStale determines whether a message retrieved from the backing
 // MessageStore is seen as stale by the current graph.
-func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
+func (d *AuthenticatedGossiper) isMsgStale(ctx context.Context,
 	msg lnwire.Message) bool {
 
 	switch msg := msg.(type) {
 	case *lnwire.AnnounceSignatures1:
 		chanInfo, _, _, err := d.cfg.Graph.GetChannelByID(
-			msg.ShortChannelID,
+			ctx, msg.ShortChannelID,
 		)
 
 		// If the channel cannot be found, it is most likely a leftover
@@ -2252,7 +2252,9 @@ func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
 		return chanInfo.AuthProof != nil
 
 	case *lnwire.ChannelUpdate1:
-		_, p1, p2, err := d.cfg.Graph.GetChannelByID(msg.ShortChannelID)
+		_, p1, p2, err := d.cfg.Graph.GetChannelByID(
+			ctx, msg.ShortChannelID,
+		)
 
 		// If the channel cannot be found, it is most likely a leftover
 		// message for a channel that was closed, so we can consider it
@@ -2448,7 +2450,7 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
 
 	// We'll quickly ask the router if it already has a newer update for
 	// this node so we can skip validating signatures if not required.
-	if d.cfg.Graph.IsStaleNode(nodeAnn.NodeID, timestamp) {
+	if d.cfg.Graph.IsStaleNode(ctx, nodeAnn.NodeID, timestamp) {
 		log.Debugf("Skipped processing stale node: %x", nodeAnn.NodeID)
 		nMsg.err <- nil
 		return nil, true
@@ -2474,7 +2476,7 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
 	// In order to ensure we don't leak unadvertised nodes, we'll make a
 	// quick check to ensure this node intends to publicly advertise itself
 	// to the network.
-	isPublic, err := d.cfg.Graph.IsPublicNode(nodeAnn.NodeID)
+	isPublic, err := d.cfg.Graph.IsPublicNode(ctx, nodeAnn.NodeID)
 	if err != nil {
 		log.Errorf("Unable to determine if node %x is advertised: %v",
 			nodeAnn.NodeID, err)
@@ -2568,7 +2570,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 
 	// At this point, we'll now ask the router if this is a zombie/known
 	// edge. If so we can skip all the processing below.
-	if d.cfg.Graph.IsKnownEdge(scid) {
+	if d.cfg.Graph.IsKnownEdge(ctx, scid) {
 		nMsg.err <- nil
 		return nil, true
 	}
@@ -2811,7 +2813,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 	// We will add the edge to the channel router. If the nodes present in
 	// this channel are not present in the database, a partial node will be
 	// added to represent each node while we wait for a node announcement.
-	err = d.cfg.Graph.AddEdge(edge, ops...)
+	err = d.cfg.Graph.AddEdge(ctx, edge, ops...)
 	if err != nil {
 		log.Debugf("Graph rejected edge for short_chan_id(%v): %v",
 			scid.ToUint64(), err)
@@ -3036,7 +3038,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 	defer d.channelMtx.Unlock(graphScid.ToUint64())
 
 	if d.cfg.Graph.IsStaleEdgePolicy(
-		graphScid, timestamp, upd.ChannelFlags,
+		ctx, graphScid, timestamp, upd.ChannelFlags,
 	) {
 
 		log.Debugf("Ignored stale edge policy for short_chan_id(%v): "+
@@ -3067,7 +3069,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 	// Get the node pub key as far since we don't have it in the channel
 	// update announcement message. We'll need this to properly verify the
 	// message's signature.
-	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(graphScid)
+	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(ctx, graphScid)
 	switch {
 	// No error, break.
 	case err == nil:
@@ -3411,7 +3413,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	defer d.channelMtx.Unlock(ann.ShortChannelID.ToUint64())
 
 	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(
-		ann.ShortChannelID,
+		ctx, ann.ShortChannelID,
 	)
 	if err != nil {
 		_, err = d.cfg.FindChannel(nMsg.source, ann.ChannelID)

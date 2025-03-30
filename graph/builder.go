@@ -923,7 +923,7 @@ func (b *Builder) MarkZombieEdge(chanID uint64) error {
 func (b *Builder) ApplyChannelUpdate(ctx context.Context,
 	msg *lnwire.ChannelUpdate1) bool {
 
-	ch, _, _, err := b.GetChannelByID(msg.ShortChannelID)
+	ch, _, _, err := b.GetChannelByID(ctx, msg.ShortChannelID)
 	if err != nil {
 		log.Errorf("Unable to retrieve channel by id: %v", err)
 		return false
@@ -1022,7 +1022,7 @@ func (b *Builder) addNode(node *models.LightningNode,
 // in construction of payment path.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) AddEdge(edge *models.ChannelEdgeInfo,
+func (b *Builder) AddEdge(_ context.Context, edge *models.ChannelEdgeInfo,
 	op ...batch.SchedulerOption) error {
 
 	err := b.addEdge(edge, op...)
@@ -1257,10 +1257,9 @@ func (b *Builder) SyncedHeight() uint32 {
 // GetChannelByID return the channel by the channel id.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) GetChannelByID(chanID lnwire.ShortChannelID) (
-	*models.ChannelEdgeInfo,
-	*models.ChannelEdgePolicy,
-	*models.ChannelEdgePolicy, error) {
+func (b *Builder) GetChannelByID(_ context.Context,
+	chanID lnwire.ShortChannelID) (*models.ChannelEdgeInfo,
+	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error) {
 
 	return b.cfg.Graph.FetchChannelEdgesByID(chanID.ToUint64())
 }
@@ -1312,7 +1311,7 @@ func (b *Builder) AddProof(_ context.Context, chanID lnwire.ShortChannelID,
 // target node with a more recent timestamp.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsStaleNode(node route.Vertex,
+func (b *Builder) IsStaleNode(_ context.Context, node route.Vertex,
 	timestamp time.Time) bool {
 
 	// If our attempt to assert that the node announcement is fresh fails,
@@ -1330,7 +1329,9 @@ func (b *Builder) IsStaleNode(node route.Vertex,
 // the graph from the graph's source node's point of view.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsPublicNode(node route.Vertex) (bool, error) {
+func (b *Builder) IsPublicNode(_ context.Context, node route.Vertex) (bool,
+	error) {
+
 	return b.cfg.Graph.IsPublicNode(node)
 }
 
@@ -1338,7 +1339,9 @@ func (b *Builder) IsPublicNode(node route.Vertex) (bool, error) {
 // channel ID either as a live or zombie edge.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsKnownEdge(chanID lnwire.ShortChannelID) bool {
+func (b *Builder) IsKnownEdge(_ context.Context,
+	chanID lnwire.ShortChannelID) bool {
+
 	_, _, exists, isZombie, _ := b.cfg.Graph.HasChannelEdge(
 		chanID.ToUint64(),
 	)
@@ -1360,8 +1363,9 @@ func (b *Builder) IsZombieEdge(chanID lnwire.ShortChannelID) (bool, error) {
 // the passed channel ID (and flags) that have a more recent timestamp.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
-	timestamp time.Time, flags lnwire.ChanUpdateChanFlags) bool {
+func (b *Builder) IsStaleEdgePolicy(_ context.Context,
+	chanID lnwire.ShortChannelID, timestamp time.Time,
+	flags lnwire.ChanUpdateChanFlags) bool {
 
 	edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
 		b.cfg.Graph.HasChannelEdge(chanID.ToUint64())
@@ -1416,6 +1420,8 @@ func (b *Builder) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 // MarkEdgeLive clears an edge from our zombie index, deeming it as live.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) MarkEdgeLive(chanID lnwire.ShortChannelID) error {
+func (b *Builder) MarkEdgeLive(_ context.Context,
+	chanID lnwire.ShortChannelID) error {
+
 	return b.cfg.Graph.MarkEdgeLive(chanID.ToUint64())
 }

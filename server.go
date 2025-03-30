@@ -1222,10 +1222,10 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		PropagateChanPolicyUpdate: s.authGossiper.PropagateChanPolicyUpdate,
 		UpdateForwardingPolicies:  s.htlcSwitch.UpdateForwardingPolicies,
 		FetchChannel:              s.chanStateDB.FetchChannel,
-		AddEdge: func(_ context.Context,
+		AddEdge: func(ctx context.Context,
 			edge *models.ChannelEdgeInfo) error {
 
-			return s.graphBuilder.AddEdge(edge)
+			return s.graphBuilder.AddEdge(ctx, edge)
 		},
 	}
 
@@ -5238,10 +5238,12 @@ func (s *server) fetchLastChanUpdate() func(context.Context,
 
 	ourPubKey := s.identityECDH.PubKey().SerializeCompressed()
 
-	return func(_ context.Context, cid lnwire.ShortChannelID) (
+	return func(ctx context.Context, cid lnwire.ShortChannelID) (
 		*lnwire.ChannelUpdate1, error) {
 
-		info, edge1, edge2, err := s.graphBuilder.GetChannelByID(cid)
+		info, edge1, edge2, err := s.graphBuilder.GetChannelByID(
+			ctx, cid,
+		)
 		if err != nil {
 			return nil, err
 		}

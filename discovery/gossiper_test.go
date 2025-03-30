@@ -136,8 +136,8 @@ func (r *mockGraphSource) IsZombieEdge(chanID lnwire.ShortChannelID) (bool,
 	return ok, nil
 }
 
-func (r *mockGraphSource) AddEdge(info *models.ChannelEdgeInfo,
-	_ ...batch.SchedulerOption) error {
+func (r *mockGraphSource) AddEdge(_ context.Context,
+	info *models.ChannelEdgeInfo, _ ...batch.SchedulerOption) error {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -245,10 +245,9 @@ func (r *mockGraphSource) ForAllOutgoingChannels(_ context.Context,
 	return nil
 }
 
-func (r *mockGraphSource) GetChannelByID(chanID lnwire.ShortChannelID) (
-	*models.ChannelEdgeInfo,
-	*models.ChannelEdgePolicy,
-	*models.ChannelEdgePolicy, error) {
+func (r *mockGraphSource) GetChannelByID(_ context.Context,
+	chanID lnwire.ShortChannelID) (*models.ChannelEdgeInfo,
+	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error) {
 
 	select {
 	// Check if a pause request channel has been loaded. If one has, then we
@@ -311,7 +310,9 @@ func (r *mockGraphSource) FetchLightningNode(
 
 // IsStaleNode returns true if the graph source has a node announcement for the
 // target node with a more recent timestamp.
-func (r *mockGraphSource) IsStaleNode(nodePub route.Vertex, timestamp time.Time) bool {
+func (r *mockGraphSource) IsStaleNode(_ context.Context, nodePub route.Vertex,
+	timestamp time.Time) bool {
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -338,7 +339,9 @@ func (r *mockGraphSource) IsStaleNode(nodePub route.Vertex, timestamp time.Time)
 
 // IsPublicNode determines whether the given vertex is seen as a public node in
 // the graph from the graph's source node's point of view.
-func (r *mockGraphSource) IsPublicNode(node route.Vertex) (bool, error) {
+func (r *mockGraphSource) IsPublicNode(_ context.Context,
+	node route.Vertex) (bool, error) {
+
 	for _, info := range r.infos {
 		if !bytes.Equal(node[:], info.NodeKey1Bytes[:]) &&
 			!bytes.Equal(node[:], info.NodeKey2Bytes[:]) {
@@ -354,7 +357,9 @@ func (r *mockGraphSource) IsPublicNode(node route.Vertex) (bool, error) {
 
 // IsKnownEdge returns true if the graph source already knows of the passed
 // channel ID either as a live or zombie channel.
-func (r *mockGraphSource) IsKnownEdge(chanID lnwire.ShortChannelID) bool {
+func (r *mockGraphSource) IsKnownEdge(_ context.Context,
+	chanID lnwire.ShortChannelID) bool {
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -366,8 +371,9 @@ func (r *mockGraphSource) IsKnownEdge(chanID lnwire.ShortChannelID) bool {
 
 // IsStaleEdgePolicy returns true if the graph source has a channel edge for
 // the passed channel ID (and flags) that have a more recent timestamp.
-func (r *mockGraphSource) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
-	timestamp time.Time, flags lnwire.ChanUpdateChanFlags) bool {
+func (r *mockGraphSource) IsStaleEdgePolicy(_ context.Context,
+	chanID lnwire.ShortChannelID, timestamp time.Time,
+	flags lnwire.ChanUpdateChanFlags) bool {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -407,7 +413,9 @@ func (r *mockGraphSource) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 // MarkEdgeLive clears an edge from our zombie index, deeming it as live.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (r *mockGraphSource) MarkEdgeLive(chanID lnwire.ShortChannelID) error {
+func (r *mockGraphSource) MarkEdgeLive(_ context.Context,
+	chanID lnwire.ShortChannelID) error {
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.zombies, chanID.ToUint64())
