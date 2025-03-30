@@ -1349,16 +1349,6 @@ func (b *Builder) IsKnownEdge(_ context.Context,
 	return exists || isZombie
 }
 
-// IsZombieEdge returns true if the graph source has marked the given channel ID
-// as a zombie edge.
-//
-// NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsZombieEdge(chanID lnwire.ShortChannelID) (bool, error) {
-	_, _, _, isZombie, err := b.cfg.Graph.HasChannelEdge(chanID.ToUint64())
-
-	return isZombie, err
-}
-
 // IsStaleEdgePolicy returns true if the graph source has a channel edge for
 // the passed channel ID (and flags) that have a more recent timestamp.
 //
