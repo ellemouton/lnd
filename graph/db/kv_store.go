@@ -848,8 +848,8 @@ func (c *KVStore) SetSourceNode(node *models.LightningNode) error {
 // channel update.
 //
 // TODO(roasbeef): also need sig of announcement.
-func (c *KVStore) AddLightningNode(node *models.LightningNode,
-	op ...batch.SchedulerOption) error {
+func (c *KVStore) AddLightningNode(_ context.Context,
+	node *models.LightningNode, op ...batch.SchedulerOption) error {
 
 	r := &batch.Request{
 		Update: func(tx kvdb.RwTx) error {
@@ -986,8 +986,8 @@ func (c *KVStore) deleteLightningNode(nodes kvdb.RwBucket,
 // involved in creation of the channel, and the set of features that the channel
 // supports. The chanPoint and chanID are used to uniquely identify the edge
 // globally within the database.
-func (c *KVStore) AddChannelEdge(edge *models.ChannelEdgeInfo,
-	op ...batch.SchedulerOption) error {
+func (c *KVStore) AddChannelEdge(_ context.Context,
+	edge *models.ChannelEdgeInfo, op ...batch.SchedulerOption) error {
 
 	var alreadyExists bool
 	r := &batch.Request{
@@ -2698,7 +2698,8 @@ func makeZombiePubkeys(info *models.ChannelEdgeInfo,
 // updated, otherwise it's the second node's information. The node ordering is
 // determined by the lexicographical ordering of the identity public keys of the
 // nodes on either side of the channel.
-func (c *KVStore) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
+func (c *KVStore) UpdateEdgePolicy(_ context.Context,
+	edge *models.ChannelEdgePolicy,
 	op ...batch.SchedulerOption) (route.Vertex, route.Vertex, error) {
 
 	var (
@@ -3336,7 +3337,7 @@ func (c *KVStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 // ErrZombieEdge an be returned if the edge is currently marked as a zombie
 // within the database. In this case, the ChannelEdgePolicy's will be nil, and
 // the ChannelEdgeInfo will only include the public keys of each node.
-func (c *KVStore) FetchChannelEdgesByID(chanID uint64) (
+func (c *KVStore) FetchChannelEdgesByID(_ context.Context, chanID uint64) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
@@ -3580,7 +3581,7 @@ func (c *KVStore) ChannelView(_ context.Context) ([]EdgePoint, error) {
 // MarkEdgeZombie attempts to mark a channel identified by its channel ID as a
 // zombie. This method is used on an ad-hoc basis, when channels need to be
 // marked as zombies outside the normal pruning cycle.
-func (c *KVStore) MarkEdgeZombie(chanID uint64,
+func (c *KVStore) MarkEdgeZombie(_ context.Context, chanID uint64,
 	pubKey1, pubKey2 [33]byte) error {
 
 	c.cacheMu.Lock()
@@ -4745,7 +4746,7 @@ func MakeTestGraph(t testing.TB, modifiers ...KVStoreOptionModifier) (
 
 		return nil, err
 	}
-	require.NoError(t, graph.Start())
+	require.NoError(t, graph.Start(context.Background()))
 
 	t.Cleanup(func() {
 		_ = backend.Close()

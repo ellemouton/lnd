@@ -621,7 +621,7 @@ func createTestPeer(t *testing.T) *peerTestCtx {
 		KVDB: graphBackend,
 	})
 	require.NoError(t, err)
-	require.NoError(t, dbAliceGraph.Start())
+	require.NoError(t, dbAliceGraph.Start(context.Background()))
 	t.Cleanup(func() {
 		require.NoError(t, dbAliceGraph.Stop())
 	})

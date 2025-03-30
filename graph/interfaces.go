@@ -196,8 +196,9 @@ type DB interface {
 	// zombie within the database. In this case, the ChannelEdgePolicy's
 	// will be nil, and the ChannelEdgeInfo will only include the public
 	// keys of each node.
-	FetchChannelEdgesByID(chanID uint64) (*models.ChannelEdgeInfo,
-		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error)
+	FetchChannelEdgesByID(ctx context.Context, chanID uint64) (
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, error)
 
 	// AddLightningNode adds a vertex/node to the graph database. If the
 	// node is not in the database from before, this will add a new,
@@ -205,7 +206,7 @@ type DB interface {
 	// update that node's information. Note that this method is expected to
 	// only be called to update an already present node from a node
 	// announcement, or to insert a node found in a channel update.
-	AddLightningNode(node *models.LightningNode,
+	AddLightningNode(ctx context.Context, node *models.LightningNode,
 		op ...batch.SchedulerOption) error
 
 	// AddChannelEdge adds a new (undirected, blank) edge to the graph
@@ -215,13 +216,14 @@ type DB interface {
 	// and the set of features that the channel supports. The chanPoint and
 	// chanID are used to uniquely identify the edge globally within the
 	// database.
-	AddChannelEdge(edge *models.ChannelEdgeInfo,
+	AddChannelEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 		op ...batch.SchedulerOption) error
 
 	// MarkEdgeZombie attempts to mark a channel identified by its channel
 	// ID as a zombie. This method is used on an ad-hoc basis, when channels
 	// need to be marked as zombies outside the normal pruning cycle.
-	MarkEdgeZombie(chanID uint64, pubKey1, pubKey2 [33]byte) error
+	MarkEdgeZombie(ctx context.Context, chanID uint64, pubKey1,
+		pubKey2 [33]byte) error
 
 	// UpdateEdgePolicy updates the edge routing policy for a single
 	// directed edge within the database for the referenced channel. The
@@ -231,7 +233,7 @@ type DB interface {
 	// node's information. The node ordering is determined by the
 	// lexicographical ordering of the identity public keys of the nodes on
 	// either side of the channel.
-	UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
+	UpdateEdgePolicy(ctx context.Context, edge *models.ChannelEdgePolicy,
 		op ...batch.SchedulerOption) error
 
 	// HasLightningNode determines if the graph has a vertex identified by

@@ -907,12 +907,12 @@ func (b *Builder) assertNodeAnnFreshness(node route.Vertex,
 
 // MarkZombieEdge adds a channel that failed complete validation into the zombie
 // index so we can avoid having to re-validate it in the future.
-func (b *Builder) MarkZombieEdge(_ context.Context, chanID uint64) error {
+func (b *Builder) MarkZombieEdge(ctx context.Context, chanID uint64) error {
 	// If the edge fails validation we'll mark the edge itself as a zombie
 	// so we don't continue to request it. We use the "zero key" for both
 	// node pubkeys so this edge can't be resurrected.
 	var zeroKey [33]byte
-	err := b.cfg.Graph.MarkEdgeZombie(chanID, zeroKey, zeroKey)
+	err := b.cfg.Graph.MarkEdgeZombie(ctx, chanID, zeroKey, zeroKey)
 	if err != nil {
 		return fmt.Errorf("unable to mark spent chan(id=%v) as a "+
 			"zombie: %w", chanID, err)
@@ -981,10 +981,10 @@ func (b *Builder) ApplyChannelUpdate(ctx context.Context,
 // be ignored.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) AddNode(_ context.Context, node *models.LightningNode,
+func (b *Builder) AddNode(ctx context.Context, node *models.LightningNode,
 	op ...batch.SchedulerOption) error {
 
-	err := b.addNode(node, op...)
+	err := b.addNode(ctx, node, op...)
 	if err != nil {
 		logNetworkMsgProcessError(err)
 
@@ -998,7 +998,7 @@ func (b *Builder) AddNode(_ context.Context, node *models.LightningNode,
 // currently have persisted in the graph, and then adds it to the graph. If we
 // already know about the node, then we only update our DB if the new update
 // has a newer timestamp than the last one we received.
-func (b *Builder) addNode(node *models.LightningNode,
+func (b *Builder) addNode(ctx context.Context, node *models.LightningNode,
 	op ...batch.SchedulerOption) error {
 
 	// Before we add the node to the database, we'll check to see if the
@@ -1009,7 +1009,7 @@ func (b *Builder) addNode(node *models.LightningNode,
 		return err
 	}
 
-	if err := b.cfg.Graph.AddLightningNode(node, op...); err != nil {
+	if err := b.cfg.Graph.AddLightningNode(ctx, node, op...); err != nil {
 		return errors.Errorf("unable to add node %x to the "+
 			"graph: %v", node.PubKeyBytes, err)
 	}
@@ -1069,7 +1069,7 @@ func (b *Builder) addEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 			edge.ChannelID)
 	}
 
-	if err := b.cfg.Graph.AddChannelEdge(edge, op...); err != nil {
+	if err := b.cfg.Graph.AddChannelEdge(ctx, edge, op...); err != nil {
 		return fmt.Errorf("unable to add edge: %w", err)
 	}
 
@@ -1217,7 +1217,7 @@ func (b *Builder) updateEdge(ctx context.Context,
 
 	// Now that we know this isn't a stale update, we'll apply the new edge
 	// policy to the proper directional edge within the channel graph.
-	if err = b.cfg.Graph.UpdateEdgePolicy(policy, op...); err != nil {
+	if err = b.cfg.Graph.UpdateEdgePolicy(ctx, policy, op...); err != nil {
 		err := errors.Errorf("unable to add channel: %v", err)
 		log.Error(err)
 		return err
@@ -1260,11 +1260,11 @@ func (b *Builder) SyncedHeight() uint32 {
 // GetChannelByID return the channel by the channel id.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) GetChannelByID(_ context.Context,
+func (b *Builder) GetChannelByID(ctx context.Context,
 	chanID lnwire.ShortChannelID) (*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error) {
 
-	return b.cfg.Graph.FetchChannelEdgesByID(chanID.ToUint64())
+	return b.cfg.Graph.FetchChannelEdgesByID(ctx, chanID.ToUint64())
 }
 
 // FetchLightningNode attempts to look up a target node by its identity public

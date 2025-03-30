@@ -173,8 +173,8 @@ var (
 
 // FetchChannelEndpoints returns the pubkeys of both endpoints of the
 // given channel id if it exists in the graph.
-type FetchChannelEndpoints func(chanID uint64) (route.Vertex, route.Vertex,
-	error)
+type FetchChannelEndpoints func(ctx context.Context, chanID uint64) (
+	route.Vertex, route.Vertex, error)
 
 // ServerShell is a shell struct holding a reference to the actual sub-server.
 // It is used to register the gRPC sub-server with the root server before we
@@ -557,7 +557,7 @@ func (s *Server) probePaymentRequest(ctx context.Context, paymentRequest string,
 	// If the hints don't indicate an LSP then chances are that our probe
 	// payment won't be blocked along the route to the destination. We send
 	// a probe payment with unmodified route hints.
-	if !isLSP(hints, s.cfg.RouterBackend.FetchChannelEndpoints) {
+	if !isLSP(ctx, hints, s.cfg.RouterBackend.FetchChannelEndpoints) {
 		probeRequest.RouteHints = invoicesrpc.CreateRPCRouteHints(hints)
 		return s.sendProbePayment(ctx, probeRequest)
 	}
@@ -634,7 +634,7 @@ func (s *Server) probePaymentRequest(ctx context.Context, paymentRequest string,
 // false otherwise. If the destination hop hint of any route hint contains a
 // public channel, the function returns false because we can directly send a
 // probe to the final destination.
-func isLSP(routeHints [][]zpay32.HopHint,
+func isLSP(ctx context.Context, routeHints [][]zpay32.HopHint,
 	fetchChannelEndpoints FetchChannelEndpoints) bool {
 
 	if len(routeHints) == 0 || len(routeHints[0]) == 0 {
@@ -646,7 +646,7 @@ func isLSP(routeHints [][]zpay32.HopHint,
 	// If the destination hop hint of the first route hint contains a public
 	// channel we can send a probe to it directly, hence we don't signal an
 	// LSP.
-	_, _, err := fetchChannelEndpoints(destHopHint.ChannelID)
+	_, _, err := fetchChannelEndpoints(ctx, destHopHint.ChannelID)
 	if err == nil {
 		return false
 	}
@@ -662,7 +662,7 @@ func isLSP(routeHints [][]zpay32.HopHint,
 		// If the last hop hint of any route hint contains a public
 		// channel we can send a probe to it directly, hence we don't
 		// signal an LSP.
-		_, _, err = fetchChannelEndpoints(lastHop.ChannelID)
+		_, _, err = fetchChannelEndpoints(ctx, lastHop.ChannelID)
 		if err == nil {
 			return false
 		}
@@ -898,7 +898,7 @@ func (s *Server) SendToRouteV2(ctx context.Context,
 		return nil, fmt.Errorf("unable to send, no routes provided")
 	}
 
-	route, err := s.cfg.RouterBackend.UnmarshallRoute(req.Route)
+	route, err := s.cfg.RouterBackend.UnmarshallRoute(ctx, req.Route)
 	if err != nil {
 		return nil, err
 	}
@@ -932,7 +932,7 @@ func (s *Server) SendToRouteV2(ctx context.Context,
 	}
 	if attempt != nil {
 		rpcAttempt, err := s.cfg.RouterBackend.MarshalHTLCAttempt(
-			*attempt,
+			ctx, *attempt,
 		)
 		if err != nil {
 			return nil, err
@@ -1421,7 +1421,7 @@ func (s *Server) TrackPayments(request *TrackPaymentsRequest,
 }
 
 // trackPaymentStream streams payment updates to the client.
-func (s *Server) trackPaymentStream(context context.Context,
+func (s *Server) trackPaymentStream(ctx context.Context,
 	subscription routing.ControlTowerSubscriber, noInflightUpdates bool,
 	send func(*lnrpc.Payment) error) error {
 
@@ -1451,7 +1451,7 @@ func (s *Server) trackPaymentStream(context context.Context,
 			}
 
 			rpcPayment, err := s.cfg.RouterBackend.MarshallPayment(
-				result,
+				ctx, result,
 			)
 			if err != nil {
 				return err
@@ -1466,14 +1466,14 @@ func (s *Server) trackPaymentStream(context context.Context,
 		case <-s.quit:
 			return errServerShuttingDown
 
-		case <-context.Done():
-			return context.Err()
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 }
 
 // BuildRoute builds a route from a list of hop addresses.
-func (s *Server) BuildRoute(_ context.Context,
+func (s *Server) BuildRoute(ctx context.Context,
 	req *BuildRouteRequest) (*BuildRouteResponse, error) {
 
 	if len(req.HopPubkeys) == 0 {
@@ -1541,7 +1541,7 @@ func (s *Server) BuildRoute(_ context.Context,
 		return nil, err
 	}
 
-	rpcRoute, err := s.cfg.RouterBackend.MarshallRoute(route)
+	rpcRoute, err := s.cfg.RouterBackend.MarshallRoute(ctx, route)
 	if err != nil {
 		return nil, err
 	}

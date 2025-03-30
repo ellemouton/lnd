@@ -11,6 +11,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/batch"
+	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -52,8 +53,9 @@ type ChannelGraph struct {
 	*KVStore
 	*topologyManager
 
-	quit chan struct{}
-	wg   sync.WaitGroup
+	quit   chan struct{}
+	wg     sync.WaitGroup
+	cancel fn.Option[context.CancelFunc]
 }
 
 // NewChannelGraph creates a new ChannelGraph instance with the given backend.
@@ -88,12 +90,15 @@ func NewChannelGraph(cfg *Config, options ...ChanGraphOption) (*ChannelGraph,
 // Start kicks off any goroutines required for the ChannelGraph to function.
 // If the graph cache is enabled, then it will be populated with the contents of
 // the database.
-func (c *ChannelGraph) Start() error {
+func (c *ChannelGraph) Start(ctx context.Context) error {
 	if !c.started.CompareAndSwap(false, true) {
 		return nil
 	}
 	log.Debugf("ChannelGraph starting")
 	defer log.Debug("ChannelGraph started")
+
+	ctx, cancel := context.WithCancel(ctx)
+	c.cancel = fn.Some(cancel)
 
 	if c.graphCache != nil {
 		if err := c.populateCache(); err != nil {
@@ -103,7 +108,7 @@ func (c *ChannelGraph) Start() error {
 	}
 
 	c.wg.Add(1)
-	go c.handleTopologySubscriptions()
+	go c.handleTopologySubscriptions(ctx)
 
 	return nil
 }
@@ -128,7 +133,7 @@ func (c *ChannelGraph) Stop() error {
 // synchronously.
 //
 // NOTE: this MUST be run in a goroutine.
-func (c *ChannelGraph) handleTopologySubscriptions() {
+func (c *ChannelGraph) handleTopologySubscriptions(ctx context.Context) {
 	defer c.wg.Done()
 
 	for {
@@ -140,7 +145,7 @@ func (c *ChannelGraph) handleTopologySubscriptions() {
 			// synchronously so that we can guarantee the order of
 			// notification delivery.
 			c.wg.Add(1)
-			go c.handleTopologyUpdate(update)
+			go c.handleTopologyUpdate(ctx, update)
 
 			// TODO(roasbeef): remove all unconnected vertexes
 			// after N blocks pass with no corresponding
@@ -281,13 +286,13 @@ func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
 // information. Note that this method is expected to only be called to update an
 // already present node from a node announcement, or to insert a node found in a
 // channel update.
-func (c *ChannelGraph) AddLightningNode(node *models.LightningNode,
-	op ...batch.SchedulerOption) error {
+func (c *ChannelGraph) AddLightningNode(ctx context.Context,
+	node *models.LightningNode, op ...batch.SchedulerOption) error {
 
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 
-	err := c.KVStore.AddLightningNode(node, op...)
+	err := c.KVStore.AddLightningNode(ctx, node, op...)
 	if err != nil {
 		return err
 	}
@@ -331,13 +336,13 @@ func (c *ChannelGraph) DeleteLightningNode(nodePub route.Vertex) error {
 // involved in creation of the channel, and the set of features that the channel
 // supports. The chanPoint and chanID are used to uniquely identify the edge
 // globally within the database.
-func (c *ChannelGraph) AddChannelEdge(edge *models.ChannelEdgeInfo,
-	op ...batch.SchedulerOption) error {
+func (c *ChannelGraph) AddChannelEdge(ctx context.Context,
+	edge *models.ChannelEdgeInfo, op ...batch.SchedulerOption) error {
 
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 
-	err := c.KVStore.AddChannelEdge(edge, op...)
+	err := c.KVStore.AddChannelEdge(ctx, edge, op...)
 	if err != nil {
 		return err
 	}
@@ -580,13 +585,13 @@ func (c *ChannelGraph) FilterKnownChanIDs(ctx context.Context,
 // MarkEdgeZombie attempts to mark a channel identified by its channel ID as a
 // zombie. This method is used on an ad-hoc basis, when channels need to be
 // marked as zombies outside the normal pruning cycle.
-func (c *ChannelGraph) MarkEdgeZombie(chanID uint64,
+func (c *ChannelGraph) MarkEdgeZombie(ctx context.Context, chanID uint64,
 	pubKey1, pubKey2 [33]byte) error {
 
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 
-	err := c.KVStore.MarkEdgeZombie(chanID, pubKey1, pubKey2)
+	err := c.KVStore.MarkEdgeZombie(ctx, chanID, pubKey1, pubKey2)
 	if err != nil {
 		return err
 	}
@@ -605,13 +610,13 @@ func (c *ChannelGraph) MarkEdgeZombie(chanID uint64,
 // updated, otherwise it's the second node's information. The node ordering is
 // determined by the lexicographical ordering of the identity public keys of the
 // nodes on either side of the channel.
-func (c *ChannelGraph) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
-	op ...batch.SchedulerOption) error {
+func (c *ChannelGraph) UpdateEdgePolicy(ctx context.Context,
+	edge *models.ChannelEdgePolicy, op ...batch.SchedulerOption) error {
 
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 
-	from, to, err := c.KVStore.UpdateEdgePolicy(edge, op...)
+	from, to, err := c.KVStore.UpdateEdgePolicy(ctx, edge, op...)
 	if err != nil {
 		return err
 	}

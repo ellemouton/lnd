@@ -1343,7 +1343,7 @@ func (d *AuthenticatedGossiper) splitAnnouncementBatches(
 // split size, and then sends out all items to the set of target peers. Locally
 // generated announcements are always sent before remotely generated
 // announcements.
-func (d *AuthenticatedGossiper) splitAndSendAnnBatch(
+func (d *AuthenticatedGossiper) splitAndSendAnnBatch(ctx context.Context,
 	annBatch msgsToBroadcast) {
 
 	// delayNextBatch is a helper closure that blocks for `SubBatchDelay`
@@ -1380,7 +1380,7 @@ func (d *AuthenticatedGossiper) splitAndSendAnnBatch(
 
 		// Now send the remote announcements.
 		for _, annBatch := range remoteBatches {
-			d.sendRemoteBatch(annBatch)
+			d.sendRemoteBatch(ctx, annBatch)
 			delayNextBatch()
 		}
 	}()
@@ -1404,14 +1404,16 @@ func (d *AuthenticatedGossiper) sendLocalBatch(annBatch []msgWithSenders) {
 
 // sendRemoteBatch broadcasts a list of remotely generated announcements to our
 // peers.
-func (d *AuthenticatedGossiper) sendRemoteBatch(annBatch []msgWithSenders) {
+func (d *AuthenticatedGossiper) sendRemoteBatch(ctx context.Context,
+	annBatch []msgWithSenders) {
+
 	syncerPeers := d.syncMgr.GossipSyncers()
 
 	// We'll first attempt to filter out this new message for all peers
 	// that have active gossip syncers active.
 	for pub, syncer := range syncerPeers {
 		log.Tracef("Sending messages batch to GossipSyncer(%s)", pub)
-		syncer.FilterGossipMsgs(annBatch...)
+		syncer.FilterGossipMsgs(ctx, annBatch...)
 	}
 
 	for _, msgChunk := range annBatch {
@@ -1557,7 +1559,7 @@ func (d *AuthenticatedGossiper) networkHandler(ctx context.Context) {
 			// announcements, we'll blast them out w/o regard for
 			// our peer's policies so we ensure they propagate
 			// properly.
-			d.splitAndSendAnnBatch(announcementBatch)
+			d.splitAndSendAnnBatch(ctx, announcementBatch)
 
 		// The retransmission timer has ticked which indicates that we
 		// should check if we need to prune or re-broadcast any of our

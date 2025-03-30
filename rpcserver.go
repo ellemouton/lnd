@@ -697,10 +697,12 @@ func (r *rpcServer) addDeps(ctx context.Context, s *server,
 
 	routerBackend := &routerrpc.RouterBackend{
 		SelfNode: selfNode.PubKeyBytes,
-		FetchChannelCapacity: func(chanID uint64) (btcutil.Amount,
-			error) {
+		FetchChannelCapacity: func(ctx context.Context,
+			chanID uint64) (btcutil.Amount, error) {
 
-			info, _, _, err := graph.FetchChannelEdgesByID(chanID)
+			info, _, _, err := graph.FetchChannelEdgesByID(
+				ctx, chanID,
+			)
 			if err != nil {
 				return 0, err
 			}
@@ -714,11 +716,11 @@ func (r *rpcServer) addDeps(ctx context.Context, s *server,
 				amount,
 			)
 		},
-		FetchChannelEndpoints: func(chanID uint64) (route.Vertex,
-			route.Vertex, error) {
+		FetchChannelEndpoints: func(ctx context.Context,
+			chanID uint64) (route.Vertex, route.Vertex, error) {
 
 			info, _, _, err := graph.FetchChannelEdgesByID(
-				chanID,
+				ctx, chanID,
 			)
 			if err != nil {
 				return route.Vertex{}, route.Vertex{},
@@ -5412,7 +5414,7 @@ func (r *rpcServer) SubscribeChannelEvents(req *lnrpc.ChannelEventSubscription,
 // execute sendPayment. We use this struct as a sort of bridge to enable code
 // re-use between SendPayment and SendToRoute.
 type paymentStream struct {
-	recv func() (*rpcPaymentRequest, error)
+	recv func(ctx context.Context) (*rpcPaymentRequest, error)
 	send func(*lnrpc.SendResponse) error
 }
 
@@ -5432,7 +5434,7 @@ func (r *rpcServer) SendPayment(stream lnrpc.Lightning_SendPaymentServer) error 
 
 	return r.sendPayment(
 		stream.Context(), &paymentStream{
-			recv: func() (*rpcPaymentRequest, error) {
+			recv: func(_ context.Context) (*rpcPaymentRequest, error) {
 				req, err := stream.Recv()
 				if err != nil {
 					return nil, err
@@ -5461,13 +5463,15 @@ func (r *rpcServer) SendToRoute(stream lnrpc.Lightning_SendToRouteServer) error 
 
 	return r.sendPayment(
 		stream.Context(), &paymentStream{
-			recv: func() (*rpcPaymentRequest, error) {
+			recv: func(ctx context.Context) (*rpcPaymentRequest,
+				error) {
+
 				req, err := stream.Recv()
 				if err != nil {
 					return nil, err
 				}
 
-				return r.unmarshallSendToRouteRequest(req)
+				return r.unmarshallSendToRouteRequest(ctx, req)
 			},
 			send: func(r *lnrpc.SendResponse) error {
 				// Calling stream.Send concurrently is not safe.
@@ -5479,14 +5483,14 @@ func (r *rpcServer) SendToRoute(stream lnrpc.Lightning_SendToRouteServer) error 
 }
 
 // unmarshallSendToRouteRequest unmarshalls an rpc sendtoroute request
-func (r *rpcServer) unmarshallSendToRouteRequest(
+func (r *rpcServer) unmarshallSendToRouteRequest(ctx context.Context,
 	req *lnrpc.SendToRouteRequest) (*rpcPaymentRequest, error) {
 
 	if req.Route == nil {
 		return nil, fmt.Errorf("unable to send, no route provided")
 	}
 
-	route, err := r.routerBackend.UnmarshallRoute(req.Route)
+	route, err := r.routerBackend.UnmarshallRoute(ctx, req.Route)
 	if err != nil {
 		return nil, err
 	}
@@ -5932,7 +5936,7 @@ func (r *rpcServer) sendPayment(ctx context.Context,
 				// stream sent by the client. If we read the
 				// EOF sentinel, then the client has closed the
 				// stream, and we can exit normally.
-				nextPayment, err := stream.recv()
+				nextPayment, err := stream.recv(ctx)
 				if err == io.EOF {
 					close(payChan)
 					return
@@ -6065,7 +6069,7 @@ sendLoop:
 
 				backend := r.routerBackend
 				marshalledRouted, err := backend.MarshallRoute(
-					resp.Route,
+					ctx, resp.Route,
 				)
 				if err != nil {
 					errChan <- err
@@ -6119,7 +6123,7 @@ func (r *rpcServer) SendToRouteSync(ctx context.Context,
 		return nil, fmt.Errorf("unable to send, no routes provided")
 	}
 
-	paymentRequest, err := r.unmarshallSendToRouteRequest(req)
+	paymentRequest, err := r.unmarshallSendToRouteRequest(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -6160,7 +6164,7 @@ func (r *rpcServer) sendPaymentSync(ctx context.Context,
 		}, nil
 	}
 
-	rpcRoute, err := r.routerBackend.MarshallRoute(resp.Route)
+	rpcRoute, err := r.routerBackend.MarshallRoute(ctx, resp.Route)
 	if err != nil {
 		return nil, err
 	}
@@ -6889,7 +6893,7 @@ func (r *rpcServer) GetNodeMetrics(ctx context.Context,
 // uniquely identify the location of transaction's funding output within the
 // blockchain. The former is an 8-byte integer, while the latter is a string
 // formatted as funding_txid:output_index.
-func (r *rpcServer) GetChanInfo(_ context.Context,
+func (r *rpcServer) GetChanInfo(ctx context.Context,
 	in *lnrpc.ChanInfoRequest) (*lnrpc.ChannelEdge, error) {
 
 	graph := r.server.graphDB
@@ -6903,7 +6907,7 @@ func (r *rpcServer) GetChanInfo(_ context.Context,
 	switch {
 	case in.ChanId != 0:
 		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByID(
-			in.ChanId,
+			ctx, in.ChanId,
 		)
 
 	case in.ChanPoint != "":
@@ -7423,7 +7427,7 @@ func (r *rpcServer) ListPayments(ctx context.Context,
 	for _, payment := range paymentsQuerySlice.Payments {
 		payment := payment
 
-		rpcPayment, err := r.routerBackend.MarshallPayment(payment)
+		rpcPayment, err := r.routerBackend.MarshallPayment(ctx, payment)
 		if err != nil {
 			return nil, err
 		}
