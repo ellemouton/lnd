@@ -23,7 +23,6 @@ import (
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/keychain"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lntest/channels"
 	"github.com/lightningnetwork/lnd/lntest/mock"
 	"github.com/lightningnetwork/lnd/lntypes"
@@ -605,20 +604,7 @@ func createTestPeer(t *testing.T) *peerTestCtx {
 
 	dbPath := t.TempDir()
 
-	graphBackend, err := kvdb.GetBoltBackend(&kvdb.BoltBackendConfig{
-		DBPath:            dbPath,
-		DBFileName:        "graph.db",
-		NoFreelistSync:    true,
-		AutoCompact:       false,
-		AutoCompactMinAge: kvdb.DefaultBoltAutoCompactMinAge,
-		DBTimeout:         kvdb.DefaultDBTimeout,
-	})
-	require.NoError(t, err)
-
-	graphStore, err := graphdb.NewKVStore(graphBackend)
-	require.NoError(t, err)
-
-	dbAliceGraph, err := graphdb.NewChannelGraph(graphStore)
+	dbAliceGraph, err := graphdb.MakeTestGraph(t)
 	require.NoError(t, err)
 	require.NoError(t, dbAliceGraph.Start())
 	t.Cleanup(func() {

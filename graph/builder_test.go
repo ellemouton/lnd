@@ -1352,7 +1352,10 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 	testAddrs = append(testAddrs, testAddr)
 
 	// Next, create a temporary graph database for usage within the test.
-	graph := makeTestGraph(t, useCache)
+	graph, err := graphdb.MakeTestGraph(
+		t, graphdb.WithUseGraphCache(useCache),
+	)
+	require.NoError(t, err)
 
 	aliasMap := make(map[string]route.Vertex)
 	privKeyMap := make(map[string]*btcec.PrivateKey)
@@ -1726,7 +1729,10 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 	testAddrs = append(testAddrs, testAddr)
 
 	// Next, create a temporary graph database for usage within the test.
-	graph := makeTestGraph(t, useCache)
+	graph, err := graphdb.MakeTestGraph(
+		t, graphdb.WithUseGraphCache(useCache),
+	)
+	require.NoError(t, err)
 
 	aliasMap := make(map[string]route.Vertex)
 	privKeyMap := make(map[string]*btcec.PrivateKey)
