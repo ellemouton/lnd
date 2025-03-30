@@ -11,7 +11,6 @@ import (
 	"net"
 	"sort"
 	"sync"
-	"testing"
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -26,7 +25,6 @@ import (
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
-	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -4714,42 +4712,4 @@ func (c *chanGraphNodeTx) ForEachChannel(f func(*models.ChannelEdgeInfo,
 			return f(info, policy1, policy2)
 		},
 	)
-}
-
-// MakeTestGraph creates a new instance of the KVStore for testing
-// purposes.
-func MakeTestGraph(t testing.TB, modifiers ...KVStoreOptionModifier) (
-	*ChannelGraph, error) {
-
-	opts := DefaultOptions()
-	for _, modifier := range modifiers {
-		modifier(opts)
-	}
-
-	// Next, create KVStore for the first time.
-	backend, backendCleanup, err := kvdb.GetTestBackend(t.TempDir(), "cgr")
-	if err != nil {
-		backendCleanup()
-
-		return nil, err
-	}
-
-	graphStore, err := NewKVStore(backend, modifiers...)
-	require.NoError(t, err)
-
-	graph, err := NewChannelGraph(graphStore)
-	if err != nil {
-		backendCleanup()
-
-		return nil, err
-	}
-	require.NoError(t, graph.Start())
-
-	t.Cleanup(func() {
-		_ = backend.Close()
-		backendCleanup()
-		require.NoError(t, graph.Stop())
-	})
-
-	return graph, nil
 }

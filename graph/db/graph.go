@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -13,6 +14,7 @@ import (
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
+	"github.com/stretchr/testify/require"
 )
 
 // ErrChanGraphShuttingDown indicates that the ChannelGraph has shutdown or is
@@ -611,4 +613,24 @@ func (c *ChannelGraph) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 	}
 
 	return nil
+}
+
+// MakeTestGraph creates a new instance of the KVStore for testing
+// purposes.
+func MakeTestGraph(t testing.TB, opts ...ChanGraphOption) (*ChannelGraph,
+	error) {
+
+	store := NewTestDB(t)
+
+	graph, err := NewChannelGraph(store, opts...)
+	if err != nil {
+		return nil, err
+	}
+	require.NoError(t, graph.Start())
+
+	t.Cleanup(func() {
+		require.NoError(t, graph.Stop())
+	})
+
+	return graph, nil
 }
