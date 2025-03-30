@@ -4762,7 +4762,9 @@ func assertChanChainRejection(t *testing.T, ctx *testCtx,
 		err:      errChan,
 	}
 
-	_, added := ctx.gossiper.handleChanAnnouncement(nMsg, edge)
+	_, added := ctx.gossiper.handleChanAnnouncement(
+		context.Background(), nMsg, edge,
+	)
 	require.False(t, added)
 
 	select {
