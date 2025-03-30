@@ -1,6 +1,7 @@
 package autopilot
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -96,7 +97,7 @@ func (m *Manager) IsActive() bool {
 
 // StartAgent creates and starts an autopilot agent from the Manager's
 // config.
-func (m *Manager) StartAgent() error {
+func (m *Manager) StartAgent(ctx context.Context) error {
 	m.Lock()
 	defer m.Unlock()
 
@@ -119,7 +120,7 @@ func (m *Manager) StartAgent() error {
 		return err
 	}
 
-	if err := pilot.Start(); err != nil {
+	if err := pilot.Start(ctx); err != nil {
 		return err
 	}
 
@@ -266,7 +267,7 @@ func (m *Manager) StopAgent() error {
 }
 
 // QueryHeuristics queries the available autopilot heuristics for node scores.
-func (m *Manager) QueryHeuristics(nodes []NodeID, localState bool) (
+func (m *Manager) QueryHeuristics(ctx context.Context, nodes []NodeID, localState bool) (
 	HeuristicScores, error) {
 
 	m.Lock()
@@ -278,7 +279,7 @@ func (m *Manager) QueryHeuristics(nodes []NodeID, localState bool) (
 	}
 
 	log.Debugf("Querying heuristics for %d nodes", len(n))
-	return m.queryHeuristics(n, localState)
+	return m.queryHeuristics(ctx, n, localState)
 }
 
 // HeuristicScores is an alias for a map that maps heuristic names to a map of
@@ -289,7 +290,7 @@ type HeuristicScores map[string]map[NodeID]float64
 // the agent's current active heuristic.
 //
 // NOTE: Must be called with the manager's lock.
-func (m *Manager) queryHeuristics(nodes map[NodeID]struct{}, localState bool) (
+func (m *Manager) queryHeuristics(ctx context.Context, nodes map[NodeID]struct{}, localState bool) (
 	HeuristicScores, error) {
 
 	// If we want to take the local state into action when querying the
@@ -338,7 +339,7 @@ func (m *Manager) queryHeuristics(nodes map[NodeID]struct{}, localState bool) (
 		}
 
 		s, err := h.NodeScores(
-			m.cfg.PilotCfg.Graph, totalChans, chanSize, nodes,
+			ctx, m.cfg.PilotCfg.Graph, totalChans, chanSize, nodes,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("unable to get sub score: %w",
