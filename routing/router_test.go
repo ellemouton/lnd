@@ -2,6 +2,7 @@ package routing
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image/color"
 	"math"
@@ -422,6 +423,7 @@ func TestSendPaymentRouteInfiniteLoopWithBadHopHint(t *testing.T) {
 // valid signature.
 func TestChannelUpdateValidation(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	// Setup a three node network.
 	chanCapSat := btcutil.Amount(100000)
@@ -447,10 +449,12 @@ func TestChannelUpdateValidation(t *testing.T) {
 	require.NoError(t, err, "unable to create graph")
 
 	const startingBlockHeight = 101
-	ctx := createTestCtxFromGraphInstance(t, startingBlockHeight, testGraph)
+	tCtx := createTestCtxFromGraphInstance(
+		t, startingBlockHeight, testGraph,
+	)
 
 	// Assert that the initially configured fee is retrieved correctly.
-	_, e1, e2, err := ctx.graph.FetchChannelEdgesByID(
+	_, e1, e2, err := tCtx.graph.FetchChannelEdgesByID(
 		lnwire.NewShortChanIDFromInt(1).ToUint64(),
 	)
 	require.NoError(t, err, "cannot retrieve channel")
@@ -461,8 +465,8 @@ func TestChannelUpdateValidation(t *testing.T) {
 	// Setup a route from source a to destination c. The route will be used
 	// in a call to SendToRoute. SendToRoute also applies channel updates,
 	// but it saves us from including RequestRoute in the test scope too.
-	hop1 := ctx.aliases["b"]
-	hop2 := ctx.aliases["c"]
+	hop1 := tCtx.aliases["b"]
+	hop2 := tCtx.aliases["c"]
 	hops := []*route.Hop{
 		{
 			ChannelID:     1,
@@ -478,7 +482,7 @@ func TestChannelUpdateValidation(t *testing.T) {
 
 	rt, err := route.NewRouteFromHops(
 		lnwire.MilliSatoshi(10000), 100,
-		ctx.aliases["a"], hops,
+		tCtx.aliases["a"], hops,
 	)
 	require.NoError(t, err, "unable to create route")
 
@@ -498,15 +502,19 @@ func TestChannelUpdateValidation(t *testing.T) {
 	// We'll modify the SendToSwitch method so that it simulates a failed
 	// payment with an error originating from the first hop of the route.
 	// The unsigned channel update is attached to the failure message.
-	ctx.router.cfg.Payer.(*mockPaymentAttemptDispatcherOld).setPaymentResult(
-		func(firstHop lnwire.ShortChannelID) ([32]byte, error) {
-			return [32]byte{}, htlcswitch.NewForwardingError(
-				&lnwire.FailFeeInsufficient{
-					Update: errChanUpdate,
-				},
-				1,
-			)
-		})
+	tCtx.router.cfg.Payer.(*mockPaymentAttemptDispatcherOld).
+		setPaymentResult(
+			func(firstHop lnwire.ShortChannelID) ([32]byte,
+				error) {
+
+				return [32]byte{},
+					htlcswitch.NewForwardingError(
+						&lnwire.FailFeeInsufficient{
+							Update: errChanUpdate,
+						}, 1,
+					)
+			},
+		)
 
 	// The payment parameter is mostly redundant in SendToRoute. Can be left
 	// empty for this test.
@@ -514,15 +522,15 @@ func TestChannelUpdateValidation(t *testing.T) {
 
 	// Instruct the mock graph builder to reject the next update we send
 	// it.
-	ctx.graphBuilder.setNextReject(true)
+	tCtx.graphBuilder.setNextReject(true)
 
 	// Send off the payment request to the router. The specified route
 	// should be attempted and the channel update should be received by
 	// graph and ignored because it is missing a valid signature.
-	_, err = ctx.router.SendToRoute(payment, rt, nil)
+	_, err = tCtx.router.SendToRoute(ctx, payment, rt, nil)
 	require.Error(t, err, "expected route to fail with channel update")
 
-	_, e1, e2, err = ctx.graph.FetchChannelEdgesByID(
+	_, e1, e2, err = tCtx.graph.FetchChannelEdgesByID(
 		lnwire.NewShortChanIDFromInt(1).ToUint64(),
 	)
 	require.NoError(t, err, "cannot retrieve channel")
@@ -536,15 +544,15 @@ func TestChannelUpdateValidation(t *testing.T) {
 	signErrChanUpdate(t, testGraph.privKeyMap["b"], &errChanUpdate)
 
 	// Let the graph builder accept the next update.
-	ctx.graphBuilder.setNextReject(false)
+	tCtx.graphBuilder.setNextReject(false)
 
 	// Retry the payment using the same route as before.
-	_, err = ctx.router.SendToRoute(payment, rt, nil)
+	_, err = tCtx.router.SendToRoute(ctx, payment, rt, nil)
 	require.Error(t, err, "expected route to fail with channel update")
 
 	// This time a valid signature was supplied and the policy change should
 	// have been applied to the graph.
-	_, e1, e2, err = ctx.graph.FetchChannelEdgesByID(
+	_, e1, e2, err = tCtx.graph.FetchChannelEdgesByID(
 		lnwire.NewShortChanIDFromInt(1).ToUint64(),
 	)
 	require.NoError(t, err, "cannot retrieve channel")
@@ -1336,6 +1344,7 @@ func TestUnknownErrorSource(t *testing.T) {
 // error.
 func TestSendToRouteStructuredError(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	// Setup a three node network.
 	chanCapSat := btcutil.Amount(100000)
@@ -1358,19 +1367,21 @@ func TestSendToRouteStructuredError(t *testing.T) {
 	require.NoError(t, err, "unable to create graph")
 
 	const startingBlockHeight = 101
-	ctx := createTestCtxFromGraphInstance(t, startingBlockHeight, testGraph)
+	tCtx := createTestCtxFromGraphInstance(
+		t, startingBlockHeight, testGraph,
+	)
 
 	// Set up an init channel for the control tower, such that we can make
 	// sure the payment is initiated correctly.
 	init := make(chan initArgs, 1)
-	ctx.router.cfg.Control.(*mockControlTowerOld).init = init
+	tCtx.router.cfg.Control.(*mockControlTowerOld).init = init
 
 	// Setup a route from source a to destination c. The route will be used
 	// in a call to SendToRoute. SendToRoute also applies channel updates,
 	// but it saves us from including RequestRoute in the test scope too.
 	const payAmt = lnwire.MilliSatoshi(10000)
-	hop1 := ctx.aliases["b"]
-	hop2 := ctx.aliases["c"]
+	hop1 := tCtx.aliases["b"]
+	hop2 := tCtx.aliases["c"]
 	hops := []*route.Hop{
 		{
 			ChannelID:     1,
@@ -1386,7 +1397,7 @@ func TestSendToRouteStructuredError(t *testing.T) {
 		},
 	}
 
-	rt, err := route.NewRouteFromHops(payAmt, 100, ctx.aliases["a"], hops)
+	rt, err := route.NewRouteFromHops(payAmt, 100, tCtx.aliases["a"], hops)
 	require.NoError(t, err, "unable to create route")
 
 	finalHopIndex := len(hops)
@@ -1405,7 +1416,7 @@ func TestSendToRouteStructuredError(t *testing.T) {
 			// We'll modify the SendToSwitch method so that it
 			// simulates a failed payment with an error originating
 			// from the final hop in the route.
-			ctx.router.cfg.Payer.(*mockPaymentAttemptDispatcherOld).setPaymentResult(
+			tCtx.router.cfg.Payer.(*mockPaymentAttemptDispatcherOld).setPaymentResult(
 				func(firstHop lnwire.ShortChannelID) ([32]byte, error) {
 					return [32]byte{}, htlcswitch.NewForwardingError(
 						errorType, failIndex,
@@ -1422,7 +1433,7 @@ func TestSendToRouteStructuredError(t *testing.T) {
 			// update should be received by router and ignored
 			// because it is missing a valid
 			// signature.
-			_, err = ctx.router.SendToRoute(payment, rt, nil)
+			_, err = tCtx.router.SendToRoute(ctx, payment, rt, nil)
 
 			fErr, ok := err.(*htlcswitch.ForwardingError)
 			require.True(
@@ -1471,12 +1482,14 @@ func TestSendToRouteMaxHops(t *testing.T) {
 
 	const startingBlockHeight = 101
 
-	ctx := createTestCtxFromGraphInstance(t, startingBlockHeight, testGraph)
+	tCtx := createTestCtxFromGraphInstance(
+		t, startingBlockHeight, testGraph,
+	)
 
 	// Create a 30 hop route that exceeds the maximum hop limit.
 	const payAmt = lnwire.MilliSatoshi(10000)
-	hopA := ctx.aliases["a"]
-	hopB := ctx.aliases["b"]
+	hopA := tCtx.aliases["a"]
+	hopB := tCtx.aliases["b"]
 
 	var hops []*route.Hop
 	for i := 0; i < 15; i++ {
@@ -1495,13 +1508,13 @@ func TestSendToRouteMaxHops(t *testing.T) {
 		})
 	}
 
-	rt, err := route.NewRouteFromHops(payAmt, 100, ctx.aliases["a"], hops)
+	rt, err := route.NewRouteFromHops(payAmt, 100, tCtx.aliases["a"], hops)
 	require.NoError(t, err, "unable to create route")
 
 	// Send off the payment request to the router. We expect an error back
 	// indicating that the route is too long.
 	var payHash lntypes.Hash
-	_, err = ctx.router.SendToRoute(payHash, rt, nil)
+	_, err = tCtx.router.SendToRoute(context.Background(), payHash, rt, nil)
 	if err != route.ErrMaxRouteHopsExceeded {
 		t.Fatalf("expected ErrMaxRouteHopsExceeded, but got %v", err)
 	}
@@ -2524,7 +2537,9 @@ func TestSendToRouteTempFailure(t *testing.T) {
 	).Return(nil, nil)
 
 	// Expect a failed send to route.
-	attempt, err := router.SendToRoute(payHash, rt, nil)
+	attempt, err := router.SendToRoute(
+		context.Background(), payHash, rt, nil,
+	)
 	require.Equal(t, tempErr, err)
 	require.Equal(t, testAttempt, attempt)
 
