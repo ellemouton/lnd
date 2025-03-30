@@ -857,8 +857,8 @@ func (d *AuthenticatedGossiper) stop() {
 // then added to a queue for batched trickled announcement to all connected
 // peers.  Remote channel announcements should contain the announcement proof
 // and be fully validated.
-func (d *AuthenticatedGossiper) ProcessRemoteAnnouncement(msg lnwire.Message,
-	peer lnpeer.Peer) chan error {
+func (d *AuthenticatedGossiper) ProcessRemoteAnnouncement(ctx context.Context,
+	msg lnwire.Message, peer lnpeer.Peer) chan error {
 
 	log.Debugf("Processing remote msg %T from peer=%x", msg, peer.PubKey())
 
@@ -907,7 +907,7 @@ func (d *AuthenticatedGossiper) ProcessRemoteAnnouncement(msg lnwire.Message,
 
 		// If we've found the message target, then we'll dispatch the
 		// message directly to it.
-		if err := syncer.ApplyGossipFilter(m); err != nil {
+		if err := syncer.ApplyGossipFilter(ctx, m); err != nil {
 			log.Warnf("Unable to apply gossip filter for peer=%x: "+
 				"%v", peer.PubKey(), err)
 

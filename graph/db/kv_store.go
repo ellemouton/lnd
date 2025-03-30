@@ -617,7 +617,7 @@ func (c *KVStore) ForEachNodeCached(cb func(node route.Vertex,
 // DisabledChannelIDs returns the channel ids of disabled channels.
 // A channel is disabled when two of the associated ChanelEdgePolicies
 // have their disabled bit on.
-func (c *KVStore) DisabledChannelIDs() ([]uint64, error) {
+func (c *KVStore) DisabledChannelIDs(_ context.Context) ([]uint64, error) {
 	var disabledChanIDs []uint64
 	var chanEdgeFound map[uint64]struct{}
 
@@ -765,7 +765,7 @@ func (c *KVStore) ForEachNodeCacheable(cb func(route.Vertex,
 // as the center node within a star-graph. This method may be used to kick off
 // a path finding algorithm in order to explore the reachability of another
 // node based off the source node.
-func (c *KVStore) SourceNode() (*models.LightningNode, error) {
+func (c *KVStore) SourceNode(_ context.Context) (*models.LightningNode, error) {
 	var source *models.LightningNode
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		// First grab the nodes bucket which stores the mapping from
@@ -1135,7 +1135,7 @@ func (c *KVStore) addChannelEdge(tx kvdb.RwTx,
 // was updated for both directed edges are returned along with the boolean. If
 // it is not found, then the zombie index is checked and its result is returned
 // as the second boolean.
-func (c *KVStore) HasChannelEdge(
+func (c *KVStore) HasChannelEdge(ctx context.Context,
 	chanID uint64) (time.Time, time.Time, bool, bool, error) {
 
 	var (
@@ -1415,7 +1415,7 @@ func (c *KVStore) PruneGraph(_ context.Context, spentOutputs []*wire.OutPoint,
 // any nodes from the channel graph that are currently unconnected. This ensure
 // that we only maintain a graph of reachable nodes. In the event that a pruned
 // node gains more channels, it will be re-added back to the graph.
-func (c *KVStore) PruneGraphNodes() ([]route.Vertex, error) {
+func (c *KVStore) PruneGraphNodes(_ context.Context) ([]route.Vertex, error) {
 	var prunedNodes []route.Vertex
 	err := kvdb.Update(c.db, func(tx kvdb.RwTx) error {
 		nodes := tx.ReadWriteBucket(nodeBucket)
@@ -1555,7 +1555,7 @@ func (c *KVStore) pruneGraphNodes(nodes kvdb.RwBucket,
 // set to the last prune height valid for the remaining chain.
 // Channels that were removed from the graph resulting from the
 // disconnected block are returned.
-func (c *KVStore) DisconnectBlockAtHeight(height uint32) (
+func (c *KVStore) DisconnectBlockAtHeight(_ context.Context, height uint32) (
 	[]*models.ChannelEdgeInfo, error) {
 
 	// Every channel having a ShortChannelID starting at 'height'
@@ -1907,7 +1907,7 @@ type ChannelEdge struct {
 
 // ChanUpdatesInHorizon returns all the known channel edges which have at least
 // one edge that has an update timestamp within the specified horizon.
-func (c *KVStore) ChanUpdatesInHorizon(startTime,
+func (c *KVStore) ChanUpdatesInHorizon(_ context.Context, startTime,
 	endTime time.Time) ([]ChannelEdge, error) {
 
 	// To ensure we don't return duplicate ChannelEdges, we'll use an
@@ -2410,7 +2410,9 @@ func (c *KVStore) FilterChannelRange(startHeight,
 // skipped and the result will contain only those edges that exist at the time
 // of the query. This can be used to respond to peer queries that are seeking to
 // fill in gaps in their view of the channel graph.
-func (c *KVStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
+func (c *KVStore) FetchChanInfos(_ context.Context,
+	chanIDs []uint64) ([]ChannelEdge, error) {
+
 	return c.fetchChanInfos(nil, chanIDs)
 }
 
@@ -3509,7 +3511,7 @@ func (e *EdgePoint) String() string {
 // within the known channel graph. The set of UTXO's (along with their scripts)
 // returned are the ones that need to be watched on chain to detect channel
 // closes on the resident blockchain.
-func (c *KVStore) ChannelView() ([]EdgePoint, error) {
+func (c *KVStore) ChannelView(_ context.Context) ([]EdgePoint, error) {
 	var edgePoints []EdgePoint
 	if err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		// We're going to iterate over the entire channel index, so
@@ -3624,7 +3626,7 @@ func markEdgeZombie(zombieIndex kvdb.RwBucket, chanID uint64, pubKey1,
 }
 
 // MarkEdgeLive clears an edge from our zombie index, deeming it as live.
-func (c *KVStore) MarkEdgeLive(chanID uint64) error {
+func (c *KVStore) MarkEdgeLive(_ context.Context, chanID uint64) error {
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 

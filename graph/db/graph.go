@@ -358,11 +358,11 @@ func (c *ChannelGraph) AddChannelEdge(edge *models.ChannelEdgeInfo,
 // MarkEdgeLive clears an edge from our zombie index, deeming it as live.
 // If the cache is enabled, the edge will be added back to the graph cache if
 // we still have a record of this channel in the DB.
-func (c *ChannelGraph) MarkEdgeLive(chanID uint64) error {
+func (c *ChannelGraph) MarkEdgeLive(ctx context.Context, chanID uint64) error {
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 
-	err := c.KVStore.MarkEdgeLive(chanID)
+	err := c.KVStore.MarkEdgeLive(ctx, chanID)
 	if err != nil {
 		return err
 	}
@@ -370,7 +370,7 @@ func (c *ChannelGraph) MarkEdgeLive(chanID uint64) error {
 	if c.graphCache != nil {
 		// We need to add the channel back into our graph cache,
 		// otherwise we won't use it for path finding.
-		infos, err := c.KVStore.FetchChanInfos([]uint64{chanID})
+		infos, err := c.KVStore.FetchChanInfos(ctx, []uint64{chanID})
 		if err != nil {
 			return err
 		}
@@ -395,8 +395,8 @@ func (c *ChannelGraph) MarkEdgeLive(chanID uint64) error {
 // that we require the node that failed to send the fresh update to be the one
 // that resurrects the channel from its zombie state. The markZombie bool
 // denotes whether to mark the channel as a zombie.
-func (c *ChannelGraph) DeleteChannelEdges(strictZombiePruning, markZombie bool,
-	chanIDs ...uint64) error {
+func (c *ChannelGraph) DeleteChannelEdges(_ context.Context,
+	strictZombiePruning, markZombie bool, chanIDs ...uint64) error {
 
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
@@ -427,13 +427,13 @@ func (c *ChannelGraph) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 // set to the last prune height valid for the remaining chain.
 // Channels that were removed from the graph resulting from the
 // disconnected block are returned.
-func (c *ChannelGraph) DisconnectBlockAtHeight(height uint32) (
-	[]*models.ChannelEdgeInfo, error) {
+func (c *ChannelGraph) DisconnectBlockAtHeight(ctx context.Context,
+	height uint32) ([]*models.ChannelEdgeInfo, error) {
 
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 
-	edges, err := c.KVStore.DisconnectBlockAtHeight(height)
+	edges, err := c.KVStore.DisconnectBlockAtHeight(ctx, height)
 	if err != nil {
 		return nil, err
 	}
@@ -506,11 +506,11 @@ func (c *ChannelGraph) PruneGraph(ctx context.Context,
 // any nodes from the channel graph that are currently unconnected. This ensure
 // that we only maintain a graph of reachable nodes. In the event that a pruned
 // node gains more channels, it will be re-added back to the graph.
-func (c *ChannelGraph) PruneGraphNodes() error {
+func (c *ChannelGraph) PruneGraphNodes(ctx context.Context) error {
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 
-	nodes, err := c.KVStore.PruneGraphNodes()
+	nodes, err := c.KVStore.PruneGraphNodes(ctx)
 	if err != nil {
 		return err
 	}
@@ -529,7 +529,8 @@ func (c *ChannelGraph) PruneGraphNodes() error {
 // words, we perform a set difference of our set of chan ID's and the ones
 // passed in. This method can be used by callers to determine the set of
 // channels another peer knows of that we don't.
-func (c *ChannelGraph) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo,
+func (c *ChannelGraph) FilterKnownChanIDs(ctx context.Context,
+	chansInfo []ChannelUpdateInfo,
 	isZombieChan func(time.Time, time.Time) bool) ([]uint64, error) {
 
 	unknown, knownZombies, err := c.KVStore.FilterKnownChanIDs(chansInfo)
@@ -562,7 +563,7 @@ func (c *ChannelGraph) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo,
 		// alive, and we let it be added to the set of IDs to query our
 		// peer for.
 		err := c.KVStore.MarkEdgeLive(
-			info.ShortChannelID.ToUint64(),
+			ctx, info.ShortChannelID.ToUint64(),
 		)
 		// Since there is a chance that the edge could have been marked
 		// as "live" between the FilterKnownChanIDs call and the

@@ -681,14 +681,15 @@ func newRPCServer(cfg *Config, interceptorChain *rpcperms.InterceptorChain,
 // addDeps populates all dependencies needed by the RPC server, and any
 // of the sub-servers that it maintains. When this is done, the RPC server can
 // be started, and start accepting RPC calls.
-func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
+func (r *rpcServer) addDeps(ctx context.Context, s *server,
+	macService *macaroons.Service,
 	subServerCgs *subRPCServerConfigs, atpl *autopilot.Manager,
 	invoiceRegistry *invoices.InvoiceRegistry, tower *watchtower.Standalone,
 	chanPredicate chanacceptor.MultiplexAcceptor,
 	invoiceHtlcModifier *invoices.HtlcModificationInterceptor) error {
 
 	// Set up router rpc backend.
-	selfNode, err := s.graphDB.SourceNode()
+	selfNode, err := s.graphDB.SourceNode(ctx)
 	if err != nil {
 		return err
 	}
@@ -2621,8 +2622,10 @@ func (r *rpcServer) BatchOpenChannel(ctx context.Context,
 
 		return r.parseOpenChannelReq(req, false)
 	}
-	channelAbandoner := func(point *wire.OutPoint) error {
-		return r.abandonChan(point, uint32(bestHeight))
+	channelAbandoner := func(ctx context.Context,
+		point *wire.OutPoint) error {
+
+		return r.abandonChan(ctx, point, uint32(bestHeight))
 	}
 	batcher := funding.NewBatcher(&funding.BatchConfig{
 		RequestParser:    requestParser,
@@ -3114,7 +3117,7 @@ func createRPCCloseUpdate(
 // abandonChanFromGraph attempts to remove a channel from the channel graph. If
 // we can't find the chanID in the graph, then we assume it has already been
 // removed, and will return a nop.
-func abandonChanFromGraph(chanGraph *graphdb.ChannelGraph,
+func abandonChanFromGraph(ctx context.Context, chanGraph *graphdb.ChannelGraph,
 	chanPoint *wire.OutPoint) error {
 
 	// First, we'll obtain the channel ID. If we can't locate this, then
@@ -3130,11 +3133,11 @@ func abandonChanFromGraph(chanGraph *graphdb.ChannelGraph,
 
 	// If the channel ID is still in the graph, then that means the channel
 	// is still open, so we'll now move to purge it from the graph.
-	return chanGraph.DeleteChannelEdges(false, true, chanID)
+	return chanGraph.DeleteChannelEdges(ctx, false, true, chanID)
 }
 
 // abandonChan removes a channel from the database, graph and contract court.
-func (r *rpcServer) abandonChan(chanPoint *wire.OutPoint,
+func (r *rpcServer) abandonChan(ctx context.Context, chanPoint *wire.OutPoint,
 	bestHeight uint32) error {
 
 	// Before we remove the channel we cancel the rebroadcasting of the
@@ -3155,7 +3158,7 @@ func (r *rpcServer) abandonChan(chanPoint *wire.OutPoint,
 	if err != nil {
 		return err
 	}
-	err = abandonChanFromGraph(r.server.graphDB, chanPoint)
+	err = abandonChanFromGraph(ctx, r.server.graphDB, chanPoint)
 	if err != nil {
 		return err
 	}
@@ -3183,7 +3186,7 @@ func (r *rpcServer) abandonChan(chanPoint *wire.OutPoint,
 // AbandonChannel removes all channel state from the database except for a
 // close summary. This method can be used to get rid of permanently unusable
 // channels due to bugs fixed in newer versions of lnd.
-func (r *rpcServer) AbandonChannel(_ context.Context,
+func (r *rpcServer) AbandonChannel(ctx context.Context,
 	in *lnrpc.AbandonChannelRequest) (*lnrpc.AbandonChannelResponse, error) {
 
 	// If this isn't the dev build, then we won't allow the RPC to be
@@ -3259,7 +3262,7 @@ func (r *rpcServer) AbandonChannel(_ context.Context,
 	}
 
 	// Remove the channel from the graph, database and contract court.
-	if err := r.abandonChan(chanPoint, uint32(bestHeight)); err != nil {
+	if err := r.abandonChan(ctx, chanPoint, uint32(bestHeight)); err != nil {
 		return nil, err
 	}
 
@@ -7637,7 +7640,7 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 	_ *lnrpc.FeeReportRequest) (*lnrpc.FeeReportResponse, error) {
 
 	channelGraph := r.server.graphDB
-	selfNode, err := channelGraph.SourceNode()
+	selfNode, err := channelGraph.SourceNode(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -119,25 +119,25 @@ type DB interface {
 	// channel within the known channel graph. The set of UTXO's (along with
 	// their scripts) returned are the ones that need to be watched on
 	// chain to detect channel closes on the resident blockchain.
-	ChannelView() ([]graphdb.EdgePoint, error)
+	ChannelView(ctx context.Context) ([]graphdb.EdgePoint, error)
 
 	// PruneGraphNodes is a garbage collection method which attempts to
 	// prune out any nodes from the channel graph that are currently
 	// unconnected. This ensure that we only maintain a graph of reachable
 	// nodes. In the event that a pruned node gains more channels, it will
 	// be re-added back to the graph.
-	PruneGraphNodes() error
+	PruneGraphNodes(ctx context.Context) error
 
 	// SourceNode returns the source node of the graph. The source node is
 	// treated as the center node within a star-graph. This method may be
 	// used to kick off a path finding algorithm in order to explore the
 	// reachability of another node based off the source node.
-	SourceNode() (*models.LightningNode, error)
+	SourceNode(ctx context.Context) (*models.LightningNode, error)
 
 	// DisabledChannelIDs returns the channel ids of disabled channels.
 	// A channel is disabled when two of the associated ChanelEdgePolicies
 	// have their disabled bit on.
-	DisabledChannelIDs() ([]uint64, error)
+	DisabledChannelIDs(ctx context.Context) ([]uint64, error)
 
 	// FetchChanInfos returns the set of channel edges that correspond to
 	// the passed channel ID's. If an edge is the query is unknown to the
@@ -145,13 +145,14 @@ type DB interface {
 	// edges that exist at the time of the query. This can be used to
 	// respond to peer queries that are seeking to fill in gaps in their
 	// view of the channel graph.
-	FetchChanInfos(chanIDs []uint64) ([]graphdb.ChannelEdge, error)
+	FetchChanInfos(ctx context.Context,
+		chanIDs []uint64) ([]graphdb.ChannelEdge, error)
 
 	// ChanUpdatesInHorizon returns all the known channel edges which have
 	// at least one edge that has an update timestamp within the specified
 	// horizon.
-	ChanUpdatesInHorizon(startTime, endTime time.Time) (
-		[]graphdb.ChannelEdge, error)
+	ChanUpdatesInHorizon(ctx context.Context, startTime,
+		endTime time.Time) ([]graphdb.ChannelEdge, error)
 
 	// DeleteChannelEdges removes edges with the given channel IDs from the
 	// database and marks them as zombies. This ensures that we're unable to
@@ -162,8 +163,8 @@ type DB interface {
 	// failed to send the fresh update to be the one that resurrects the
 	// channel from its zombie state. The markZombie bool denotes whether
 	// to mark the channel as a zombie.
-	DeleteChannelEdges(strictZombiePruning, markZombie bool,
-		chanIDs ...uint64) error
+	DeleteChannelEdges(ctx context.Context, strictZombiePruning,
+		markZombie bool, chanIDs ...uint64) error
 
 	// DisconnectBlockAtHeight is used to indicate that the block specified
 	// by the passed height has been disconnected from the main chain. This
@@ -172,8 +173,8 @@ type DB interface {
 	// set to the last prune height valid for the remaining chain.
 	// Channels that were removed from the graph resulting from the
 	// disconnected block are returned.
-	DisconnectBlockAtHeight(height uint32) ([]*models.ChannelEdgeInfo,
-		error)
+	DisconnectBlockAtHeight(ctx context.Context, height uint32) (
+		[]*models.ChannelEdgeInfo, error)
 
 	// HasChannelEdge returns true if the database knows of a channel edge
 	// with the passed channel ID, and false otherwise. If an edge with that
@@ -181,7 +182,8 @@ type DB interface {
 	// last time the edge was updated for both directed edges are returned
 	// along with the boolean. If it is not found, then the zombie index is
 	// checked and its result is returned as the second boolean.
-	HasChannelEdge(chanID uint64) (time.Time, time.Time, bool, bool, error)
+	HasChannelEdge(ctx context.Context, chanID uint64) (time.Time,
+		time.Time, bool, bool, error)
 
 	// FetchChannelEdgesByID attempts to lookup the two directed edges for
 	// the channel identified by the channel ID. If the channel can't be
@@ -270,5 +272,5 @@ type DB interface {
 
 	// MarkEdgeLive clears an edge from our zombie index, deeming it as
 	// live.
-	MarkEdgeLive(chanID uint64) error
+	MarkEdgeLive(ctx context.Context, chanID uint64) error
 }

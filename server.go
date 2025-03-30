@@ -1068,7 +1068,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		MinProbability: routingConfig.MinRouteProbability,
 	}
 
-	sourceNode, err := dbs.GraphDB.SourceNode()
+	sourceNode, err := dbs.GraphDB.SourceNode(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("error getting source node: %w", err)
 	}
@@ -1461,8 +1461,8 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 
 	// Wrap the DeleteChannelEdges method so that the funding manager can
 	// use it without depending on several layers of indirection.
-	deleteAliasEdge := func(scid lnwire.ShortChannelID) (
-		*models.ChannelEdgePolicy, error) {
+	deleteAliasEdge := func(ctx context.Context,
+		scid lnwire.ShortChannelID) (*models.ChannelEdgePolicy, error) {
 
 		info, e1, e2, err := s.graphDB.FetchChannelEdgesByID(
 			scid.ToUint64(),
@@ -1494,7 +1494,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		}
 
 		err = s.graphDB.DeleteChannelEdges(
-			false, false, scid.ToUint64(),
+			ctx, false, false, scid.ToUint64(),
 		)
 		return ourPolicy, err
 	}
@@ -2341,7 +2341,7 @@ func (s *server) Start(ctx context.Context) error {
 		}
 
 		cleanup = cleanup.add(s.fundingMgr.Stop)
-		if err := s.fundingMgr.Start(); err != nil {
+		if err := s.fundingMgr.Start(ctx); err != nil {
 			startErr = err
 			return
 		}
@@ -3480,7 +3480,8 @@ func (s *server) genNodeAnnouncement(features *lnwire.RawFeatureVector,
 // applying the giving modifiers and updating the time stamp
 // to ensure it propagates through the network. Then it broadcasts
 // it to the network.
-func (s *server) updateAndBroadcastSelfNode(features *lnwire.RawFeatureVector,
+func (s *server) updateAndBroadcastSelfNode(ctx context.Context,
+	features *lnwire.RawFeatureVector,
 	modifiers ...netann.NodeAnnModifier) error {
 
 	newNodeAnn, err := s.genNodeAnnouncement(features, modifiers...)
@@ -3492,7 +3493,7 @@ func (s *server) updateAndBroadcastSelfNode(features *lnwire.RawFeatureVector,
 	// Update the on-disk version of our announcement.
 	// Load and modify self node istead of creating anew instance so we
 	// don't risk overwriting any existing values.
-	selfNode, err := s.graphDB.SourceNode()
+	selfNode, err := s.graphDB.SourceNode(ctx)
 	if err != nil {
 		return fmt.Errorf("unable to get current source node: %w", err)
 	}
