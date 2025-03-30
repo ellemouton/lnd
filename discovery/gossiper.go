@@ -665,7 +665,7 @@ func (d *AuthenticatedGossiper) start(ctx context.Context) error {
 	}
 	d.blockEpochs = blockEpochs
 
-	height, err := d.cfg.Graph.CurrentBlockHeight()
+	height, err := d.cfg.Graph.CurrentBlockHeight(ctx)
 	if err != nil {
 		return err
 	}
@@ -1437,7 +1437,7 @@ func (d *AuthenticatedGossiper) sendRemoteBatch(annBatch []msgWithSenders) {
 // broadcasting our latest topology state to all connected peers.
 //
 // NOTE: This MUST be run as a goroutine.
-func (d *AuthenticatedGossiper) networkHandler(_ context.Context) {
+func (d *AuthenticatedGossiper) networkHandler(ctx context.Context) {
 	defer d.wg.Done()
 
 	// Initialize empty deDupedAnnouncements to store announcement batch.
@@ -1452,7 +1452,7 @@ func (d *AuthenticatedGossiper) networkHandler(_ context.Context) {
 
 	// To start, we'll first check to see if there are any stale channel or
 	// node announcements that we need to re-transmit.
-	if err := d.retransmitStaleAnns(time.Now()); err != nil {
+	if err := d.retransmitStaleAnns(ctx, time.Now()); err != nil {
 		log.Errorf("Unable to rebroadcast stale announcements: %v", err)
 	}
 
@@ -1566,7 +1566,7 @@ func (d *AuthenticatedGossiper) networkHandler(_ context.Context) {
 		// have been dropped, or not properly propagated through the
 		// network.
 		case tick := <-d.cfg.RetransmitTicker.Ticks():
-			if err := d.retransmitStaleAnns(tick); err != nil {
+			if err := d.retransmitStaleAnns(ctx, tick); err != nil {
 				log.Errorf("unable to rebroadcast stale "+
 					"announcements: %v", err)
 			}
@@ -1687,7 +1687,9 @@ func (d *AuthenticatedGossiper) isRecentlyRejectedMsg(msg lnwire.Message,
 // stale iff, the last timestamp of its rebroadcast is older than the
 // RebroadcastInterval. We also check if a refreshed node announcement should
 // be resent.
-func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
+func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
+	now time.Time) error {
+
 	// Iterate over all of our channels and check if any of them fall
 	// within the prune interval or re-broadcast interval.
 	type updateTuple struct {
@@ -1699,56 +1701,66 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(now time.Time) error {
 		havePublicChannels bool
 		edgesToUpdate      []updateTuple
 	)
-	err := d.cfg.Graph.ForAllOutgoingChannels(func(
-		info *models.ChannelEdgeInfo,
-		edge *models.ChannelEdgePolicy) error {
+	err := d.cfg.Graph.ForAllOutgoingChannels(
+		ctx, func(info *models.ChannelEdgeInfo,
+			edge *models.ChannelEdgePolicy) error {
 
-		// If there's no auth proof attached to this edge, it means
-		// that it is a private channel not meant to be announced to
-		// the greater network, so avoid sending channel updates for
-		// this channel to not leak its
-		// existence.
-		if info.AuthProof == nil {
-			log.Debugf("Skipping retransmission of channel "+
-				"without AuthProof: %v", info.ChannelID)
+			// If there's no auth proof attached to this edge, it
+			// means that it is a private channel not meant to be
+			// announced to the greater network, so avoid sending
+			// channel updates for this channel to not leak its
+			// existence.
+			if info.AuthProof == nil {
+				log.Debugf("Skipping retransmission of "+
+					"channel without AuthProof: %v",
+					info.ChannelID)
+
+				return nil
+			}
+
+			// We make a note that we have at least one public
+			// channel. We use this to determine whether we should
+			// send a node announcement below.
+			havePublicChannels = true
+
+			// If this edge has a ChannelUpdate that was created
+			// before the introduction of the MaxHTLC field, then
+			// we'll update this edge to propagate this information
+			// in the network.
+			if !edge.MessageFlags.HasMaxHtlc() {
+				// We'll make sure we support the new max_htlc
+				// field if not already present.
+				edge.MessageFlags |=
+					lnwire.ChanUpdateRequiredMaxHtlc
+				edge.MaxHTLC = lnwire.NewMSatFromSatoshis(
+					info.Capacity,
+				)
+
+				edgesToUpdate = append(
+					edgesToUpdate, updateTuple{
+						info: info,
+						edge: edge,
+					},
+				)
+				return nil
+			}
+
+			timeElapsed := now.Sub(edge.LastUpdate)
+
+			// If it's been longer than RebroadcastInterval since
+			// we've re-broadcasted the channel, add the channel to
+			// the set of edges we need to update.
+			if timeElapsed >= d.cfg.RebroadcastInterval {
+				edgesToUpdate = append(
+					edgesToUpdate, updateTuple{
+						info: info,
+						edge: edge,
+					},
+				)
+			}
+
 			return nil
-		}
-
-		// We make a note that we have at least one public channel. We
-		// use this to determine whether we should send a node
-		// announcement below.
-		havePublicChannels = true
-
-		// If this edge has a ChannelUpdate that was created before the
-		// introduction of the MaxHTLC field, then we'll update this
-		// edge to propagate this information in the network.
-		if !edge.MessageFlags.HasMaxHtlc() {
-			// We'll make sure we support the new max_htlc field if
-			// not already present.
-			edge.MessageFlags |= lnwire.ChanUpdateRequiredMaxHtlc
-			edge.MaxHTLC = lnwire.NewMSatFromSatoshis(info.Capacity)
-
-			edgesToUpdate = append(edgesToUpdate, updateTuple{
-				info: info,
-				edge: edge,
-			})
-			return nil
-		}
-
-		timeElapsed := now.Sub(edge.LastUpdate)
-
-		// If it's been longer than RebroadcastInterval since we've
-		// re-broadcasted the channel, add the channel to the set of
-		// edges we need to update.
-		if timeElapsed >= d.cfg.RebroadcastInterval {
-			edgesToUpdate = append(edgesToUpdate, updateTuple{
-				info: info,
-				edge: edge,
-			})
-		}
-
-		return nil
-	})
+		})
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
 		return fmt.Errorf("unable to retrieve outgoing channels: %w",
 			err)

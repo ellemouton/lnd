@@ -1240,7 +1240,7 @@ func logNetworkMsgProcessError(err error) {
 // CurrentBlockHeight returns the block height from POV of the router subsystem.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) CurrentBlockHeight() (uint32, error) {
+func (b *Builder) CurrentBlockHeight(_ context.Context) (uint32, error) {
 	_, height, err := b.cfg.Chain.GetBestBlock()
 	return uint32(height), err
 }
@@ -1278,8 +1278,9 @@ func (b *Builder) FetchLightningNode(
 // the router.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) ForAllOutgoingChannels(cb func(*models.ChannelEdgeInfo,
-	*models.ChannelEdgePolicy) error) error {
+func (b *Builder) ForAllOutgoingChannels(_ context.Context,
+	cb func(*models.ChannelEdgeInfo,
+		*models.ChannelEdgePolicy) error) error {
 
 	return b.cfg.Graph.ForEachNodeChannel(b.cfg.SelfNode,
 		func(c *models.ChannelEdgeInfo, e *models.ChannelEdgePolicy,

@@ -183,7 +183,9 @@ func (r *mockGraphSource) UpdateEdge(edge *models.ChannelEdgePolicy,
 	return nil
 }
 
-func (r *mockGraphSource) CurrentBlockHeight() (uint32, error) {
+func (r *mockGraphSource) CurrentBlockHeight(_ context.Context) (uint32,
+	error) {
+
 	return r.bestHeight, nil
 }
 
@@ -211,8 +213,9 @@ func (r *mockGraphSource) ForEachNode(
 	return nil
 }
 
-func (r *mockGraphSource) ForAllOutgoingChannels(cb func(
-	i *models.ChannelEdgeInfo, c *models.ChannelEdgePolicy) error) error {
+func (r *mockGraphSource) ForAllOutgoingChannels(_ context.Context,
+	cb func(i *models.ChannelEdgeInfo,
+		c *models.ChannelEdgePolicy) error) error {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -3571,17 +3574,18 @@ func assertBroadcastMsg(t *testing.T, ctx *testCtx,
 // channels.
 func TestPropagateChanPolicyUpdate(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	// First, we'll make out test context and add 3 random channels to the
 	// graph.
 	startingHeight := uint32(10)
-	ctx, err := createTestCtx(t, startingHeight, false)
+	tCtx, err := createTestCtx(t, startingHeight, false)
 	require.NoError(t, err, "unable to create test context")
 
 	const numChannels = 3
 	channelsToAnnounce := make([]*annBatch, 0, numChannels)
 	for i := 0; i < numChannels; i++ {
-		newChan, err := ctx.createLocalAnnouncements(uint32(i + 1))
+		newChan, err := tCtx.createLocalAnnouncements(uint32(i + 1))
 		if err != nil {
 			t.Fatalf("unable to make new channel ann: %v", err)
 		}
@@ -3593,7 +3597,7 @@ func TestPropagateChanPolicyUpdate(t *testing.T) {
 
 	sentMsgs := make(chan lnwire.Message, 10)
 	remotePeer := &mockPeer{
-		remoteKey, sentMsgs, ctx.gossiper.quit, atomic.Bool{},
+		remoteKey, sentMsgs, tCtx.gossiper.quit, atomic.Bool{},
 	}
 
 	// The forced code path for sending the private ChannelUpdate to the
@@ -3601,7 +3605,7 @@ func TestPropagateChanPolicyUpdate(t *testing.T) {
 	// the remote peer is active. We'll ensure that it targets the proper
 	// pubkey, and hand it our mock peer above.
 	notifyErr := make(chan error, 1)
-	ctx.gossiper.reliableSender.cfg.NotifyWhenOnline = func(
+	tCtx.gossiper.reliableSender.cfg.NotifyWhenOnline = func(
 		targetPub [33]byte, peerChan chan<- lnpeer.Peer) {
 
 		if !bytes.Equal(targetPub[:], remoteKey.SerializeCompressed()) {
@@ -3626,12 +3630,12 @@ func TestPropagateChanPolicyUpdate(t *testing.T) {
 		// each channel has a unique channel point.
 		channelPoint := ChannelPoint(wire.OutPoint{Index: uint32(i)})
 
-		sendLocalMsg(t, ctx, batch.chanAnn, channelPoint)
-		sendLocalMsg(t, ctx, batch.chanUpdAnn1)
-		sendLocalMsg(t, ctx, batch.nodeAnn1)
+		sendLocalMsg(t, tCtx, batch.chanAnn, channelPoint)
+		sendLocalMsg(t, tCtx, batch.chanUpdAnn1)
+		sendLocalMsg(t, tCtx, batch.nodeAnn1)
 
-		sendRemoteMsg(t, ctx, batch.chanUpdAnn2, remotePeer)
-		sendRemoteMsg(t, ctx, batch.nodeAnn2, remotePeer)
+		sendRemoteMsg(t, tCtx, batch.chanUpdAnn2, remotePeer)
+		sendRemoteMsg(t, tCtx, batch.nodeAnn2, remotePeer)
 
 		// We'll skip sending the auth proofs from the first channel to
 		// ensure that it's seen as a private channel.
@@ -3639,8 +3643,8 @@ func TestPropagateChanPolicyUpdate(t *testing.T) {
 			continue
 		}
 
-		sendLocalMsg(t, ctx, batch.localProofAnn)
-		sendRemoteMsg(t, ctx, batch.remoteProofAnn, remotePeer)
+		sendLocalMsg(t, tCtx, batch.localProofAnn)
+		sendRemoteMsg(t, tCtx, batch.remoteProofAnn, remotePeer)
 	}
 
 	// Drain out any broadcast or direct messages we might not have read up
@@ -3649,7 +3653,7 @@ func TestPropagateChanPolicyUpdate(t *testing.T) {
 out:
 	for {
 		select {
-		case <-ctx.broadcastedMessage:
+		case <-tCtx.broadcastedMessage:
 		case <-sentMsgs:
 		case err := <-notifyErr:
 			t.Fatal(err)
@@ -3664,29 +3668,29 @@ out:
 	// policy of all of them.
 	const newTimeLockDelta = 100
 	var edgesToUpdate []EdgeWithInfo
-	err = ctx.router.ForAllOutgoingChannels(func(
-		info *models.ChannelEdgeInfo,
-		edge *models.ChannelEdgePolicy) error {
+	err = tCtx.router.ForAllOutgoingChannels(
+		ctx, func(info *models.ChannelEdgeInfo,
+			edge *models.ChannelEdgePolicy) error {
 
-		edge.TimeLockDelta = uint16(newTimeLockDelta)
-		edgesToUpdate = append(edgesToUpdate, EdgeWithInfo{
-			Info: info,
-			Edge: edge,
+			edge.TimeLockDelta = uint16(newTimeLockDelta)
+			edgesToUpdate = append(edgesToUpdate, EdgeWithInfo{
+				Info: info,
+				Edge: edge,
+			})
+
+			return nil
 		})
-
-		return nil
-	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = ctx.gossiper.PropagateChanPolicyUpdate(edgesToUpdate)
+	err = tCtx.gossiper.PropagateChanPolicyUpdate(edgesToUpdate)
 	require.NoError(t, err, "unable to chan policies")
 
 	// Two channel updates should now be broadcast, with neither of them
 	// being the channel our first private channel.
 	for i := 0; i < numChannels-1; i++ {
-		assertBroadcastMsg(t, ctx, func(msg lnwire.Message) error {
+		assertBroadcastMsg(t, tCtx, func(msg lnwire.Message) error {
 			upd, ok := msg.(*lnwire.ChannelUpdate1)
 			if !ok {
 				return fmt.Errorf("channel update not "+
@@ -3734,7 +3738,7 @@ out:
 	// was sent directly to the peer.
 	for {
 		select {
-		case msg := <-ctx.broadcastedMessage:
+		case msg := <-tCtx.broadcastedMessage:
 			if upd, ok := msg.msg.(*lnwire.ChannelUpdate1); ok {
 				if upd.ShortChannelID == firstChanID {
 					t.Fatalf("chan update msg received: %v",

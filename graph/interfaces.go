@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"context"
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -68,12 +69,13 @@ type ChannelGraphSource interface {
 	// ForAllOutgoingChannels is used to iterate over all channels
 	// emanating from the "source" node which is the center of the
 	// star-graph.
-	ForAllOutgoingChannels(cb func(c *models.ChannelEdgeInfo,
-		e *models.ChannelEdgePolicy) error) error
+	ForAllOutgoingChannels(ctx context.Context,
+		cb func(c *models.ChannelEdgeInfo,
+			e *models.ChannelEdgePolicy) error) error
 
 	// CurrentBlockHeight returns the block height from POV of the router
 	// subsystem.
-	CurrentBlockHeight() (uint32, error)
+	CurrentBlockHeight(ctx context.Context) (uint32, error)
 
 	// GetChannelByID return the channel by the channel id.
 	GetChannelByID(chanID lnwire.ShortChannelID) (
