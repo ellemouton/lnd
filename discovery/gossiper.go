@@ -2212,10 +2212,10 @@ func (d *AuthenticatedGossiper) processZombieUpdate(ctx context.Context,
 
 // fetchNodeAnn fetches the latest signed node announcement from our point of
 // view for the node with the given public key.
-func (d *AuthenticatedGossiper) fetchNodeAnn(
+func (d *AuthenticatedGossiper) fetchNodeAnn(ctx context.Context,
 	pubKey [33]byte) (*lnwire.NodeAnnouncement, error) {
 
-	node, err := d.cfg.Graph.FetchLightningNode(pubKey)
+	node, err := d.cfg.Graph.FetchLightningNode(ctx, pubKey)
 	if err != nil {
 		return nil, err
 	}
@@ -2704,7 +2704,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 	// add an alias ChannelAnnouncement from the gossiper.
 	if !(d.cfg.AssumeChannelValid || d.cfg.IsAlias(scid)) { //nolint:nestif
 		op, capacity, script, err := d.validateFundingTransaction(
-			ann, tapscriptRoot,
+			ctx, ann, tapscriptRoot,
 		)
 		if err != nil {
 			defer d.channelMtx.Unlock(scid.ToUint64())
@@ -3656,7 +3656,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	// it since the source gets skipped. This isn't necessary for channel
 	// updates and announcement signatures since we send those directly to
 	// our channel counterparty through the gossiper's reliable sender.
-	node1Ann, err := d.fetchNodeAnn(chanInfo.NodeKey1Bytes)
+	node1Ann, err := d.fetchNodeAnn(ctx, chanInfo.NodeKey1Bytes)
 	if err != nil {
 		log.Debugf("Unable to fetch node announcement for %x: %v",
 			chanInfo.NodeKey1Bytes, err)
@@ -3670,7 +3670,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 		}
 	}
 
-	node2Ann, err := d.fetchNodeAnn(chanInfo.NodeKey2Bytes)
+	node2Ann, err := d.fetchNodeAnn(ctx, chanInfo.NodeKey2Bytes)
 	if err != nil {
 		log.Debugf("Unable to fetch node announcement for %x: %v",
 			chanInfo.NodeKey2Bytes, err)
@@ -3725,7 +3725,7 @@ func (d *AuthenticatedGossiper) ShouldDisconnect(pubkey *btcec.PublicKey) (
 // transaction from chain to ensure that it exists, is not spent and matches
 // the channel announcement proof. The transaction's outpoint and value are
 // returned if we can glean them from the work done in this method.
-func (d *AuthenticatedGossiper) validateFundingTransaction(
+func (d *AuthenticatedGossiper) validateFundingTransaction(ctx context.Context,
 	ann *lnwire.ChannelAnnouncement1,
 	tapscriptRoot fn.Option[chainhash.Hash]) (wire.OutPoint, btcutil.Amount,
 	[]byte, error) {
@@ -3759,7 +3759,7 @@ func (d *AuthenticatedGossiper) validateFundingTransaction(
 			// we'll mark the edge itself as a zombie so we don't
 			// continue to request it. We use the "zero key" for
 			// both node pubkeys so this edge can't be resurrected.
-			zErr := d.cfg.Graph.MarkZombieEdge(scid.ToUint64())
+			zErr := d.cfg.Graph.MarkZombieEdge(ctx, scid.ToUint64())
 			if zErr != nil {
 				return wire.OutPoint{}, 0, nil, zErr
 			}
@@ -3797,7 +3797,7 @@ func (d *AuthenticatedGossiper) validateFundingTransaction(
 	if err != nil {
 		// Mark the edge as a zombie so we won't try to re-validate it
 		// on start up.
-		zErr := d.cfg.Graph.MarkZombieEdge(scid.ToUint64())
+		zErr := d.cfg.Graph.MarkZombieEdge(ctx, scid.ToUint64())
 		if zErr != nil {
 			return wire.OutPoint{}, 0, nil, zErr
 		}
@@ -3814,7 +3814,7 @@ func (d *AuthenticatedGossiper) validateFundingTransaction(
 	)
 	if err != nil {
 		if errors.Is(err, btcwallet.ErrOutputSpent) {
-			zErr := d.cfg.Graph.MarkZombieEdge(scid.ToUint64())
+			zErr := d.cfg.Graph.MarkZombieEdge(ctx, scid.ToUint64())
 			if zErr != nil {
 				return wire.OutPoint{}, 0, nil, zErr
 			}

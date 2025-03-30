@@ -86,10 +86,11 @@ type ChannelGraphSource interface {
 	// FetchLightningNode attempts to look up a target node by its identity
 	// public key. channeldb.ErrGraphNodeNotFound is returned if the node
 	// doesn't exist within the graph.
-	FetchLightningNode(route.Vertex) (*models.LightningNode, error)
+	FetchLightningNode(context.Context,
+		route.Vertex) (*models.LightningNode, error)
 
 	// MarkZombieEdge marks the channel with the given ID as a zombie edge.
-	MarkZombieEdge(chanID uint64) error
+	MarkZombieEdge(ctx context.Context, chanID uint64) error
 
 	// IsZombieEdge returns true if the edge with the given channel ID is
 	// currently marked as a zombie edge.

@@ -904,7 +904,7 @@ func (b *Builder) assertNodeAnnFreshness(node route.Vertex,
 
 // MarkZombieEdge adds a channel that failed complete validation into the zombie
 // index so we can avoid having to re-validate it in the future.
-func (b *Builder) MarkZombieEdge(chanID uint64) error {
+func (b *Builder) MarkZombieEdge(_ context.Context, chanID uint64) error {
 	// If the edge fails validation we'll mark the edge itself as a zombie
 	// so we don't continue to request it. We use the "zero key" for both
 	// node pubkeys so this edge can't be resurrected.
@@ -1269,7 +1269,7 @@ func (b *Builder) GetChannelByID(_ context.Context,
 // within the graph.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) FetchLightningNode(
+func (b *Builder) FetchLightningNode(_ context.Context,
 	node route.Vertex) (*models.LightningNode, error) {
 
 	return b.cfg.Graph.FetchLightningNode(node)

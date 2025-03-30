@@ -119,7 +119,9 @@ func (r *mockGraphSource) AddNode(_ context.Context, node *models.LightningNode,
 	return nil
 }
 
-func (r *mockGraphSource) MarkZombieEdge(scid uint64) error {
+func (r *mockGraphSource) MarkZombieEdge(_ context.Context,
+	scid uint64) error {
+
 	return r.MarkEdgeZombie(
 		lnwire.NewShortChanIDFromInt(scid), [33]byte{}, [33]byte{},
 	)
@@ -296,7 +298,7 @@ func (r *mockGraphSource) GetChannelByID(_ context.Context,
 	return &chanInfo, edge1, edge2, nil
 }
 
-func (r *mockGraphSource) FetchLightningNode(
+func (r *mockGraphSource) FetchLightningNode(_ context.Context,
 	nodePub route.Vertex) (*models.LightningNode, error) {
 
 	for _, node := range r.nodes {
