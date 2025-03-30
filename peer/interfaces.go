@@ -1,6 +1,7 @@
 package peer
 
 import (
+	"context"
 	"net"
 	"time"
 
@@ -25,7 +26,7 @@ type messageSwitch interface {
 
 	// CreateAndAddLink creates an abstract link in the messageSwitch given
 	// a ChannelLinkConfig and raw LightningChannel pointer.
-	CreateAndAddLink(cfg htlcswitch.ChannelLinkConfig,
+	CreateAndAddLink(ctx context.Context, cfg htlcswitch.ChannelLinkConfig,
 		lnChan *lnwallet.LightningChannel) error
 
 	// GetLinksByInterface retrieves abstract links (represented by the

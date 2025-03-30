@@ -1695,7 +1695,7 @@ func (l *channelLink) handleDownstreamUpdateAdd(ctx context.Context,
 	// already sent Stfu, then we can't add new htlcs to the link and we
 	// need to bounce it.
 	if l.IsFlushing(Outgoing) || !l.quiescer.CanSendUpdates() {
-		l.mailBox.FailAdd(pkt)
+		l.mailBox.FailAdd(ctx, pkt)
 
 		return NewDetailedLinkError(
 			&lnwire.FailTemporaryChannelFailure{},
@@ -1718,7 +1718,7 @@ func (l *channelLink) handleDownstreamUpdateAdd(ctx context.Context,
 		l.log.Debugf("Unable to handle downstream HTLC - max fee " +
 			"exposure exceeded")
 
-		l.mailBox.FailAdd(pkt)
+		l.mailBox.FailAdd(ctx, pkt)
 
 		return NewDetailedLinkError(
 			lnwire.NewTemporaryChannelFailure(nil),
@@ -1752,7 +1752,7 @@ func (l *channelLink) handleDownstreamUpdateAdd(ctx context.Context,
 		// the switch, since the circuit was never fully opened,
 		// and the forwarding package shows it as
 		// unacknowledged.
-		l.mailBox.FailAdd(pkt)
+		l.mailBox.FailAdd(ctx, pkt)
 
 		return NewDetailedLinkError(
 			lnwire.NewTemporaryChannelFailure(nil),
@@ -3260,13 +3260,11 @@ func (l *channelLink) UpdateForwardingPolicy(
 // issue.
 //
 // NOTE: Part of the ChannelLink interface.
-func (l *channelLink) CheckHtlcForward(payHash [32]byte, incomingHtlcAmt,
-	amtToForward lnwire.MilliSatoshi, incomingTimeout,
+func (l *channelLink) CheckHtlcForward(ctx context.Context, payHash [32]byte,
+	incomingHtlcAmt, amtToForward lnwire.MilliSatoshi, incomingTimeout,
 	outgoingTimeout uint32, inboundFee models.InboundFee,
 	heightNow uint32, originalScid lnwire.ShortChannelID,
 	customRecords lnwire.CustomRecords) *LinkError {
-
-	ctx := context.TODO()
 
 	l.RLock()
 	policy := l.cfg.FwrdingPolicy
@@ -3355,11 +3353,9 @@ func (l *channelLink) CheckHtlcForward(payHash [32]byte, incomingHtlcAmt,
 // valid protocol failure message should be returned in order to signal
 // the violation. This call is intended to be used for locally initiated
 // payments for which there is no corresponding incoming htlc.
-func (l *channelLink) CheckHtlcTransit(payHash [32]byte,
+func (l *channelLink) CheckHtlcTransit(ctx context.Context, payHash [32]byte,
 	amt lnwire.MilliSatoshi, timeout uint32, heightNow uint32,
 	customRecords lnwire.CustomRecords) *LinkError {
-
-	ctx := context.TODO()
 
 	l.RLock()
 	policy := l.cfg.FwrdingPolicy

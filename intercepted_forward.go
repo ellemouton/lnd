@@ -64,7 +64,7 @@ func (f *interceptedForward) ResumeModified(_ context.Context, _,
 
 // Fail notifies the intention to fail an existing hold forward with an
 // encrypted failure reason.
-func (f *interceptedForward) Fail(_ []byte) error {
+func (f *interceptedForward) Fail(_ context.Context, _ []byte) error {
 	// We can't actively fail an htlc. The best we could do is abandon the
 	// resolver, but this wouldn't be a safe operation. There may be a race
 	// with the preimage beacon supplying a preimage. Therefore we don't
@@ -82,7 +82,9 @@ func (f *interceptedForward) FailWithCode(_ context.Context,
 
 // Settle notifies the intention to settle an existing hold forward with a given
 // preimage.
-func (f *interceptedForward) Settle(preimage lntypes.Preimage) error {
+func (f *interceptedForward) Settle(_ context.Context,
+	preimage lntypes.Preimage) error {
+
 	if !preimage.Matches(f.packet.Hash) {
 		return ErrPreimageMismatch
 	}

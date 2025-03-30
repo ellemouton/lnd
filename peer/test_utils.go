@@ -339,7 +339,7 @@ func createTestPeerWithChannel(t *testing.T, updateChan func(a,
 	alicePeer.activeChannels.Store(chanID, channelAlice)
 
 	alicePeer.cg.WgAdd(1)
-	go alicePeer.channelManager()
+	go alicePeer.channelManager(context.Background())
 
 	return &peerTestCtx{
 		peer:       alicePeer,
@@ -371,7 +371,8 @@ func (m *mockMessageSwitch) CircuitModifier() htlcswitch.CircuitModifier {
 func (m *mockMessageSwitch) RemoveLink(cid lnwire.ChannelID) {}
 
 // CreateAndAddLink currently returns a dummy value.
-func (m *mockMessageSwitch) CreateAndAddLink(cfg htlcswitch.ChannelLinkConfig,
+func (m *mockMessageSwitch) CreateAndAddLink(_ context.Context,
+	cfg htlcswitch.ChannelLinkConfig,
 	lnChan *lnwallet.LightningChannel) error {
 
 	return nil

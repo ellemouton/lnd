@@ -547,8 +547,8 @@ func (s *Switch) CleanStore(keepPids map[uint64]struct{}) error {
 // package in order to send the htlc update. The attemptID used MUST be unique
 // for this HTLC, and MUST be used only once, otherwise the switch might reject
 // it.
-func (s *Switch) SendHTLC(firstHop lnwire.ShortChannelID, attemptID uint64,
-	htlc *lnwire.UpdateAddHTLC) error {
+func (s *Switch) SendHTLC(ctx context.Context, firstHop lnwire.ShortChannelID,
+	attemptID uint64, htlc *lnwire.UpdateAddHTLC) error {
 
 	// Generate and send new update packet, if error will be received on
 	// this stage it means that packet haven't left boundaries of our
@@ -564,7 +564,7 @@ func (s *Switch) SendHTLC(firstHop lnwire.ShortChannelID, attemptID uint64,
 	// Attempt to fetch the target link before creating a circuit so that
 	// we don't leave dangling circuits. The getLocalLink method does not
 	// require the circuit variable to be set on the *htlcPacket.
-	link, linkErr := s.getLocalLink(packet, htlc)
+	link, linkErr := s.getLocalLink(ctx, packet, htlc)
 	if linkErr != nil {
 		// Notify the htlc notifier of a link failure on our outgoing
 		// link. Incoming timelock/amount values are not set because
@@ -585,7 +585,7 @@ func (s *Switch) SendHTLC(firstHop lnwire.ShortChannelID, attemptID uint64,
 
 	// Evaluate whether this HTLC would bypass our fee exposure. If it
 	// does, don't send it out and instead return an error.
-	if s.dustExceedsFeeThreshold(link, htlc.Amount, false) {
+	if s.dustExceedsFeeThreshold(ctx, link, htlc.Amount, false) {
 		// Notify the htlc notifier of a link failure on our outgoing
 		// link. We use the FailTemporaryChannelFailure in place of a
 		// more descriptive error message.
@@ -818,7 +818,7 @@ func (s *Switch) ForwardPackets(ctx context.Context, linkQuit <-chan struct{},
 		for _, packet := range failedPackets {
 			// We don't handle the error here since this method
 			// always returns an error.
-			_ = s.failAddPacket(packet, linkError)
+			_ = s.failAddPacket(ctx, packet, linkError)
 		}
 	}
 
@@ -876,8 +876,8 @@ func (s *Switch) routeAsync(packet *htlcPacket, errChan chan error,
 // getLocalLink handles the addition of a htlc for a send that originates from
 // our node. It returns the link that the htlc should be forwarded outwards on,
 // and a link error if the htlc cannot be forwarded.
-func (s *Switch) getLocalLink(pkt *htlcPacket, htlc *lnwire.UpdateAddHTLC) (
-	ChannelLink, *LinkError) {
+func (s *Switch) getLocalLink(ctx context.Context, pkt *htlcPacket,
+	htlc *lnwire.UpdateAddHTLC) (ChannelLink, *LinkError) {
 
 	// Try to find links by node destination.
 	s.indexMtx.RLock()
@@ -922,7 +922,7 @@ func (s *Switch) getLocalLink(pkt *htlcPacket, htlc *lnwire.UpdateAddHTLC) (
 	// Ensure that the htlc satisfies the outgoing channel policy.
 	currentHeight := atomic.LoadUint32(&s.bestHeight)
 	htlcErr := link.CheckHtlcTransit(
-		htlc.PaymentHash, htlc.Amount, htlc.Expiry, currentHeight,
+		ctx, htlc.PaymentHash, htlc.Amount, htlc.Expiry, currentHeight,
 		htlc.CustomRecords,
 	)
 	if htlcErr != nil {
@@ -1120,16 +1120,18 @@ func (s *Switch) parseFailedPayment(deobfuscator ErrorDecrypter,
 // handlePacketForward is used in cases when we need forward the htlc update
 // from one channel link to another and be able to propagate the settle/fail
 // updates back. This behaviour is achieved by creation of payment circuits.
-func (s *Switch) handlePacketForward(packet *htlcPacket) error {
+func (s *Switch) handlePacketForward(ctx context.Context,
+	packet *htlcPacket) error {
+
 	switch htlc := packet.htlc.(type) {
 	// Channel link forwarded us a new htlc, therefore we initiate the
 	// payment circuit within our internal state so we can properly forward
 	// the ultimate settle message back latter.
 	case *lnwire.UpdateAddHTLC:
-		return s.handlePacketAdd(packet, htlc)
+		return s.handlePacketAdd(ctx, packet, htlc)
 
 	case *lnwire.UpdateFulfillHTLC:
-		return s.handlePacketSettle(packet)
+		return s.handlePacketSettle(ctx, packet)
 
 	// Channel link forwarded us an update_fail_htlc message.
 	//
@@ -1138,7 +1140,7 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 	// forward it. Thus there's no need to catch `UpdateFailMalformedHTLC`
 	// here.
 	case *lnwire.UpdateFailHTLC:
-		return s.handlePacketFail(packet, htlc)
+		return s.handlePacketFail(ctx, packet, htlc)
 
 	default:
 		return fmt.Errorf("wrong update type: %T", htlc)
@@ -1218,7 +1220,9 @@ func (s *Switch) checkCircularForward(incoming, outgoing lnwire.ShortChannelID,
 // failAddPacket encrypts a fail packet back to an add packet's source.
 // The ciphertext will be derived from the failure message proivded by context.
 // This method returns the failErr if all other steps complete successfully.
-func (s *Switch) failAddPacket(packet *htlcPacket, failure *LinkError) error {
+func (s *Switch) failAddPacket(ctx context.Context, packet *htlcPacket,
+	failure *LinkError) error {
+
 	// Encrypt the failure so that the sender will be able to read the error
 	// message. Since we failed this packet, we use EncryptFirstHop to
 	// obfuscate the failure for their eyes only.
@@ -1254,7 +1258,7 @@ func (s *Switch) failAddPacket(packet *htlcPacket, failure *LinkError) error {
 	}
 
 	// Route a fail packet back to the source link.
-	err = s.mailOrchestrator.Deliver(failPkt.incomingChanID, failPkt)
+	err = s.mailOrchestrator.Deliver(ctx, failPkt.incomingChanID, failPkt)
 	if err != nil {
 		err = fmt.Errorf("source chanid=%v unable to "+
 			"handle switch packet: %v",
@@ -1620,7 +1624,7 @@ out:
 			// encounter is due to the circuit already being
 			// closed. This is fine, as processing this message is
 			// meant to be idempotent.
-			err = s.handlePacketForward(pkt)
+			err = s.handlePacketForward(ctx, pkt)
 			if err != nil {
 				log.Errorf("Unable to forward resolution msg: %v", err)
 			}
@@ -1629,7 +1633,7 @@ out:
 		// packet concretely, then either forward it along, or
 		// interpret a return packet to a locally initialized one.
 		case cmd := <-s.htlcPlex:
-			cmd.err <- s.handlePacketForward(cmd.pkt)
+			cmd.err <- s.handlePacketForward(ctx, cmd.pkt)
 
 		// When this time ticks, then it indicates that we should
 		// collect all the forwarding events since the last internal,
@@ -2019,20 +2023,18 @@ func (s *Switch) Stop() error {
 
 // CreateAndAddLink will create a link and then add it to the internal maps
 // when given a ChannelLinkConfig and LightningChannel.
-func (s *Switch) CreateAndAddLink(linkCfg ChannelLinkConfig,
-	lnChan *lnwallet.LightningChannel) error {
+func (s *Switch) CreateAndAddLink(ctx context.Context,
+	linkCfg ChannelLinkConfig, lnChan *lnwallet.LightningChannel) error {
 
 	link := NewChannelLink(linkCfg, lnChan)
-	return s.AddLink(link)
+	return s.AddLink(ctx, link)
 }
 
 // AddLink is used to initiate the handling of the add link command. The
 // request will be propagated and handled in the main goroutine.
-func (s *Switch) AddLink(link ChannelLink) error {
+func (s *Switch) AddLink(ctx context.Context, link ChannelLink) error {
 	s.indexMtx.Lock()
 	defer s.indexMtx.Unlock()
-
-	ctx := context.TODO()
 
 	chanID := link.ChanID()
 
@@ -2047,7 +2049,9 @@ func (s *Switch) AddLink(link ChannelLink) error {
 	// case there packets that we tried to deliver while this link was
 	// offline.
 	shortChanID := link.ShortChanID()
-	mailbox := s.mailOrchestrator.GetOrCreateMailBox(chanID, shortChanID)
+	mailbox := s.mailOrchestrator.GetOrCreateMailBox(
+		ctx, chanID, shortChanID,
+	)
 	link.AttachMailBox(mailbox)
 
 	// Attach the Switch's failAliasUpdate function to the link.
@@ -2561,7 +2565,7 @@ func (s *Switch) BestHeight() uint32 {
 // included in the sum as it was already included in the commitment's dust. A
 // boolean is returned telling the caller whether the HTLC should be failed
 // back.
-func (s *Switch) dustExceedsFeeThreshold(link ChannelLink,
+func (s *Switch) dustExceedsFeeThreshold(ctx context.Context, link ChannelLink,
 	amount lnwire.MilliSatoshi, incoming bool) bool {
 
 	// Retrieve the link's current commitment feerate and dustClosure.
@@ -2585,7 +2589,7 @@ func (s *Switch) dustExceedsFeeThreshold(link ChannelLink,
 	// Fetch the dust sums currently in the mailbox for this link.
 	cid := link.ChanID()
 	sid := link.ShortChanID()
-	mailbox := s.mailOrchestrator.GetOrCreateMailBox(cid, sid)
+	mailbox := s.mailOrchestrator.GetOrCreateMailBox(ctx, cid, sid)
 	localMailDust, remoteMailDust := mailbox.DustPackets()
 
 	// If the htlc is dust on the local commitment, we'll obtain the dust
@@ -2837,7 +2841,7 @@ func (s *Switch) AddAliasForLink(chanID lnwire.ChannelID,
 }
 
 // handlePacketAdd handles forwarding an Add packet.
-func (s *Switch) handlePacketAdd(packet *htlcPacket,
+func (s *Switch) handlePacketAdd(ctx context.Context, packet *htlcPacket,
 	htlc *lnwire.UpdateAddHTLC) error {
 
 	// Check if the node is set to reject all onward HTLCs and also make
@@ -2848,7 +2852,7 @@ func (s *Switch) handlePacketAdd(packet *htlcPacket,
 			OutgoingFailureForwardsDisabled,
 		)
 
-		return s.failAddPacket(packet, failure)
+		return s.failAddPacket(ctx, packet, failure)
 	}
 
 	// Before we attempt to find a non-strict forwarding path for this
@@ -2864,7 +2868,7 @@ func (s *Switch) handlePacketAdd(packet *htlcPacket,
 		s.cfg.AllowCircularRoute, htlc.PaymentHash,
 	)
 	if linkErr != nil {
-		return s.failAddPacket(packet, linkErr)
+		return s.failAddPacket(ctx, packet, linkErr)
 	}
 
 	s.indexMtx.RLock()
@@ -2881,7 +2885,7 @@ func (s *Switch) handlePacketAdd(packet *htlcPacket,
 			&lnwire.FailUnknownNextPeer{},
 		)
 
-		return s.failAddPacket(packet, linkError)
+		return s.failAddPacket(ctx, packet, linkError)
 	}
 	targetPeerKey := targetLink.PeerPubKey()
 	interfaceLinks, _ := s.getLinks(targetPeerKey)
@@ -2910,7 +2914,7 @@ func (s *Switch) handlePacketAdd(packet *htlcPacket,
 			// forwarding conditions of this target link.
 			currentHeight := atomic.LoadUint32(&s.bestHeight)
 			failure = link.CheckHtlcForward(
-				htlc.PaymentHash, packet.incomingAmount,
+				ctx, htlc.PaymentHash, packet.incomingAmount,
 				packet.amount, packet.incomingTimeout,
 				packet.outgoingTimeout, packet.inboundFee,
 				currentHeight, packet.originalOutgoingChanID,
@@ -2954,7 +2958,7 @@ func (s *Switch) handlePacketAdd(packet *htlcPacket,
 			htlc.PaymentHash[:], packet.outgoingChanID,
 			linkErr)
 
-		return s.failAddPacket(packet, linkErr)
+		return s.failAddPacket(ctx, packet, linkErr)
 	}
 
 	// Choose a random link out of the set of links that can forward this
@@ -2975,13 +2979,13 @@ func (s *Switch) handlePacketAdd(packet *htlcPacket,
 			&lnwire.FailTemporaryChannelFailure{},
 		)
 
-		return s.failAddPacket(packet, linkErr)
+		return s.failAddPacket(ctx, packet, linkErr)
 	}
 
 	// Evaluate whether this HTLC would increase our fee exposure over the
 	// threshold on the incoming link. If it does, fail it backwards.
 	if s.dustExceedsFeeThreshold(
-		incomingLink, packet.incomingAmount, true,
+		ctx, incomingLink, packet.incomingAmount, true,
 	) {
 		// The incoming dust exceeds the threshold, so we fail the add
 		// back.
@@ -2989,13 +2993,13 @@ func (s *Switch) handlePacketAdd(packet *htlcPacket,
 			&lnwire.FailTemporaryChannelFailure{},
 		)
 
-		return s.failAddPacket(packet, linkErr)
+		return s.failAddPacket(ctx, packet, linkErr)
 	}
 
 	// Also evaluate whether this HTLC would increase our fee exposure over
 	// the threshold on the destination link. If it does, fail it back.
 	if s.dustExceedsFeeThreshold(
-		destination, packet.amount, false,
+		ctx, destination, packet.amount, false,
 	) {
 		// The outgoing dust exceeds the threshold, so we fail the add
 		// back.
@@ -3003,7 +3007,7 @@ func (s *Switch) handlePacketAdd(packet *htlcPacket,
 			&lnwire.FailTemporaryChannelFailure{},
 		)
 
-		return s.failAddPacket(packet, linkErr)
+		return s.failAddPacket(ctx, packet, linkErr)
 	}
 
 	// Send the packet to the destination channel link which manages the
@@ -3014,7 +3018,9 @@ func (s *Switch) handlePacketAdd(packet *htlcPacket,
 }
 
 // handlePacketSettle handles forwarding a settle packet.
-func (s *Switch) handlePacketSettle(packet *htlcPacket) error {
+func (s *Switch) handlePacketSettle(ctx context.Context,
+	packet *htlcPacket) error {
+
 	// If the source of this packet has not been set, use the circuit map
 	// to lookup the origin.
 	circuit, err := s.closeCircuit(packet)
@@ -3086,11 +3092,11 @@ func (s *Switch) handlePacketSettle(packet *htlcPacket) error {
 	}
 
 	// Deliver this packet.
-	return s.mailOrchestrator.Deliver(packet.incomingChanID, packet)
+	return s.mailOrchestrator.Deliver(ctx, packet.incomingChanID, packet)
 }
 
 // handlePacketFail handles forwarding a fail packet.
-func (s *Switch) handlePacketFail(packet *htlcPacket,
+func (s *Switch) handlePacketFail(ctx context.Context, packet *htlcPacket,
 	htlc *lnwire.UpdateFailHTLC) error {
 
 	// If the source of this packet has not been set, use the circuit map
@@ -3126,7 +3132,9 @@ func (s *Switch) handlePacketFail(packet *htlcPacket,
 	// need to proceed and extract the failure reason below.
 	if packet.hasSource {
 		// Deliver this packet.
-		return s.mailOrchestrator.Deliver(packet.incomingChanID, packet)
+		return s.mailOrchestrator.Deliver(
+			ctx, packet.incomingChanID, packet,
+		)
 	}
 
 	// HTLC resolutions and messages restored from disk don't have the
@@ -3177,5 +3185,5 @@ func (s *Switch) handlePacketFail(packet *htlcPacket,
 	}
 
 	// Deliver this packet.
-	return s.mailOrchestrator.Deliver(packet.incomingChanID, packet)
+	return s.mailOrchestrator.Deliver(ctx, packet.incomingChanID, packet)
 }

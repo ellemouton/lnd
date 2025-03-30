@@ -690,7 +690,9 @@ func (p *paymentLifecycle) sendAttempt(ctx context.Context,
 	// the Switch successfully has persisted the payment attempt,
 	// such that we can resume waiting for the result after a
 	// restart.
-	err = p.router.cfg.Payer.SendHTLC(firstHop, attempt.AttemptID, htlcAdd)
+	err = p.router.cfg.Payer.SendHTLC(
+		ctx, firstHop, attempt.AttemptID, htlcAdd,
+	)
 	if err != nil {
 		log.Errorf("Failed sending attempt %d for payment %v to "+
 			"switch: %v", attempt.AttemptID, p.identifier, err)

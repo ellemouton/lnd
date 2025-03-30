@@ -734,7 +734,8 @@ func makePayment(sendingPeer, receivingPeer lnpeer.Peer,
 	paymentErr := make(chan error, 1)
 	var rhash lntypes.Hash
 
-	invoice, payFunc, err := preparePayment(sendingPeer, receivingPeer,
+	invoice, payFunc, err := preparePayment(
+		context.Background(), sendingPeer, receivingPeer,
 		firstHop, hops, invoiceAmt, htlcAmt, timelock,
 	)
 	if err != nil {
@@ -760,7 +761,7 @@ func makePayment(sendingPeer, receivingPeer lnpeer.Peer,
 
 // preparePayment creates an invoice at the receivingPeer and returns a function
 // that, when called, launches the payment from the sendingPeer.
-func preparePayment(sendingPeer, receivingPeer lnpeer.Peer,
+func preparePayment(ctx context.Context, sendingPeer, receivingPeer lnpeer.Peer,
 	firstHop lnwire.ShortChannelID, hops []*hop.Payload,
 	invoiceAmt, htlcAmt lnwire.MilliSatoshi,
 	timelock uint32) (*invoices.Invoice, func() error, error) {
@@ -794,7 +795,7 @@ func preparePayment(sendingPeer, receivingPeer lnpeer.Peer,
 	// Send payment and expose err channel.
 	return invoice, func() error {
 		err := sender.htlcSwitch.SendHTLC(
-			firstHop, pid, htlc,
+			ctx, firstHop, pid, htlc,
 		)
 		if err != nil {
 			return err
@@ -1183,7 +1184,8 @@ func (h *hopNetwork) createChannelLink(server, peer *mockServer,
 		},
 		channel,
 	)
-	if err := server.htlcSwitch.AddLink(link); err != nil {
+	err := server.htlcSwitch.AddLink(context.Background(), link)
+	if err != nil {
 		return nil, fmt.Errorf("unable to add channel link: %w", err)
 	}
 
@@ -1362,7 +1364,9 @@ func (n *twoHopNetwork) makeHoldPayment(sendingPeer, receivingPeer lnpeer.Peer,
 	}
 
 	// Send payment and expose err channel.
-	err = sender.htlcSwitch.SendHTLC(firstHop, pid, htlc)
+	err = sender.htlcSwitch.SendHTLC(
+		context.Background(), firstHop, pid, htlc,
+	)
 	if err != nil {
 		paymentErr <- err
 		return paymentErr
