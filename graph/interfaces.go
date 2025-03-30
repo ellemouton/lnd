@@ -241,13 +241,14 @@ type DB interface {
 	// database, a timestamp of when the data for the node was lasted
 	// updated is returned along with a true boolean. Otherwise, an empty
 	// time.Time is returned with a false boolean.
-	HasLightningNode(nodePub [33]byte) (time.Time, bool, error)
+	HasLightningNode(ctx context.Context, nodePub [33]byte) (time.Time,
+		bool, error)
 
 	// FetchLightningNode attempts to look up a target node by its identity
 	// public key. If the node isn't found in the database, then
 	// ErrGraphNodeNotFound is returned.
-	FetchLightningNode(nodePub route.Vertex) (*models.LightningNode,
-		error)
+	FetchLightningNode(ctx context.Context, nodePub route.Vertex) (
+		*models.LightningNode, error)
 
 	// ForEachNodeChannel iterates through all channels of the given node,
 	// executing the passed callback with an edge info structure and the

@@ -1715,13 +1715,13 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		cfg.BackupFilePath, cfg.NoBackupArchive,
 	)
 	startingChans, err := chanbackup.FetchStaticChanBackups(
-		s.chanStateDB, s.addrSource,
+		ctx, s.chanStateDB, s.addrSource,
 	)
 	if err != nil {
 		return nil, err
 	}
 	s.chanSubSwapper, err = chanbackup.NewSubSwapper(
-		startingChans, chanNotifier, s.cc.KeyRing, backupFile,
+		ctx, startingChans, chanNotifier, s.cc.KeyRing, backupFile,
 	)
 	if err != nil {
 		return nil, err
@@ -2670,6 +2670,8 @@ func (s *server) Stop() error {
 
 		close(s.quit)
 
+		ctx := context.Background()
+
 		// Shutdown connMgr first to prevent conns during shutdown.
 		s.connMgr.Stop()
 
@@ -2741,7 +2743,7 @@ func (s *server) Stop() error {
 		// Update channel.backup file. Make sure to do it before
 		// stopping chanSubSwapper.
 		singles, err := chanbackup.FetchStaticChanBackups(
-			s.chanStateDB, s.addrSource,
+			ctx, s.chanStateDB, s.addrSource,
 		)
 		if err != nil {
 			srvrLog.Warnf("failed to fetch channel states: %v",
@@ -4587,7 +4589,7 @@ func (s *server) peerInitializer(ctx context.Context, p *peer.Brontide) {
 	// the peer is ever added to the ignorePeerTermination map, indicating
 	// that the server has already handled the removal of this peer.
 	s.wg.Add(1)
-	go s.peerTerminationWatcher(p, ready)
+	go s.peerTerminationWatcher(ctx, p, ready)
 
 	// Start the peer! If an error occurs, we Disconnect the peer, which
 	// will unblock the peerTerminationWatcher.
@@ -4632,7 +4634,9 @@ func (s *server) peerInitializer(ctx context.Context, p *peer.Brontide) {
 // successfully, otherwise the peer should be disconnected instead.
 //
 // NOTE: This MUST be launched as a goroutine.
-func (s *server) peerTerminationWatcher(p *peer.Brontide, ready chan struct{}) {
+func (s *server) peerTerminationWatcher(ctx context.Context, p *peer.Brontide,
+	ready chan struct{}) {
+
 	defer s.wg.Done()
 
 	p.WaitForDisconnect(ready)
@@ -4721,7 +4725,7 @@ func (s *server) peerTerminationWatcher(p *peer.Brontide, ready chan struct{}) {
 
 	// We'll ensure that we locate all the peers advertised addresses for
 	// reconnection purposes.
-	advertisedAddrs, err := s.fetchNodeAdvertisedAddrs(pubKey)
+	advertisedAddrs, err := s.fetchNodeAdvertisedAddrs(ctx, pubKey)
 	switch {
 	// We found advertised addresses, so use them.
 	case err == nil:
@@ -5214,13 +5218,15 @@ func computeNextBackoff(currBackoff, maxBackoff time.Duration) time.Duration {
 var errNoAdvertisedAddr = errors.New("no advertised address found")
 
 // fetchNodeAdvertisedAddrs attempts to fetch the advertised addresses of a node.
-func (s *server) fetchNodeAdvertisedAddrs(pub *btcec.PublicKey) ([]net.Addr, error) {
+func (s *server) fetchNodeAdvertisedAddrs(ctx context.Context,
+	pub *btcec.PublicKey) ([]net.Addr, error) {
+
 	vertex, err := route.NewVertexFromBytes(pub.SerializeCompressed())
 	if err != nil {
 		return nil, err
 	}
 
-	node, err := s.graphDB.FetchLightningNode(vertex)
+	node, err := s.graphDB.FetchLightningNode(ctx, vertex)
 	if err != nil {
 		return nil, err
 	}
