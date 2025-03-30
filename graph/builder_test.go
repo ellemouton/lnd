@@ -79,7 +79,9 @@ func TestAddProof(t *testing.T) {
 
 	// Now we'll attempt to update the proof and check that it has been
 	// properly updated.
-	require.NoError(t, ctx.builder.AddProof(*chanID, &testAuthProof))
+	require.NoError(t, ctx.builder.AddProof(
+		context.Background(), *chanID, &testAuthProof,
+	))
 
 	info, _, _, err := ctx.builder.GetChannelByID(*chanID)
 	require.NoError(t, err, "unable to get channel")
@@ -107,7 +109,7 @@ func TestIgnoreNodeAnnouncement(t *testing.T) {
 	}
 	copy(node.PubKeyBytes[:], pub.SerializeCompressed())
 
-	err := ctx.builder.AddNode(node)
+	err := ctx.builder.AddNode(context.Background(), node)
 	if !IsError(err, ErrIgnored) {
 		t.Fatalf("expected to get ErrIgnore, instead got: %v", err)
 	}
@@ -117,6 +119,7 @@ func TestIgnoreNodeAnnouncement(t *testing.T) {
 // ignore a channel policy for a channel not in the graph.
 func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	const startingBlockHeight = 101
 
@@ -127,7 +130,7 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 	)
 	require.NoError(t, err, "unable to create graph")
 
-	ctx := createTestCtxFromGraphInstance(
+	tCtx := createTestCtxFromGraphInstance(
 		t, startingBlockHeight, testGraph, false,
 	)
 
@@ -147,7 +150,7 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 	fundingBlock := &wire.MsgBlock{
 		Transactions: []*wire.MsgTx{fundingTx},
 	}
-	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
+	tCtx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
 	edge := &models.ChannelEdgeInfo{
 		ChannelID:        chanID.ToUint64(),
@@ -170,18 +173,18 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 
 	// Attempt to update the edge. This should be ignored, since the edge
 	// is not yet added to the router.
-	err = ctx.builder.UpdateEdge(edgePolicy)
+	err = tCtx.builder.UpdateEdge(ctx, edgePolicy)
 	if !IsError(err, ErrIgnored) {
 		t.Fatalf("expected to get ErrIgnore, instead got: %v", err)
 	}
 
 	// Add the edge.
-	require.NoErrorf(t, ctx.builder.AddEdge(edge), "expected to be able "+
+	require.NoErrorf(t, tCtx.builder.AddEdge(edge), "expected to be able "+
 		"to add edge to the channel graph, even though the vertexes "+
 		"were unknown: %v.", err)
 
 	// Now updating the edge policy should succeed.
-	require.NoError(t, ctx.builder.UpdateEdge(edgePolicy))
+	require.NoError(t, tCtx.builder.UpdateEdge(ctx, edgePolicy))
 }
 
 // TestWakeUpOnStaleBranch tests that upon startup of the ChannelRouter, if the
@@ -1014,9 +1017,10 @@ func testPruneChannelGraphDoubleDisabled(t *testing.T, assumeValid bool) {
 // node announcements.
 func TestIsStaleNode(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	const startingBlockHeight = 101
-	ctx := createTestCtxSingleNode(t, startingBlockHeight)
+	tCtx := createTestCtxSingleNode(t, startingBlockHeight)
 
 	// Before we can insert a node in to the database, we need to create a
 	// channel that it's linked to.
@@ -1036,7 +1040,7 @@ func TestIsStaleNode(t *testing.T) {
 	fundingBlock := &wire.MsgBlock{
 		Transactions: []*wire.MsgTx{fundingTx},
 	}
-	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
+	tCtx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
 	edge := &models.ChannelEdgeInfo{
 		ChannelID:        chanID.ToUint64(),
@@ -1047,14 +1051,14 @@ func TestIsStaleNode(t *testing.T) {
 		AuthProof:        nil,
 		FundingScript:    fn.Some(script),
 	}
-	if err := ctx.builder.AddEdge(edge); err != nil {
+	if err := tCtx.builder.AddEdge(edge); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
 	// Before we add the node, if we query for staleness, we should get
 	// false, as we haven't added the full node.
 	updateTimeStamp := time.Unix(123, 0)
-	if ctx.builder.IsStaleNode(pub1, updateTimeStamp) {
+	if tCtx.builder.IsStaleNode(pub1, updateTimeStamp) {
 		t.Fatalf("incorrectly detected node as stale")
 	}
 
@@ -1070,20 +1074,20 @@ func TestIsStaleNode(t *testing.T) {
 		Features:             testFeatures,
 	}
 	copy(n1.PubKeyBytes[:], priv1.PubKey().SerializeCompressed())
-	if err := ctx.builder.AddNode(n1); err != nil {
+	if err := tCtx.builder.AddNode(ctx, n1); err != nil {
 		t.Fatalf("could not add node: %v", err)
 	}
 
 	// If we use the same timestamp and query for staleness, we should get
 	// true.
-	if !ctx.builder.IsStaleNode(pub1, updateTimeStamp) {
+	if !tCtx.builder.IsStaleNode(pub1, updateTimeStamp) {
 		t.Fatalf("failure to detect stale node update")
 	}
 
 	// If we update the timestamp and once again query for staleness, it
 	// should report false.
 	newTimeStamp := time.Unix(1234, 0)
-	if ctx.builder.IsStaleNode(pub1, newTimeStamp) {
+	if tCtx.builder.IsStaleNode(pub1, newTimeStamp) {
 		t.Fatalf("incorrectly detected node as stale")
 	}
 }
@@ -1140,9 +1144,12 @@ func TestIsKnownEdge(t *testing.T) {
 // stale channel edge update announcements.
 func TestIsStaleEdgePolicy(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	const startingBlockHeight = 101
-	ctx := createTestCtxFromFile(t, startingBlockHeight, basicGraphFilePath)
+	tCtx := createTestCtxFromFile(
+		t, startingBlockHeight, basicGraphFilePath,
+	)
 
 	// First, we'll create a new channel edge (just the info) and insert it
 	// into the database.
@@ -1162,15 +1169,15 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 	fundingBlock := &wire.MsgBlock{
 		Transactions: []*wire.MsgTx{fundingTx},
 	}
-	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
+	tCtx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
 	// If we query for staleness before adding the edge, we should get
 	// false.
 	updateTimeStamp := time.Unix(123, 0)
-	if ctx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 0) {
+	if tCtx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 0) {
 		t.Fatalf("router failed to detect fresh edge policy")
 	}
-	if ctx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 1) {
+	if tCtx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 1) {
 		t.Fatalf("router failed to detect fresh edge policy")
 	}
 
@@ -1183,7 +1190,7 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 		AuthProof:        nil,
 		FundingScript:    fn.Some(script),
 	}
-	if err := ctx.builder.AddEdge(edge); err != nil {
+	if err := tCtx.builder.AddEdge(edge); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
@@ -1198,7 +1205,7 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 		FeeProportionalMillionths: 10000,
 	}
 	edgePolicy.ChannelFlags = 0
-	if err := ctx.builder.UpdateEdge(edgePolicy); err != nil {
+	if err := tCtx.builder.UpdateEdge(ctx, edgePolicy); err != nil {
 		t.Fatalf("unable to update edge policy: %v", err)
 	}
 
@@ -1212,26 +1219,26 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 		FeeProportionalMillionths: 10000,
 	}
 	edgePolicy.ChannelFlags = 1
-	if err := ctx.builder.UpdateEdge(edgePolicy); err != nil {
+	if err := tCtx.builder.UpdateEdge(ctx, edgePolicy); err != nil {
 		t.Fatalf("unable to update edge policy: %v", err)
 	}
 
 	// Now that the edges have been added, an identical (chanID, flag,
 	// timestamp) tuple for each edge should be detected as a stale edge.
-	if !ctx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 0) {
+	if !tCtx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 0) {
 		t.Fatalf("router failed to detect stale edge policy")
 	}
-	if !ctx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 1) {
+	if !tCtx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 1) {
 		t.Fatalf("router failed to detect stale edge policy")
 	}
 
 	// If we now update the timestamp for both edges, the router should
 	// detect that this tuple represents a fresh edge.
 	updateTimeStamp = time.Unix(9999, 0)
-	if ctx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 0) {
+	if tCtx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 0) {
 		t.Fatalf("router failed to detect fresh edge policy")
 	}
-	if ctx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 1) {
+	if tCtx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 1) {
 		t.Fatalf("router failed to detect fresh edge policy")
 	}
 }

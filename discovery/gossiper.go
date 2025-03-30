@@ -1771,7 +1771,7 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
 		// Re-sign and update the channel on disk and retrieve our
 		// ChannelUpdate to broadcast.
 		chanAnn, chanUpdate, err := d.updateChannel(
-			chanToUpdate.info, chanToUpdate.edge,
+			ctx, chanToUpdate.info, chanToUpdate.edge,
 		)
 		if err != nil {
 			return fmt.Errorf("unable to update channel: %w", err)
@@ -1812,7 +1812,7 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
 
 		// Before broadcasting the refreshed node announcement, add it
 		// to our own graph.
-		if err := d.addNode(&newNodeAnn); err != nil {
+		if err := d.addNode(ctx, &newNodeAnn); err != nil {
 			log.Errorf("Unable to add refreshed node announcement "+
 				"to graph: %v", err)
 		}
@@ -1847,7 +1847,7 @@ func (d *AuthenticatedGossiper) processChanPolicyUpdate(ctx context.Context,
 		// we'll re-sign and update the backing ChannelGraphSource, and
 		// retrieve our ChannelUpdate to broadcast.
 		_, chanUpdate, err := d.updateChannel(
-			edgeInfo.Info, edgeInfo.Edge,
+			ctx, edgeInfo.Info, edgeInfo.Edge,
 		)
 		if err != nil {
 			return nil, err
@@ -1940,7 +1940,7 @@ func remotePubFromChanInfo(chanInfo *models.ChannelEdgeInfo,
 // situation in the case where we create a channel, but for some reason fail
 // to receive the remote peer's proof, while the remote peer is able to fully
 // assemble the proof and craft the ChannelAnnouncement.
-func (d *AuthenticatedGossiper) processRejectedEdge(_ context.Context,
+func (d *AuthenticatedGossiper) processRejectedEdge(ctx context.Context,
 	chanAnnMsg *lnwire.ChannelAnnouncement1,
 	proof *models.ChannelAuthProof) ([]networkMsg, error) {
 
@@ -1986,7 +1986,7 @@ func (d *AuthenticatedGossiper) processRejectedEdge(_ context.Context,
 
 	// If everything checks out, then we'll add the fully assembled proof
 	// to the database.
-	err = d.cfg.Graph.AddProof(chanAnnMsg.ShortChannelID, proof)
+	err = d.cfg.Graph.AddProof(ctx, chanAnnMsg.ShortChannelID, proof)
 	if err != nil {
 		err := fmt.Errorf("unable add proof to shortChanID=%v: %w",
 			chanAnnMsg.ShortChannelID, err)
@@ -2028,15 +2028,17 @@ func (d *AuthenticatedGossiper) fetchPKScript(chanID *lnwire.ShortChannelID) (
 
 // addNode processes the given node announcement, and adds it to our channel
 // graph.
-func (d *AuthenticatedGossiper) addNode(msg *lnwire.NodeAnnouncement,
-	op ...batch.SchedulerOption) error {
+func (d *AuthenticatedGossiper) addNode(ctx context.Context,
+	msg *lnwire.NodeAnnouncement, op ...batch.SchedulerOption) error {
 
 	if err := netann.ValidateNodeAnn(msg); err != nil {
 		return fmt.Errorf("unable to validate node announcement: %w",
 			err)
 	}
 
-	return d.cfg.Graph.AddNode(models.NodeFromWireAnnouncement(msg), op...)
+	return d.cfg.Graph.AddNode(
+		ctx, models.NodeFromWireAnnouncement(msg), op...,
+	)
 }
 
 // isPremature decides whether a given network message has a block height+delta
@@ -2292,9 +2294,9 @@ func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
 
 // updateChannel creates a new fully signed update for the channel, and updates
 // the underlying graph with the new state.
-func (d *AuthenticatedGossiper) updateChannel(info *models.ChannelEdgeInfo,
-	edge *models.ChannelEdgePolicy) (*lnwire.ChannelAnnouncement1,
-	*lnwire.ChannelUpdate1, error) {
+func (d *AuthenticatedGossiper) updateChannel(ctx context.Context,
+	info *models.ChannelEdgeInfo, edge *models.ChannelEdgePolicy) (
+	*lnwire.ChannelAnnouncement1, *lnwire.ChannelUpdate1, error) {
 
 	// Parse the unsigned edge into a channel update.
 	chanUpdate := netann.UnsignedChannelUpdateFromEdge(info, edge)
@@ -2325,7 +2327,7 @@ func (d *AuthenticatedGossiper) updateChannel(info *models.ChannelEdgeInfo,
 	}
 
 	// Finally, we'll write the new edge policy to disk.
-	if err := d.cfg.Graph.UpdateEdge(edge); err != nil {
+	if err := d.cfg.Graph.UpdateEdge(ctx, edge); err != nil {
 		return nil, nil, err
 	}
 
@@ -2434,7 +2436,7 @@ func (d *AuthenticatedGossiper) latestHeight() uint32 {
 }
 
 // handleNodeAnnouncement processes a new node announcement.
-func (d *AuthenticatedGossiper) handleNodeAnnouncement(_ context.Context,
+func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
 	nMsg *networkMsg, nodeAnn *lnwire.NodeAnnouncement,
 	ops []batch.SchedulerOption) ([]networkMsg, bool) {
 
@@ -2452,7 +2454,7 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(_ context.Context,
 		return nil, true
 	}
 
-	if err := d.addNode(nodeAnn, ops...); err != nil {
+	if err := d.addNode(ctx, nodeAnn, ops...); err != nil {
 		log.Debugf("Adding node: %x got error: %v", nodeAnn.NodeID,
 			err)
 
@@ -3261,7 +3263,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 		ExtraOpaqueData:           upd.ExtraOpaqueData,
 	}
 
-	if err := d.cfg.Graph.UpdateEdge(update, ops...); err != nil {
+	if err := d.cfg.Graph.UpdateEdge(ctx, update, ops...); err != nil {
 		if graph.IsError(
 			err, graph.ErrOutdated,
 			graph.ErrIgnored,
@@ -3599,7 +3601,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	// attest to the bitcoin keys by validating the signatures of
 	// announcement. If proof is valid then we'll populate the channel edge
 	// with it, so we can announce it on peer connect.
-	err = d.cfg.Graph.AddProof(ann.ShortChannelID, &dbProof)
+	err = d.cfg.Graph.AddProof(ctx, ann.ShortChannelID, &dbProof)
 	if err != nil {
 		err := fmt.Errorf("unable add proof to the channel chanID=%v:"+
 			" %v", ann.ChannelID, err)

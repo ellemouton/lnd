@@ -920,7 +920,7 @@ func (b *Builder) MarkZombieEdge(chanID uint64) error {
 
 // ApplyChannelUpdate validates a channel update and if valid, applies it to the
 // database. It returns a bool indicating whether the updates were successful.
-func (b *Builder) ApplyChannelUpdate(_ context.Context,
+func (b *Builder) ApplyChannelUpdate(ctx context.Context,
 	msg *lnwire.ChannelUpdate1) bool {
 
 	ch, _, _, err := b.GetChannelByID(msg.ShortChannelID)
@@ -952,7 +952,7 @@ func (b *Builder) ApplyChannelUpdate(_ context.Context,
 		return false
 	}
 
-	err = b.UpdateEdge(&models.ChannelEdgePolicy{
+	err = b.UpdateEdge(ctx, &models.ChannelEdgePolicy{
 		SigBytes:                  msg.Signature.ToSignatureBytes(),
 		ChannelID:                 msg.ShortChannelID.ToUint64(),
 		LastUpdate:                time.Unix(int64(msg.Timestamp), 0),
@@ -978,7 +978,7 @@ func (b *Builder) ApplyChannelUpdate(_ context.Context,
 // be ignored.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) AddNode(node *models.LightningNode,
+func (b *Builder) AddNode(_ context.Context, node *models.LightningNode,
 	op ...batch.SchedulerOption) error {
 
 	err := b.addNode(node, op...)
@@ -1123,8 +1123,8 @@ func (b *Builder) addEdge(edge *models.ChannelEdgeInfo,
 // considered as not fully constructed.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) UpdateEdge(update *models.ChannelEdgePolicy,
-	op ...batch.SchedulerOption) error {
+func (b *Builder) UpdateEdge(_ context.Context,
+	update *models.ChannelEdgePolicy, op ...batch.SchedulerOption) error {
 
 	err := b.updateEdge(update, op...)
 	if err != nil {
@@ -1302,7 +1302,7 @@ func (b *Builder) ForAllOutgoingChannels(_ context.Context,
 // properly announce the edge to the rest of the network.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) AddProof(chanID lnwire.ShortChannelID,
+func (b *Builder) AddProof(_ context.Context, chanID lnwire.ShortChannelID,
 	proof *models.ChannelAuthProof) error {
 
 	return b.cfg.Graph.AddEdgeProof(chanID, proof)

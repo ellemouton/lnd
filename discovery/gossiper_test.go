@@ -109,7 +109,7 @@ func newMockRouter(t *testing.T, height uint32) *mockGraphSource {
 
 var _ graph.ChannelGraphSource = (*mockGraphSource)(nil)
 
-func (r *mockGraphSource) AddNode(node *models.LightningNode,
+func (r *mockGraphSource) AddNode(_ context.Context, node *models.LightningNode,
 	_ ...batch.SchedulerOption) error {
 
 	r.mu.Lock()
@@ -161,8 +161,8 @@ func (r *mockGraphSource) queueValidationFail(chanID uint64) {
 	r.chansToReject[chanID] = struct{}{}
 }
 
-func (r *mockGraphSource) UpdateEdge(edge *models.ChannelEdgePolicy,
-	_ ...batch.SchedulerOption) error {
+func (r *mockGraphSource) UpdateEdge(_ context.Context,
+	edge *models.ChannelEdgePolicy, _ ...batch.SchedulerOption) error {
 
 	r.mu.Lock()
 	defer func() {
@@ -189,8 +189,8 @@ func (r *mockGraphSource) CurrentBlockHeight(_ context.Context) (uint32,
 	return r.bestHeight, nil
 }
 
-func (r *mockGraphSource) AddProof(chanID lnwire.ShortChannelID,
-	proof *models.ChannelAuthProof) error {
+func (r *mockGraphSource) AddProof(_ context.Context,
+	chanID lnwire.ShortChannelID, proof *models.ChannelAuthProof) error {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -23,7 +23,7 @@ type ChannelGraphSource interface {
 	// AddNode is used to add information about a node to the router
 	// database. If the node with this pubkey is not present in an existing
 	// channel, it will be ignored.
-	AddNode(node *models.LightningNode,
+	AddNode(ctx context.Context, node *models.LightningNode,
 		op ...batch.SchedulerOption) error
 
 	// AddEdge is used to add edge/channel to the topology of the router,
@@ -34,12 +34,12 @@ type ChannelGraphSource interface {
 
 	// AddProof updates the channel edge info with proof which is needed to
 	// properly announce the edge to the rest of the network.
-	AddProof(chanID lnwire.ShortChannelID,
+	AddProof(ctx context.Context, chanID lnwire.ShortChannelID,
 		proof *models.ChannelAuthProof) error
 
 	// UpdateEdge is used to update edge information, without this message
 	// edge considered as not fully constructed.
-	UpdateEdge(policy *models.ChannelEdgePolicy,
+	UpdateEdge(ctx context.Context, policy *models.ChannelEdgePolicy,
 		op ...batch.SchedulerOption) error
 
 	// IsStaleNode returns true if the graph source has a node announcement
