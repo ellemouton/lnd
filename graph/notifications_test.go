@@ -22,7 +22,6 @@ import (
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/input"
-	"github.com/lightningnetwork/lnd/kvdb"
 	lnmock "github.com/lightningnetwork/lnd/lntest/mock"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -1034,7 +1033,8 @@ type testCtx struct {
 func createTestCtxSingleNode(t *testing.T,
 	startingHeight uint32) *testCtx {
 
-	graph := makeTestGraph(t, true)
+	graph, err := graphdb.MakeTestGraph(t)
+	require.NoError(t, err)
 
 	sourceNode := createTestNode(t)
 
@@ -1080,28 +1080,6 @@ func (c *testCtx) RestartBuilder(t *testing.T) {
 	// Finally, we'll swap out the pointer in the testCtx with this fresh
 	// instance of the router.
 	c.builder = builder
-}
-
-// makeTestGraph creates a new instance of a channeldb.ChannelGraph for testing
-// purposes.
-func makeTestGraph(t *testing.T, useCache bool) *graphdb.ChannelGraph {
-	// Create channelgraph for the first time.
-	backend, backendCleanup, err := kvdb.GetTestBackend(t.TempDir(), "cgr")
-	require.NoError(t, err)
-
-	t.Cleanup(backendCleanup)
-
-	graph, err := graphdb.NewChannelGraph(
-		&graphdb.Config{KVDB: backend},
-		graphdb.WithUseGraphCache(useCache),
-	)
-	require.NoError(t, err)
-	require.NoError(t, graph.Start())
-	t.Cleanup(func() {
-		require.NoError(t, graph.Stop())
-	})
-
-	return graph
 }
 
 type testGraphInstance struct {
