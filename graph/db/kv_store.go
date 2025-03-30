@@ -387,8 +387,9 @@ func (c *KVStore) AddrsForNode(ctx context.Context,
 // NOTE: If an edge can't be found, or wasn't advertised, then a nil pointer
 // for that particular channel edge routing policy will be passed into the
 // callback.
-func (c *KVStore) ForEachChannel(cb func(*models.ChannelEdgeInfo,
-	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
+func (c *KVStore) ForEachChannel(_ context.Context,
+	cb func(*models.ChannelEdgeInfo,
+		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
 
 	return c.db.View(func(tx kvdb.RTx) error {
 		edges := tx.ReadBucket(edgeBucket)
@@ -725,7 +726,7 @@ func (c *KVStore) forEachNode(
 // graph, executing the passed callback with each node encountered. If the
 // callback returns an error, then the transaction is aborted and the iteration
 // stops early.
-func (c *KVStore) ForEachNodeCacheable(cb func(route.Vertex,
+func (c *KVStore) ForEachNodeCacheable(_ context.Context, cb func(route.Vertex,
 	*lnwire.FeatureVector) error) error {
 
 	traversal := func(tx kvdb.RTx) error {

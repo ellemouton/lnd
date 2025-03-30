@@ -101,7 +101,7 @@ func (c *ChannelGraph) Start(ctx context.Context) error {
 	c.cancel = fn.Some(cancel)
 
 	if c.graphCache != nil {
-		if err := c.populateCache(); err != nil {
+		if err := c.populateCache(ctx); err != nil {
 			return fmt.Errorf("could not populate the graph "+
 				"cache: %w", err)
 		}
@@ -185,12 +185,12 @@ func (c *ChannelGraph) handleTopologySubscriptions(ctx context.Context) {
 // populateCache loads the entire channel graph into the in-memory graph cache.
 //
 // NOTE: This should only be called if the graphCache has been constructed.
-func (c *ChannelGraph) populateCache() error {
+func (c *ChannelGraph) populateCache(ctx context.Context) error {
 	startTime := time.Now()
 	log.Info("Populating in-memory channel graph, this might take a " +
 		"while...")
 
-	err := c.KVStore.ForEachNodeCacheable(func(node route.Vertex,
+	err := c.KVStore.ForEachNodeCacheable(ctx, func(node route.Vertex,
 		features *lnwire.FeatureVector) error {
 
 		c.graphCache.AddNodeFeatures(node, features)
@@ -201,7 +201,7 @@ func (c *ChannelGraph) populateCache() error {
 		return err
 	}
 
-	err = c.KVStore.ForEachChannel(func(info *models.ChannelEdgeInfo,
+	err = c.KVStore.ForEachChannel(ctx, func(info *models.ChannelEdgeInfo,
 		policy1, policy2 *models.ChannelEdgePolicy) error {
 
 		c.graphCache.AddChannel(info, policy1, policy2)
