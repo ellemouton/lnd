@@ -101,7 +101,7 @@ type DB interface {
 	// has been used to prune channels in the graph. Knowing the "prune tip"
 	// allows callers to tell if the graph is currently in sync with the
 	// current best known UTXO state.
-	PruneTip() (*chainhash.Hash, uint32, error)
+	PruneTip(ctx context.Context) (*chainhash.Hash, uint32, error)
 
 	// PruneGraph prunes newly closed channels from the channel graph in
 	// response to a new block being solved on the network. Any transactions
@@ -111,7 +111,8 @@ type DB interface {
 	// ensure the graph is fully in sync with the current UTXO state. A
 	// slice of channels that have been closed by the target block are
 	// returned if the function succeeds without error.
-	PruneGraph(spentOutputs []*wire.OutPoint, blockHash *chainhash.Hash,
+	PruneGraph(ctx context.Context, spentOutputs []*wire.OutPoint,
+		blockHash *chainhash.Hash,
 		blockHeight uint32) ([]*models.ChannelEdgeInfo, error)
 
 	// ChannelView returns the verifiable edge information for each active

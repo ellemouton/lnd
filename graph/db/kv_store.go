@@ -2,6 +2,7 @@ package graphdb
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -1286,7 +1287,7 @@ const (
 // with the current UTXO state. A slice of channels that have been closed by
 // the target block along with any pruned nodes are returned if the function
 // succeeds without error.
-func (c *KVStore) PruneGraph(spentOutputs []*wire.OutPoint,
+func (c *KVStore) PruneGraph(_ context.Context, spentOutputs []*wire.OutPoint,
 	blockHash *chainhash.Hash, blockHeight uint32) (
 	[]*models.ChannelEdgeInfo, []route.Vertex, error) {
 
@@ -1681,7 +1682,7 @@ func (c *KVStore) DisconnectBlockAtHeight(height uint32) (
 // used to prune channels in the graph. Knowing the "prune tip" allows callers
 // to tell if the graph is currently in sync with the current best known UTXO
 // state.
-func (c *KVStore) PruneTip() (*chainhash.Hash, uint32, error) {
+func (c *KVStore) PruneTip(_ context.Context) (*chainhash.Hash, uint32, error) {
 	var (
 		tipHash   chainhash.Hash
 		tipHeight uint32

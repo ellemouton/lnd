@@ -175,7 +175,7 @@ func (b *Builder) Start(ctx context.Context) error {
 
 	// If the graph has never been pruned, or hasn't fully been created yet,
 	// then we don't treat this as an explicit error.
-	if _, _, err := b.cfg.Graph.PruneTip(); err != nil {
+	if _, _, err := b.cfg.Graph.PruneTip(ctx); err != nil {
 		switch {
 		case errors.Is(err, graphdb.ErrGraphNeverPruned):
 			fallthrough
@@ -185,7 +185,7 @@ func (b *Builder) Start(ctx context.Context) error {
 			// the prune height to the current best height of the
 			// chain backend.
 			_, err = b.cfg.Graph.PruneGraph(
-				nil, bestHash, uint32(bestHeight),
+				ctx, nil, bestHash, uint32(bestHeight),
 			)
 			if err != nil {
 				return err
@@ -261,7 +261,7 @@ func (b *Builder) Start(ctx context.Context) error {
 		// Before we begin normal operation of the router, we first need
 		// to synchronize the channel graph to the latest state of the
 		// UTXO set.
-		if err := b.syncGraphWithChain(); err != nil {
+		if err := b.syncGraphWithChain(ctx); err != nil {
 			return err
 		}
 
@@ -315,7 +315,7 @@ func (b *Builder) Stop() error {
 // the latest UTXO set state. This process involves pruning from the channel
 // graph any channels which have been closed by spending their funding output
 // since we've been down.
-func (b *Builder) syncGraphWithChain() error {
+func (b *Builder) syncGraphWithChain(ctx context.Context) error {
 	// First, we'll need to check to see if we're already in sync with the
 	// latest state of the UTXO set.
 	bestHash, bestHeight, err := b.cfg.Chain.GetBestBlock()
@@ -324,7 +324,7 @@ func (b *Builder) syncGraphWithChain() error {
 	}
 	b.bestHeight.Store(uint32(bestHeight))
 
-	pruneHash, pruneHeight, err := b.cfg.Graph.PruneTip()
+	pruneHash, pruneHeight, err := b.cfg.Graph.PruneTip(ctx)
 	if err != nil {
 		switch {
 		// If the graph has never been pruned, or hasn't fully been
@@ -371,7 +371,7 @@ func (b *Builder) syncGraphWithChain() error {
 			return err
 		}
 
-		pruneHash, pruneHeight, err = b.cfg.Graph.PruneTip()
+		pruneHash, pruneHeight, err = b.cfg.Graph.PruneTip(ctx)
 		switch {
 		// If at this point the graph has never been pruned, we can exit
 		// as this entails we are back to the point where it hasn't seen
@@ -444,7 +444,7 @@ func (b *Builder) syncGraphWithChain() error {
 	// With the spent outputs gathered, attempt to prune the channel graph,
 	// also passing in the best hash+height so the prune tip can be updated.
 	closedChans, err := b.cfg.Graph.PruneGraph(
-		spentOutputs, bestHash, uint32(bestHeight),
+		ctx, spentOutputs, bestHash, uint32(bestHeight),
 	)
 	if err != nil {
 		return err
@@ -648,7 +648,7 @@ func (b *Builder) pruneZombieChans() error {
 // updates, and registering new topology clients.
 //
 // NOTE: This MUST be run as a goroutine.
-func (b *Builder) networkHandler(_ context.Context) {
+func (b *Builder) networkHandler(ctx context.Context) {
 	defer b.wg.Done()
 
 	graphPruneTicker := time.NewTicker(b.cfg.GraphPruneInterval)
@@ -707,7 +707,7 @@ func (b *Builder) networkHandler(_ context.Context) {
 			switch {
 			case chainUpdate.Height == currentHeight+1:
 				err := b.updateGraphWithClosedChannels(
-					chainUpdate,
+					ctx, chainUpdate,
 				)
 				if err != nil {
 					log.Errorf("unable to prune graph "+
@@ -720,7 +720,7 @@ func (b *Builder) networkHandler(_ context.Context) {
 					currentHeight+1, chainUpdate.Height)
 
 				err := b.getMissingBlocks(
-					currentHeight, chainUpdate,
+					ctx, currentHeight, chainUpdate,
 				)
 				if err != nil {
 					log.Errorf("unable to retrieve missing"+
@@ -767,7 +767,7 @@ func (b *Builder) networkHandler(_ context.Context) {
 
 // getMissingBlocks walks through all missing blocks and updates the graph
 // closed channels accordingly.
-func (b *Builder) getMissingBlocks(currentHeight uint32,
+func (b *Builder) getMissingBlocks(ctx context.Context, currentHeight uint32,
 	chainUpdate *chainview.FilteredBlock) error {
 
 	outdatedHash, err := b.cfg.Chain.GetBlockHash(int64(currentHeight))
@@ -816,7 +816,7 @@ func (b *Builder) getMissingBlocks(currentHeight uint32,
 		}
 
 		err = b.updateGraphWithClosedChannels(
-			filteredBlock,
+			ctx, filteredBlock,
 		)
 		if err != nil {
 			return err
@@ -828,7 +828,7 @@ func (b *Builder) getMissingBlocks(currentHeight uint32,
 
 // updateGraphWithClosedChannels prunes the channel graph of closed channels
 // that are no longer needed.
-func (b *Builder) updateGraphWithClosedChannels(
+func (b *Builder) updateGraphWithClosedChannels(ctx context.Context,
 	chainUpdate *chainview.FilteredBlock) error {
 
 	// Once a new block arrives, we update our running track of the height
@@ -853,8 +853,9 @@ func (b *Builder) updateGraphWithClosedChannels(
 	// With the spent outputs gathered, attempt to prune the channel graph,
 	// also passing in the hash+height of the block being pruned so the
 	// prune tip can be updated.
-	chansClosed, err := b.cfg.Graph.PruneGraph(spentOutputs,
-		&chainUpdate.Hash, chainUpdate.Height)
+	chansClosed, err := b.cfg.Graph.PruneGraph(
+		ctx, spentOutputs, &chainUpdate.Hash, chainUpdate.Height,
+	)
 	if err != nil {
 		log.Errorf("unable to prune routing table: %v", err)
 		return err

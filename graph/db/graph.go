@@ -1,6 +1,7 @@
 package graphdb
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -456,7 +457,8 @@ func (c *ChannelGraph) DisconnectBlockAtHeight(height uint32) (
 // prune the graph is stored so callers can ensure the graph is fully in sync
 // with the current UTXO state. A slice of channels that have been closed by
 // the target block are returned if the function succeeds without error.
-func (c *ChannelGraph) PruneGraph(spentOutputs []*wire.OutPoint,
+func (c *ChannelGraph) PruneGraph(ctx context.Context,
+	spentOutputs []*wire.OutPoint,
 	blockHash *chainhash.Hash, blockHeight uint32) (
 	[]*models.ChannelEdgeInfo, error) {
 
@@ -464,7 +466,7 @@ func (c *ChannelGraph) PruneGraph(spentOutputs []*wire.OutPoint,
 	defer c.cacheMu.Unlock()
 
 	edges, nodes, err := c.KVStore.PruneGraph(
-		spentOutputs, blockHash, blockHeight,
+		ctx, spentOutputs, blockHash, blockHeight,
 	)
 	if err != nil {
 		return nil, err
