@@ -1820,7 +1820,7 @@ func (r *rpcServer) ConnectPeer(ctx context.Context,
 	}
 
 	if err := r.server.ConnectToPeer(
-		peerAddr, in.Perm, timeout,
+		ctx, peerAddr, in.Perm, timeout,
 	); err != nil {
 		rpcsLog.Errorf("[connectpeer]: error connecting to peer: %v",
 			err)

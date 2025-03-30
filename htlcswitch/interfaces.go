@@ -85,8 +85,8 @@ type dustHandler interface {
 type scidAliasHandler interface {
 	// attachFailAliasUpdate allows the link to properly fail incoming
 	// HTLCs on option_scid_alias channels.
-	attachFailAliasUpdate(failClosure func(
-		sid lnwire.ShortChannelID,
+	attachFailAliasUpdate(failClosure func(ctx context.Context,
+		ksid lnwire.ShortChannelID,
 		incoming bool) *lnwire.ChannelUpdate1)
 
 	// getAliases fetches the link's underlying aliases. This is used by
@@ -434,11 +434,11 @@ type InterceptedForward interface {
 	// Resume notifies the intention to resume an existing hold forward. This
 	// basically means the caller wants to resume with the default behavior for
 	// this htlc which usually means forward it.
-	Resume() error
+	Resume(ctx context.Context) error
 
 	// ResumeModified notifies the intention to resume an existing hold
 	// forward with modified fields.
-	ResumeModified(inAmountMsat,
+	ResumeModified(ctx context.Context, inAmountMsat,
 		outAmountMsat fn.Option[lnwire.MilliSatoshi],
 		outWireCustomRecords fn.Option[lnwire.CustomRecords]) error
 
@@ -452,7 +452,7 @@ type InterceptedForward interface {
 
 	// FailWithCode notifies the intention to fail an existing hold forward
 	// with the specified failure code.
-	FailWithCode(code lnwire.FailCode) error
+	FailWithCode(ctx context.Context, code lnwire.FailCode) error
 }
 
 // htlcNotifier is an interface which represents the input side of the

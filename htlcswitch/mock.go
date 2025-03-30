@@ -183,8 +183,9 @@ func initSwitchWithDB(startingHeight uint32, db *channeldb.DB) (*Switch, error) 
 		FwdingLog: &mockForwardingLog{
 			events: make(map[time.Time]channeldb.ForwardingEvent),
 		},
-		FetchLastChannelUpdate: func(scid lnwire.ShortChannelID) (
-			*lnwire.ChannelUpdate1, error) {
+		FetchLastChannelUpdate: func(_ context.Context,
+			scid lnwire.ShortChannelID) (*lnwire.ChannelUpdate1,
+			error) {
 
 			return &lnwire.ChannelUpdate1{
 				ShortChannelID: scid,
@@ -269,7 +270,7 @@ func (s *mockServer) Start() error {
 		return errors.New("mock server already started")
 	}
 
-	if err := s.htlcSwitch.Start(); err != nil {
+	if err := s.htlcSwitch.Start(context.Background()); err != nil {
 		return err
 	}
 
@@ -735,7 +736,7 @@ type mockChannelLink struct {
 
 	checkHtlcForwardResult *LinkError
 
-	failAliasUpdate func(sid lnwire.ShortChannelID,
+	failAliasUpdate func(ctx context.Context, sid lnwire.ShortChannelID,
 		incoming bool) *lnwire.ChannelUpdate1
 
 	confirmedZC bool
@@ -871,7 +872,8 @@ func (f *mockChannelLink) AttachMailBox(mailBox MailBox) {
 }
 
 func (f *mockChannelLink) attachFailAliasUpdate(closure func(
-	sid lnwire.ShortChannelID, incoming bool) *lnwire.ChannelUpdate1) {
+	ctx context.Context, sid lnwire.ShortChannelID,
+	incoming bool) *lnwire.ChannelUpdate1) {
 
 	f.failAliasUpdate = closure
 }

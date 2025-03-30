@@ -3,6 +3,7 @@ package htlcswitch
 import (
 	"bytes"
 	"container/list"
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -95,7 +96,8 @@ type mailBoxConfig struct {
 	// forwardPackets send a varidic number of htlcPackets to the switch to
 	// be routed. A quit channel should be provided so that the call can
 	// properly exit during shutdown.
-	forwardPackets func(<-chan struct{}, ...*htlcPacket) error
+	forwardPackets func(context.Context, <-chan struct{},
+		...*htlcPacket) error
 
 	// clock is a time source for the mailbox.
 	clock clock.Clock
@@ -107,7 +109,7 @@ type mailBoxConfig struct {
 
 	// failMailboxUpdate is used to fail an expired HTLC and use the
 	// correct SCID if the underlying channel uses aliases.
-	failMailboxUpdate func(outScid,
+	failMailboxUpdate func(ctx context.Context, outScid,
 		mailboxScid lnwire.ShortChannelID) lnwire.FailureMessage
 }
 
@@ -687,6 +689,8 @@ func (m *memoryMailBox) DustPackets() (lnwire.MilliSatoshi,
 // generated LinkError will show an OutgoingFailureDownstreamHtlcAdd
 // FailureDetail.
 func (m *memoryMailBox) FailAdd(pkt *htlcPacket) {
+	ctx := context.TODO()
+
 	// First, remove the packet from mailbox. If we didn't find the packet
 	// because it has already been acked, we'll exit early to avoid sending
 	// a duplicate fail message through the switch.
@@ -703,7 +707,7 @@ func (m *memoryMailBox) FailAdd(pkt *htlcPacket) {
 	// peer if this is a forward, or report to the user if the failed
 	// payment was locally initiated.
 	failure := m.cfg.failMailboxUpdate(
-		pkt.originalOutgoingChanID, m.cfg.shortChanID,
+		ctx, pkt.originalOutgoingChanID, m.cfg.shortChanID,
 	)
 
 	// If the payment was locally initiated (which is indicated by a nil
@@ -748,7 +752,7 @@ func (m *memoryMailBox) FailAdd(pkt *htlcPacket) {
 		},
 	}
 
-	if err := m.cfg.forwardPackets(m.quit, failPkt); err != nil {
+	if err := m.cfg.forwardPackets(ctx, m.quit, failPkt); err != nil {
 		log.Errorf("Unhandled error while reforwarding packets "+
 			"settle/fail over htlcswitch: %v", err)
 	}
@@ -804,7 +808,8 @@ type mailOrchConfig struct {
 	// forwardPackets send a varidic number of htlcPackets to the switch to
 	// be routed. A quit channel should be provided so that the call can
 	// properly exit during shutdown.
-	forwardPackets func(<-chan struct{}, ...*htlcPacket) error
+	forwardPackets func(context.Context, <-chan struct{},
+		...*htlcPacket) error
 
 	// clock is a time source for the generated mailboxes.
 	clock clock.Clock
@@ -816,7 +821,7 @@ type mailOrchConfig struct {
 
 	// failMailboxUpdate is used to fail an expired HTLC and use the
 	// correct SCID if the underlying channel uses aliases.
-	failMailboxUpdate func(outScid,
+	failMailboxUpdate func(ctx context.Context, outScid,
 		mailboxScid lnwire.ShortChannelID) lnwire.FailureMessage
 }
 
