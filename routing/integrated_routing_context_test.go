@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"os"
@@ -234,7 +235,8 @@ func (c *integratedRoutingContext) testPayment(maxParts uint32,
 
 		// Find a route.
 		route, err := session.RequestRoute(
-			amtRemaining, lnwire.MaxMilliSatoshi, inFlightHtlcs, 0,
+			context.Background(), amtRemaining,
+			lnwire.MaxMilliSatoshi, inFlightHtlcs, 0,
 			lnwire.CustomRecords{
 				lnwire.MinCustomRecordsTlvType: []byte{1, 2, 3},
 			},

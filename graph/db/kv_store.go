@@ -531,7 +531,8 @@ func (c *KVStore) fetchNodeFeatures(tx kvdb.RTx,
 // Unknown policies are passed into the callback as nil values.
 //
 // NOTE: this is part of the graphdb.NodeTraverser interface.
-func (c *KVStore) ForEachNodeDirectedChannel(nodePub route.Vertex,
+func (c *KVStore) ForEachNodeDirectedChannel(_ context.Context,
+	nodePub route.Vertex,
 	cb func(channel *DirectedChannel) error) error {
 
 	return c.forEachNodeDirectedChannel(nil, nodePub, cb)
@@ -3813,9 +3814,11 @@ func (c *KVStore) IsClosedScid(scid lnwire.ShortChannelID) (bool, error) {
 
 // GraphSession will provide the call-back with access to a NodeTraverser
 // instance which can be used to perform queries against the channel graph.
-func (c *KVStore) GraphSession(cb func(graph NodeTraverser) error) error {
+func (c *KVStore) GraphSession(ctx context.Context,
+	cb func(ctx context.Context, graph NodeTraverser) error) error {
+
 	return c.db.View(func(tx walletdb.ReadTx) error {
-		return cb(&nodeTraverserSession{
+		return cb(ctx, &nodeTraverserSession{
 			db: c,
 			tx: tx,
 		})
@@ -3833,8 +3836,8 @@ type nodeTraverserSession struct {
 // node.
 //
 // NOTE: Part of the NodeTraverser interface.
-func (c *nodeTraverserSession) ForEachNodeDirectedChannel(nodePub route.Vertex,
-	cb func(channel *DirectedChannel) error) error {
+func (c *nodeTraverserSession) ForEachNodeDirectedChannel(_ context.Context,
+	nodePub route.Vertex, cb func(channel *DirectedChannel) error) error {
 
 	return c.db.forEachNodeDirectedChannel(c.tx, nodePub, cb)
 }
