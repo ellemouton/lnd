@@ -462,7 +462,7 @@ FROM nodes n
 WHERE NOT EXISTS (
     SELECT 1
     FROM channels c
-    WHERE c.node_id_1 = n.id OR c.node_id_2 = n.id AND c.version = $1
+    WHERE c.node_id_1 = n.id OR c.node_id_2 = n.id
 )
 `
 
@@ -471,8 +471,8 @@ type GetUnconnectedNodesRow struct {
 	PubKey []byte
 }
 
-func (q *Queries) GetUnconnectedNodes(ctx context.Context, version int16) ([]GetUnconnectedNodesRow, error) {
-	rows, err := q.db.QueryContext(ctx, getUnconnectedNodes, version)
+func (q *Queries) GetUnconnectedNodes(ctx context.Context) ([]GetUnconnectedNodesRow, error) {
+	rows, err := q.db.QueryContext(ctx, getUnconnectedNodes)
 	if err != nil {
 		return nil, err
 	}
@@ -787,22 +787,6 @@ func (q *Queries) ListChannelsByNodeIDAndVersion(ctx context.Context, arg ListCh
 		return nil, err
 	}
 	return items, nil
-}
-
-const nodeHasV1ProofChannel = `-- name: NodeHasV1ProofChannel :one
-SELECT EXISTS (
-    SELECT 1
-    FROM channels c
-             JOIN v1_channel_proofs v1p ON c.id = v1p.channel_id
-    WHERE c.node_id_1 = $1 OR c.node_id_2 = $1
-)
-`
-
-func (q *Queries) NodeHasV1ProofChannel(ctx context.Context, nodeID1 int64) (bool, error) {
-	row := q.db.QueryRowContext(ctx, nodeHasV1ProofChannel, nodeID1)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
 }
 
 const updateChannelsV1Data = `-- name: UpdateChannelsV1Data :exec

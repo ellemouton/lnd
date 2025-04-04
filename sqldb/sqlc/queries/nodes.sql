@@ -21,6 +21,21 @@ FROM nodes
 WHERE pub_key = $1
 AND version = $2;
 
+-- name: GetNodeIDByPubKeyAndVersion :one
+SELECT id
+FROM nodes
+WHERE pub_key = $1
+  AND version = $2;
+
+-- name: IsPublicV1Node :one
+SELECT EXISTS (
+    SELECT 1
+    FROM channels c
+             JOIN v1_channel_proofs v1p ON c.id = v1p.channel_id
+             JOIN nodes n ON n.id = c.node_id_1 OR n.id = c.node_id_2
+    WHERE n.pub_key = $1
+);
+
 -- name: UpdateNode :exec
 UPDATE nodes
 SET alias = $2,
@@ -123,10 +138,15 @@ VALUES ($1)
 ON CONFLICT (node_id) DO NOTHING;
 
 -- name: GetSourceNodesByVersion :many
-SELECT sn.node_id
+SELECT sn.node_id, n.pub_key
 FROM source_nodes sn
 JOIN nodes n ON sn.node_id = n.id
 WHERE n.version = $1;
+
+-- name: GetSourceNodes :many
+SELECT sn.node_id, n.pub_key, n.version
+FROM source_nodes sn
+JOIN nodes n ON sn.node_id = n.id;
 
 -- name: GetNodeAliasByPubKeyAndVersion :one
 SELECT alias

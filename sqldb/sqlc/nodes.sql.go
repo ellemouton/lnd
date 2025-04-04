@@ -278,26 +278,85 @@ func (q *Queries) GetNodeFeatures(ctx context.Context, nodeID int64) ([]GetNodeF
 	return items, nil
 }
 
+const getNodeIDByPubKeyAndVersion = `-- name: GetNodeIDByPubKeyAndVersion :one
+SELECT id
+FROM nodes
+WHERE pub_key = $1
+  AND version = $2
+`
+
+type GetNodeIDByPubKeyAndVersionParams struct {
+	PubKey  []byte
+	Version int16
+}
+
+func (q *Queries) GetNodeIDByPubKeyAndVersion(ctx context.Context, arg GetNodeIDByPubKeyAndVersionParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getNodeIDByPubKeyAndVersion, arg.PubKey, arg.Version)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const getSourceNodes = `-- name: GetSourceNodes :many
+SELECT sn.node_id, n.pub_key, n.version
+FROM source_nodes sn
+JOIN nodes n ON sn.node_id = n.id
+`
+
+type GetSourceNodesRow struct {
+	NodeID  int64
+	PubKey  []byte
+	Version int16
+}
+
+func (q *Queries) GetSourceNodes(ctx context.Context) ([]GetSourceNodesRow, error) {
+	rows, err := q.db.QueryContext(ctx, getSourceNodes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetSourceNodesRow
+	for rows.Next() {
+		var i GetSourceNodesRow
+		if err := rows.Scan(&i.NodeID, &i.PubKey, &i.Version); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getSourceNodesByVersion = `-- name: GetSourceNodesByVersion :many
-SELECT sn.node_id
+SELECT sn.node_id, n.pub_key
 FROM source_nodes sn
 JOIN nodes n ON sn.node_id = n.id
 WHERE n.version = $1
 `
 
-func (q *Queries) GetSourceNodesByVersion(ctx context.Context, version int16) ([]int64, error) {
+type GetSourceNodesByVersionRow struct {
+	NodeID int64
+	PubKey []byte
+}
+
+func (q *Queries) GetSourceNodesByVersion(ctx context.Context, version int16) ([]GetSourceNodesByVersionRow, error) {
 	rows, err := q.db.QueryContext(ctx, getSourceNodesByVersion, version)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []int64
+	var items []GetSourceNodesByVersionRow
 	for rows.Next() {
-		var node_id int64
-		if err := rows.Scan(&node_id); err != nil {
+		var i GetSourceNodesByVersionRow
+		if err := rows.Scan(&i.NodeID, &i.PubKey); err != nil {
 			return nil, err
 		}
-		items = append(items, node_id)
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -408,6 +467,23 @@ type InsertNodeFeatureParams struct {
 func (q *Queries) InsertNodeFeature(ctx context.Context, arg InsertNodeFeatureParams) error {
 	_, err := q.db.ExecContext(ctx, insertNodeFeature, arg.NodeID, arg.FeatureID)
 	return err
+}
+
+const isPublicV1Node = `-- name: IsPublicV1Node :one
+SELECT EXISTS (
+    SELECT 1
+    FROM channels c
+             JOIN v1_channel_proofs v1p ON c.id = v1p.channel_id
+             JOIN nodes n ON n.id = c.node_id_1 OR n.id = c.node_id_2
+    WHERE n.pub_key = $1
+)
+`
+
+func (q *Queries) IsPublicV1Node(ctx context.Context, pubKey []byte) (bool, error) {
+	row := q.db.QueryRowContext(ctx, isPublicV1Node, pubKey)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const listNodeIDsAndPubKeysV1 = `-- name: ListNodeIDsAndPubKeysV1 :many
