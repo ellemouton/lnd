@@ -70,6 +70,21 @@ var (
 			// schema. This is optional and can be disabled by the
 			// user if necessary.
 		},
+		{
+			Name:          "000007_nodes",
+			Version:       8,
+			SchemaVersion: 7,
+		},
+		{
+			Name:          "000008_channels",
+			Version:       9,
+			SchemaVersion: 8,
+		},
+		{
+			Name:          "000009_channel_policies",
+			Version:       10,
+			SchemaVersion: 9,
+		},
 	}
 )
 

@@ -28,6 +28,66 @@ type AmpSubInvoiceHtlc struct {
 	Preimage   []byte
 }
 
+type Channel struct {
+	ID       int64
+	Version  int16
+	Scid     []byte
+	NodeID1  int64
+	NodeID2  int64
+	Outpoint string
+	Capacity int64
+}
+
+type ChannelExtraType struct {
+	ChannelID int64
+	Type      int64
+	Value     []byte
+}
+
+type ChannelFeature struct {
+	ChannelID int64
+	FeatureID int64
+}
+
+type ChannelPolicy struct {
+	ID          int64
+	ChannelID   int64
+	NodeID      int64
+	Timelock    int32
+	FeePpm      int64
+	BaseFeeMsat int64
+	MinHtlcMsat int64
+	Signature   []byte
+}
+
+type ChannelPolicyExtraType struct {
+	ChannelPolicyID int64
+	Type            int64
+	Value           []byte
+}
+
+type ChannelPolicyV1Datum struct {
+	ChannelPolicyID int64
+	LastUpdate      int64
+	Disabled        bool
+	MaxHtlcMsat     sql.NullInt64
+}
+
+type ChannelsV1Datum struct {
+	ChannelID   int64
+	BitcoinKey1 []byte
+	BitcoinKey2 []byte
+}
+
+type ClosedScid struct {
+	Scid []byte
+}
+
+type Feature struct {
+	ID  int64
+	Bit int32
+}
+
 type Invoice struct {
 	ID                 int64
 	Hash               []byte
@@ -101,4 +161,60 @@ type InvoiceSequence struct {
 type MigrationTracker struct {
 	Version       int32
 	MigrationTime time.Time
+}
+
+type Node struct {
+	ID        int64
+	Version   int16
+	PubKey    []byte
+	Alias     sql.NullString
+	Signature []byte
+}
+
+type NodeAddress struct {
+	NodeID   int64
+	Type     int16
+	Position int32
+	Address  string
+}
+
+type NodeExtraType struct {
+	NodeID int64
+	Type   int64
+	Value  []byte
+}
+
+type NodeFeature struct {
+	NodeID    int64
+	FeatureID int64
+}
+
+type NodesV1Datum struct {
+	NodeID     int64
+	LastUpdate int64
+	Color      string
+}
+
+type PruneLog struct {
+	BlockHeight int64
+	BlockHash   []byte
+}
+
+type SourceNode struct {
+	NodeID int64
+}
+
+type V1ChannelProof struct {
+	ChannelID         int64
+	Node1Signature    []byte
+	Node2Signature    []byte
+	Bitcoin1Signature []byte
+	Bitcoin2Signature []byte
+}
+
+type ZombieChannel struct {
+	Scid     int64
+	Version  int16
+	NodeKey1 []byte
+	NodeKey2 []byte
 }
