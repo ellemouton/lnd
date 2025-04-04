@@ -144,15 +144,7 @@ FROM nodes n
 WHERE NOT EXISTS (
     SELECT 1
     FROM channels c
-    WHERE c.node_id_1 = n.id OR c.node_id_2 = n.id AND c.version = $1
-);
-
--- name: NodeHasV1ProofChannel :one
-SELECT EXISTS (
-    SELECT 1
-    FROM channels c
-             JOIN v1_channel_proofs v1p ON c.id = v1p.channel_id
-    WHERE c.node_id_1 = $1 OR c.node_id_2 = $1
+    WHERE c.node_id_1 = n.id OR c.node_id_2 = n.id
 );
 
 -- name: GetV1DisabledSCIDs :many

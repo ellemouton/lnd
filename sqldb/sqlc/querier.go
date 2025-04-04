@@ -69,11 +69,13 @@ type Querier interface {
 	GetNodeByID(ctx context.Context, id int64) (Node, error)
 	GetNodeByPubKeyAndVersion(ctx context.Context, arg GetNodeByPubKeyAndVersionParams) (Node, error)
 	GetNodeFeatures(ctx context.Context, nodeID int64) ([]GetNodeFeaturesRow, error)
+	GetNodeIDByPubKeyAndVersion(ctx context.Context, arg GetNodeIDByPubKeyAndVersionParams) (int64, error)
 	GetPruneTip(ctx context.Context) (PruneLog, error)
 	GetPublicV1ChannelsBySCID(ctx context.Context, arg GetPublicV1ChannelsBySCIDParams) ([]Channel, error)
 	GetSCIDByOutpointAndVersion(ctx context.Context, arg GetSCIDByOutpointAndVersionParams) ([]byte, error)
-	GetSourceNodesByVersion(ctx context.Context, version int16) ([]int64, error)
-	GetUnconnectedNodes(ctx context.Context, version int16) ([]GetUnconnectedNodesRow, error)
+	GetSourceNodes(ctx context.Context) ([]GetSourceNodesRow, error)
+	GetSourceNodesByVersion(ctx context.Context, version int16) ([]GetSourceNodesByVersionRow, error)
+	GetUnconnectedNodes(ctx context.Context) ([]GetUnconnectedNodesRow, error)
 	GetV1ChannelPolicyByChannelAndNode(ctx context.Context, arg GetV1ChannelPolicyByChannelAndNodeParams) (GetV1ChannelPolicyByChannelAndNodeRow, error)
 	GetV1ChannelProof(ctx context.Context, channelID int64) (V1ChannelProof, error)
 	GetV1ChannelsByPolicyLastUpdateRange(ctx context.Context, arg GetV1ChannelsByPolicyLastUpdateRangeParams) ([]Channel, error)
@@ -95,6 +97,7 @@ type Querier interface {
 	InsertNodeAddress(ctx context.Context, arg InsertNodeAddressParams) error
 	InsertNodeFeature(ctx context.Context, arg InsertNodeFeatureParams) error
 	IsClosedChannel(ctx context.Context, scid []byte) (bool, error)
+	IsPublicV1Node(ctx context.Context, pubKey []byte) (bool, error)
 	IsV1ChannelPublic(ctx context.Context, channelID int64) (bool, error)
 	IsZombieChannel(ctx context.Context, arg IsZombieChannelParams) (bool, error)
 	ListAllChannelsByVersion(ctx context.Context, version int16) ([]Channel, error)
@@ -102,7 +105,6 @@ type Querier interface {
 	ListNodeIDsAndPubKeysV1(ctx context.Context) ([]ListNodeIDsAndPubKeysV1Row, error)
 	ListNodesByVersion(ctx context.Context, version int16) ([]ListNodesByVersionRow, error)
 	NextInvoiceSettleIndex(ctx context.Context) (int64, error)
-	NodeHasV1ProofChannel(ctx context.Context, nodeID1 int64) (bool, error)
 	OnAMPSubInvoiceCanceled(ctx context.Context, arg OnAMPSubInvoiceCanceledParams) error
 	OnAMPSubInvoiceCreated(ctx context.Context, arg OnAMPSubInvoiceCreatedParams) error
 	OnAMPSubInvoiceSettled(ctx context.Context, arg OnAMPSubInvoiceSettledParams) error
