@@ -455,3 +455,18 @@ func (c *ChannelGraph) addToTopologyChange(update *TopologyChange,
 func EncodeHexColor(color color.RGBA) string {
 	return fmt.Sprintf("#%02x%02x%02x", color.R, color.G, color.B)
 }
+
+// DecodeHexColor takes a hex color string like "#rrggbb" and returns a color.RGBA.
+// If the input is invalid, it returns an error.
+func DecodeHexColor(hex string) (color.RGBA, error) {
+	var c color.RGBA
+	if len(hex) != 7 || hex[0] != '#' {
+		return c, fmt.Errorf("invalid hex color format: %s", hex)
+	}
+
+	_, err := fmt.Sscanf(hex, "#%02x%02x%02x", &c.R, &c.G, &c.B)
+	if err != nil {
+		return c, fmt.Errorf("failed to parse hex color: %w", err)
+	}
+	return c, nil
+}
