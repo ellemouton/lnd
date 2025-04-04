@@ -554,7 +554,7 @@ func (c *KVStore) ForEachNodeCached(cb func(node route.Vertex,
 
 	// Otherwise call back to a version that uses the database directly.
 	// We'll iterate over each node, then the set of channels for each
-	// node, and construct a similar callback functiopn signature as the
+	// node, and construct a similar callback function signature as the
 	// main funcotin expects.
 	return c.forEachNode(func(tx kvdb.RTx,
 		node *models.LightningNode) error {

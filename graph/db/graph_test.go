@@ -19,6 +19,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/graph/db/models"
@@ -77,7 +78,7 @@ func createLightningNode(priv *btcec.PrivateKey) (*models.LightningNode,
 		AuthSigBytes:         testSig.Serialize(),
 		LastUpdate:           time.Unix(updateTime, 0),
 		Color:                color.RGBA{1, 2, 3, 0},
-		Alias:                "kek" + string(pub[:]),
+		Alias:                "kek" + hex.EncodeToString(pub[:]),
 		Features:             testFeatures,
 		Addresses:            testAddrs,
 	}
@@ -93,6 +94,36 @@ func createTestVertex() (*models.LightningNode, error) {
 	}
 
 	return createLightningNode(priv)
+}
+
+func TestNodeCRUD(t *testing.T) {
+	t.Parallel()
+
+	graph, err := MakeTestGraph(t)
+	require.NoError(t, err, "unable to make test database")
+
+	node1, err := createTestVertex()
+	require.NoError(t, err)
+	node2, err := createTestVertex()
+	require.NoError(t, err)
+
+	// Create first node before getting edge.
+	require.NoError(t, graph.AddLightningNode(node1))
+
+	// Adding edge should create shell nodes.
+	edgeInfo, _ := createEdge(140, 0, 0, 0, node1, node2)
+	require.NoError(t, graph.AddChannelEdge(&edgeInfo))
+
+	// Now add the full node announcement for node2.
+	require.NoError(t, graph.AddLightningNode(node2))
+
+	dbNode1, err := graph.FetchLightningNode(node1.PubKeyBytes)
+	require.NoError(t, err)
+	require.NoError(t, compareNodes(t, node1, dbNode1))
+
+	dbNode2, err := graph.FetchLightningNode(node2.PubKeyBytes)
+	require.NoError(t, err)
+	require.NoError(t, compareNodes(t, node2, dbNode2))
 }
 
 func TestNodeInsertionAndDeletion(t *testing.T) {
@@ -111,7 +142,7 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 		Alias:                "kek",
 		Features:             testFeatures,
 		Addresses:            testAddrs,
-		ExtraOpaqueData:      []byte("extra new data"),
+		ExtraOpaqueData:      []byte{1, 1, 1},
 		PubKeyBytes:          testPub,
 	}
 
@@ -135,9 +166,21 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 	}
 
 	// The two nodes should match exactly!
-	if err := compareNodes(node, dbNode); err != nil {
-		t.Fatalf("nodes don't match: %v", err)
-	}
+	require.NoError(t, compareNodes(t, node, dbNode))
+
+	// Check that the addresses for the node are fetched correctly.
+	pub, err := node.PubKey()
+	require.NoError(t, err)
+
+	known, addrs, err := graph.AddrsForNode(pub)
+	require.NoError(t, err)
+	require.True(t, known)
+	require.True(t, addressesEqual(testAddrs, addrs))
+
+	// Check that the node's features are fetched correctly.
+	features, err := graph.FetchNodeFeatures(node.PubKeyBytes)
+	require.NoError(t, err)
+	require.Equal(t, testFeatures, features)
 
 	// Next, delete the node from the graph, this should purge all data
 	// related to the node.
@@ -149,9 +192,7 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 	// Finally, attempt to fetch the node again. This should fail as the
 	// node should have been deleted from the database.
 	_, err = graph.FetchLightningNode(testPub)
-	if err != ErrGraphNodeNotFound {
-		t.Fatalf("fetch after delete should fail!")
-	}
+	require.ErrorIs(t, err, ErrGraphNodeNotFound)
 }
 
 // TestPartialNode checks that we can add and retrieve a LightningNode where
@@ -195,7 +236,7 @@ func TestPartialNode(t *testing.T) {
 		LastUpdate:           time.Unix(0, 0),
 		PubKeyBytes:          pubKey1,
 	}
-	require.NoError(t, compareNodes(dbNode1, expectedNode1))
+	require.NoError(t, compareNodes(t, dbNode1, expectedNode1))
 
 	_, exists, err = graph.HasLightningNode(dbNode2.PubKeyBytes)
 	require.NoError(t, err)
@@ -208,7 +249,7 @@ func TestPartialNode(t *testing.T) {
 		LastUpdate:           time.Unix(0, 0),
 		PubKeyBytes:          pubKey2,
 	}
-	require.NoError(t, compareNodes(dbNode2, expectedNode2))
+	require.NoError(t, compareNodes(t, dbNode2, expectedNode2))
 
 	// Next, delete the node from the graph, this should purge all data
 	// related to the node.
@@ -255,9 +296,7 @@ func TestAliasLookup(t *testing.T) {
 	nodePub, err = node.PubKey()
 	require.NoError(t, err, "unable to generate pubkey")
 	_, err = graph.LookupAlias(nodePub)
-	if err != ErrNodeAliasNotFound {
-		t.Fatalf("alias lookup should fail for non-existent pubkey")
-	}
+	require.ErrorIs(t, err, ErrNodeAliasNotFound)
 }
 
 func TestSourceNode(t *testing.T) {
@@ -273,9 +312,8 @@ func TestSourceNode(t *testing.T) {
 
 	// Attempt to fetch the source node, this should return an error as the
 	// source node hasn't yet been set.
-	if _, err := graph.SourceNode(); err != ErrSourceNodeNotSet {
-		t.Fatalf("source node shouldn't be set in new graph")
-	}
+	_, err = graph.SourceNode()
+	require.ErrorIs(t, err, ErrSourceNodeNotSet)
 
 	// Set the source the source node, this should insert the node into the
 	// database in a special way indicating it's the source node.
@@ -287,7 +325,7 @@ func TestSourceNode(t *testing.T) {
 	// the one we set above.
 	sourceNode, err := graph.SourceNode()
 	require.NoError(t, err, "unable to fetch source node")
-	if err := compareNodes(testNode, sourceNode); err != nil {
+	if err := compareNodes(t, testNode, sourceNode); err != nil {
 		t.Fatalf("nodes don't match: %v", err)
 	}
 }
@@ -374,9 +412,7 @@ func TestEdgeInsertionDeletion(t *testing.T) {
 	// Finally, attempt to delete a (now) non-existent edge within the
 	// database, this should result in an error.
 	err = graph.DeleteChannelEdges(false, true, chanID)
-	if err != ErrEdgeNotFound {
-		t.Fatalf("deleting a non-existent edge should fail!")
-	}
+	require.ErrorIs(t, err, ErrEdgeNotFound)
 }
 
 func createEdge(height, txIndex uint32, txPosition uint16, outPointIndex uint32,
@@ -393,19 +429,27 @@ func createEdge(height, txIndex uint32, txPosition uint16, outPointIndex uint32,
 		Index: outPointIndex,
 	}
 
+	var (
+		features   = lnwire.NewRawFeatureVector()
+		featureBuf bytes.Buffer
+	)
+	_ = features.Encode(&featureBuf)
+
 	node1Pub, _ := node1.PubKey()
 	node2Pub, _ := node2.PubKey()
 	edgeInfo := models.ChannelEdgeInfo{
 		ChannelID: shortChanID.ToUint64(),
-		ChainHash: key,
+		ChainHash: *chaincfg.MainNetParams.GenesisHash,
 		AuthProof: &models.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
 			BitcoinSig2Bytes: testSig.Serialize(),
 		},
-		ChannelPoint: outpoint,
-		Capacity:     9000,
+		ChannelPoint:    outpoint,
+		Capacity:        9000,
+		Features:        featureBuf.Bytes(),
+		ExtraOpaqueData: make([]byte, 0),
 	}
 
 	copy(edgeInfo.NodeKey1Bytes[:], node1Pub.SerializeCompressed())
@@ -565,12 +609,8 @@ func assertEdgeInfoEqual(t *testing.T, e1 *models.ChannelEdgeInfo,
 	if !bytes.Equal(e1.NodeKey2Bytes[:], e2.NodeKey2Bytes[:]) {
 		t.Fatalf("nodekey2 doesn't match")
 	}
-	if !bytes.Equal(e1.BitcoinKey1Bytes[:], e2.BitcoinKey1Bytes[:]) {
-		t.Fatalf("bitcoinkey1 doesn't match")
-	}
-	if !bytes.Equal(e1.BitcoinKey2Bytes[:], e2.BitcoinKey2Bytes[:]) {
-		t.Fatalf("bitcoinkey2 doesn't match")
-	}
+	require.Equal(t, e1.BitcoinKey1Bytes, e2.BitcoinKey1Bytes)
+	require.Equal(t, e1.BitcoinKey2Bytes, e2.BitcoinKey2Bytes)
 
 	if !bytes.Equal(e1.Features, e2.Features) {
 		t.Fatalf("features doesn't match: %x vs %x", e1.Features,
@@ -600,11 +640,7 @@ func assertEdgeInfoEqual(t *testing.T, e1 *models.ChannelEdgeInfo,
 		t.Fatalf("capacity doesn't match: %v vs %v", e1.Capacity,
 			e2.Capacity)
 	}
-
-	if !bytes.Equal(e1.ExtraOpaqueData, e2.ExtraOpaqueData) {
-		t.Fatalf("extra data doesn't match: %v vs %v",
-			e2.ExtraOpaqueData, e2.ExtraOpaqueData)
-	}
+	require.Equal(t, e1.ExtraOpaqueData, e2.ExtraOpaqueData)
 }
 
 func createChannelEdge(node1, node2 *models.LightningNode) (
@@ -631,11 +667,17 @@ func createChannelEdge(node1, node2 *models.LightningNode) (
 		Index: 9,
 	}
 
+	var (
+		features   = lnwire.NewRawFeatureVector()
+		featureBuf bytes.Buffer
+	)
+	_ = features.Encode(&featureBuf)
+
 	// Add the new edge to the database, this should proceed without any
 	// errors.
 	edgeInfo := &models.ChannelEdgeInfo{
 		ChannelID: chanID,
-		ChainHash: key,
+		ChainHash: *chaincfg.MainNetParams.GenesisHash,
 		AuthProof: &models.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
@@ -644,7 +686,8 @@ func createChannelEdge(node1, node2 *models.LightningNode) (
 		},
 		ChannelPoint:    outpoint,
 		Capacity:        1000,
-		ExtraOpaqueData: []byte("new unknown feature"),
+		ExtraOpaqueData: []byte{1, 1, 1, 2, 2, 5, 5},
+		Features:        featureBuf.Bytes(),
 	}
 	copy(edgeInfo.NodeKey1Bytes[:], firstNode[:])
 	copy(edgeInfo.NodeKey2Bytes[:], secondNode[:])
@@ -709,9 +752,8 @@ func TestEdgeInfoUpdates(t *testing.T) {
 
 	// Make sure inserting the policy at this point, before the edge info
 	// is added, will fail.
-	if err := graph.UpdateEdgePolicy(edge1); err != ErrEdgeNotFound {
-		t.Fatalf("expected ErrEdgeNotFound, got: %v", err)
-	}
+	err = graph.UpdateEdgePolicy(edge1)
+	require.ErrorIs(t, err, ErrEdgeNotFound)
 	require.Len(t, graph.graphCache.nodeChannels, 0)
 
 	// Add the edge info.
@@ -1002,6 +1044,7 @@ func newEdgePolicy(chanID uint64,
 		MaxHTLC:                   lnwire.MilliSatoshi(prand.Int63()),
 		FeeBaseMSat:               lnwire.MilliSatoshi(prand.Int63()),
 		FeeProportionalMillionths: lnwire.MilliSatoshi(prand.Int63()),
+		ExtraOpaqueData:           make(lnwire.ExtraOpaqueData, 0),
 	}
 }
 
@@ -1804,7 +1847,9 @@ func TestChanUpdatesInHorizon(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			compareEdgePolicies(chanExp.Policy2, chanRet.Policy2)
+			err = compareEdgePolicies(
+				chanExp.Policy2, chanRet.Policy2,
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1840,9 +1885,7 @@ func TestNodeUpdatesInHorizon(t *testing.T) {
 	nodeAnns := make([]models.LightningNode, 0, numNodes)
 	for i := 0; i < numNodes; i++ {
 		nodeAnn, err := createTestVertex()
-		if err != nil {
-			t.Fatalf("unable to create test vertex: %v", err)
-		}
+		require.NoError(t, err)
 
 		// The node ann will use the current end time as its last
 		// update them, then we'll add 10 seconds in order to create
@@ -1879,7 +1922,7 @@ func TestNodeUpdatesInHorizon(t *testing.T) {
 			end:   time.Unix(999999, 0),
 		},
 
-		// If we skip he first time epoch with out start time, then we
+		// If we skip the first time epoch without start time, then we
 		// should get back every now but the first.
 		{
 			start: startTime.Add(time.Second * 10),
@@ -1910,21 +1953,12 @@ func TestNodeUpdatesInHorizon(t *testing.T) {
 		resp, err := graph.NodeUpdatesInHorizon(
 			queryCase.start, queryCase.end,
 		)
-		if err != nil {
-			t.Fatalf("unable to query for nodes: %v", err)
-		}
-
-		if len(resp) != len(queryCase.resp) {
-			t.Fatalf("expected %v nodes, got %v nodes",
-				len(queryCase.resp), len(resp))
-
-		}
+		require.NoError(t, err)
+		require.Len(t, resp, len(queryCase.resp))
 
 		for i := 0; i < len(resp); i++ {
-			err := compareNodes(&queryCase.resp[i], &resp[i])
-			if err != nil {
-				t.Fatal(err)
-			}
+			err := compareNodes(t, &queryCase.resp[i], &resp[i])
+			require.NoError(t, err)
 		}
 	}
 }
@@ -3189,7 +3223,7 @@ func TestNodePruningUpdateIndexDeletion(t *testing.T) {
 		t.Fatalf("should have 1 nodes instead have: %v",
 			len(nodesInHorizon))
 	}
-	if err := compareNodes(node1, &nodesInHorizon[0]); err != nil {
+	if err := compareNodes(t, node1, &nodesInHorizon[0]); err != nil {
 		t.Fatalf("nodes don't match: %v", err)
 	}
 
@@ -3673,15 +3707,12 @@ func TestGraphZombieIndex(t *testing.T) {
 // compareNodes is used to compare two LightningNodes while excluding the
 // Features struct, which cannot be compared as the semantics for reserializing
 // the featuresMap have not been defined.
-func compareNodes(a, b *models.LightningNode) error {
+func compareNodes(t *testing.T, a, b *models.LightningNode) error {
 	if a.LastUpdate != b.LastUpdate {
 		return fmt.Errorf("node LastUpdate doesn't match: expected "+
 			"%v, got %v", a.LastUpdate, b.LastUpdate)
 	}
-	if !reflect.DeepEqual(a.Addresses, b.Addresses) {
-		return fmt.Errorf("Addresses doesn't match: expected %#v, \n "+
-			"got %#v", a.Addresses, b.Addresses)
-	}
+	require.True(t, addressesEqual(a.Addresses, b.Addresses))
 	if !reflect.DeepEqual(a.PubKeyBytes, b.PubKeyBytes) {
 		return fmt.Errorf("PubKey doesn't match: expected %#v, \n "+
 			"got %#v", a.PubKeyBytes, b.PubKeyBytes)
@@ -3705,6 +3736,25 @@ func compareNodes(a, b *models.LightningNode) error {
 	}
 
 	return nil
+}
+
+func addressesEqual(a, b []net.Addr) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	addrMap := make(map[string]struct{}, len(a))
+	for _, addr := range a {
+		addrMap[addr.String()] = struct{}{}
+	}
+
+	for _, addr := range b {
+		if _, ok := addrMap[addr.String()]; !ok {
+			return false
+		}
+	}
+
+	return true
 }
 
 // compareEdgePolicies is used to compare two ChannelEdgePolices using
@@ -4070,14 +4120,16 @@ func TestGraphCacheForEachNodeChannel(t *testing.T) {
 		FeeRate: 20,
 	})
 
+	/* TODO(elle): ensure that it is ok to remove this part of the test
+	 since invalid extra opaque data should fail when we try to persist it.
 	// Set an invalid inbound fee and check that the edge is no longer
 	// returned.
 	edge1.ExtraOpaqueData = []byte{
 		253, 217, 3, 8, 0,
 	}
 	require.NoError(t, graph.UpdateEdgePolicy(edge1))
-
 	require.Nil(t, getSingleChannel())
+	*/
 }
 
 // TestGraphLoading asserts that the cache is properly reconstructed after a
@@ -4190,6 +4242,8 @@ func TestLightningNodePersistence(t *testing.T) {
 	// Convert it back to a wire message.
 	wireMsg, err := diskNode.NodeAnnouncement(true)
 	require.NoError(t, err)
+
+	require.Equal(t, na, wireMsg)
 
 	// Encode it and compare against the original.
 	var b bytes.Buffer
