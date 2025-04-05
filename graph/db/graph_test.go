@@ -1101,13 +1101,11 @@ func TestGraphTraversalCacheable(t *testing.T) {
 	// Create a map of all nodes with the iteration we know works (because
 	// it is tested in another test).
 	nodeMap := make(map[route.Vertex]struct{})
-	err = graph.forEachNode(
-		func(tx kvdb.RTx, n *models.LightningNode) error {
-			nodeMap[n.PubKeyBytes] = struct{}{}
+	err = graph.ForEachNode(func(tx NodeRTx) error {
+		nodeMap[tx.Node().PubKeyBytes] = struct{}{}
 
-			return nil
-		},
-	)
+		return nil
+	})
 	require.NoError(t, err)
 	require.Len(t, nodeMap, numNodes)
 
@@ -1126,26 +1124,15 @@ func TestGraphTraversalCacheable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, nodeMap, 0)
 
-	err = graph.db.View(func(tx kvdb.RTx) error {
-		for _, node := range nodes {
-			err := graph.forEachNodeChannelTx(tx, node,
-				func(tx kvdb.RTx, info *models.ChannelEdgeInfo,
-					policy *models.ChannelEdgePolicy,
-					policy2 *models.ChannelEdgePolicy) error { //nolint:ll
-
-					delete(chanIndex, info.ChannelID)
-					return nil
-				},
-			)
-			if err != nil {
-				return err
-			}
-		}
-
-		return nil
-	}, func() {})
-
-	require.NoError(t, err)
+	for _, node := range nodes {
+		err = graph.ForEachNodeDirectedChannel(
+			node, func(d *DirectedChannel) error {
+				delete(chanIndex, d.ChannelID)
+				return nil
+			},
+		)
+		require.NoError(t, err)
+	}
 	require.Len(t, chanIndex, 0)
 }
 
@@ -1223,12 +1210,10 @@ func fillTestGraph(t testing.TB, graph *ChannelGraph, numNodes,
 
 	// Iterate over each node as returned by the graph, if all nodes are
 	// reached, then the map created above should be empty.
-	err := graph.forEachNode(
-		func(_ kvdb.RTx, node *models.LightningNode) error {
-			delete(nodeIndex, node.Alias)
-			return nil
-		},
-	)
+	err := graph.ForEachNode(func(tx NodeRTx) error {
+		delete(nodeIndex, tx.Node().Alias)
+		return nil
+	})
 	require.NoError(t, err)
 	require.Len(t, nodeIndex, 0)
 
@@ -1335,12 +1320,11 @@ func assertNumChans(t *testing.T, graph *ChannelGraph, n int) {
 
 func assertNumNodes(t *testing.T, graph *ChannelGraph, n int) {
 	numNodes := 0
-	err := graph.forEachNode(
-		func(_ kvdb.RTx, _ *models.LightningNode) error {
-			numNodes++
-			return nil
-		},
-	)
+	err := graph.ForEachNode(func(tx NodeRTx) error {
+		numNodes++
+
+		return nil
+	})
 	if err != nil {
 		_, _, line, _ := runtime.Caller(1)
 		t.Fatalf("line %v: unable to scan nodes: %v", line, err)
