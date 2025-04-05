@@ -1,6 +1,7 @@
 package graphdb
 
 import (
+	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -36,4 +37,30 @@ type NodeTraverser interface {
 
 	// FetchNodeFeatures returns the features of the given node.
 	FetchNodeFeatures(nodePub route.Vertex) (*lnwire.FeatureVector, error)
+}
+
+// GraphSource defines an interface that abstracts the source of the general
+// wider Lightning Network graph queries.
+type GraphSource interface {
+	ForEachNode(cb func(tx NodeRTx) error) error
+
+	ForEachNodeCacheable(cb func(route.Vertex,
+		*lnwire.FeatureVector) error) error
+
+	ForEachChannel(cb func(*models.ChannelEdgeInfo,
+		*models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy) error) error
+
+	ForEachNodeChannel(nodePub route.Vertex,
+		cb func(*models.ChannelEdgeInfo,
+			*models.ChannelEdgePolicy,
+			*models.ChannelEdgePolicy) error) error
+
+	FetchChannelEdgesByID(chanID uint64) (
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, error)
+
+	FetchChannelEdgesByOutpoint(point *wire.OutPoint) (
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, error)
 }

@@ -8,7 +8,6 @@ import (
 	"github.com/lightningnetwork/lnd/batch"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -92,6 +91,11 @@ type ChannelGraphSource interface {
 	// IsZombieEdge returns true if the edge with the given channel ID is
 	// currently marked as a zombie edge.
 	IsZombieEdge(chanID lnwire.ShortChannelID) (bool, error)
+
+	// IsZombieChannel takes the timestamps of the latest channel updates
+	// for a channel and returns true if the channel should be considered a
+	// zombie based on these timestamps.
+	IsZombieChannel(updateTime1, updateTime2 time.Time) bool
 }
 
 // DB is an interface describing a persisted Lightning Network graph.
@@ -254,10 +258,9 @@ type DB interface {
 	// to the caller.
 	//
 	// Unknown policies are passed into the callback as nil values.
-	ForEachNodeChannel(nodePub route.Vertex, cb func(kvdb.RTx,
-		*models.ChannelEdgeInfo,
-		*models.ChannelEdgePolicy,
-		*models.ChannelEdgePolicy) error) error
+	ForEachNodeChannel(nodePub route.Vertex,
+		cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+			*models.ChannelEdgePolicy) error) error
 
 	// AddEdgeProof sets the proof of an existing edge in the graph
 	// database.

@@ -77,6 +77,9 @@ type Config struct {
 	// coop close.
 	NoRbfCoopClose bool
 
+	// NoGossipQueries unsets the gossip queries feature bit.
+	NoGossipQueries bool
+
 	// CustomFeatures is a set of custom features to advertise in each
 	// set.
 	CustomFeatures map[Set][]lnwire.FeatureBit
@@ -219,6 +222,10 @@ func newManager(cfg Config, desc setDesc) (*Manager, error) {
 		}
 		if cfg.NoRbfCoopClose {
 			raw.Unset(lnwire.RbfCoopCloseOptionalStaging)
+		}
+		if cfg.NoGossipQueries {
+			raw.Unset(lnwire.GossipQueriesOptional)
+			raw.Unset(lnwire.GossipQueriesRequired)
 		}
 
 		for _, custom := range cfg.CustomFeatures[set] {

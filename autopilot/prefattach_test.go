@@ -2,6 +2,7 @@ package autopilot
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	prand "math/rand"
 	"net"
@@ -49,7 +50,7 @@ func newDiskChanGraph(t *testing.T) (testGraph, error) {
 	graphDB, err := graphdb.NewChannelGraph(&graphdb.Config{KVDB: backend})
 	require.NoError(t, err)
 
-	require.NoError(t, graphDB.Start())
+	require.NoError(t, graphDB.Start(context.Background()))
 	t.Cleanup(func() {
 		require.NoError(t, graphDB.Stop())
 	})
@@ -720,7 +721,7 @@ func (t *testNodeTx) Node() *models.LightningNode {
 func (t *testNodeTx) ForEachChannel(f func(*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
 
-	return t.db.db.ForEachNodeChannel(t.node.PubKeyBytes, func(_ kvdb.RTx,
+	return t.db.db.ForEachNodeChannel(t.node.PubKeyBytes, func(
 		edge *models.ChannelEdgeInfo, policy1,
 		policy2 *models.ChannelEdgePolicy) error {
 
