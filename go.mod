@@ -210,8 +210,6 @@ replace github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
 // allows us to specify that as an option.
 replace google.golang.org/protobuf => github.com/lightninglabs/protobuf-go-hex-display v1.30.0-hex-display
 
-replace github.com/lightningnetwork/lnd/sqldb => ./sqldb
-
 replace github.com/lightningnetwork/lnd/kvdb => ./kvdb
 
 // If you change this please also update docs/INSTALL.md and GO_VERSION in
@@ -220,3 +218,5 @@ replace github.com/lightningnetwork/lnd/kvdb => ./kvdb
 go 1.23.6
 
 retract v0.0.2
+
+replace github.com/lightningnetwork/lnd/sqldb => ./sqldb

@@ -9,13 +9,7 @@ import (
 
 // NewTestDB is a helper function that creates an BBolt database for testing.
 func NewTestDB(t testing.TB) *KVStore {
-	return NewTestDBFromPath(t, t.TempDir())
-}
-
-// NewTestDBFromPath is a helper function that creates a new BoltStore with a
-// connection to an existing BBolt database for testing.
-func NewTestDBFromPath(t testing.TB, dbPath string) *KVStore {
-	backend, backendCleanup, err := kvdb.GetTestBackend(dbPath, "cgr")
+	backend, backendCleanup, err := kvdb.GetTestBackend(t.TempDir(), "cgr")
 	require.NoError(t, err)
 
 	t.Cleanup(backendCleanup)
