@@ -13,7 +13,6 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/stretchr/testify/require"
@@ -36,17 +35,7 @@ type testDBGraph struct {
 }
 
 func newDiskChanGraph(t *testing.T) (testGraph, error) {
-	backend, err := kvdb.GetBoltBackend(&kvdb.BoltBackendConfig{
-		DBPath:            t.TempDir(),
-		DBFileName:        "graph.db",
-		NoFreelistSync:    true,
-		AutoCompact:       false,
-		AutoCompactMinAge: kvdb.DefaultBoltAutoCompactMinAge,
-		DBTimeout:         kvdb.DefaultDBTimeout,
-	})
-	require.NoError(t, err)
-
-	graphDB, err := graphdb.NewChannelGraph(&graphdb.Config{KVDB: backend})
+	graphDB, err := graphdb.MakeTestGraph(t)
 	require.NoError(t, err)
 
 	require.NoError(t, graphDB.Start())
@@ -720,7 +709,7 @@ func (t *testNodeTx) Node() *models.LightningNode {
 func (t *testNodeTx) ForEachChannel(f func(*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
 
-	return t.db.db.ForEachNodeChannel(t.node.PubKeyBytes, func(_ kvdb.RTx,
+	return t.db.db.ForEachNodeChannel(t.node.PubKeyBytes, func(
 		edge *models.ChannelEdgeInfo, policy1,
 		policy2 *models.ChannelEdgePolicy) error {
 
