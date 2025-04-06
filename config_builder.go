@@ -1026,12 +1026,6 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 			"instances")
 	}
 
-	graphDBOptions := []graphdb.KVStoreOptionModifier{
-		graphdb.WithRejectCacheSize(cfg.Caches.RejectCacheSize),
-		graphdb.WithChannelCacheSize(cfg.Caches.ChannelCacheSize),
-		graphdb.WithBatchCommitInterval(cfg.DB.BatchCommitInterval),
-	}
-
 	chanGraphOpts := []graphdb.ChanGraphOption{
 		graphdb.WithUseGraphCache(!cfg.DB.NoGraphCache),
 	}
@@ -1157,11 +1151,20 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 			},
 		)
 
+		graphDBOpts := []graphdb.SQLStoreOption{
+			graphdb.WithSQLStoreChannelCacheSize(
+				cfg.Caches.ChannelCacheSize,
+			),
+			graphdb.WithSQLStoreRejectCacheSize(
+				cfg.Caches.RejectCacheSize,
+			),
+		}
+
 		graphStore = graphdb.NewSQLStore(
 			&graphdb.SQLStoreConfig{
 				ChainHash: *d.cfg.ActiveNetParams.GenesisHash,
 			},
-			graphExecutor,
+			graphExecutor, graphDBOpts...,
 		)
 
 	} else {
@@ -1185,6 +1188,18 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		}
 
 		dbs.InvoiceDB = dbs.ChanStateDB
+
+		graphDBOptions := []graphdb.KVStoreOptionModifier{
+			graphdb.WithRejectCacheSize(
+				cfg.Caches.RejectCacheSize,
+			),
+			graphdb.WithChannelCacheSize(
+				cfg.Caches.ChannelCacheSize,
+			),
+			graphdb.WithBatchCommitInterval(
+				cfg.DB.BatchCommitInterval,
+			),
+		}
 
 		graphStore, err = graphdb.NewKVStore(
 			databaseBackends.GraphDB, graphDBOptions...,
