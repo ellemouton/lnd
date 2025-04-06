@@ -1073,6 +1073,25 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		return nil, nil, err
 	}
 
+	graphDBOptions := []graphdb.KVStoreOptionModifier{
+		graphdb.WithRejectCacheSize(
+			cfg.Caches.RejectCacheSize,
+		),
+		graphdb.WithChannelCacheSize(
+			cfg.Caches.ChannelCacheSize,
+		),
+		graphdb.WithBatchCommitInterval(
+			cfg.DB.BatchCommitInterval,
+		),
+	}
+
+	kvGraphStore, err := graphdb.NewKVStore(
+		databaseBackends.GraphDB, graphDBOptions...,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	var graphStore graphdb.V1Store
 
 	// Instantiate a native SQL store if the flag is set.
@@ -1087,7 +1106,7 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		// migration's version (7), it will be skipped permanently,
 		// regardless of the flag.
 		if !d.cfg.DB.SkipNativeSQLMigration {
-			migrationFn := func(tx *sqlc.Queries) error {
+			invoiceMigFn := func(tx *sqlc.Queries) error {
 				err := invoices.MigrateInvoicesToSQL(
 					ctx, dbs.ChanStateDB.Backend,
 					dbs.ChanStateDB, tx,
@@ -1106,14 +1125,29 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 				return dbs.ChanStateDB.SetInvoiceBucketTombstone() //nolint:ll
 			}
 
+			graphMigFn := func(tx *sqlc.Queries) error {
+				err := graphdb.MigrateGraphToSQL(
+					ctx, kvGraphStore, tx,
+				)
+				if err != nil {
+					return fmt.Errorf("failed to migrate "+
+						"graph to SQL: %w", err)
+				}
+
+				return nil
+			}
+
 			// Make sure we attach the custom migration function to
 			// the correct migration version.
 			for i := 0; i < len(migrations); i++ {
-				if migrations[i].Version != invoiceMigration {
+				if migrations[i].Version == invoiceMigration {
+					migrations[i].MigrationFn = invoiceMigFn
 					continue
 				}
 
-				migrations[i].MigrationFn = migrationFn
+				if migrations[i].Version == 11 {
+					migrations[i].MigrationFn = graphMigFn
+				}
 			}
 		}
 
@@ -1189,24 +1223,7 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 
 		dbs.InvoiceDB = dbs.ChanStateDB
 
-		graphDBOptions := []graphdb.KVStoreOptionModifier{
-			graphdb.WithRejectCacheSize(
-				cfg.Caches.RejectCacheSize,
-			),
-			graphdb.WithChannelCacheSize(
-				cfg.Caches.ChannelCacheSize,
-			),
-			graphdb.WithBatchCommitInterval(
-				cfg.DB.BatchCommitInterval,
-			),
-		}
-
-		graphStore, err = graphdb.NewKVStore(
-			databaseBackends.GraphDB, graphDBOptions...,
-		)
-		if err != nil {
-			return nil, nil, err
-		}
+		graphStore = kvGraphStore
 	}
 
 	dbs.GraphDB, err = graphdb.NewChannelGraph(graphStore, chanGraphOpts...)

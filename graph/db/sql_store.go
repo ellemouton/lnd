@@ -1784,7 +1784,9 @@ func (s *SQLStore) AddChannelEdge(edge *models.ChannelEdgeInfo,
 			return ErrEdgeAlreadyExist
 		}
 
-		return s.insertChannel(ctx, db, edge)
+		_, err = insertChannel(ctx, db, edge)
+
+		return err
 	}, func() {})
 	if err != nil {
 		return err
@@ -3272,19 +3274,25 @@ func getNodeExtraSignedFields(ctx context.Context, db SQLQueries,
 	return extraFields, nil
 }
 
-func (s *SQLStore) insertChannel(ctx context.Context, db SQLQueries,
-	edge *models.ChannelEdgeInfo) error {
+type dbChanInfo struct {
+	channelID int64
+	node1ID   int64
+	node2ID   int64
+}
+
+func insertChannel(ctx context.Context, db SQLQueries,
+	edge *models.ChannelEdgeInfo) (*dbChanInfo, error) {
 
 	// Make sure that at least a "shell" entry for each node is present in
 	// the nodes table.
 	node1DBID, err := maybeCreateShellNode(ctx, db, edge.NodeKey1Bytes)
 	if err != nil {
-		return fmt.Errorf("unable to create shell node: %w", err)
+		return nil, fmt.Errorf("unable to create shell node: %w", err)
 	}
 
 	node2DBID, err := maybeCreateShellNode(ctx, db, edge.NodeKey2Bytes)
 	if err != nil {
-		return fmt.Errorf("unable to create shell node: %w", err)
+		return nil, fmt.Errorf("unable to create shell node: %w", err)
 	}
 
 	var chanIDB [8]byte
@@ -3301,7 +3309,7 @@ func (s *SQLStore) insertChannel(ctx context.Context, db SQLQueries,
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("unable to insert channel: %w", err)
+		return nil, fmt.Errorf("unable to insert channel: %w", err)
 	}
 
 	err = db.CreateChannelsV1Data(ctx, sqlc.CreateChannelsV1DataParams{
@@ -3310,7 +3318,8 @@ func (s *SQLStore) insertChannel(ctx context.Context, db SQLQueries,
 		BitcoinKey2: edge.BitcoinKey2Bytes[:],
 	})
 	if err != nil {
-		return fmt.Errorf("unable to insert channel v1 data: %w", err)
+		return nil, fmt.Errorf("unable to insert channel v1 data: %w",
+			err)
 	}
 
 	if edge.AuthProof != nil {
@@ -3326,8 +3335,8 @@ func (s *SQLStore) insertChannel(ctx context.Context, db SQLQueries,
 			},
 		)
 		if err != nil {
-			return fmt.Errorf("unable to insert channel proof: %w",
-				err)
+			return nil, fmt.Errorf("unable to insert channel "+
+				"proof: %w", err)
 		}
 	}
 
@@ -3335,14 +3344,14 @@ func (s *SQLStore) insertChannel(ctx context.Context, db SQLQueries,
 		chanFeatures := lnwire.NewRawFeatureVector()
 		err := chanFeatures.Decode(bytes.NewReader(edge.Features))
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		fv := lnwire.NewFeatureVector(chanFeatures, lnwire.Features)
 		for feature := range fv.Features() {
 			featureID, err := db.CreateFeature(ctx, int32(feature))
 			if err != nil {
-				return fmt.Errorf("unable to create "+
+				return nil, fmt.Errorf("unable to create "+
 					"feature(%v): %w", feature, err)
 			}
 
@@ -3353,7 +3362,7 @@ func (s *SQLStore) insertChannel(ctx context.Context, db SQLQueries,
 				},
 			)
 			if err != nil {
-				return fmt.Errorf("unable to insert "+
+				return nil, fmt.Errorf("unable to insert "+
 					"channel(%d) feature(%v): %w", dbChanID,
 					feature, err)
 			}
@@ -3362,17 +3371,21 @@ func (s *SQLStore) insertChannel(ctx context.Context, db SQLQueries,
 
 	extra, err := marshalExtraOpaqueData(edge.ExtraOpaqueData)
 	if err != nil {
-		return fmt.Errorf("unable to marshal extra opaque data: %w",
+		return nil, fmt.Errorf("unable to marshal extra opaque data: %w",
 			err)
 	}
 
 	err = upsertChannelExtraSignedFields(ctx, db, dbChanID, extra)
 	if err != nil {
-		return fmt.Errorf("unable to insert channel extra "+
+		return nil, fmt.Errorf("unable to insert channel extra "+
 			"types: %w", err)
 	}
 
-	return nil
+	return &dbChanInfo{
+		channelID: dbChanID,
+		node1ID:   node1DBID,
+		node2ID:   node2DBID,
+	}, nil
 }
 
 func maybeCreateShellNode(ctx context.Context, db SQLQueries,
