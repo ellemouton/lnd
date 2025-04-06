@@ -11,6 +11,7 @@ import (
 	"net"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -155,6 +156,43 @@ type SQLStoreConfig struct {
 	ChainHash chainhash.Hash
 }
 
+// SQLStoreOptions holds parameters for tuning the operations of the SQLStore.
+type SQLStoreOptions struct {
+	// RejectCacheSize is the maximum number of rejectCacheEntries to hold
+	// in the rejection cache.
+	RejectCacheSize int
+
+	// ChannelCacheSize is the maximum number of ChannelEdges to hold in the
+	// channel cache.
+	ChannelCacheSize int
+}
+
+// SQLStoreOption is a function signature for modifying the default
+// SQLStoreOptions
+type SQLStoreOption func(config *SQLStoreOptions)
+
+// WithSQLStoreRejectCacheSize sets the RejectCacheSize to n.
+func WithSQLStoreRejectCacheSize(n int) SQLStoreOption {
+	return func(o *SQLStoreOptions) {
+		o.RejectCacheSize = n
+	}
+}
+
+// WithSQLStoreChannelCacheSize sets the ChannelCacheSize to n.
+func WithSQLStoreChannelCacheSize(n int) SQLStoreOption {
+	return func(o *SQLStoreOptions) {
+		o.ChannelCacheSize = n
+	}
+}
+
+// defaultSQLOptions returns a SQLStoreOptions populated with default values.
+func defaultSQLOptions() *SQLStoreOptions {
+	return &SQLStoreOptions{
+		RejectCacheSize:  DefaultRejectCacheSize,
+		ChannelCacheSize: DefaultChannelCacheSize,
+	}
+}
+
 // SQLStore is an implementation of the V1Store interface that uses a SQL
 // database as the backend.
 //
@@ -165,6 +203,13 @@ type SQLStoreConfig struct {
 type SQLStore struct {
 	cfg *SQLStoreConfig
 	db  BatchedSQLQueries
+
+	// cacheMu guards all caches (rejectCache and chanCache). If
+	// this mutex will be acquired at the same time as the DB mutex then
+	// the cacheMu MUST be acquired first to prevent deadlock.
+	cacheMu     sync.RWMutex
+	rejectCache *rejectCache
+	chanCache   *channelCache
 }
 
 // A compile-time assertion to ensure that SQLStore implements the V1Store
@@ -173,10 +218,19 @@ var _ V1Store = (*SQLStore)(nil)
 
 // NewSQLStore creates a new SQLStore instance given an open BatchedSQLQueries
 // storage backend.
-func NewSQLStore(cfg *SQLStoreConfig, db BatchedSQLQueries) *SQLStore {
+func NewSQLStore(cfg *SQLStoreConfig, db BatchedSQLQueries,
+	options ...SQLStoreOption) *SQLStore {
+
+	opts := defaultSQLOptions()
+	for _, option := range options {
+		option(opts)
+	}
+
 	return &SQLStore{
-		cfg: cfg,
-		db:  db,
+		cfg:         cfg,
+		db:          db,
+		rejectCache: newRejectCache(opts.RejectCacheSize),
+		chanCache:   newChannelCache(opts.ChannelCacheSize),
 	}
 }
 
@@ -461,6 +515,11 @@ func (s *SQLStore) PruneGraph(spentOutputs []*wire.OutPoint,
 		return nil, nil, fmt.Errorf("unable to prune graph: %w", err)
 	}
 
+	for _, channel := range closedChans {
+		s.rejectCache.remove(channel.ChannelID)
+		s.chanCache.remove(channel.ChannelID)
+	}
+
 	return closedChans, prunedNodes, nil
 }
 
@@ -573,6 +632,11 @@ func (s *SQLStore) DisconnectBlockAtHeight(height uint32) (
 			"height: %w", err)
 	}
 
+	for _, channel := range removedChans {
+		s.rejectCache.remove(channel.ChannelID)
+		s.chanCache.remove(channel.ChannelID)
+	}
+
 	return removedChans, nil
 }
 
@@ -661,6 +725,11 @@ func (s *SQLStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 			err)
 	}
 
+	for _, chanID := range chanIDs {
+		s.rejectCache.remove(chanID)
+		s.chanCache.remove(chanID)
+	}
+
 	return deleted, nil
 }
 
@@ -684,6 +753,34 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 		node1LastUpdate time.Time
 		node2LastUpdate time.Time
 	)
+
+	// We'll query the cache with the shared lock held to allow multiple
+	// readers to access values in the cache concurrently if they exist.
+	s.cacheMu.RLock()
+	if entry, ok := s.rejectCache.get(chanID); ok {
+		s.cacheMu.RUnlock()
+		node1LastUpdate = time.Unix(entry.upd1Time, 0)
+		node2LastUpdate = time.Unix(entry.upd2Time, 0)
+		exists, isZombie = entry.flags.unpack()
+
+		return node1LastUpdate, node2LastUpdate, exists, isZombie, nil
+	}
+	s.cacheMu.RUnlock()
+
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+
+	// The item was not found with the shared lock, so we'll acquire the
+	// exclusive lock and check the cache again in case another method added
+	// the entry to the cache while no lock was held.
+	if entry, ok := s.rejectCache.get(chanID); ok {
+		node1LastUpdate = time.Unix(entry.upd1Time, 0)
+		node2LastUpdate = time.Unix(entry.upd2Time, 0)
+		exists, isZombie = entry.flags.unpack()
+
+		return node1LastUpdate, node2LastUpdate, exists, isZombie, nil
+	}
+
 	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
 		var chanIDB [8]byte
 		byteOrder.PutUint64(chanIDB[:], chanID)
@@ -746,6 +843,12 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 		return time.Time{}, time.Time{}, false, false,
 			fmt.Errorf("unable to fetch channel: %w", err)
 	}
+
+	s.rejectCache.insert(chanID, rejectCacheEntry{
+		upd1Time: node1LastUpdate.Unix(),
+		upd2Time: node2LastUpdate.Unix(),
+		flags:    packRejectFlags(exists, isZombie),
+	})
 
 	return node1LastUpdate, node2LastUpdate, exists, isZombie, nil
 }
@@ -1687,6 +1790,9 @@ func (s *SQLStore) AddChannelEdge(edge *models.ChannelEdgeInfo,
 		return err
 	}
 
+	s.rejectCache.remove(edge.ChannelID)
+	s.chanCache.remove(edge.ChannelID)
+
 	return nil
 }
 
@@ -1697,6 +1803,7 @@ func (s *SQLStore) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 	var (
 		writeTxOpts        TxOptions
 		node1Pub, node2Pub route.Vertex
+		isNode1            bool
 	)
 	err := s.db.ExecTx(ctx, &writeTxOpts, func(db SQLQueries) error {
 		var chanIDB [8]byte
@@ -1727,7 +1834,7 @@ func (s *SQLStore) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 		copy(node2Pub[:], node2.PubKey)
 
 		// Figure out which node this edge is from.
-		isNode1 := edge.ChannelFlags&lnwire.ChanUpdateDirection == 0
+		isNode1 = edge.ChannelFlags&lnwire.ChanUpdateDirection == 0
 		nodeID := dbChan.NodeID1
 		if !isNode1 {
 			nodeID = dbChan.NodeID2
@@ -1772,7 +1879,39 @@ func (s *SQLStore) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 			"update edge policy: %w", err)
 	}
 
+	s.updateEdgeCache(edge, isNode1)
+
 	return node1Pub, node2Pub, nil
+}
+
+func (s *SQLStore) updateEdgeCache(e *models.ChannelEdgePolicy,
+	isUpdate1 bool) {
+
+	// If an entry for this channel is found in reject cache, we'll modify
+	// the entry with the updated timestamp for the direction that was just
+	// written. If the edge doesn't exist, we'll load the cache entry lazily
+	// during the next query for this edge.
+	if entry, ok := s.rejectCache.get(e.ChannelID); ok {
+		if isUpdate1 {
+			entry.upd1Time = e.LastUpdate.Unix()
+		} else {
+			entry.upd2Time = e.LastUpdate.Unix()
+		}
+		s.rejectCache.insert(e.ChannelID, entry)
+	}
+
+	// If an entry for this channel is found in channel cache, we'll modify
+	// the entry with the updated policy for the direction that was just
+	// written. If the edge doesn't exist, we'll defer loading the info and
+	// policies and lazily read from disk during the next query.
+	if channel, ok := s.chanCache.get(e.ChannelID); ok {
+		if isUpdate1 {
+			channel.Policy1 = e
+		} else {
+			channel.Policy2 = e
+		}
+		s.chanCache.insert(e.ChannelID, channel)
+	}
 }
 
 func (s *SQLStore) ChannelID(chanPoint *wire.OutPoint) (uint64, error) {
@@ -1812,7 +1951,7 @@ func (s *SQLStore) MarkEdgeZombie(chanID uint64,
 	ctx := context.TODO()
 
 	var writeTxOpts TxOptions
-	return s.db.ExecTx(ctx, &writeTxOpts, func(db SQLQueries) error {
+	err := s.db.ExecTx(ctx, &writeTxOpts, func(db SQLQueries) error {
 		return db.UpsertZombieChannel(
 			ctx, sqlc.UpsertZombieChannelParams{
 				Version:  int16(ProtocolV1),
@@ -1822,6 +1961,14 @@ func (s *SQLStore) MarkEdgeZombie(chanID uint64,
 			},
 		)
 	}, func() {})
+	if err != nil {
+		return fmt.Errorf("unable to mark edge as zombie: %w", err)
+	}
+
+	s.rejectCache.remove(chanID)
+	s.chanCache.remove(chanID)
+
+	return nil
 }
 
 func (s *SQLStore) MarkEdgeLive(chanID uint64) error {
@@ -1829,7 +1976,7 @@ func (s *SQLStore) MarkEdgeLive(chanID uint64) error {
 		ctx     = context.TODO()
 		writeTx TxOptions
 	)
-	return s.db.ExecTx(ctx, &writeTx, func(db SQLQueries) error {
+	err := s.db.ExecTx(ctx, &writeTx, func(db SQLQueries) error {
 		_, err := db.GetZombieChannel(
 			ctx, sqlc.GetZombieChannelParams{
 				Scid:    int64(chanID),
@@ -1850,6 +1997,14 @@ func (s *SQLStore) MarkEdgeLive(chanID uint64) error {
 			},
 		)
 	}, func() {})
+	if err != nil {
+		return fmt.Errorf("unable to delete zombie channel: %w", err)
+	}
+
+	s.rejectCache.remove(chanID)
+	s.chanCache.remove(chanID)
+
+	return nil
 }
 
 func (s *SQLStore) IsZombieEdge(chanID uint64) (bool, [33]byte, [33]byte) {
