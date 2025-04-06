@@ -39,11 +39,13 @@ type TestPgFixture struct {
 // NewTestPgFixture constructs a new TestPgFixture starting up a docker
 // container running Postgres 11. The started container will expire in after
 // the passed duration.
-func NewTestPgFixture(t *testing.T, expiry time.Duration) *TestPgFixture {
+func NewTestPgFixture(expiry time.Duration) (*TestPgFixture, error) {
 	// Use a sensible default on Windows (tcp/http) and linux/osx (socket)
 	// by specifying an empty endpoint.
 	pool, err := dockertest.NewPool("")
-	require.NoError(t, err, "Could not connect to docker")
+	if err != nil {
+		return nil, fmt.Errorf("could not connect to docker: %w", err)
+	}
 
 	// Pulls an image, creates a container based on it and runs it.
 	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
@@ -67,13 +69,17 @@ func NewTestPgFixture(t *testing.T, expiry time.Duration) *TestPgFixture {
 		config.AutoRemove = true
 		config.RestartPolicy = docker.RestartPolicy{Name: "no"}
 	})
-	require.NoError(t, err, "Could not start resource")
+	if err != nil {
+		return nil, fmt.Errorf("could not start resource: %w", err)
+	}
 
 	hostAndPort := resource.GetHostPort("5432/tcp")
 	parts := strings.Split(hostAndPort, ":")
 	host := parts[0]
 	port, err := strconv.ParseInt(parts[1], 10, 64)
-	require.NoError(t, err)
+	if err != nil {
+		return nil, fmt.Errorf("could not parse port: %w", err)
+	}
 
 	fixture := &TestPgFixture{
 		host: host,
@@ -83,7 +89,10 @@ func NewTestPgFixture(t *testing.T, expiry time.Duration) *TestPgFixture {
 	log.Infof("Connecting to Postgres fixture: %v\n", databaseURL)
 
 	// Tell docker to hard kill the container in "expiry" seconds.
-	require.NoError(t, resource.Expire(uint(expiry.Seconds())))
+	err = resource.Expire(uint(expiry.Seconds()))
+	if err != nil {
+		return nil, fmt.Errorf("could not expire resource: %w", err)
+	}
 
 	// Exponential backoff-retry, because the application in the container
 	// might not be ready to accept connections yet.
@@ -98,14 +107,16 @@ func NewTestPgFixture(t *testing.T, expiry time.Duration) *TestPgFixture {
 
 		return testDB.Ping()
 	})
-	require.NoError(t, err, "Could not connect to docker")
+	if err != nil {
+		return nil, fmt.Errorf("could not connect to docker: %w", err)
+	}
 
 	// Now fill in the rest of the fixture.
 	fixture.db = testDB
 	fixture.pool = pool
 	fixture.resource = resource
 
-	return fixture
+	return fixture, nil
 }
 
 // GetConfig returns the full config of the Postgres node.
@@ -119,13 +130,12 @@ func (f *TestPgFixture) GetConfig(dbName string) *PostgresConfig {
 }
 
 // TearDown stops the underlying docker container.
-func (f *TestPgFixture) TearDown(t *testing.T) {
-	err := f.pool.Purge(f.resource)
-	require.NoError(t, err, "Could not purge resource")
+func (f *TestPgFixture) TearDown() error {
+	return f.pool.Purge(f.resource)
 }
 
 // randomDBName generates a random database name.
-func randomDBName(t *testing.T) string {
+func randomDBName(t testing.TB) string {
 	randBytes := make([]byte, 8)
 	_, err := rand.Read(randBytes)
 	require.NoError(t, err)
@@ -135,7 +145,7 @@ func randomDBName(t *testing.T) string {
 
 // NewTestPostgresDB is a helper function that creates a Postgres database for
 // testing using the given fixture.
-func NewTestPostgresDB(t *testing.T, fixture *TestPgFixture) *PostgresStore {
+func NewTestPostgresDB(t testing.TB, fixture *TestPgFixture) *PostgresStore {
 	t.Helper()
 
 	dbName := randomDBName(t)

@@ -56,12 +56,12 @@ require (
 	go.etcd.io/etcd/client/pkg/v3 v3.5.12
 	go.etcd.io/etcd/client/v3 v3.5.12
 	go.opentelemetry.io/otel/metric v1.20.0 // indirect
-	golang.org/x/crypto v0.22.0
+	golang.org/x/crypto v0.24.0
 	golang.org/x/exp v0.0.0-20240325151524-a685a6edb6d8
 	golang.org/x/mobile v0.0.0-20190719004257-d2bd2a29d028
-	golang.org/x/net v0.24.0
+	golang.org/x/net v0.26.0
 	golang.org/x/sync v0.7.0
-	golang.org/x/term v0.19.0
+	golang.org/x/term v0.21.0
 	golang.org/x/time v0.3.0
 	google.golang.org/grpc v1.59.0
 	google.golang.org/protobuf v1.33.0
@@ -178,10 +178,10 @@ require (
 	go.uber.org/atomic v1.7.0 // indirect
 	go.uber.org/multierr v1.6.0 // indirect
 	go.uber.org/zap v1.17.0 // indirect
-	golang.org/x/mod v0.16.0 // indirect
-	golang.org/x/sys v0.19.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
-	golang.org/x/tools v0.19.0 // indirect
+	golang.org/x/mod v0.18.0 // indirect
+	golang.org/x/sys v0.21.0 // indirect
+	golang.org/x/text v0.16.0 // indirect
+	golang.org/x/tools v0.22.0 // indirect
 	google.golang.org/genproto v0.0.0-20231016165738-49dd2c1f3d0b // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20231016165738-49dd2c1f3d0b // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20231030173426-d783a09b4405 // indirect
@@ -199,6 +199,8 @@ require (
 	sigs.k8s.io/yaml v1.2.0 // indirect
 )
 
+require go.uber.org/mock v0.5.0
+
 // This replace is for https://github.com/advisories/GHSA-25xm-hr59-7c27
 replace github.com/ulikunitz/xz => github.com/ulikunitz/xz v0.5.11
 
@@ -210,8 +212,6 @@ replace github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
 // allows us to specify that as an option.
 replace google.golang.org/protobuf => github.com/lightninglabs/protobuf-go-hex-display v1.30.0-hex-display
 
-replace github.com/lightningnetwork/lnd/sqldb => ./sqldb
-
 replace github.com/lightningnetwork/lnd/kvdb => ./kvdb
 
 // If you change this please also update docs/INSTALL.md and GO_VERSION in
@@ -220,3 +220,5 @@ replace github.com/lightningnetwork/lnd/kvdb => ./kvdb
 go 1.23.6
 
 retract v0.0.2
+
+replace github.com/lightningnetwork/lnd/sqldb => ./sqldb
