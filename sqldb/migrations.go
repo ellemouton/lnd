@@ -85,6 +85,15 @@ var (
 			Version:       10,
 			SchemaVersion: 9,
 		},
+		{
+			Name:          "kv_graph_migration",
+			Version:       11,
+			SchemaVersion: 9,
+			// A migration function is may be attached to this
+			// migration to migrate KV graph to the native SQL
+			// schema. This is optional and can be disabled by the
+			// user if necessary.
+		},
 	}
 )
 
