@@ -224,11 +224,12 @@ func TestInvoices(t *testing.T) {
 
 	// First create a shared Postgres instance so we don't spawn a new
 	// docker container for each test.
-	pgFixture := sqldb.NewTestPgFixture(
-		t, sqldb.DefaultPostgresFixtureLifetime,
+	pgFixture, err := sqldb.NewTestPgFixture(
+		sqldb.DefaultPostgresFixtureLifetime,
 	)
+	require.NoError(t, err, "unable to create test fixture")
 	t.Cleanup(func() {
-		pgFixture.TearDown(t)
+		require.NoError(t, pgFixture.TearDown())
 	})
 
 	makeSQLDB := func(t *testing.T, sqlite bool) invpkg.InvoiceDB {

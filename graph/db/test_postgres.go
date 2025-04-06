@@ -10,16 +10,11 @@ import (
 	"github.com/lightningnetwork/lnd/sqldb"
 )
 
+var testFixture *sqldb.TestPgFixture
+
 // NewTestDB is a helper function that creates an BBolt database for testing.
 func NewTestDB(t testing.TB) *SQLStore {
-	pgFixture := sqldb.NewTestPgFixture(
-		t, sqldb.DefaultPostgresFixtureLifetime,
-	)
-	t.Cleanup(func() {
-		pgFixture.TearDown(t)
-	})
-
-	db := sqldb.NewTestPostgresDB(t, pgFixture).BaseDB
+	db := sqldb.NewTestPostgresDB(t, testFixture).BaseDB
 
 	executor := sqldb.NewTransactionExecutor(
 		db, func(tx *sql.Tx) SQLQueries {

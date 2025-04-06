@@ -34,9 +34,12 @@ func TestMigrations(t *testing.T) {
 	postgresTestDB := func(t *testing.T, version uint) (*BaseDB,
 		func(MigrationTarget) error) {
 
-		pgFixture := NewTestPgFixture(t, DefaultPostgresFixtureLifetime)
+		pgFixture, err := NewTestPgFixture(
+			DefaultPostgresFixtureLifetime,
+		)
+		require.NoError(t, err)
 		t.Cleanup(func() {
-			pgFixture.TearDown(t)
+			require.NoError(t, pgFixture.TearDown())
 		})
 
 		db := NewTestPostgresDBWithVersion(
@@ -376,11 +379,12 @@ func TestCustomMigration(t *testing.T) {
 
 			// First create a temporary Postgres database to run
 			// the migrations on.
-			fixture := NewTestPgFixture(
-				t, DefaultPostgresFixtureLifetime,
+			fixture, err := NewTestPgFixture(
+				DefaultPostgresFixtureLifetime,
 			)
+			require.NoError(t, err)
 			t.Cleanup(func() {
-				fixture.TearDown(t)
+				require.NoError(t, fixture.TearDown())
 			})
 
 			dbName := randomDBName(t)
@@ -521,11 +525,12 @@ func TestSchemaMigrationIdempotency(t *testing.T) {
 	t.Run("Postgres", func(t *testing.T) {
 		// First create a temporary Postgres database to run
 		// the migrations on.
-		fixture := NewTestPgFixture(
-			t, DefaultPostgresFixtureLifetime,
+		fixture, err := NewTestPgFixture(
+			DefaultPostgresFixtureLifetime,
 		)
+		require.Error(t, err)
 		t.Cleanup(func() {
-			fixture.TearDown(t)
+			require.NoError(t, fixture.TearDown())
 		})
 
 		dbName := randomDBName(t)
@@ -677,11 +682,12 @@ func TestMigrationSucceedsAfterDirtyStateMigrationFailure19RC1(t *testing.T) {
 	t.Run("Postgres", func(t *testing.T) {
 		// First create a temporary Postgres database to run
 		// the migrations on.
-		fixture := NewTestPgFixture(
-			t, DefaultPostgresFixtureLifetime,
+		fixture, err := NewTestPgFixture(
+			DefaultPostgresFixtureLifetime,
 		)
+		require.Error(t, err)
 		t.Cleanup(func() {
-			fixture.TearDown(t)
+			require.NoError(t, fixture.TearDown())
 		})
 
 		dbName := randomDBName(t)
@@ -691,7 +697,7 @@ func TestMigrationSucceedsAfterDirtyStateMigrationFailure19RC1(t *testing.T) {
 		t.Logf("Creating new Postgres DB '%s' for testing "+
 			"migrations", dbName)
 
-		_, err := fixture.db.ExecContext(
+		_, err = fixture.db.ExecContext(
 			context.Background(), "CREATE DATABASE "+dbName,
 		)
 		require.NoError(t, err)

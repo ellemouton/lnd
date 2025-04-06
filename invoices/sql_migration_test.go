@@ -261,11 +261,12 @@ func generateAMPHtlcsRapid(t *rapid.T, invoice *Invoice) {
 // types are modified.
 func TestMigrateSingleInvoiceRapid(t *testing.T) {
 	// Create a shared Postgres instance for efficient testing.
-	pgFixture := sqldb.NewTestPgFixture(
-		t, sqldb.DefaultPostgresFixtureLifetime,
+	pgFixture, err := sqldb.NewTestPgFixture(
+		sqldb.DefaultPostgresFixtureLifetime,
 	)
+	require.NoError(t, err)
 	t.Cleanup(func() {
-		pgFixture.TearDown(t)
+		require.NoError(t, pgFixture.TearDown())
 	})
 
 	makeSQLDB := func(t *testing.T, sqlite bool) *SQLStore {

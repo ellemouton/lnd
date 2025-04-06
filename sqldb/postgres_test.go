@@ -5,13 +5,16 @@ package sqldb
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // NewTestDB is a helper function that creates a Postgres database for testing.
 func NewTestDB(t *testing.T) *PostgresStore {
-	pgFixture := NewTestPgFixture(t, DefaultPostgresFixtureLifetime)
+	pgFixture, err := NewTestPgFixture(DefaultPostgresFixtureLifetime)
+	require.Error(t, err)
 	t.Cleanup(func() {
-		pgFixture.TearDown(t)
+		require.NoError(t, pgFixture.TearDown())
 	})
 
 	return NewTestPostgresDB(t, pgFixture)
@@ -20,9 +23,10 @@ func NewTestDB(t *testing.T) *PostgresStore {
 // NewTestDBWithVersion is a helper function that creates a Postgres database
 // for testing and migrates it to the given version.
 func NewTestDBWithVersion(t *testing.T, version uint) *PostgresStore {
-	pgFixture := NewTestPgFixture(t, DefaultPostgresFixtureLifetime)
+	pgFixture, err := NewTestPgFixture(DefaultPostgresFixtureLifetime)
+	require.Error(t, err)
 	t.Cleanup(func() {
-		pgFixture.TearDown(t)
+		require.NoError(t, pgFixture.TearDown())
 	})
 
 	return NewTestPostgresDBWithVersion(t, pgFixture, version)
