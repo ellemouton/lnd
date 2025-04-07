@@ -2,6 +2,7 @@ package graphdb
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -1064,7 +1065,7 @@ func TestGraphTraversal(t *testing.T) {
 	numNodeChans := 0
 	firstNode, secondNode := nodeList[0], nodeList[1]
 	err = graph.ForEachNodeChannel(firstNode.PubKeyBytes,
-		func(_ kvdb.RTx, _ *models.ChannelEdgeInfo, outEdge,
+		func(_ *models.ChannelEdgeInfo, outEdge,
 			inEdge *models.ChannelEdgePolicy) error {
 
 			// All channels between first and second node should
@@ -1144,7 +1145,7 @@ func TestGraphTraversalCacheable(t *testing.T) {
 
 	err = graph.db.View(func(tx kvdb.RTx) error {
 		for _, node := range nodes {
-			err := graph.ForEachNodeChannelTx(tx, node,
+			err := graph.forEachNodeChannelTx(tx, node,
 				func(tx kvdb.RTx, info *models.ChannelEdgeInfo,
 					policy *models.ChannelEdgePolicy,
 					policy2 *models.ChannelEdgePolicy) error { //nolint:ll
@@ -2845,7 +2846,7 @@ func TestIncompleteChannelPolicies(t *testing.T) {
 
 		calls := 0
 		err := graph.ForEachNodeChannel(node.PubKeyBytes,
-			func(_ kvdb.RTx, _ *models.ChannelEdgeInfo, outEdge,
+			func(_ *models.ChannelEdgeInfo, outEdge,
 				inEdge *models.ChannelEdgePolicy) error {
 
 				if !expectedOut && outEdge != nil {
@@ -3989,8 +3990,7 @@ func BenchmarkForEachChannel(b *testing.B) {
 		require.NoError(b, err)
 
 		for _, n := range nodes {
-			cb := func(tx kvdb.RTx,
-				info *models.ChannelEdgeInfo,
+			cb := func(info *models.ChannelEdgeInfo,
 				policy *models.ChannelEdgePolicy,
 				policy2 *models.ChannelEdgePolicy) error { //nolint:ll
 
@@ -4105,7 +4105,7 @@ func TestGraphLoading(t *testing.T) {
 
 	graph, err := NewChannelGraph(&Config{KVDB: backend})
 	require.NoError(t, err)
-	require.NoError(t, graph.Start())
+	require.NoError(t, graph.Start(context.Background()))
 	t.Cleanup(func() {
 		require.NoError(t, graph.Stop())
 	})
@@ -4119,7 +4119,7 @@ func TestGraphLoading(t *testing.T) {
 	// populated.
 	graphReloaded, err := NewChannelGraph(&Config{KVDB: backend})
 	require.NoError(t, err)
-	require.NoError(t, graphReloaded.Start())
+	require.NoError(t, graphReloaded.Start(context.Background()))
 	t.Cleanup(func() {
 		require.NoError(t, graphReloaded.Stop())
 	})

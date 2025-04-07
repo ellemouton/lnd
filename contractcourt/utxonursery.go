@@ -16,7 +16,6 @@ import (
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/fn/v2"
-	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/labels"
 	"github.com/lightningnetwork/lnd/lnutils"
@@ -1467,10 +1466,10 @@ func (k *kidOutput) Encode(w io.Writer) error {
 	}
 
 	op := k.OutPoint()
-	if err := graphdb.WriteOutpoint(w, &op); err != nil {
+	if err := channeldb.WriteOutpoint(w, &op); err != nil {
 		return err
 	}
-	if err := graphdb.WriteOutpoint(w, k.OriginChanPoint()); err != nil {
+	if err := channeldb.WriteOutpoint(w, k.OriginChanPoint()); err != nil {
 		return err
 	}
 
@@ -1522,12 +1521,12 @@ func (k *kidOutput) Decode(r io.Reader) error {
 	}
 	k.amt = btcutil.Amount(byteOrder.Uint64(scratch[:]))
 
-	err := graphdb.ReadOutpoint(io.LimitReader(r, 40), &k.outpoint)
+	err := channeldb.ReadOutpoint(io.LimitReader(r, 40), &k.outpoint)
 	if err != nil {
 		return err
 	}
 
-	err = graphdb.ReadOutpoint(io.LimitReader(r, 40), &k.originChanPoint)
+	err = channeldb.ReadOutpoint(io.LimitReader(r, 40), &k.originChanPoint)
 	if err != nil {
 		return err
 	}

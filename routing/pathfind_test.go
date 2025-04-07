@@ -2,6 +2,7 @@ package routing
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -173,7 +174,7 @@ func makeTestGraph(t *testing.T, useCache bool) (*graphdb.ChannelGraph,
 	if err != nil {
 		return nil, nil, err
 	}
-	require.NoError(t, graph.Start())
+	require.NoError(t, graph.Start(context.Background()))
 	t.Cleanup(func() {
 		require.NoError(t, graph.Stop())
 	})
