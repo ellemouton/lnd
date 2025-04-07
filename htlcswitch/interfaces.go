@@ -85,8 +85,8 @@ type dustHandler interface {
 type scidAliasHandler interface {
 	// attachFailAliasUpdate allows the link to properly fail incoming
 	// HTLCs on option_scid_alias channels.
-	attachFailAliasUpdate(failClosure func(
-		sid lnwire.ShortChannelID,
+	attachFailAliasUpdate(failClosure func(ctx context.Context,
+		ksid lnwire.ShortChannelID,
 		incoming bool) *lnwire.ChannelUpdate1)
 
 	// getAliases fetches the link's underlying aliases. This is used by
@@ -281,7 +281,8 @@ type ChannelLink interface {
 	// a LinkError with a valid protocol failure message should be returned
 	// in order to signal to the source of the HTLC, the policy consistency
 	// issue.
-	CheckHtlcForward(payHash [32]byte, incomingAmt lnwire.MilliSatoshi,
+	CheckHtlcForward(ctx context.Context, payHash [32]byte,
+		incomingAmt lnwire.MilliSatoshi,
 		amtToForward lnwire.MilliSatoshi, incomingTimeout,
 		outgoingTimeout uint32, inboundFee models.InboundFee,
 		heightNow uint32, scid lnwire.ShortChannelID,
@@ -292,8 +293,8 @@ type ChannelLink interface {
 	// valid protocol failure message should be returned in order to signal
 	// the violation. This call is intended to be used for locally initiated
 	// payments for which there is no corresponding incoming htlc.
-	CheckHtlcTransit(payHash [32]byte, amt lnwire.MilliSatoshi,
-		timeout uint32, heightNow uint32,
+	CheckHtlcTransit(ctx context.Context, payHash [32]byte,
+		amt lnwire.MilliSatoshi, timeout uint32, heightNow uint32,
 		customRecords lnwire.CustomRecords) *LinkError
 
 	// Stats return the statistics of channel link. Number of updates,
@@ -327,7 +328,7 @@ type ChannelLink interface {
 		ts AuxTrafficShaper) fn.Result[OptionalBandwidth]
 
 	// Start starts the channel link.
-	Start() error
+	Start(ctx context.Context) error
 
 	// Stop requests the channel link to be shut down.
 	Stop()
@@ -434,25 +435,25 @@ type InterceptedForward interface {
 	// Resume notifies the intention to resume an existing hold forward. This
 	// basically means the caller wants to resume with the default behavior for
 	// this htlc which usually means forward it.
-	Resume() error
+	Resume(ctx context.Context) error
 
 	// ResumeModified notifies the intention to resume an existing hold
 	// forward with modified fields.
-	ResumeModified(inAmountMsat,
+	ResumeModified(ctx context.Context, inAmountMsat,
 		outAmountMsat fn.Option[lnwire.MilliSatoshi],
 		outWireCustomRecords fn.Option[lnwire.CustomRecords]) error
 
 	// Settle notifies the intention to settle an existing hold
 	// forward with a given preimage.
-	Settle(lntypes.Preimage) error
+	Settle(context.Context, lntypes.Preimage) error
 
 	// Fail notifies the intention to fail an existing hold forward with an
 	// encrypted failure reason.
-	Fail(reason []byte) error
+	Fail(ctx context.Context, reason []byte) error
 
 	// FailWithCode notifies the intention to fail an existing hold forward
 	// with the specified failure code.
-	FailWithCode(code lnwire.FailCode) error
+	FailWithCode(ctx context.Context, code lnwire.FailCode) error
 }
 
 // htlcNotifier is an interface which represents the input side of the

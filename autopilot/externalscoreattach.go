@@ -1,6 +1,7 @@
 package autopilot
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -80,7 +81,7 @@ func (s *ExternalScoreAttachment) SetNodeScores(targetHeuristic string,
 // not known will get a score of 0.
 //
 // NOTE: This is a part of the AttachmentHeuristic interface.
-func (s *ExternalScoreAttachment) NodeScores(g ChannelGraph, chans []LocalChannel,
+func (s *ExternalScoreAttachment) NodeScores(_ context.Context, g ChannelGraph, chans []LocalChannel,
 	chanSize btcutil.Amount, nodes map[NodeID]struct{}) (
 	map[NodeID]*NodeScore, error) {
 

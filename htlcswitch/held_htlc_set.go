@@ -1,6 +1,7 @@
 package htlcswitch
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -29,9 +30,11 @@ func (h *heldHtlcSet) forEach(cb func(InterceptedForward)) {
 }
 
 // popAll calls the callback for each forward and removes them from the set.
-func (h *heldHtlcSet) popAll(cb func(InterceptedForward)) {
+func (h *heldHtlcSet) popAll(ctx context.Context,
+	cb func(context.Context, InterceptedForward)) {
+
 	for _, fwd := range h.set {
-		cb(fwd)
+		cb(ctx, fwd)
 	}
 
 	h.set = make(map[models.CircuitKey]InterceptedForward)
@@ -39,13 +42,15 @@ func (h *heldHtlcSet) popAll(cb func(InterceptedForward)) {
 
 // popAutoFails calls the callback for each forward that has an auto-fail height
 // equal or less then the specified pop height and removes them from the set.
-func (h *heldHtlcSet) popAutoFails(height uint32, cb func(InterceptedForward)) {
+func (h *heldHtlcSet) popAutoFails(ctx context.Context, height uint32,
+	cb func(context.Context, InterceptedForward)) {
+
 	for key, fwd := range h.set {
 		if uint32(fwd.Packet().AutoFailHeight) > height {
 			continue
 		}
 
-		cb(fwd)
+		cb(ctx, fwd)
 
 		delete(h.set, key)
 	}

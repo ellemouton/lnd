@@ -1,6 +1,7 @@
 package graphdb
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/batch"
+	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -51,8 +53,9 @@ type ChannelGraph struct {
 	*KVStore
 	*topologyManager
 
-	quit chan struct{}
-	wg   sync.WaitGroup
+	quit   chan struct{}
+	wg     sync.WaitGroup
+	cancel fn.Option[context.CancelFunc]
 }
 
 // NewChannelGraph creates a new ChannelGraph instance with the given backend.
@@ -87,22 +90,25 @@ func NewChannelGraph(cfg *Config, options ...ChanGraphOption) (*ChannelGraph,
 // Start kicks off any goroutines required for the ChannelGraph to function.
 // If the graph cache is enabled, then it will be populated with the contents of
 // the database.
-func (c *ChannelGraph) Start() error {
+func (c *ChannelGraph) Start(ctx context.Context) error {
 	if !c.started.CompareAndSwap(false, true) {
 		return nil
 	}
 	log.Debugf("ChannelGraph starting")
 	defer log.Debug("ChannelGraph started")
 
+	ctx, cancel := context.WithCancel(ctx)
+	c.cancel = fn.Some(cancel)
+
 	if c.graphCache != nil {
-		if err := c.populateCache(); err != nil {
+		if err := c.populateCache(ctx); err != nil {
 			return fmt.Errorf("could not populate the graph "+
 				"cache: %w", err)
 		}
 	}
 
 	c.wg.Add(1)
-	go c.handleTopologySubscriptions()
+	go c.handleTopologySubscriptions(ctx)
 
 	return nil
 }
@@ -127,7 +133,7 @@ func (c *ChannelGraph) Stop() error {
 // synchronously.
 //
 // NOTE: this MUST be run in a goroutine.
-func (c *ChannelGraph) handleTopologySubscriptions() {
+func (c *ChannelGraph) handleTopologySubscriptions(ctx context.Context) {
 	defer c.wg.Done()
 
 	for {
@@ -139,7 +145,7 @@ func (c *ChannelGraph) handleTopologySubscriptions() {
 			// synchronously so that we can guarantee the order of
 			// notification delivery.
 			c.wg.Add(1)
-			go c.handleTopologyUpdate(update)
+			go c.handleTopologyUpdate(ctx, update)
 
 			// TODO(roasbeef): remove all unconnected vertexes
 			// after N blocks pass with no corresponding
@@ -179,12 +185,12 @@ func (c *ChannelGraph) handleTopologySubscriptions() {
 // populateCache loads the entire channel graph into the in-memory graph cache.
 //
 // NOTE: This should only be called if the graphCache has been constructed.
-func (c *ChannelGraph) populateCache() error {
+func (c *ChannelGraph) populateCache(ctx context.Context) error {
 	startTime := time.Now()
 	log.Info("Populating in-memory channel graph, this might take a " +
 		"while...")
 
-	err := c.KVStore.ForEachNodeCacheable(func(node route.Vertex,
+	err := c.KVStore.ForEachNodeCacheable(ctx, func(node route.Vertex,
 		features *lnwire.FeatureVector) error {
 
 		c.graphCache.AddNodeFeatures(node, features)
@@ -195,7 +201,7 @@ func (c *ChannelGraph) populateCache() error {
 		return err
 	}
 
-	err = c.KVStore.ForEachChannel(func(info *models.ChannelEdgeInfo,
+	err = c.KVStore.ForEachChannel(ctx, func(info *models.ChannelEdgeInfo,
 		policy1, policy2 *models.ChannelEdgePolicy) error {
 
 		c.graphCache.AddChannel(info, policy1, policy2)
@@ -222,14 +228,14 @@ func (c *ChannelGraph) populateCache() error {
 // Unknown policies are passed into the callback as nil values.
 //
 // NOTE: this is part of the graphdb.NodeTraverser interface.
-func (c *ChannelGraph) ForEachNodeDirectedChannel(node route.Vertex,
-	cb func(channel *DirectedChannel) error) error {
+func (c *ChannelGraph) ForEachNodeDirectedChannel(ctx context.Context,
+	node route.Vertex, cb func(channel *DirectedChannel) error) error {
 
 	if c.graphCache != nil {
 		return c.graphCache.ForEachChannel(node, cb)
 	}
 
-	return c.KVStore.ForEachNodeDirectedChannel(node, cb)
+	return c.KVStore.ForEachNodeDirectedChannel(ctx, node, cb)
 }
 
 // FetchNodeFeatures returns the features of the given node. If no features are
@@ -238,40 +244,43 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(node route.Vertex,
 // features instead of the database.
 //
 // NOTE: this is part of the graphdb.NodeTraverser interface.
-func (c *ChannelGraph) FetchNodeFeatures(node route.Vertex) (
-	*lnwire.FeatureVector, error) {
+func (c *ChannelGraph) FetchNodeFeatures(ctx context.Context,
+	node route.Vertex) (*lnwire.FeatureVector, error) {
 
 	if c.graphCache != nil {
 		return c.graphCache.GetFeatures(node), nil
 	}
 
-	return c.KVStore.FetchNodeFeatures(node)
+	return c.KVStore.FetchNodeFeatures(ctx, node)
 }
 
 // GraphSession will provide the call-back with access to a NodeTraverser
 // instance which can be used to perform queries against the channel graph. If
 // the graph cache is not enabled, then the call-back will be provided with
 // access to the graph via a consistent read-only transaction.
-func (c *ChannelGraph) GraphSession(cb func(graph NodeTraverser) error) error {
+func (c *ChannelGraph) GraphSession(ctx context.Context,
+	cb func(ctx context.Context, graph NodeTraverser) error) error {
+
 	if c.graphCache != nil {
-		return cb(c)
+		return cb(ctx, c)
 	}
 
-	return c.KVStore.GraphSession(cb)
+	return c.KVStore.GraphSession(ctx, cb)
 }
 
 // ForEachNodeCached iterates through all the stored vertices/nodes in the
 // graph, executing the passed callback with each node encountered.
 //
 // NOTE: The callback contents MUST not be modified.
-func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
-	chans map[uint64]*DirectedChannel) error) error {
+func (c *ChannelGraph) ForEachNodeCached(ctx context.Context,
+	cb func(node route.Vertex,
+		chans map[uint64]*DirectedChannel) error) error {
 
 	if c.graphCache != nil {
 		return c.graphCache.ForEachNode(cb)
 	}
 
-	return c.KVStore.ForEachNodeCached(cb)
+	return c.KVStore.ForEachNodeCached(ctx, cb)
 }
 
 // AddLightningNode adds a vertex/node to the graph database. If the node is not
@@ -280,13 +289,13 @@ func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
 // information. Note that this method is expected to only be called to update an
 // already present node from a node announcement, or to insert a node found in a
 // channel update.
-func (c *ChannelGraph) AddLightningNode(node *models.LightningNode,
-	op ...batch.SchedulerOption) error {
+func (c *ChannelGraph) AddLightningNode(ctx context.Context,
+	node *models.LightningNode, op ...batch.SchedulerOption) error {
 
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 
-	err := c.KVStore.AddLightningNode(node, op...)
+	err := c.KVStore.AddLightningNode(ctx, node, op...)
 	if err != nil {
 		return err
 	}
@@ -330,13 +339,13 @@ func (c *ChannelGraph) DeleteLightningNode(nodePub route.Vertex) error {
 // involved in creation of the channel, and the set of features that the channel
 // supports. The chanPoint and chanID are used to uniquely identify the edge
 // globally within the database.
-func (c *ChannelGraph) AddChannelEdge(edge *models.ChannelEdgeInfo,
-	op ...batch.SchedulerOption) error {
+func (c *ChannelGraph) AddChannelEdge(ctx context.Context,
+	edge *models.ChannelEdgeInfo, op ...batch.SchedulerOption) error {
 
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 
-	err := c.KVStore.AddChannelEdge(edge, op...)
+	err := c.KVStore.AddChannelEdge(ctx, edge, op...)
 	if err != nil {
 		return err
 	}
@@ -357,11 +366,11 @@ func (c *ChannelGraph) AddChannelEdge(edge *models.ChannelEdgeInfo,
 // MarkEdgeLive clears an edge from our zombie index, deeming it as live.
 // If the cache is enabled, the edge will be added back to the graph cache if
 // we still have a record of this channel in the DB.
-func (c *ChannelGraph) MarkEdgeLive(chanID uint64) error {
+func (c *ChannelGraph) MarkEdgeLive(ctx context.Context, chanID uint64) error {
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 
-	err := c.KVStore.MarkEdgeLive(chanID)
+	err := c.KVStore.MarkEdgeLive(ctx, chanID)
 	if err != nil {
 		return err
 	}
@@ -369,7 +378,7 @@ func (c *ChannelGraph) MarkEdgeLive(chanID uint64) error {
 	if c.graphCache != nil {
 		// We need to add the channel back into our graph cache,
 		// otherwise we won't use it for path finding.
-		infos, err := c.KVStore.FetchChanInfos([]uint64{chanID})
+		infos, err := c.KVStore.FetchChanInfos(ctx, []uint64{chanID})
 		if err != nil {
 			return err
 		}
@@ -394,8 +403,8 @@ func (c *ChannelGraph) MarkEdgeLive(chanID uint64) error {
 // that we require the node that failed to send the fresh update to be the one
 // that resurrects the channel from its zombie state. The markZombie bool
 // denotes whether to mark the channel as a zombie.
-func (c *ChannelGraph) DeleteChannelEdges(strictZombiePruning, markZombie bool,
-	chanIDs ...uint64) error {
+func (c *ChannelGraph) DeleteChannelEdges(_ context.Context,
+	strictZombiePruning, markZombie bool, chanIDs ...uint64) error {
 
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
@@ -426,13 +435,13 @@ func (c *ChannelGraph) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 // set to the last prune height valid for the remaining chain.
 // Channels that were removed from the graph resulting from the
 // disconnected block are returned.
-func (c *ChannelGraph) DisconnectBlockAtHeight(height uint32) (
-	[]*models.ChannelEdgeInfo, error) {
+func (c *ChannelGraph) DisconnectBlockAtHeight(ctx context.Context,
+	height uint32) ([]*models.ChannelEdgeInfo, error) {
 
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 
-	edges, err := c.KVStore.DisconnectBlockAtHeight(height)
+	edges, err := c.KVStore.DisconnectBlockAtHeight(ctx, height)
 	if err != nil {
 		return nil, err
 	}
@@ -456,7 +465,8 @@ func (c *ChannelGraph) DisconnectBlockAtHeight(height uint32) (
 // prune the graph is stored so callers can ensure the graph is fully in sync
 // with the current UTXO state. A slice of channels that have been closed by
 // the target block are returned if the function succeeds without error.
-func (c *ChannelGraph) PruneGraph(spentOutputs []*wire.OutPoint,
+func (c *ChannelGraph) PruneGraph(ctx context.Context,
+	spentOutputs []*wire.OutPoint,
 	blockHash *chainhash.Hash, blockHeight uint32) (
 	[]*models.ChannelEdgeInfo, error) {
 
@@ -464,7 +474,7 @@ func (c *ChannelGraph) PruneGraph(spentOutputs []*wire.OutPoint,
 	defer c.cacheMu.Unlock()
 
 	edges, nodes, err := c.KVStore.PruneGraph(
-		spentOutputs, blockHash, blockHeight,
+		ctx, spentOutputs, blockHash, blockHeight,
 	)
 	if err != nil {
 		return nil, err
@@ -504,11 +514,11 @@ func (c *ChannelGraph) PruneGraph(spentOutputs []*wire.OutPoint,
 // any nodes from the channel graph that are currently unconnected. This ensure
 // that we only maintain a graph of reachable nodes. In the event that a pruned
 // node gains more channels, it will be re-added back to the graph.
-func (c *ChannelGraph) PruneGraphNodes() error {
+func (c *ChannelGraph) PruneGraphNodes(ctx context.Context) error {
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 
-	nodes, err := c.KVStore.PruneGraphNodes()
+	nodes, err := c.KVStore.PruneGraphNodes(ctx)
 	if err != nil {
 		return err
 	}
@@ -527,7 +537,8 @@ func (c *ChannelGraph) PruneGraphNodes() error {
 // words, we perform a set difference of our set of chan ID's and the ones
 // passed in. This method can be used by callers to determine the set of
 // channels another peer knows of that we don't.
-func (c *ChannelGraph) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo,
+func (c *ChannelGraph) FilterKnownChanIDs(ctx context.Context,
+	chansInfo []ChannelUpdateInfo,
 	isZombieChan func(time.Time, time.Time) bool) ([]uint64, error) {
 
 	unknown, knownZombies, err := c.KVStore.FilterKnownChanIDs(chansInfo)
@@ -560,7 +571,7 @@ func (c *ChannelGraph) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo,
 		// alive, and we let it be added to the set of IDs to query our
 		// peer for.
 		err := c.KVStore.MarkEdgeLive(
-			info.ShortChannelID.ToUint64(),
+			ctx, info.ShortChannelID.ToUint64(),
 		)
 		// Since there is a chance that the edge could have been marked
 		// as "live" between the FilterKnownChanIDs call and the
@@ -577,13 +588,13 @@ func (c *ChannelGraph) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo,
 // MarkEdgeZombie attempts to mark a channel identified by its channel ID as a
 // zombie. This method is used on an ad-hoc basis, when channels need to be
 // marked as zombies outside the normal pruning cycle.
-func (c *ChannelGraph) MarkEdgeZombie(chanID uint64,
+func (c *ChannelGraph) MarkEdgeZombie(ctx context.Context, chanID uint64,
 	pubKey1, pubKey2 [33]byte) error {
 
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 
-	err := c.KVStore.MarkEdgeZombie(chanID, pubKey1, pubKey2)
+	err := c.KVStore.MarkEdgeZombie(ctx, chanID, pubKey1, pubKey2)
 	if err != nil {
 		return err
 	}
@@ -602,13 +613,13 @@ func (c *ChannelGraph) MarkEdgeZombie(chanID uint64,
 // updated, otherwise it's the second node's information. The node ordering is
 // determined by the lexicographical ordering of the identity public keys of the
 // nodes on either side of the channel.
-func (c *ChannelGraph) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
-	op ...batch.SchedulerOption) error {
+func (c *ChannelGraph) UpdateEdgePolicy(ctx context.Context,
+	edge *models.ChannelEdgePolicy, op ...batch.SchedulerOption) error {
 
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 
-	from, to, err := c.KVStore.UpdateEdgePolicy(edge, op...)
+	from, to, err := c.KVStore.UpdateEdgePolicy(ctx, edge, op...)
 	if err != nil {
 		return err
 	}

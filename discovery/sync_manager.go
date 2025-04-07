@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/lnpeer"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -200,13 +201,13 @@ type SyncManager struct {
 	// number of queries.
 	rateLimiter *rate.Limiter
 
-	wg   sync.WaitGroup
-	quit chan struct{}
+	wg     sync.WaitGroup
+	quit   chan struct{}
+	cancel fn.Option[context.CancelFunc]
 }
 
 // newSyncManager constructs a new SyncManager backed by the given config.
 func newSyncManager(cfg *SyncManagerCfg) *SyncManager {
-
 	filterSema := make(chan struct{}, filterSemaSize)
 	for i := 0; i < filterSemaSize; i++ {
 		filterSema <- struct{}{}
@@ -246,10 +247,13 @@ func newSyncManager(cfg *SyncManagerCfg) *SyncManager {
 }
 
 // Start starts the SyncManager in order to properly carry out its duties.
-func (m *SyncManager) Start() {
+func (m *SyncManager) Start(ctx context.Context) {
 	m.start.Do(func() {
+		ctx, cancel := context.WithCancel(ctx)
+		m.cancel = fn.Some(cancel)
+
 		m.wg.Add(1)
-		go m.syncerHandler()
+		go m.syncerHandler(ctx)
 	})
 }
 
@@ -259,6 +263,7 @@ func (m *SyncManager) Stop() {
 		log.Debugf("SyncManager is stopping")
 		defer log.Debugf("SyncManager stopped")
 
+		m.cancel.WhenSome(func(fn context.CancelFunc) { fn() })
 		close(m.quit)
 		m.wg.Wait()
 
@@ -282,7 +287,7 @@ func (m *SyncManager) Stop() {
 //     much of the public network as possible.
 //
 // NOTE: This must be run as a goroutine.
-func (m *SyncManager) syncerHandler() {
+func (m *SyncManager) syncerHandler(ctx context.Context) {
 	defer m.wg.Done()
 
 	m.cfg.RotateTicker.Resume()
@@ -380,7 +385,7 @@ func (m *SyncManager) syncerHandler() {
 			}
 			m.syncersMu.Unlock()
 
-			s.Start()
+			s.Start(ctx)
 
 			// Once we create the GossipSyncer, we'll signal to the
 			// caller that they can proceed since the SyncManager's

@@ -3888,6 +3888,7 @@ func (c *interceptableSwitchTestContext) createSettlePacket(
 
 func TestSwitchHoldForward(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	c := newInterceptableSwitchTestContext(t)
 	defer c.finish()
@@ -3906,7 +3907,7 @@ func TestSwitchHoldForward(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	require.NoError(t, switchForwardInterceptor.Start())
+	require.NoError(t, switchForwardInterceptor.Start(ctx))
 
 	switchForwardInterceptor.SetInterceptor(c.forwardInterceptor.InterceptForwardHtlc)
 	linkQuit := make(chan struct{})
@@ -3927,7 +3928,7 @@ func TestSwitchHoldForward(t *testing.T) {
 
 	// Simulate an error during the composition of the failure message.
 	currentCallback := c.s.cfg.FetchLastChannelUpdate
-	c.s.cfg.FetchLastChannelUpdate = func(
+	c.s.cfg.FetchLastChannelUpdate = func(context.Context,
 		lnwire.ShortChannelID) (*lnwire.ChannelUpdate1, error) {
 
 		return nil, errors.New("cannot fetch update")
@@ -4110,7 +4111,7 @@ func TestSwitchHoldForward(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	require.NoError(t, switchForwardInterceptor.Start())
+	require.NoError(t, switchForwardInterceptor.Start(ctx))
 
 	// Forward a fresh packet. It is expected to be failed immediately,
 	// because there is no interceptor registered.
@@ -4178,6 +4179,7 @@ func TestSwitchHoldForward(t *testing.T) {
 
 func TestInterceptableSwitchWatchDog(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	c := newInterceptableSwitchTestContext(t)
 	defer c.finish()
@@ -4197,7 +4199,7 @@ func TestInterceptableSwitchWatchDog(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	require.NoError(t, switchForwardInterceptor.Start())
+	require.NoError(t, switchForwardInterceptor.Start(ctx))
 
 	// Set interceptor.
 	switchForwardInterceptor.SetInterceptor(
@@ -5431,6 +5433,7 @@ func TestSwitchAliasInterceptFail(t *testing.T) {
 
 func testSwitchAliasInterceptFail(t *testing.T, zeroConf bool) {
 	t.Parallel()
+	ctx := context.Background()
 
 	chanID, aliceScid := genID()
 
@@ -5516,7 +5519,7 @@ func testSwitchAliasInterceptFail(t *testing.T, zeroConf bool) {
 		},
 	)
 	require.NoError(t, err)
-	require.NoError(t, interceptSwitch.Start())
+	require.NoError(t, interceptSwitch.Start(ctx))
 	interceptSwitch.SetInterceptor(forwardInterceptor.InterceptForwardHtlc)
 
 	err = interceptSwitch.ForwardPackets(nil, false, ogPacket)

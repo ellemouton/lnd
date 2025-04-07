@@ -1,6 +1,7 @@
 package autopilot
 
 import (
+	"context"
 	"encoding/hex"
 	"net"
 	"sort"
@@ -117,7 +118,9 @@ func (d *dbNode) ForEachChannel(cb func(ChannelEdge) error) error {
 // error, then execution should be terminated.
 //
 // NOTE: Part of the autopilot.ChannelGraph interface.
-func (d *databaseChannelGraph) ForEachNode(cb func(Node) error) error {
+func (d *databaseChannelGraph) ForEachNode(_ context.Context,
+	cb func(Node) error) error {
+
 	return d.db.ForEachNode(func(nodeTx graphdb.NodeRTx) error {
 		// We'll skip over any node that doesn't have any advertised
 		// addresses. As we won't be able to reach them to actually
@@ -208,8 +211,10 @@ func (nc dbNodeCached) ForEachChannel(cb func(ChannelEdge) error) error {
 // error, then execution should be terminated.
 //
 // NOTE: Part of the autopilot.ChannelGraph interface.
-func (dc *databaseChannelGraphCached) ForEachNode(cb func(Node) error) error {
-	return dc.db.ForEachNodeCached(func(n route.Vertex,
+func (dc *databaseChannelGraphCached) ForEachNode(ctx context.Context,
+	cb func(Node) error) error {
+
+	return dc.db.ForEachNodeCached(ctx, func(n route.Vertex,
 		channels map[uint64]*graphdb.DirectedChannel) error {
 
 		if len(channels) > 0 {

@@ -1,6 +1,7 @@
 package lnd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -223,8 +224,10 @@ func initAutoPilot(svr *server, cfg *lncfg.AutoPilot,
 						"address type %T", addr)
 				}
 
+				ctx := context.TODO()
 				err := svr.ConnectToPeer(
-					lnAddr, false, svr.cfg.ConnectionTimeout,
+					ctx, lnAddr, false,
+					svr.cfg.ConnectionTimeout,
 				)
 				if err != nil {
 					// If we weren't able to connect to the

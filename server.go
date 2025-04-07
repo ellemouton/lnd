@@ -51,7 +51,6 @@ import (
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/keychain"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnencrypt"
 	"github.com/lightningnetwork/lnd/lnpeer"
@@ -554,7 +553,7 @@ func noiseDial(idKey keychain.SingleKeyECDH,
 
 // newServer creates a new instance of the server which is to listen using the
 // passed listener address.
-func newServer(cfg *Config, listenAddrs []net.Addr,
+func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	dbs *DatabaseInstances, cc *chainreg.ChainControl,
 	nodeKeyDesc *keychain.KeyDescriptor,
 	chansToRestore walletunlocker.ChannelsToRecover,
@@ -1069,7 +1068,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		MinProbability: routingConfig.MinRouteProbability,
 	}
 
-	sourceNode, err := dbs.GraphDB.SourceNode()
+	sourceNode, err := dbs.GraphDB.SourceNode(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("error getting source node: %w", err)
 	}
@@ -1206,11 +1205,13 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	s.localChanMgr = &localchans.Manager{
 		SelfPub:              nodeKeyDesc.PubKey,
 		DefaultRoutingPolicy: cc.RoutingPolicy,
-		ForAllOutgoingChannels: func(cb func(*models.ChannelEdgeInfo,
-			*models.ChannelEdgePolicy) error) error {
+		ForAllOutgoingChannels: func(ctx context.Context,
+			cb func(*models.ChannelEdgeInfo,
+				*models.ChannelEdgePolicy) error) error {
 
-			return s.graphDB.ForEachNodeChannel(selfVertex,
-				func(_ kvdb.RTx, c *models.ChannelEdgeInfo,
+			return s.graphDB.ForEachNodeChannel(
+				ctx, selfVertex,
+				func(c *models.ChannelEdgeInfo,
 					e *models.ChannelEdgePolicy,
 					_ *models.ChannelEdgePolicy) error {
 
@@ -1223,8 +1224,10 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		PropagateChanPolicyUpdate: s.authGossiper.PropagateChanPolicyUpdate,
 		UpdateForwardingPolicies:  s.htlcSwitch.UpdateForwardingPolicies,
 		FetchChannel:              s.chanStateDB.FetchChannel,
-		AddEdge: func(edge *models.ChannelEdgeInfo) error {
-			return s.graphBuilder.AddEdge(edge)
+		AddEdge: func(ctx context.Context,
+			edge *models.ChannelEdgeInfo) error {
+
+			return s.graphBuilder.AddEdge(ctx, edge)
 		},
 	}
 
@@ -1460,11 +1463,11 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	// Wrap the DeleteChannelEdges method so that the funding manager can
 	// use it without depending on several layers of indirection.
-	deleteAliasEdge := func(scid lnwire.ShortChannelID) (
-		*models.ChannelEdgePolicy, error) {
+	deleteAliasEdge := func(ctx context.Context,
+		scid lnwire.ShortChannelID) (*models.ChannelEdgePolicy, error) {
 
 		info, e1, e2, err := s.graphDB.FetchChannelEdgesByID(
-			scid.ToUint64(),
+			ctx, scid.ToUint64(),
 		)
 		if errors.Is(err, graphdb.ErrEdgeNotFound) {
 			// This is unlikely but there is a slim chance of this
@@ -1493,7 +1496,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		}
 
 		err = s.graphDB.DeleteChannelEdges(
-			false, false, scid.ToUint64(),
+			ctx, false, false, scid.ToUint64(),
 		)
 		return ourPolicy, err
 	}
@@ -1714,13 +1717,13 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		cfg.BackupFilePath, cfg.NoBackupArchive,
 	)
 	startingChans, err := chanbackup.FetchStaticChanBackups(
-		s.chanStateDB, s.addrSource,
+		ctx, s.chanStateDB, s.addrSource,
 	)
 	if err != nil {
 		return nil, err
 	}
 	s.chanSubSwapper, err = chanbackup.NewSubSwapper(
-		startingChans, chanNotifier, s.cc.KeyRing, backupFile,
+		ctx, startingChans, chanNotifier, s.cc.KeyRing, backupFile,
 	)
 	if err != nil {
 		return nil, err
@@ -1899,14 +1902,18 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	// maintaining persistent outbound connections and also accepting new
 	// incoming connections
 	cmgr, err := connmgr.New(&connmgr.Config{
-		Listeners:      listeners,
-		OnAccept:       s.InboundPeerConnected,
+		Listeners: listeners,
+		OnAccept: func(conn net.Conn) {
+			s.InboundPeerConnected(ctx, conn)
+		},
 		RetryDuration:  time.Second * 5,
 		TargetOutbound: 100,
 		Dial: noiseDial(
 			nodeKeyECDH, s.cfg.net, s.cfg.ConnectionTimeout,
 		),
-		OnConnection: s.OutboundPeerConnected,
+		OnConnection: func(req *connmgr.ConnReq, conn net.Conn) {
+			s.OutboundPeerConnected(ctx, req, conn)
+		},
 	})
 	if err != nil {
 		return nil, err
@@ -2217,7 +2224,7 @@ func (s *server) startLowLevelServices() error {
 // NOTE: This function is safe for concurrent access.
 //
 //nolint:funlen
-func (s *server) Start() error {
+func (s *server) Start(ctx context.Context) error {
 	// Get the current blockbeat.
 	beat, err := s.getStartingBeat()
 	if err != nil {
@@ -2336,7 +2343,7 @@ func (s *server) Start() error {
 		}
 
 		cleanup = cleanup.add(s.fundingMgr.Stop)
-		if err := s.fundingMgr.Start(); err != nil {
+		if err := s.fundingMgr.Start(ctx); err != nil {
 			startErr = err
 			return
 		}
@@ -2345,13 +2352,13 @@ func (s *server) Start() error {
 		// relies on htlcSwitch to deliver resolution message upon
 		// start.
 		cleanup = cleanup.add(s.htlcSwitch.Stop)
-		if err := s.htlcSwitch.Start(); err != nil {
+		if err := s.htlcSwitch.Start(ctx); err != nil {
 			startErr = err
 			return
 		}
 
 		cleanup = cleanup.add(s.interceptableSwitch.Stop)
-		if err := s.interceptableSwitch.Start(); err != nil {
+		if err := s.interceptableSwitch.Start(ctx); err != nil {
 			startErr = err
 			return
 		}
@@ -2369,13 +2376,13 @@ func (s *server) Start() error {
 		}
 
 		cleanup = cleanup.add(s.graphDB.Stop)
-		if err := s.graphDB.Start(); err != nil {
+		if err := s.graphDB.Start(ctx); err != nil {
 			startErr = err
 			return
 		}
 
 		cleanup = cleanup.add(s.graphBuilder.Stop)
-		if err := s.graphBuilder.Start(); err != nil {
+		if err := s.graphBuilder.Start(ctx); err != nil {
 			startErr = err
 			return
 		}
@@ -2388,7 +2395,7 @@ func (s *server) Start() error {
 		// The authGossiper depends on the chanRouter and therefore
 		// should be started after it.
 		cleanup = cleanup.add(s.authGossiper.Stop)
-		if err := s.authGossiper.Start(); err != nil {
+		if err := s.authGossiper.Start(ctx); err != nil {
 			startErr = err
 			return
 		}
@@ -2434,7 +2441,7 @@ func (s *server) Start() error {
 		}
 		if len(s.chansToRestore.PackedSingleChanBackups) != 0 {
 			_, err := chanbackup.UnpackAndRecoverSingles(
-				s.chansToRestore.PackedSingleChanBackups,
+				ctx, s.chansToRestore.PackedSingleChanBackups,
 				s.cc.KeyRing, chanRestorer, s,
 			)
 			if err != nil {
@@ -2445,7 +2452,7 @@ func (s *server) Start() error {
 		}
 		if len(s.chansToRestore.PackedMultiChanBackup) != 0 {
 			_, err := chanbackup.UnpackAndRecoverMulti(
-				s.chansToRestore.PackedMultiChanBackup,
+				ctx, s.chansToRestore.PackedMultiChanBackup,
 				s.cc.KeyRing, chanRestorer, s,
 			)
 			if err != nil {
@@ -2519,7 +2526,7 @@ func (s *server) Start() error {
 			}
 
 			err = s.ConnectToPeer(
-				peerAddr, true,
+				ctx, peerAddr, true,
 				s.cfg.ConnectionTimeout,
 			)
 			if err != nil {
@@ -2626,7 +2633,9 @@ func (s *server) Start() error {
 			}
 
 			s.wg.Add(1)
-			go s.peerBootstrapper(defaultMinPeers, bootstrappers)
+			go s.peerBootstrapper(
+				ctx, defaultMinPeers, bootstrappers,
+			)
 		} else {
 			srvrLog.Infof("Auto peer bootstrapping is disabled")
 		}
@@ -2662,6 +2671,8 @@ func (s *server) Stop() error {
 		atomic.StoreInt32(&s.stopping, 1)
 
 		close(s.quit)
+
+		ctx := context.Background()
 
 		// Shutdown connMgr first to prevent conns during shutdown.
 		s.connMgr.Stop()
@@ -2734,7 +2745,7 @@ func (s *server) Stop() error {
 		// Update channel.backup file. Make sure to do it before
 		// stopping chanSubSwapper.
 		singles, err := chanbackup.FetchStaticChanBackups(
-			s.chanStateDB, s.addrSource,
+			ctx, s.chanStateDB, s.addrSource,
 		)
 		if err != nil {
 			srvrLog.Warnf("failed to fetch channel states: %v",
@@ -3073,7 +3084,7 @@ func (s *server) createBootstrapIgnorePeers() map[autopilot.NodeID]struct{} {
 // invariant, we ensure that our node is connected to a diverse set of peers
 // and that nodes newly joining the network receive an up to date network view
 // as soon as possible.
-func (s *server) peerBootstrapper(numTargetPeers uint32,
+func (s *server) peerBootstrapper(ctx context.Context, numTargetPeers uint32,
 	bootstrappers []discovery.NetworkPeerBootstrapper) {
 
 	defer s.wg.Done()
@@ -3083,7 +3094,7 @@ func (s *server) peerBootstrapper(numTargetPeers uint32,
 
 	// We'll start off by aggressively attempting connections to peers in
 	// order to be a part of the network as soon as possible.
-	s.initialPeerBootstrap(ignoreList, numTargetPeers, bootstrappers)
+	s.initialPeerBootstrap(ctx, ignoreList, numTargetPeers, bootstrappers)
 
 	// Once done, we'll attempt to maintain our target minimum number of
 	// peers.
@@ -3161,7 +3172,7 @@ func (s *server) peerBootstrapper(numTargetPeers uint32,
 			ignoreList = s.createBootstrapIgnorePeers()
 
 			peerAddrs, err := discovery.MultiSourceBootstrap(
-				ignoreList, numNeeded*2, bootstrappers...,
+				ctx, ignoreList, numNeeded*2, bootstrappers...,
 			)
 			if err != nil {
 				srvrLog.Errorf("Unable to retrieve bootstrap "+
@@ -3179,7 +3190,7 @@ func (s *server) peerBootstrapper(numTargetPeers uint32,
 					// country diversity, etc
 					errChan := make(chan error, 1)
 					s.connectToPeer(
-						a, errChan,
+						ctx, a, errChan,
 						s.cfg.ConnectionTimeout,
 					)
 					select {
@@ -3210,8 +3221,8 @@ const bootstrapBackOffCeiling = time.Minute * 5
 // initialPeerBootstrap attempts to continuously connect to peers on startup
 // until the target number of peers has been reached. This ensures that nodes
 // receive an up to date network view as soon as possible.
-func (s *server) initialPeerBootstrap(ignore map[autopilot.NodeID]struct{},
-	numTargetPeers uint32,
+func (s *server) initialPeerBootstrap(ctx context.Context,
+	ignore map[autopilot.NodeID]struct{}, numTargetPeers uint32,
 	bootstrappers []discovery.NetworkPeerBootstrapper) {
 
 	srvrLog.Debugf("Init bootstrap with targetPeers=%v, bootstrappers=%v, "+
@@ -3270,7 +3281,7 @@ func (s *server) initialPeerBootstrap(ignore map[autopilot.NodeID]struct{},
 		// in order to reach our target.
 		peersNeeded := numTargetPeers - numActivePeers
 		bootstrapAddrs, err := discovery.MultiSourceBootstrap(
-			ignore, peersNeeded, bootstrappers...,
+			ctx, ignore, peersNeeded, bootstrappers...,
 		)
 		if err != nil {
 			srvrLog.Errorf("Unable to retrieve initial bootstrap "+
@@ -3288,7 +3299,8 @@ func (s *server) initialPeerBootstrap(ignore map[autopilot.NodeID]struct{},
 
 				errChan := make(chan error, 1)
 				go s.connectToPeer(
-					addr, errChan, s.cfg.ConnectionTimeout,
+					ctx, addr, errChan,
+					s.cfg.ConnectionTimeout,
 				)
 
 				// We'll only allow this connection attempt to
@@ -3472,7 +3484,8 @@ func (s *server) genNodeAnnouncement(features *lnwire.RawFeatureVector,
 // applying the giving modifiers and updating the time stamp
 // to ensure it propagates through the network. Then it broadcasts
 // it to the network.
-func (s *server) updateAndBroadcastSelfNode(features *lnwire.RawFeatureVector,
+func (s *server) updateAndBroadcastSelfNode(ctx context.Context,
+	features *lnwire.RawFeatureVector,
 	modifiers ...netann.NodeAnnModifier) error {
 
 	newNodeAnn, err := s.genNodeAnnouncement(features, modifiers...)
@@ -3484,7 +3497,7 @@ func (s *server) updateAndBroadcastSelfNode(features *lnwire.RawFeatureVector,
 	// Update the on-disk version of our announcement.
 	// Load and modify self node istead of creating anew instance so we
 	// don't risk overwriting any existing values.
-	selfNode, err := s.graphDB.SourceNode()
+	selfNode, err := s.graphDB.SourceNode(ctx)
 	if err != nil {
 		return fmt.Errorf("unable to get current source node: %w", err)
 	}
@@ -3549,36 +3562,17 @@ func (s *server) establishPersistentConnections() error {
 	// After checking our previous connections for addresses to connect to,
 	// iterate through the nodes in our channel graph to find addresses
 	// that have been added via NodeAnnouncement messages.
-	sourceNode, err := s.graphDB.SourceNode()
-	if err != nil {
-		return fmt.Errorf("failed to fetch source node: %w", err)
-	}
-
 	// TODO(roasbeef): instead iterate over link nodes and query graph for
 	// each of the nodes.
-	selfPub := s.identityECDH.PubKey().SerializeCompressed()
-	err = s.graphDB.ForEachNodeChannel(sourceNode.PubKeyBytes, func(
-		tx kvdb.RTx,
-		chanInfo *models.ChannelEdgeInfo,
-		policy, _ *models.ChannelEdgePolicy) error {
+	err = s.graphDB.ForEachSourceNodeChannel(func(chanPoint wire.OutPoint,
+		havePolicy bool, channelPeer *models.LightningNode) error {
 
 		// If the remote party has announced the channel to us, but we
 		// haven't yet, then we won't have a policy. However, we don't
 		// need this to connect to the peer, so we'll log it and move on.
-		if policy == nil {
+		if !havePolicy {
 			srvrLog.Warnf("No channel policy found for "+
-				"ChannelPoint(%v): ", chanInfo.ChannelPoint)
-		}
-
-		// We'll now fetch the peer opposite from us within this
-		// channel so we can queue up a direct connection to them.
-		channelPeer, err := s.graphDB.FetchOtherNode(
-			tx, chanInfo, selfPub,
-		)
-		if err != nil {
-			return fmt.Errorf("unable to fetch channel peer for "+
-				"ChannelPoint(%v): %v", chanInfo.ChannelPoint,
-				err)
+				"ChannelPoint(%v): ", chanPoint)
 		}
 
 		pubStr := string(channelPeer.PubKeyBytes[:])
@@ -3638,8 +3632,7 @@ func (s *server) establishPersistentConnections() error {
 		return nil
 	})
 	if err != nil {
-		srvrLog.Errorf("Failed to iterate channels for node %x",
-			sourceNode.PubKeyBytes)
+		srvrLog.Errorf("Failed to iterate over source node channels")
 
 		if !errors.Is(err, graphdb.ErrGraphNoEdgesFound) &&
 			!errors.Is(err, graphdb.ErrEdgeNotFound) {
@@ -3991,7 +3984,7 @@ func shouldDropLocalConnection(local, remote *btcec.PublicKey) bool {
 // connection.
 //
 // NOTE: This function is safe for concurrent access.
-func (s *server) InboundPeerConnected(conn net.Conn) {
+func (s *server) InboundPeerConnected(ctx context.Context, conn net.Conn) {
 	// Exit early if we have already been instructed to shutdown, this
 	// prevents any delayed callbacks from accidentally registering peers.
 	if s.Stopped() {
@@ -4058,7 +4051,7 @@ func (s *server) InboundPeerConnected(conn net.Conn) {
 		// We were unable to locate an existing connection with the
 		// target peer, proceed to connect.
 		s.cancelConnReqs(pubStr, nil)
-		s.peerConnected(conn, nil, true, access)
+		s.peerConnected(ctx, conn, nil, true, access)
 
 	case nil:
 		// We already have a connection with the incoming peer. If the
@@ -4090,7 +4083,7 @@ func (s *server) InboundPeerConnected(conn net.Conn) {
 		s.removePeer(connectedPeer)
 		s.ignorePeerTermination[connectedPeer] = struct{}{}
 		s.scheduledPeerConnection[pubStr] = func() {
-			s.peerConnected(conn, nil, true, access)
+			s.peerConnected(ctx, conn, nil, true, access)
 		}
 	}
 }
@@ -4098,7 +4091,9 @@ func (s *server) InboundPeerConnected(conn net.Conn) {
 // OutboundPeerConnected initializes a new peer in response to a new outbound
 // connection.
 // NOTE: This function is safe for concurrent access.
-func (s *server) OutboundPeerConnected(connReq *connmgr.ConnReq, conn net.Conn) {
+func (s *server) OutboundPeerConnected(ctx context.Context,
+	connReq *connmgr.ConnReq, conn net.Conn) {
+
 	// Exit early if we have already been instructed to shutdown, this
 	// prevents any delayed callbacks from accidentally registering peers.
 	if s.Stopped() {
@@ -4192,7 +4187,7 @@ func (s *server) OutboundPeerConnected(connReq *connmgr.ConnReq, conn net.Conn) 
 	case ErrPeerNotConnected:
 		// We were unable to locate an existing connection with the
 		// target peer, proceed to connect.
-		s.peerConnected(conn, connReq, false, access)
+		s.peerConnected(ctx, conn, connReq, false, access)
 
 	case nil:
 		// We already have a connection with the incoming peer. If the
@@ -4226,7 +4221,7 @@ func (s *server) OutboundPeerConnected(connReq *connmgr.ConnReq, conn net.Conn) 
 		s.removePeer(connectedPeer)
 		s.ignorePeerTermination[connectedPeer] = struct{}{}
 		s.scheduledPeerConnection[pubStr] = func() {
-			s.peerConnected(conn, connReq, false, access)
+			s.peerConnected(ctx, conn, connReq, false, access)
 		}
 	}
 }
@@ -4358,8 +4353,8 @@ func (s *server) notifyFundingTimeoutPeerEvent(op wire.OutPoint,
 // peer by adding it to the server's global list of all active peers, and
 // starting all the goroutines the peer needs to function properly. The inbound
 // boolean should be true if the peer initiated the connection to us.
-func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
-	inbound bool, access peerAccessStatus) {
+func (s *server) peerConnected(ctx context.Context, conn net.Conn,
+	connReq *connmgr.ConnReq, inbound bool, access peerAccessStatus) {
 
 	brontideConn := conn.(*brontide.Conn)
 	addr := conn.RemoteAddr()
@@ -4517,7 +4512,7 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 	// includes sending and receiving Init messages, which would be a DOS
 	// vector if we held the server's mutex throughout the procedure.
 	s.wg.Add(1)
-	go s.peerInitializer(p)
+	go s.peerInitializer(ctx, p)
 }
 
 // addPeer adds the passed peer to the server's global state of all active
@@ -4572,7 +4567,7 @@ func (s *server) addPeer(p *peer.Brontide) {
 // be signaled of the new peer once the method returns.
 //
 // NOTE: This MUST be launched as a goroutine.
-func (s *server) peerInitializer(p *peer.Brontide) {
+func (s *server) peerInitializer(ctx context.Context, p *peer.Brontide) {
 	defer s.wg.Done()
 
 	pubBytes := p.IdentityKey().SerializeCompressed()
@@ -4596,11 +4591,11 @@ func (s *server) peerInitializer(p *peer.Brontide) {
 	// the peer is ever added to the ignorePeerTermination map, indicating
 	// that the server has already handled the removal of this peer.
 	s.wg.Add(1)
-	go s.peerTerminationWatcher(p, ready)
+	go s.peerTerminationWatcher(ctx, p, ready)
 
 	// Start the peer! If an error occurs, we Disconnect the peer, which
 	// will unblock the peerTerminationWatcher.
-	if err := p.Start(); err != nil {
+	if err := p.Start(ctx); err != nil {
 		srvrLog.Warnf("Starting peer=%x got error: %v", pubBytes, err)
 
 		p.Disconnect(fmt.Errorf("unable to start peer: %w", err))
@@ -4641,7 +4636,9 @@ func (s *server) peerInitializer(p *peer.Brontide) {
 // successfully, otherwise the peer should be disconnected instead.
 //
 // NOTE: This MUST be launched as a goroutine.
-func (s *server) peerTerminationWatcher(p *peer.Brontide, ready chan struct{}) {
+func (s *server) peerTerminationWatcher(ctx context.Context, p *peer.Brontide,
+	ready chan struct{}) {
+
 	defer s.wg.Done()
 
 	p.WaitForDisconnect(ready)
@@ -4730,7 +4727,7 @@ func (s *server) peerTerminationWatcher(p *peer.Brontide, ready chan struct{}) {
 
 	// We'll ensure that we locate all the peers advertised addresses for
 	// reconnection purposes.
-	advertisedAddrs, err := s.fetchNodeAdvertisedAddrs(pubKey)
+	advertisedAddrs, err := s.fetchNodeAdvertisedAddrs(ctx, pubKey)
 	switch {
 	// We found advertised addresses, so use them.
 	case err == nil:
@@ -4982,7 +4979,7 @@ func (s *server) removePeer(p *peer.Brontide) {
 // connection is established, or the initial handshake process fails.
 //
 // NOTE: This function is safe for concurrent access.
-func (s *server) ConnectToPeer(addr *lnwire.NetAddress,
+func (s *server) ConnectToPeer(ctx context.Context, addr *lnwire.NetAddress,
 	perm bool, timeout time.Duration) error {
 
 	targetPub := string(addr.IdentityKey.SerializeCompressed())
@@ -5044,7 +5041,7 @@ func (s *server) ConnectToPeer(addr *lnwire.NetAddress,
 	// the crypto negotiation breaks down, then return an error to the
 	// caller.
 	errChan := make(chan error, 1)
-	s.connectToPeer(addr, errChan, timeout)
+	s.connectToPeer(ctx, addr, errChan, timeout)
 
 	select {
 	case err := <-errChan:
@@ -5057,7 +5054,7 @@ func (s *server) ConnectToPeer(addr *lnwire.NetAddress,
 // connectToPeer establishes a connection to a remote peer. errChan is used to
 // notify the caller if the connection attempt has failed. Otherwise, it will be
 // closed.
-func (s *server) connectToPeer(addr *lnwire.NetAddress,
+func (s *server) connectToPeer(ctx context.Context, addr *lnwire.NetAddress,
 	errChan chan<- error, timeout time.Duration) {
 
 	conn, err := brontide.Dial(
@@ -5077,7 +5074,7 @@ func (s *server) connectToPeer(addr *lnwire.NetAddress,
 	srvrLog.Tracef("Brontide dialer made local=%v, remote=%v",
 		conn.LocalAddr(), conn.RemoteAddr())
 
-	s.OutboundPeerConnected(nil, conn)
+	s.OutboundPeerConnected(ctx, nil, conn)
 }
 
 // DisconnectPeer sends the request to server to close the connection with peer
@@ -5223,13 +5220,15 @@ func computeNextBackoff(currBackoff, maxBackoff time.Duration) time.Duration {
 var errNoAdvertisedAddr = errors.New("no advertised address found")
 
 // fetchNodeAdvertisedAddrs attempts to fetch the advertised addresses of a node.
-func (s *server) fetchNodeAdvertisedAddrs(pub *btcec.PublicKey) ([]net.Addr, error) {
+func (s *server) fetchNodeAdvertisedAddrs(ctx context.Context,
+	pub *btcec.PublicKey) ([]net.Addr, error) {
+
 	vertex, err := route.NewVertexFromBytes(pub.SerializeCompressed())
 	if err != nil {
 		return nil, err
 	}
 
-	node, err := s.graphDB.FetchLightningNode(vertex)
+	node, err := s.graphDB.FetchLightningNode(ctx, vertex)
 	if err != nil {
 		return nil, err
 	}
@@ -5243,12 +5242,17 @@ func (s *server) fetchNodeAdvertisedAddrs(pub *btcec.PublicKey) ([]net.Addr, err
 
 // fetchLastChanUpdate returns a function which is able to retrieve our latest
 // channel update for a target channel.
-func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
-	*lnwire.ChannelUpdate1, error) {
+func (s *server) fetchLastChanUpdate() func(context.Context,
+	lnwire.ShortChannelID) (*lnwire.ChannelUpdate1, error) {
 
 	ourPubKey := s.identityECDH.PubKey().SerializeCompressed()
-	return func(cid lnwire.ShortChannelID) (*lnwire.ChannelUpdate1, error) {
-		info, edge1, edge2, err := s.graphBuilder.GetChannelByID(cid)
+
+	return func(ctx context.Context, cid lnwire.ShortChannelID) (
+		*lnwire.ChannelUpdate1, error) {
+
+		info, edge1, edge2, err := s.graphBuilder.GetChannelByID(
+			ctx, cid,
+		)
 		if err != nil {
 			return nil, err
 		}

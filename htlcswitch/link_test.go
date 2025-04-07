@@ -6381,8 +6381,8 @@ func TestChannelLinkCanceledInvoice(t *testing.T) {
 	firstHop := n.bobChannelLink.ShortChanID()
 
 	invoice, payFunc, err := preparePayment(
-		n.aliceServer, n.bobServer, firstHop, hops, amount, htlcAmt,
-		totalTimelock,
+		context.Background(), n.aliceServer, n.bobServer, firstHop,
+		hops, amount, htlcAmt, totalTimelock,
 	)
 	require.NoError(t, err, "unable to prepare the payment")
 

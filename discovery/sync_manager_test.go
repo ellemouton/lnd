@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"reflect"
@@ -64,6 +65,7 @@ func newPinnedTestSyncManager(numActiveSyncers int,
 // NumActiveSyncers active syncers.
 func TestSyncManagerNumActiveSyncers(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	// We'll start by creating our test sync manager which will hold up to
 	// 3 active syncers.
@@ -82,7 +84,7 @@ func TestSyncManagerNumActiveSyncers(t *testing.T) {
 	}
 
 	syncMgr := newPinnedTestSyncManager(numActiveSyncers, pinnedSyncers)
-	syncMgr.Start()
+	syncMgr.Start(ctx)
 	defer syncMgr.Stop()
 
 	// First we'll start by adding the pinned syncers. These should
@@ -131,10 +133,11 @@ func TestSyncManagerNumActiveSyncers(t *testing.T) {
 // active syncer after losing one due to the peer disconnecting.
 func TestSyncManagerNewActiveSyncerAfterDisconnect(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	// We'll create our test sync manager to have two active syncers.
 	syncMgr := newTestSyncManager(2)
-	syncMgr.Start()
+	syncMgr.Start(ctx)
 	defer syncMgr.Stop()
 
 	// The first will be an active syncer that performs a historical sync
@@ -184,10 +187,11 @@ func TestSyncManagerNewActiveSyncerAfterDisconnect(t *testing.T) {
 // rotate our active syncers after a certain interval.
 func TestSyncManagerRotateActiveSyncerCandidate(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	// We'll create our sync manager with three active syncers.
 	syncMgr := newTestSyncManager(1)
-	syncMgr.Start()
+	syncMgr.Start(ctx)
 	defer syncMgr.Stop()
 
 	// The first syncer registered always performs a historical sync.
@@ -233,9 +237,10 @@ func TestSyncManagerRotateActiveSyncerCandidate(t *testing.T) {
 // when NumActiveSyncers is set to 0.
 func TestSyncManagerNoInitialHistoricalSync(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	syncMgr := newTestSyncManager(0)
-	syncMgr.Start()
+	syncMgr.Start(ctx)
 	defer syncMgr.Stop()
 
 	// We should not expect any messages from the peer.
@@ -260,6 +265,7 @@ func TestSyncManagerNoInitialHistoricalSync(t *testing.T) {
 // replacement.
 func TestSyncManagerInitialHistoricalSync(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	syncMgr := newTestSyncManager(1)
 
@@ -269,7 +275,7 @@ func TestSyncManagerInitialHistoricalSync(t *testing.T) {
 		t.Fatal("expected graph to not be considered as synced")
 	}
 
-	syncMgr.Start()
+	syncMgr.Start(ctx)
 	defer syncMgr.Stop()
 
 	// We should expect to see a QueryChannelRange message with a
@@ -336,9 +342,10 @@ func TestSyncManagerInitialHistoricalSync(t *testing.T) {
 // sync has completed, but we have lost all peers.
 func TestSyncManagerHistoricalSyncOnReconnect(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	syncMgr := newTestSyncManager(2)
-	syncMgr.Start()
+	syncMgr.Start(ctx)
 	defer syncMgr.Stop()
 
 	// We should expect to see a QueryChannelRange message with a
@@ -370,9 +377,10 @@ func TestSyncManagerHistoricalSyncOnReconnect(t *testing.T) {
 // historical syncs whenever the HistoricalSyncTicker fires.
 func TestSyncManagerForceHistoricalSync(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	syncMgr := newTestSyncManager(1)
-	syncMgr.Start()
+	syncMgr.Start(ctx)
 	defer syncMgr.Stop()
 
 	// We should expect to see a QueryChannelRange message with a
@@ -408,9 +416,10 @@ func TestSyncManagerForceHistoricalSync(t *testing.T) {
 // historical sync has stalled, but a replacement has fully completed.
 func TestSyncManagerGraphSyncedAfterHistoricalSyncReplacement(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	syncMgr := newTestSyncManager(1)
-	syncMgr.Start()
+	syncMgr.Start(ctx)
 	defer syncMgr.Stop()
 
 	// We should expect to see a QueryChannelRange message with a
@@ -462,13 +471,14 @@ func TestSyncManagerGraphSyncedAfterHistoricalSyncReplacement(t *testing.T) {
 // ActiveSync.
 func TestSyncManagerWaitUntilInitialHistoricalSync(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	const numActiveSyncers = 2
 
 	// We'll start by creating our test sync manager which will hold up to
 	// 2 active syncers.
 	syncMgr := newTestSyncManager(numActiveSyncers)
-	syncMgr.Start()
+	syncMgr.Start(ctx)
 	defer syncMgr.Stop()
 
 	// We'll go ahead and create our syncers.

@@ -2,6 +2,7 @@ package graph
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -78,7 +79,9 @@ func TestAddProof(t *testing.T) {
 
 	// Now we'll attempt to update the proof and check that it has been
 	// properly updated.
-	require.NoError(t, ctx.builder.AddProof(*chanID, &testAuthProof))
+	require.NoError(t, ctx.builder.AddProof(
+		context.Background(), *chanID, &testAuthProof,
+	))
 
 	info, _, _, err := ctx.builder.GetChannelByID(*chanID)
 	require.NoError(t, err, "unable to get channel")
@@ -106,7 +109,7 @@ func TestIgnoreNodeAnnouncement(t *testing.T) {
 	}
 	copy(node.PubKeyBytes[:], pub.SerializeCompressed())
 
-	err := ctx.builder.AddNode(node)
+	err := ctx.builder.AddNode(context.Background(), node)
 	if !IsError(err, ErrIgnored) {
 		t.Fatalf("expected to get ErrIgnore, instead got: %v", err)
 	}
@@ -116,6 +119,7 @@ func TestIgnoreNodeAnnouncement(t *testing.T) {
 // ignore a channel policy for a channel not in the graph.
 func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	const startingBlockHeight = 101
 
@@ -126,7 +130,7 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 	)
 	require.NoError(t, err, "unable to create graph")
 
-	ctx := createTestCtxFromGraphInstance(
+	tCtx := createTestCtxFromGraphInstance(
 		t, startingBlockHeight, testGraph, false,
 	)
 
@@ -146,7 +150,7 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 	fundingBlock := &wire.MsgBlock{
 		Transactions: []*wire.MsgTx{fundingTx},
 	}
-	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
+	tCtx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
 	edge := &models.ChannelEdgeInfo{
 		ChannelID:        chanID.ToUint64(),
@@ -169,18 +173,18 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 
 	// Attempt to update the edge. This should be ignored, since the edge
 	// is not yet added to the router.
-	err = ctx.builder.UpdateEdge(edgePolicy)
+	err = tCtx.builder.UpdateEdge(ctx, edgePolicy)
 	if !IsError(err, ErrIgnored) {
 		t.Fatalf("expected to get ErrIgnore, instead got: %v", err)
 	}
 
 	// Add the edge.
-	require.NoErrorf(t, ctx.builder.AddEdge(edge), "expected to be able "+
+	require.NoErrorf(t, tCtx.builder.AddEdge(edge), "expected to be able "+
 		"to add edge to the channel graph, even though the vertexes "+
 		"were unknown: %v.", err)
 
 	// Now updating the edge policy should succeed.
-	require.NoError(t, ctx.builder.UpdateEdge(edgePolicy))
+	require.NoError(t, tCtx.builder.UpdateEdge(ctx, edgePolicy))
 }
 
 // TestWakeUpOnStaleBranch tests that upon startup of the ChannelRouter, if the
@@ -189,9 +193,10 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 // confirmed on the stale chain, and resync to the main chain.
 func TestWakeUpOnStaleBranch(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	const startingBlockHeight = 101
-	ctx := createTestCtxSingleNode(t, startingBlockHeight)
+	tCtx := createTestCtxSingleNode(t, startingBlockHeight)
 
 	const chanValue = 10000
 
@@ -222,16 +227,16 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 			chanID1 = chanID.ToUint64()
 			fundingScript1 = script
 		}
-		ctx.chain.addBlock(block, height, rand.Uint32())
-		ctx.chain.setBestBlock(int32(height))
-		ctx.chainView.notifyBlock(block.BlockHash(), height,
+		tCtx.chain.addBlock(block, height, rand.Uint32())
+		tCtx.chain.setBestBlock(int32(height))
+		tCtx.chainView.notifyBlock(block.BlockHash(), height,
 			[]*wire.MsgTx{}, t)
 	}
 
 	// Give time to process new blocks
 	time.Sleep(time.Millisecond * 500)
 
-	_, forkHeight, err := ctx.chain.GetBestBlock()
+	_, forkHeight, err := tCtx.chain.GetBestBlock()
 	require.NoError(t, err, "unable to ge best block")
 
 	// Create 10 blocks on the minority chain, confirming chanID2.
@@ -254,9 +259,9 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 			chanID2 = chanID.ToUint64()
 			fundingScript2 = script
 		}
-		ctx.chain.addBlock(block, height, rand.Uint32())
-		ctx.chain.setBestBlock(int32(height))
-		ctx.chainView.notifyBlock(block.BlockHash(), height,
+		tCtx.chain.addBlock(block, height, rand.Uint32())
+		tCtx.chain.setBestBlock(int32(height))
+		tCtx.chainView.notifyBlock(block.BlockHash(), height,
 			[]*wire.MsgTx{}, t)
 	}
 	// Give time to process new blocks
@@ -282,7 +287,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 	copy(edge1.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
 	copy(edge1.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
 
-	if err := ctx.builder.AddEdge(edge1); err != nil {
+	if err := tCtx.builder.AddEdge(edge1); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
@@ -301,12 +306,12 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 	copy(edge2.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
 	copy(edge2.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
 
-	if err := ctx.builder.AddEdge(edge2); err != nil {
+	if err := tCtx.builder.AddEdge(edge2); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
 	// Check that the fundingTxs are in the graph db.
-	_, _, has, isZombie, err := ctx.graph.HasChannelEdge(chanID1)
+	_, _, has, isZombie, err := tCtx.graph.HasChannelEdge(chanID1)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID1)
 	}
@@ -317,7 +322,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		t.Fatal("edge was marked as zombie")
 	}
 
-	_, _, has, isZombie, err = ctx.graph.HasChannelEdge(chanID2)
+	_, _, has, isZombie, err = tCtx.graph.HasChannelEdge(chanID2)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID2)
 	}
@@ -329,7 +334,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 	}
 
 	// Stop the router, so we can reorg the chain while its offline.
-	if err := ctx.builder.Stop(); err != nil {
+	if err := tCtx.builder.Stop(); err != nil {
 		t.Fatalf("unable to stop router: %v", err)
 	}
 
@@ -339,22 +344,22 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 			Transactions: []*wire.MsgTx{},
 		}
 		height := uint32(forkHeight) + i
-		ctx.chain.addBlock(block, height, rand.Uint32())
-		ctx.chain.setBestBlock(int32(height))
+		tCtx.chain.addBlock(block, height, rand.Uint32())
+		tCtx.chain.setBestBlock(int32(height))
 	}
 
 	// Give time to process new blocks.
 	time.Sleep(time.Millisecond * 500)
 
-	selfNode, err := ctx.graph.SourceNode()
+	selfNode, err := tCtx.graph.SourceNode()
 	require.NoError(t, err)
 
 	// Create new router with same graph database.
 	router, err := NewBuilder(&Config{
 		SelfNode:           selfNode.PubKeyBytes,
-		Graph:              ctx.graph,
-		Chain:              ctx.chain,
-		ChainView:          ctx.chainView,
+		Graph:              tCtx.graph,
+		Chain:              tCtx.chain,
+		ChainView:          tCtx.chainView,
 		ChannelPruneExpiry: time.Hour * 24,
 		GraphPruneInterval: time.Hour * 2,
 
@@ -367,14 +372,14 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 	require.NoError(t, err)
 
 	// It should resync to the longer chain on startup.
-	if err := router.Start(); err != nil {
+	if err := router.Start(ctx); err != nil {
 		t.Fatalf("unable to start router: %v", err)
 	}
 
 	// The channel with chanID2 should not be in the database anymore,
 	// since it is not confirmed on the longest chain. chanID1 should
 	// still be.
-	_, _, has, isZombie, err = ctx.graph.HasChannelEdge(chanID1)
+	_, _, has, isZombie, err = tCtx.graph.HasChannelEdge(chanID1)
 	require.NoError(t, err)
 
 	if !has {
@@ -384,7 +389,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		t.Fatal("edge was marked as zombie")
 	}
 
-	_, _, has, isZombie, err = ctx.graph.HasChannelEdge(chanID2)
+	_, _, has, isZombie, err = tCtx.graph.HasChannelEdge(chanID2)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID2)
 	}
@@ -1012,9 +1017,10 @@ func testPruneChannelGraphDoubleDisabled(t *testing.T, assumeValid bool) {
 // node announcements.
 func TestIsStaleNode(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	const startingBlockHeight = 101
-	ctx := createTestCtxSingleNode(t, startingBlockHeight)
+	tCtx := createTestCtxSingleNode(t, startingBlockHeight)
 
 	// Before we can insert a node in to the database, we need to create a
 	// channel that it's linked to.
@@ -1034,7 +1040,7 @@ func TestIsStaleNode(t *testing.T) {
 	fundingBlock := &wire.MsgBlock{
 		Transactions: []*wire.MsgTx{fundingTx},
 	}
-	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
+	tCtx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
 	edge := &models.ChannelEdgeInfo{
 		ChannelID:        chanID.ToUint64(),
@@ -1045,14 +1051,14 @@ func TestIsStaleNode(t *testing.T) {
 		AuthProof:        nil,
 		FundingScript:    fn.Some(script),
 	}
-	if err := ctx.builder.AddEdge(edge); err != nil {
+	if err := tCtx.builder.AddEdge(edge); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
 	// Before we add the node, if we query for staleness, we should get
 	// false, as we haven't added the full node.
 	updateTimeStamp := time.Unix(123, 0)
-	if ctx.builder.IsStaleNode(pub1, updateTimeStamp) {
+	if tCtx.builder.IsStaleNode(pub1, updateTimeStamp) {
 		t.Fatalf("incorrectly detected node as stale")
 	}
 
@@ -1068,20 +1074,20 @@ func TestIsStaleNode(t *testing.T) {
 		Features:             testFeatures,
 	}
 	copy(n1.PubKeyBytes[:], priv1.PubKey().SerializeCompressed())
-	if err := ctx.builder.AddNode(n1); err != nil {
+	if err := tCtx.builder.AddNode(ctx, n1); err != nil {
 		t.Fatalf("could not add node: %v", err)
 	}
 
 	// If we use the same timestamp and query for staleness, we should get
 	// true.
-	if !ctx.builder.IsStaleNode(pub1, updateTimeStamp) {
+	if !tCtx.builder.IsStaleNode(pub1, updateTimeStamp) {
 		t.Fatalf("failure to detect stale node update")
 	}
 
 	// If we update the timestamp and once again query for staleness, it
 	// should report false.
 	newTimeStamp := time.Unix(1234, 0)
-	if ctx.builder.IsStaleNode(pub1, newTimeStamp) {
+	if tCtx.builder.IsStaleNode(pub1, newTimeStamp) {
 		t.Fatalf("incorrectly detected node as stale")
 	}
 }
@@ -1138,9 +1144,12 @@ func TestIsKnownEdge(t *testing.T) {
 // stale channel edge update announcements.
 func TestIsStaleEdgePolicy(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	const startingBlockHeight = 101
-	ctx := createTestCtxFromFile(t, startingBlockHeight, basicGraphFilePath)
+	tCtx := createTestCtxFromFile(
+		t, startingBlockHeight, basicGraphFilePath,
+	)
 
 	// First, we'll create a new channel edge (just the info) and insert it
 	// into the database.
@@ -1160,15 +1169,15 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 	fundingBlock := &wire.MsgBlock{
 		Transactions: []*wire.MsgTx{fundingTx},
 	}
-	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
+	tCtx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
 	// If we query for staleness before adding the edge, we should get
 	// false.
 	updateTimeStamp := time.Unix(123, 0)
-	if ctx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 0) {
+	if tCtx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 0) {
 		t.Fatalf("router failed to detect fresh edge policy")
 	}
-	if ctx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 1) {
+	if tCtx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 1) {
 		t.Fatalf("router failed to detect fresh edge policy")
 	}
 
@@ -1181,7 +1190,7 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 		AuthProof:        nil,
 		FundingScript:    fn.Some(script),
 	}
-	if err := ctx.builder.AddEdge(edge); err != nil {
+	if err := tCtx.builder.AddEdge(edge); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
@@ -1196,7 +1205,7 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 		FeeProportionalMillionths: 10000,
 	}
 	edgePolicy.ChannelFlags = 0
-	if err := ctx.builder.UpdateEdge(edgePolicy); err != nil {
+	if err := tCtx.builder.UpdateEdge(ctx, edgePolicy); err != nil {
 		t.Fatalf("unable to update edge policy: %v", err)
 	}
 
@@ -1210,26 +1219,26 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 		FeeProportionalMillionths: 10000,
 	}
 	edgePolicy.ChannelFlags = 1
-	if err := ctx.builder.UpdateEdge(edgePolicy); err != nil {
+	if err := tCtx.builder.UpdateEdge(ctx, edgePolicy); err != nil {
 		t.Fatalf("unable to update edge policy: %v", err)
 	}
 
 	// Now that the edges have been added, an identical (chanID, flag,
 	// timestamp) tuple for each edge should be detected as a stale edge.
-	if !ctx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 0) {
+	if !tCtx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 0) {
 		t.Fatalf("router failed to detect stale edge policy")
 	}
-	if !ctx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 1) {
+	if !tCtx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 1) {
 		t.Fatalf("router failed to detect stale edge policy")
 	}
 
 	// If we now update the timestamp for both edges, the router should
 	// detect that this tuple represents a fresh edge.
 	updateTimeStamp = time.Unix(9999, 0)
-	if ctx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 0) {
+	if tCtx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 0) {
 		t.Fatalf("router failed to detect fresh edge policy")
 	}
-	if ctx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 1) {
+	if tCtx.builder.IsStaleEdgePolicy(*chanID, updateTimeStamp, 1) {
 		t.Fatalf("router failed to detect fresh edge policy")
 	}
 }

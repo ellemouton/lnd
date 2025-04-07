@@ -2,6 +2,7 @@ package peer
 
 import (
 	"bytes"
+	"context"
 	crand "crypto/rand"
 	"encoding/binary"
 	"io"
@@ -338,7 +339,7 @@ func createTestPeerWithChannel(t *testing.T, updateChan func(a,
 	alicePeer.activeChannels.Store(chanID, channelAlice)
 
 	alicePeer.cg.WgAdd(1)
-	go alicePeer.channelManager()
+	go alicePeer.channelManager(context.Background())
 
 	return &peerTestCtx{
 		peer:       alicePeer,
@@ -370,7 +371,8 @@ func (m *mockMessageSwitch) CircuitModifier() htlcswitch.CircuitModifier {
 func (m *mockMessageSwitch) RemoveLink(cid lnwire.ChannelID) {}
 
 // CreateAndAddLink currently returns a dummy value.
-func (m *mockMessageSwitch) CreateAndAddLink(cfg htlcswitch.ChannelLinkConfig,
+func (m *mockMessageSwitch) CreateAndAddLink(_ context.Context,
+	cfg htlcswitch.ChannelLinkConfig,
 	lnChan *lnwallet.LightningChannel) error {
 
 	return nil
@@ -619,7 +621,7 @@ func createTestPeer(t *testing.T) *peerTestCtx {
 		KVDB: graphBackend,
 	})
 	require.NoError(t, err)
-	require.NoError(t, dbAliceGraph.Start())
+	require.NoError(t, dbAliceGraph.Start(context.Background()))
 	t.Cleanup(func() {
 		require.NoError(t, dbAliceGraph.Stop())
 	})
@@ -748,8 +750,9 @@ func createTestPeer(t *testing.T) *peerTestCtx {
 			return nil
 		},
 		PongBuf: make([]byte, lnwire.MaxPongBytes),
-		FetchLastChanUpdate: func(chanID lnwire.ShortChannelID,
-		) (*lnwire.ChannelUpdate1, error) {
+		FetchLastChanUpdate: func(_ context.Context,
+			chanID lnwire.ShortChannelID) (*lnwire.ChannelUpdate1,
+			error) {
 
 			return &lnwire.ChannelUpdate1{}, nil
 		},
@@ -780,7 +783,7 @@ func startPeer(t *testing.T, mockConn *mockMessageConn,
 	// indicates a successful startup.
 	done := make(chan struct{})
 	go func() {
-		require.NoError(t, peer.Start())
+		require.NoError(t, peer.Start(context.Background()))
 		close(done)
 	}()
 

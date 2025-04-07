@@ -336,8 +336,8 @@ type Config struct {
 
 	// FetchLastChanUpdate fetches our latest channel update for a target
 	// channel.
-	FetchLastChanUpdate func(lnwire.ShortChannelID) (*lnwire.ChannelUpdate1,
-		error)
+	FetchLastChanUpdate func(context.Context, lnwire.ShortChannelID) (
+		*lnwire.ChannelUpdate1, error)
 
 	// FundingManager is an implementation of the funding.Controller interface.
 	FundingManager funding.Controller
@@ -748,7 +748,7 @@ func NewBrontide(cfg Config) *Brontide {
 
 // Start starts all helper goroutines the peer needs for normal operations.  In
 // the case this peer has already been started, then this function is a noop.
-func (p *Brontide) Start() error {
+func (p *Brontide) Start(ctx context.Context) error {
 	if atomic.AddInt32(&p.started, 1) != 1 {
 		return nil
 	}
@@ -861,7 +861,7 @@ func (p *Brontide) Start() error {
 		router.Start(context.Background())
 	})
 
-	msgs, err := p.loadActiveChannels(activeChans)
+	msgs, err := p.loadActiveChannels(ctx, activeChans)
 	if err != nil {
 		return fmt.Errorf("unable to load channels: %w", err)
 	}
@@ -893,7 +893,7 @@ func (p *Brontide) Start() error {
 	p.cg.WgAdd(4)
 	go p.queueHandler()
 	go p.writeHandler()
-	go p.channelManager()
+	go p.channelManager(ctx)
 	go p.readHandler()
 
 	// Signal to any external processes that the peer is now active.
@@ -912,7 +912,7 @@ func (p *Brontide) Start() error {
 	// announcements through their timestamps.
 	p.cg.WgAdd(2)
 	go p.maybeSendNodeAnn(activeChans)
-	go p.maybeSendChannelUpdates()
+	go p.maybeSendChannelUpdates(ctx)
 
 	return nil
 }
@@ -1003,8 +1003,8 @@ func (p *Brontide) addrWithInternalKey(
 // channels returned by the database. It returns a slice of channel reestablish
 // messages that should be sent to the peer immediately, in case we have borked
 // channels that haven't been closed yet.
-func (p *Brontide) loadActiveChannels(chans []*channeldb.OpenChannel) (
-	[]lnwire.Message, error) {
+func (p *Brontide) loadActiveChannels(ctx context.Context,
+	chans []*channeldb.OpenChannel) ([]lnwire.Message, error) {
 
 	// Return a slice of messages to send to the peers in case the channel
 	// cannot be loaded normally.
@@ -1307,7 +1307,7 @@ func (p *Brontide) loadActiveChannels(chans []*channeldb.OpenChannel) (
 		}
 
 		err = p.addLink(
-			&chanPoint, lnChan, forwardingPolicy, chainEvents,
+			ctx, &chanPoint, lnChan, forwardingPolicy, chainEvents,
 			true, shutdownMsg,
 		)
 		if err != nil {
@@ -1358,7 +1358,7 @@ func (p *Brontide) loadActiveChannels(chans []*channeldb.OpenChannel) (
 }
 
 // addLink creates and adds a new ChannelLink from the specified channel.
-func (p *Brontide) addLink(chanPoint *wire.OutPoint,
+func (p *Brontide) addLink(ctx context.Context, chanPoint *wire.OutPoint,
 	lnChan *lnwallet.LightningChannel,
 	forwardingPolicy *models.ForwardingPolicy,
 	chainEvents *contractcourt.ChainEventSubscription,
@@ -1450,7 +1450,7 @@ func (p *Brontide) addLink(chanPoint *wire.OutPoint,
 	// With the channel link created, we'll now notify the htlc switch so
 	// this channel can be used to dispatch local payments and also
 	// passively forward payments.
-	return p.cfg.Switch.CreateAndAddLink(linkCfg, lnChan)
+	return p.cfg.Switch.CreateAndAddLink(ctx, linkCfg, lnChan)
 }
 
 // maybeSendNodeAnn sends our node announcement to the remote peer if at least
@@ -1487,7 +1487,7 @@ func (p *Brontide) maybeSendNodeAnn(channels []*channeldb.OpenChannel) {
 
 // maybeSendChannelUpdates sends our channel updates to the remote peer if we
 // have any active channels with them.
-func (p *Brontide) maybeSendChannelUpdates() {
+func (p *Brontide) maybeSendChannelUpdates(ctx context.Context) {
 	defer p.cg.WgDone()
 
 	// If we don't have any active channels, then we can exit early.
@@ -1495,7 +1495,7 @@ func (p *Brontide) maybeSendChannelUpdates() {
 		return
 	}
 
-	maybeSendUpd := func(cid lnwire.ChannelID,
+	maybeSendUpd := func(ctx context.Context, cid lnwire.ChannelID,
 		lnChan *lnwallet.LightningChannel) error {
 
 		// Nil channels are pending, so we'll skip them.
@@ -1521,7 +1521,7 @@ func (p *Brontide) maybeSendChannelUpdates() {
 		// to fetch the update to send to the remote peer. If the
 		// channel is pending, and not a zero conf channel, we'll get
 		// an error here which we'll ignore.
-		chanUpd, err := p.cfg.FetchLastChanUpdate(scid)
+		chanUpd, err := p.cfg.FetchLastChanUpdate(ctx, scid)
 		if err != nil {
 			p.log.Debugf("Unable to fetch channel update for "+
 				"ChannelPoint(%v), scid=%v: %v",
@@ -1548,7 +1548,11 @@ func (p *Brontide) maybeSendChannelUpdates() {
 		return nil
 	}
 
-	p.activeChannels.ForEach(maybeSendUpd)
+	p.activeChannels.ForEach(func(id lnwire.ChannelID,
+		channel *lnwallet.LightningChannel) error {
+
+		return maybeSendUpd(ctx, id, channel)
+	})
 }
 
 // WaitForDisconnect waits until the peer has disconnected. A peer may be
@@ -1969,9 +1973,10 @@ func newChanMsgStream(p *Brontide, cid lnwire.ChannelID) *msgStream {
 // channel announcements.
 func newDiscMsgStream(p *Brontide) *msgStream {
 	apply := func(msg lnwire.Message) {
+		ctx := context.TODO()
 		// TODO(yy): `ProcessRemoteAnnouncement` returns an error chan
 		// and we need to process it.
-		p.cfg.AuthGossiper.ProcessRemoteAnnouncement(msg, p)
+		p.cfg.AuthGossiper.ProcessRemoteAnnouncement(ctx, msg, p)
 	}
 
 	return newMsgStream(
@@ -2863,7 +2868,7 @@ func (p *Brontide) genDeliveryScript() ([]byte, error) {
 // channels maintained with the remote peer.
 //
 // NOTE: This method MUST be run as a goroutine.
-func (p *Brontide) channelManager() {
+func (p *Brontide) channelManager(ctx context.Context) {
 	defer p.cg.WgDone()
 
 	// reenableTimeout will fire once after the configured channel status
@@ -2886,7 +2891,7 @@ out:
 		// funding workflow. We'll initialize the necessary local
 		// state, and notify the htlc switch of a new link.
 		case req := <-p.newActiveChannel:
-			p.handleNewActiveChannel(req)
+			p.handleNewActiveChannel(ctx, req)
 
 		// The funding flow for a pending channel is failed, we will
 		// remove it from Brontide.
@@ -5077,7 +5082,9 @@ func (p *Brontide) updateNextRevocation(c *channeldb.OpenChannel) error {
 // addActiveChannel adds a new active channel to the `activeChannels` map. It
 // takes a `channeldb.OpenChannel`, creates a `lnwallet.LightningChannel` from
 // it and assembles it with a channel link.
-func (p *Brontide) addActiveChannel(c *lnpeer.NewChannel) error {
+func (p *Brontide) addActiveChannel(ctx context.Context,
+	c *lnpeer.NewChannel) error {
+
 	chanPoint := c.FundingOutpoint
 	chanID := lnwire.NewChanIDFromOutPoint(chanPoint)
 
@@ -5139,7 +5146,7 @@ func (p *Brontide) addActiveChannel(c *lnpeer.NewChannel) error {
 
 	// Create the link and add it to the switch.
 	err = p.addLink(
-		&chanPoint, lnChan, initialPolicy, chainEvents,
+		ctx, &chanPoint, lnChan, initialPolicy, chainEvents,
 		shouldReestablish, fn.None[lnwire.Shutdown](),
 	)
 	if err != nil {
@@ -5175,7 +5182,9 @@ func (p *Brontide) addActiveChannel(c *lnpeer.NewChannel) error {
 // handleNewActiveChannel handles a `newChannelMsg` request. Depending on we
 // know this channel ID or not, we'll either add it to the `activeChannels` map
 // or init the next revocation for it.
-func (p *Brontide) handleNewActiveChannel(req *newChannelMsg) {
+func (p *Brontide) handleNewActiveChannel(ctx context.Context,
+	req *newChannelMsg) {
+
 	newChan := req.channel
 	chanPoint := newChan.FundingOutpoint
 	chanID := lnwire.NewChanIDFromOutPoint(chanPoint)
@@ -5200,7 +5209,7 @@ func (p *Brontide) handleNewActiveChannel(req *newChannelMsg) {
 	}
 
 	// This is a new channel, we now add it to the map.
-	if err := p.addActiveChannel(req.channel); err != nil {
+	if err := p.addActiveChannel(ctx, req.channel); err != nil {
 		// Log and send back the error to the request.
 		p.log.Errorf(err.Error())
 		req.err <- err

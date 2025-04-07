@@ -56,7 +56,6 @@ import (
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/keychain"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/labels"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -682,14 +681,15 @@ func newRPCServer(cfg *Config, interceptorChain *rpcperms.InterceptorChain,
 // addDeps populates all dependencies needed by the RPC server, and any
 // of the sub-servers that it maintains. When this is done, the RPC server can
 // be started, and start accepting RPC calls.
-func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
+func (r *rpcServer) addDeps(ctx context.Context, s *server,
+	macService *macaroons.Service,
 	subServerCgs *subRPCServerConfigs, atpl *autopilot.Manager,
 	invoiceRegistry *invoices.InvoiceRegistry, tower *watchtower.Standalone,
 	chanPredicate chanacceptor.MultiplexAcceptor,
 	invoiceHtlcModifier *invoices.HtlcModificationInterceptor) error {
 
 	// Set up router rpc backend.
-	selfNode, err := s.graphDB.SourceNode()
+	selfNode, err := s.graphDB.SourceNode(ctx)
 	if err != nil {
 		return err
 	}
@@ -697,28 +697,30 @@ func (r *rpcServer) addDeps(s *server, macService *macaroons.Service,
 
 	routerBackend := &routerrpc.RouterBackend{
 		SelfNode: selfNode.PubKeyBytes,
-		FetchChannelCapacity: func(chanID uint64) (btcutil.Amount,
-			error) {
+		FetchChannelCapacity: func(ctx context.Context,
+			chanID uint64) (btcutil.Amount, error) {
 
-			info, _, _, err := graph.FetchChannelEdgesByID(chanID)
+			info, _, _, err := graph.FetchChannelEdgesByID(
+				ctx, chanID,
+			)
 			if err != nil {
 				return 0, err
 			}
 			return info.Capacity, nil
 		},
-		FetchAmountPairCapacity: func(nodeFrom, nodeTo route.Vertex,
+		FetchAmountPairCapacity: func(ctx context.Context, nodeFrom, nodeTo route.Vertex,
 			amount lnwire.MilliSatoshi) (btcutil.Amount, error) {
 
 			return routing.FetchAmountPairCapacity(
-				graph, selfNode.PubKeyBytes, nodeFrom, nodeTo,
+				ctx, graph, selfNode.PubKeyBytes, nodeFrom, nodeTo,
 				amount,
 			)
 		},
-		FetchChannelEndpoints: func(chanID uint64) (route.Vertex,
-			route.Vertex, error) {
+		FetchChannelEndpoints: func(ctx context.Context,
+			chanID uint64) (route.Vertex, route.Vertex, error) {
 
 			info, _, _, err := graph.FetchChannelEdgesByID(
-				chanID,
+				ctx, chanID,
 			)
 			if err != nil {
 				return route.Vertex{}, route.Vertex{},
@@ -1756,7 +1758,7 @@ func (r *rpcServer) VerifyMessage(ctx context.Context,
 	//
 	// TODO(phlip9): Require valid nodes to have capital in active channels.
 	graph := r.server.graphDB
-	_, active, err := graph.HasLightningNode(pub)
+	_, active, err := graph.HasLightningNode(ctx, pub)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query graph: %w", err)
 	}
@@ -1821,7 +1823,7 @@ func (r *rpcServer) ConnectPeer(ctx context.Context,
 	}
 
 	if err := r.server.ConnectToPeer(
-		peerAddr, in.Perm, timeout,
+		ctx, peerAddr, in.Perm, timeout,
 	); err != nil {
 		rpcsLog.Errorf("[connectpeer]: error connecting to peer: %v",
 			err)
@@ -2622,8 +2624,10 @@ func (r *rpcServer) BatchOpenChannel(ctx context.Context,
 
 		return r.parseOpenChannelReq(req, false)
 	}
-	channelAbandoner := func(point *wire.OutPoint) error {
-		return r.abandonChan(point, uint32(bestHeight))
+	channelAbandoner := func(ctx context.Context,
+		point *wire.OutPoint) error {
+
+		return r.abandonChan(ctx, point, uint32(bestHeight))
 	}
 	batcher := funding.NewBatcher(&funding.BatchConfig{
 		RequestParser:    requestParser,
@@ -3115,7 +3119,7 @@ func createRPCCloseUpdate(
 // abandonChanFromGraph attempts to remove a channel from the channel graph. If
 // we can't find the chanID in the graph, then we assume it has already been
 // removed, and will return a nop.
-func abandonChanFromGraph(chanGraph *graphdb.ChannelGraph,
+func abandonChanFromGraph(ctx context.Context, chanGraph *graphdb.ChannelGraph,
 	chanPoint *wire.OutPoint) error {
 
 	// First, we'll obtain the channel ID. If we can't locate this, then
@@ -3131,11 +3135,11 @@ func abandonChanFromGraph(chanGraph *graphdb.ChannelGraph,
 
 	// If the channel ID is still in the graph, then that means the channel
 	// is still open, so we'll now move to purge it from the graph.
-	return chanGraph.DeleteChannelEdges(false, true, chanID)
+	return chanGraph.DeleteChannelEdges(ctx, false, true, chanID)
 }
 
 // abandonChan removes a channel from the database, graph and contract court.
-func (r *rpcServer) abandonChan(chanPoint *wire.OutPoint,
+func (r *rpcServer) abandonChan(ctx context.Context, chanPoint *wire.OutPoint,
 	bestHeight uint32) error {
 
 	// Before we remove the channel we cancel the rebroadcasting of the
@@ -3156,7 +3160,7 @@ func (r *rpcServer) abandonChan(chanPoint *wire.OutPoint,
 	if err != nil {
 		return err
 	}
-	err = abandonChanFromGraph(r.server.graphDB, chanPoint)
+	err = abandonChanFromGraph(ctx, r.server.graphDB, chanPoint)
 	if err != nil {
 		return err
 	}
@@ -3184,7 +3188,7 @@ func (r *rpcServer) abandonChan(chanPoint *wire.OutPoint,
 // AbandonChannel removes all channel state from the database except for a
 // close summary. This method can be used to get rid of permanently unusable
 // channels due to bugs fixed in newer versions of lnd.
-func (r *rpcServer) AbandonChannel(_ context.Context,
+func (r *rpcServer) AbandonChannel(ctx context.Context,
 	in *lnrpc.AbandonChannelRequest) (*lnrpc.AbandonChannelResponse, error) {
 
 	// If this isn't the dev build, then we won't allow the RPC to be
@@ -3260,7 +3264,7 @@ func (r *rpcServer) AbandonChannel(_ context.Context,
 	}
 
 	// Remove the channel from the graph, database and contract court.
-	if err := r.abandonChan(chanPoint, uint32(bestHeight)); err != nil {
+	if err := r.abandonChan(ctx, chanPoint, uint32(bestHeight)); err != nil {
 		return nil, err
 	}
 
@@ -5410,7 +5414,7 @@ func (r *rpcServer) SubscribeChannelEvents(req *lnrpc.ChannelEventSubscription,
 // execute sendPayment. We use this struct as a sort of bridge to enable code
 // re-use between SendPayment and SendToRoute.
 type paymentStream struct {
-	recv func() (*rpcPaymentRequest, error)
+	recv func(ctx context.Context) (*rpcPaymentRequest, error)
 	send func(*lnrpc.SendResponse) error
 }
 
@@ -5428,24 +5432,25 @@ type rpcPaymentRequest struct {
 func (r *rpcServer) SendPayment(stream lnrpc.Lightning_SendPaymentServer) error {
 	var lock sync.Mutex
 
-	return r.sendPayment(&paymentStream{
-		recv: func() (*rpcPaymentRequest, error) {
-			req, err := stream.Recv()
-			if err != nil {
-				return nil, err
-			}
+	return r.sendPayment(
+		stream.Context(), &paymentStream{
+			recv: func(_ context.Context) (*rpcPaymentRequest, error) {
+				req, err := stream.Recv()
+				if err != nil {
+					return nil, err
+				}
 
-			return &rpcPaymentRequest{
-				SendRequest: req,
-			}, nil
-		},
-		send: func(r *lnrpc.SendResponse) error {
-			// Calling stream.Send concurrently is not safe.
-			lock.Lock()
-			defer lock.Unlock()
-			return stream.Send(r)
-		},
-	})
+				return &rpcPaymentRequest{
+					SendRequest: req,
+				}, nil
+			},
+			send: func(r *lnrpc.SendResponse) error {
+				// Calling stream.Send concurrently is not safe.
+				lock.Lock()
+				defer lock.Unlock()
+				return stream.Send(r)
+			},
+		})
 }
 
 // SendToRoute dispatches a bi-directional streaming RPC for sending payments
@@ -5456,33 +5461,36 @@ func (r *rpcServer) SendPayment(stream lnrpc.Lightning_SendPaymentServer) error 
 func (r *rpcServer) SendToRoute(stream lnrpc.Lightning_SendToRouteServer) error {
 	var lock sync.Mutex
 
-	return r.sendPayment(&paymentStream{
-		recv: func() (*rpcPaymentRequest, error) {
-			req, err := stream.Recv()
-			if err != nil {
-				return nil, err
-			}
+	return r.sendPayment(
+		stream.Context(), &paymentStream{
+			recv: func(ctx context.Context) (*rpcPaymentRequest,
+				error) {
 
-			return r.unmarshallSendToRouteRequest(req)
-		},
-		send: func(r *lnrpc.SendResponse) error {
-			// Calling stream.Send concurrently is not safe.
-			lock.Lock()
-			defer lock.Unlock()
-			return stream.Send(r)
-		},
-	})
+				req, err := stream.Recv()
+				if err != nil {
+					return nil, err
+				}
+
+				return r.unmarshallSendToRouteRequest(ctx, req)
+			},
+			send: func(r *lnrpc.SendResponse) error {
+				// Calling stream.Send concurrently is not safe.
+				lock.Lock()
+				defer lock.Unlock()
+				return stream.Send(r)
+			},
+		})
 }
 
 // unmarshallSendToRouteRequest unmarshalls an rpc sendtoroute request
-func (r *rpcServer) unmarshallSendToRouteRequest(
+func (r *rpcServer) unmarshallSendToRouteRequest(ctx context.Context,
 	req *lnrpc.SendToRouteRequest) (*rpcPaymentRequest, error) {
 
 	if req.Route == nil {
 		return nil, fmt.Errorf("unable to send, no route provided")
 	}
 
-	route, err := r.routerBackend.UnmarshallRoute(req.Route)
+	route, err := r.routerBackend.UnmarshallRoute(ctx, req.Route)
 	if err != nil {
 		return nil, err
 	}
@@ -5799,7 +5807,7 @@ type paymentIntentResponse struct {
 // pre-built route. The first error this method returns denotes if we were
 // unable to save the payment. The second error returned denotes if the payment
 // didn't succeed.
-func (r *rpcServer) dispatchPaymentIntent(
+func (r *rpcServer) dispatchPaymentIntent(ctx context.Context,
 	payIntent *rpcPaymentIntent) (*paymentIntentResponse, error) {
 
 	// Construct a payment request to send to the channel router. If the
@@ -5846,7 +5854,7 @@ func (r *rpcServer) dispatchPaymentIntent(
 	} else {
 		var attempt *channeldb.HTLCAttempt
 		attempt, routerErr = r.server.chanRouter.SendToRoute(
-			payIntent.rHash, payIntent.route, nil,
+			ctx, payIntent.rHash, payIntent.route, nil,
 		)
 
 		if routerErr == nil {
@@ -5877,7 +5885,9 @@ func (r *rpcServer) dispatchPaymentIntent(
 // the write end of the stream. Responses will also be streamed back to the
 // client via the write end of the stream. This method is by both SendToRoute
 // and SendPayment as the logic is virtually identical.
-func (r *rpcServer) sendPayment(stream *paymentStream) error {
+func (r *rpcServer) sendPayment(ctx context.Context,
+	stream *paymentStream) error {
+
 	payChan := make(chan *rpcPaymentIntent)
 	errChan := make(chan error, 1)
 
@@ -5926,7 +5936,7 @@ func (r *rpcServer) sendPayment(stream *paymentStream) error {
 				// stream sent by the client. If we read the
 				// EOF sentinel, then the client has closed the
 				// stream, and we can exit normally.
-				nextPayment, err := stream.recv()
+				nextPayment, err := stream.recv(ctx)
 				if err == io.EOF {
 					close(payChan)
 					return
@@ -6019,7 +6029,7 @@ sendLoop:
 				}()
 
 				resp, saveErr := r.dispatchPaymentIntent(
-					payIntent,
+					ctx, payIntent,
 				)
 
 				switch {
@@ -6059,7 +6069,7 @@ sendLoop:
 
 				backend := r.routerBackend
 				marshalledRouted, err := backend.MarshallRoute(
-					resp.Route,
+					ctx, resp.Route,
 				)
 				if err != nil {
 					errChan <- err
@@ -6097,7 +6107,7 @@ sendLoop:
 func (r *rpcServer) SendPaymentSync(ctx context.Context,
 	nextPayment *lnrpc.SendRequest) (*lnrpc.SendResponse, error) {
 
-	return r.sendPaymentSync(&rpcPaymentRequest{
+	return r.sendPaymentSync(ctx, &rpcPaymentRequest{
 		SendRequest: nextPayment,
 	})
 }
@@ -6113,17 +6123,17 @@ func (r *rpcServer) SendToRouteSync(ctx context.Context,
 		return nil, fmt.Errorf("unable to send, no routes provided")
 	}
 
-	paymentRequest, err := r.unmarshallSendToRouteRequest(req)
+	paymentRequest, err := r.unmarshallSendToRouteRequest(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 
-	return r.sendPaymentSync(paymentRequest)
+	return r.sendPaymentSync(ctx, paymentRequest)
 }
 
 // sendPaymentSync is the synchronous variant of sendPayment. It will block and
 // wait until the payment has been fully completed.
-func (r *rpcServer) sendPaymentSync(
+func (r *rpcServer) sendPaymentSync(ctx context.Context,
 	nextPayment *rpcPaymentRequest) (*lnrpc.SendResponse, error) {
 
 	// We don't allow payments to be sent while the daemon itself is still
@@ -6142,7 +6152,7 @@ func (r *rpcServer) sendPaymentSync(
 
 	// With the payment validated, we'll now attempt to dispatch the
 	// payment.
-	resp, saveErr := r.dispatchPaymentIntent(&payIntent)
+	resp, saveErr := r.dispatchPaymentIntent(ctx, &payIntent)
 	switch {
 	case saveErr != nil:
 		return nil, saveErr
@@ -6154,7 +6164,7 @@ func (r *rpcServer) sendPaymentSync(
 		}, nil
 	}
 
-	rpcRoute, err := r.routerBackend.MarshallRoute(resp.Route)
+	rpcRoute, err := r.routerBackend.MarshallRoute(ctx, resp.Route)
 	if err != nil {
 		return nil, err
 	}
@@ -6258,11 +6268,11 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 		},
 		GetAlias:   r.server.aliasMgr.GetPeerAlias,
 		BestHeight: r.server.cc.BestBlockTracker.BestHeight,
-		QueryBlindedRoutes: func(amt lnwire.MilliSatoshi) (
-			[]*route.Route, error) {
+		QueryBlindedRoutes: func(ctx context.Context,
+			amt lnwire.MilliSatoshi) ([]*route.Route, error) {
 
 			return r.server.chanRouter.FindBlindedPaths(
-				r.selfNode, amt,
+				ctx, r.selfNode, amt,
 				r.server.defaultMC.GetProbability,
 				blindingRestrictions,
 			)
@@ -6682,7 +6692,7 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// Next, for each active channel we know of within the graph, create a
 	// similar response which details both the edge information as well as
 	// the routing policies of th nodes connecting the two edges.
-	err = graph.ForEachChannel(func(edgeInfo *models.ChannelEdgeInfo,
+	err = graph.ForEachChannel(ctx, func(edgeInfo *models.ChannelEdgeInfo,
 		c1, c2 *models.ChannelEdgePolicy) error {
 
 		// Do not include unannounced channels unless specifically
@@ -6857,7 +6867,7 @@ func (r *rpcServer) GetNodeMetrics(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	if err := centralityMetric.Refresh(channelGraph); err != nil {
+	if err := centralityMetric.Refresh(ctx, channelGraph); err != nil {
 		return nil, err
 	}
 
@@ -6883,7 +6893,7 @@ func (r *rpcServer) GetNodeMetrics(ctx context.Context,
 // uniquely identify the location of transaction's funding output within the
 // blockchain. The former is an 8-byte integer, while the latter is a string
 // formatted as funding_txid:output_index.
-func (r *rpcServer) GetChanInfo(_ context.Context,
+func (r *rpcServer) GetChanInfo(ctx context.Context,
 	in *lnrpc.ChanInfoRequest) (*lnrpc.ChannelEdge, error) {
 
 	graph := r.server.graphDB
@@ -6897,7 +6907,7 @@ func (r *rpcServer) GetChanInfo(_ context.Context,
 	switch {
 	case in.ChanId != 0:
 		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByID(
-			in.ChanId,
+			ctx, in.ChanId,
 		)
 
 	case in.ChanPoint != "":
@@ -6942,7 +6952,7 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 	// With the public key decoded, attempt to fetch the node corresponding
 	// to this public key. If the node cannot be found, then an error will
 	// be returned.
-	node, err := graph.FetchLightningNode(pubKey)
+	node, err := graph.FetchLightningNode(ctx, pubKey)
 	switch {
 	case errors.Is(err, graphdb.ErrGraphNodeNotFound):
 		return nil, status.Error(codes.NotFound, err.Error())
@@ -6958,8 +6968,8 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 		channels      []*lnrpc.ChannelEdge
 	)
 
-	err = graph.ForEachNodeChannel(node.PubKeyBytes,
-		func(_ kvdb.RTx, edge *models.ChannelEdgeInfo,
+	err = graph.ForEachNodeChannel(
+		ctx, node.PubKeyBytes, func(edge *models.ChannelEdgeInfo,
 			c1, c2 *models.ChannelEdgePolicy) error {
 
 			numChannels++
@@ -7066,7 +7076,7 @@ func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 	// network, tallying up the total number of nodes, and also gathering
 	// each node so we can measure the graph diameter and degree stats
 	// below.
-	err := graph.ForEachNodeCached(func(node route.Vertex,
+	err := graph.ForEachNodeCached(ctx, func(node route.Vertex,
 		edges map[uint64]*graphdb.DirectedChannel) error {
 
 		// Increment the total number of nodes with each iteration.
@@ -7140,7 +7150,7 @@ func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 
 	// Graph diameter.
 	channelGraph := autopilot.ChannelGraphFromCachedDatabase(graph)
-	simpleGraph, err := autopilot.NewSimpleGraph(channelGraph)
+	simpleGraph, err := autopilot.NewSimpleGraph(ctx, channelGraph)
 	if err != nil {
 		return nil, err
 	}
@@ -7417,7 +7427,7 @@ func (r *rpcServer) ListPayments(ctx context.Context,
 	for _, payment := range paymentsQuerySlice.Payments {
 		payment := payment
 
-		rpcPayment, err := r.routerBackend.MarshallPayment(payment)
+		rpcPayment, err := r.routerBackend.MarshallPayment(ctx, payment)
 		if err != nil {
 			return nil, err
 		}
@@ -7634,14 +7644,15 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 	_ *lnrpc.FeeReportRequest) (*lnrpc.FeeReportResponse, error) {
 
 	channelGraph := r.server.graphDB
-	selfNode, err := channelGraph.SourceNode()
+	selfNode, err := channelGraph.SourceNode(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	var feeReports []*lnrpc.ChannelFeeReport
-	err = channelGraph.ForEachNodeChannel(selfNode.PubKeyBytes,
-		func(_ kvdb.RTx, chanInfo *models.ChannelEdgeInfo,
+	err = channelGraph.ForEachNodeChannel(
+		ctx, selfNode.PubKeyBytes,
+		func(chanInfo *models.ChannelEdgeInfo,
 			edgePolicy, _ *models.ChannelEdgePolicy) error {
 
 			// Self node should always have policies for its
@@ -7917,8 +7928,9 @@ func (r *rpcServer) UpdateChannelPolicy(ctx context.Context,
 
 	// With the scope resolved, we'll now send this to the local channel
 	// manager so it can propagate the new policy for our target channel(s).
-	failedUpdates, err := r.server.localChanMgr.UpdatePolicy(chanPolicy,
-		req.CreateMissingEdge, targetChans...)
+	failedUpdates, err := r.server.localChanMgr.UpdatePolicy(
+		ctx, chanPolicy, req.CreateMissingEdge, targetChans...,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -8019,7 +8031,7 @@ func (r *rpcServer) ForwardingHistory(ctx context.Context,
 			return "", err
 		}
 
-		peer, err := r.server.graphDB.FetchLightningNode(vertex)
+		peer, err := r.server.graphDB.FetchLightningNode(ctx, vertex)
 		if err != nil {
 			return "", err
 		}
@@ -8105,7 +8117,7 @@ func (r *rpcServer) ExportChannelBackup(ctx context.Context,
 	// the database. If this channel has been closed, or the outpoint is
 	// unknown, then we'll return an error
 	unpackedBackup, err := chanbackup.FetchBackupForChan(
-		chanPoint, r.server.chanStateDB, r.server.addrSource,
+		ctx, chanPoint, r.server.chanStateDB, r.server.addrSource,
 	)
 	if err != nil {
 		return nil, err
@@ -8285,7 +8297,7 @@ func (r *rpcServer) ExportAllChannelBackups(ctx context.Context,
 	// First, we'll attempt to read back ups for ALL currently opened
 	// channels from disk.
 	allUnpackedBackups, err := chanbackup.FetchStaticChanBackups(
-		r.server.chanStateDB, r.server.addrSource,
+		ctx, r.server.chanStateDB, r.server.addrSource,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to fetch all static chan "+
@@ -8343,7 +8355,7 @@ func (r *rpcServer) RestoreChannelBackups(ctx context.Context,
 		// out to any peers that we know of which were our prior
 		// channel peers.
 		numRestored, err = chanbackup.UnpackAndRecoverSingles(
-			chanbackup.PackedSingles(packedBackups),
+			ctx, chanbackup.PackedSingles(packedBackups),
 			r.server.cc.KeyRing, chanRestorer, r.server,
 		)
 		if err != nil {
@@ -8360,7 +8372,7 @@ func (r *rpcServer) RestoreChannelBackups(ctx context.Context,
 		// channel peers.
 		packedMulti := chanbackup.PackedMulti(packedMultiBackup)
 		numRestored, err = chanbackup.UnpackAndRecoverMulti(
-			packedMulti, r.server.cc.KeyRing, chanRestorer,
+			ctx, packedMulti, r.server.cc.KeyRing, chanRestorer,
 			r.server,
 		)
 		if err != nil {
@@ -8420,7 +8432,8 @@ func (r *rpcServer) SubscribeChannelBackups(req *lnrpc.ChannelBackupSubscription
 			// we'll obtains the current set of single channel
 			// backups from disk.
 			chanBackups, err := chanbackup.FetchStaticChanBackups(
-				r.server.chanStateDB, r.server.addrSource,
+				updateStream.Context(), r.server.chanStateDB,
+				r.server.addrSource,
 			)
 			if err != nil {
 				return fmt.Errorf("unable to fetch all "+

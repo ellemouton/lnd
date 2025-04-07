@@ -1690,6 +1690,7 @@ func queryBatch(t *testing.T,
 // them.
 func TestGossipSyncerRoutineSync(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	// We'll modify the chunk size to be a smaller value, so we can ensure
 	// our chunk parsing works properly. With this value we should get 3
@@ -1704,13 +1705,13 @@ func TestGossipSyncerRoutineSync(t *testing.T) {
 	msgChan1, syncer1, chanSeries1 := newTestSyncer(
 		highestID, defaultEncoding, chunkSize, true, false,
 	)
-	syncer1.Start()
+	syncer1.Start(ctx)
 	defer syncer1.Stop()
 
 	msgChan2, syncer2, chanSeries2 := newTestSyncer(
 		highestID, defaultEncoding, chunkSize, false, true,
 	)
-	syncer2.Start()
+	syncer2.Start(ctx)
 	defer syncer2.Stop()
 
 	// Although both nodes are at the same height, syncer will have 3 chan
@@ -1837,6 +1838,7 @@ func TestGossipSyncerRoutineSync(t *testing.T) {
 // final state and not perform any channel queries.
 func TestGossipSyncerAlreadySynced(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	// We'll modify the chunk size to be a smaller value, so we can ensure
 	// our chunk parsing works properly. With this value we should get 3
@@ -1852,13 +1854,13 @@ func TestGossipSyncerAlreadySynced(t *testing.T) {
 	msgChan1, syncer1, chanSeries1 := newTestSyncer(
 		highestID, defaultEncoding, chunkSize,
 	)
-	syncer1.Start()
+	syncer1.Start(ctx)
 	defer syncer1.Stop()
 
 	msgChan2, syncer2, chanSeries2 := newTestSyncer(
 		highestID, defaultEncoding, chunkSize,
 	)
-	syncer2.Start()
+	syncer2.Start(ctx)
 	defer syncer2.Stop()
 
 	// The channel state of both syncers will be identical. They should
@@ -2058,6 +2060,7 @@ func TestGossipSyncerAlreadySynced(t *testing.T) {
 // carries out its duties when accepting a new sync transition request.
 func TestGossipSyncerSyncTransitions(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	assertMsgSent := func(t *testing.T, msgChan chan []lnwire.Message,
 		msg lnwire.Message) {
@@ -2178,7 +2181,7 @@ func TestGossipSyncerSyncTransitions(t *testing.T) {
 
 			// We'll then start the syncer in order to process the
 			// request.
-			syncer.Start()
+			syncer.Start(ctx)
 			defer syncer.Stop()
 
 			syncer.ProcessSyncTransition(test.finalSyncType)
@@ -2203,6 +2206,7 @@ func TestGossipSyncerSyncTransitions(t *testing.T) {
 // historical sync with the remote peer.
 func TestGossipSyncerHistoricalSync(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	// We'll create a new gossip syncer and manually override its state to
 	// chansSynced. This is necessary as the syncer can only process
@@ -2214,7 +2218,7 @@ func TestGossipSyncerHistoricalSync(t *testing.T) {
 	syncer.setSyncType(PassiveSync)
 	syncer.setSyncState(chansSynced)
 
-	syncer.Start()
+	syncer.Start(ctx)
 	defer syncer.Stop()
 
 	syncer.historicalSync()
@@ -2247,6 +2251,7 @@ func TestGossipSyncerHistoricalSync(t *testing.T) {
 // syncer reaches its terminal chansSynced state.
 func TestGossipSyncerSyncedSignal(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	// We'll create a new gossip syncer and manually override its state to
 	// chansSynced.
@@ -2261,7 +2266,7 @@ func TestGossipSyncerSyncedSignal(t *testing.T) {
 	signalChan := syncer.ResetSyncedSignal()
 
 	// Starting the gossip syncer should cause the signal to be delivered.
-	syncer.Start()
+	syncer.Start(ctx)
 
 	select {
 	case <-signalChan:
@@ -2280,7 +2285,7 @@ func TestGossipSyncerSyncedSignal(t *testing.T) {
 
 	syncer.setSyncState(chansSynced)
 
-	syncer.Start()
+	syncer.Start(ctx)
 	defer syncer.Stop()
 
 	signalChan = syncer.ResetSyncedSignal()
@@ -2299,6 +2304,7 @@ func TestGossipSyncerSyncedSignal(t *testing.T) {
 // said limit are not processed.
 func TestGossipSyncerMaxChannelRangeReplies(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	msgChan, syncer, chanSeries := newTestSyncer(
 		lnwire.ShortChannelID{BlockHeight: latestKnownHeight},
@@ -2309,7 +2315,7 @@ func TestGossipSyncerMaxChannelRangeReplies(t *testing.T) {
 	// the sake of testing.
 	syncer.cfg.maxQueryChanRangeReplies = 100
 
-	syncer.Start()
+	syncer.Start(ctx)
 	defer syncer.Stop()
 
 	// Upon initialization, the syncer should submit a QueryChannelRange

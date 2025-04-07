@@ -2,6 +2,7 @@ package graph
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"fmt"
 	"image/color"
@@ -421,8 +422,9 @@ func (m *mockChainView) FilterBlock(blockHash *chainhash.Hash) (*chainview.Filte
 // a proper notification is sent of to all registered clients.
 func TestEdgeUpdateNotification(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
-	ctx := createTestCtxSingleNode(t, 0)
+	tCtx := createTestCtxSingleNode(t, 0)
 
 	// First we'll create the utxo for the channel to be "closed"
 	const chanValue = 10000
@@ -437,7 +439,7 @@ func TestEdgeUpdateNotification(t *testing.T) {
 	fundingBlock := &wire.MsgBlock{
 		Transactions: []*wire.MsgTx{fundingTx},
 	}
-	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
+	tCtx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
 	// Next we'll create two test nodes that the fake channel will be open
 	// between.
@@ -463,13 +465,13 @@ func TestEdgeUpdateNotification(t *testing.T) {
 	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
 	copy(edge.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
 
-	if err := ctx.builder.AddEdge(edge); err != nil {
+	if err := tCtx.builder.AddEdge(edge); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
 	// With the channel edge now in place, we'll subscribe for topology
 	// notifications.
-	ntfnClient, err := ctx.graph.SubscribeTopology()
+	ntfnClient, err := tCtx.graph.SubscribeTopology()
 	require.NoError(t, err, "unable to subscribe for channel notifications")
 
 	// Create random policy edges that are stemmed to the channel id
@@ -482,10 +484,10 @@ func TestEdgeUpdateNotification(t *testing.T) {
 	require.NoError(t, err, "unable to create a random chan policy")
 	edge2.ChannelFlags = 1
 
-	if err := ctx.builder.UpdateEdge(edge1); err != nil {
+	if err := tCtx.builder.UpdateEdge(ctx, edge1); err != nil {
 		t.Fatalf("unable to add edge update: %v", err)
 	}
-	if err := ctx.builder.UpdateEdge(edge2); err != nil {
+	if err := tCtx.builder.UpdateEdge(ctx, edge2); err != nil {
 		t.Fatalf("unable to add edge update: %v", err)
 	}
 
@@ -608,9 +610,10 @@ func TestEdgeUpdateNotification(t *testing.T) {
 // attributes with new data.
 func TestNodeUpdateNotification(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	const startingBlockHeight = 101
-	ctx := createTestCtxSingleNode(t, startingBlockHeight)
+	tCtx := createTestCtxSingleNode(t, startingBlockHeight)
 
 	// We only accept node announcements from nodes having a known channel,
 	// so create one now.
@@ -627,7 +630,7 @@ func TestNodeUpdateNotification(t *testing.T) {
 	fundingBlock := &wire.MsgBlock{
 		Transactions: []*wire.MsgTx{fundingTx},
 	}
-	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
+	tCtx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
 	// Create two nodes acting as endpoints in the created channel, and use
 	// them to trigger notifications by sending updated node announcement
@@ -655,20 +658,20 @@ func TestNodeUpdateNotification(t *testing.T) {
 
 	// Adding the edge will add the nodes to the graph, but with no info
 	// except the pubkey known.
-	if err := ctx.builder.AddEdge(edge); err != nil {
+	if err := tCtx.builder.AddEdge(edge); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
 	// Create a new client to receive notifications.
-	ntfnClient, err := ctx.graph.SubscribeTopology()
+	ntfnClient, err := tCtx.graph.SubscribeTopology()
 	require.NoError(t, err, "unable to subscribe for channel notifications")
 
 	// Change network topology by adding the updated info for the two nodes
 	// to the channel router.
-	if err := ctx.builder.AddNode(node1); err != nil {
+	if err := tCtx.builder.AddNode(ctx, node1); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
-	if err := ctx.builder.AddNode(node2); err != nil {
+	if err := tCtx.builder.AddNode(ctx, node2); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
 
@@ -763,7 +766,7 @@ func TestNodeUpdateNotification(t *testing.T) {
 	nodeUpdateAnn.LastUpdate = node1.LastUpdate.Add(300 * time.Millisecond)
 
 	// Add new node topology update to the channel router.
-	if err := ctx.builder.AddNode(&nodeUpdateAnn); err != nil {
+	if err := tCtx.builder.AddNode(ctx, &nodeUpdateAnn); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
 
@@ -790,12 +793,13 @@ func TestNodeUpdateNotification(t *testing.T) {
 // when the client wishes to exit.
 func TestNotificationCancellation(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	const startingBlockHeight = 101
-	ctx := createTestCtxSingleNode(t, startingBlockHeight)
+	tCtx := createTestCtxSingleNode(t, startingBlockHeight)
 
 	// Create a new client to receive notifications.
-	ntfnClient, err := ctx.graph.SubscribeTopology()
+	ntfnClient, err := tCtx.graph.SubscribeTopology()
 	require.NoError(t, err, "unable to subscribe for channel notifications")
 
 	// We'll create the utxo for a new channel.
@@ -812,7 +816,7 @@ func TestNotificationCancellation(t *testing.T) {
 	fundingBlock := &wire.MsgBlock{
 		Transactions: []*wire.MsgTx{fundingTx},
 	}
-	ctx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
+	tCtx.chain.addBlock(fundingBlock, chanID.BlockHeight, chanID.BlockHeight)
 
 	// We'll create a fresh new node topology update to feed to the channel
 	// router.
@@ -841,15 +845,15 @@ func TestNotificationCancellation(t *testing.T) {
 	}
 	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
 	copy(edge.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
-	if err := ctx.builder.AddEdge(edge); err != nil {
+	if err := tCtx.builder.AddEdge(edge); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
-	if err := ctx.builder.AddNode(node1); err != nil {
+	if err := tCtx.builder.AddNode(ctx, node1); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
 
-	if err := ctx.builder.AddNode(node2); err != nil {
+	if err := tCtx.builder.AddNode(ctx, node2); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
 
@@ -1077,7 +1081,7 @@ func (c *testCtx) RestartBuilder(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.NoError(t, builder.Start())
+	require.NoError(t, builder.Start(context.Background()))
 
 	// Finally, we'll swap out the pointer in the testCtx with this fresh
 	// instance of the router.
@@ -1177,7 +1181,7 @@ func createTestCtxFromGraphInstanceAssumeValid(t *testing.T,
 		},
 	})
 	require.NoError(t, err)
-	require.NoError(t, graphBuilder.Start())
+	require.NoError(t, graphBuilder.Start(context.Background()))
 
 	ctx := &testCtx{
 		builder:    graphBuilder,

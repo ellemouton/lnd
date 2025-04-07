@@ -2,6 +2,7 @@ package chanbackup
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net"
 	"testing"
@@ -39,7 +40,7 @@ type mockPeerConnector struct {
 	callCount int
 }
 
-func (m *mockPeerConnector) ConnectPeer(_ *btcec.PublicKey,
+func (m *mockPeerConnector) ConnectPeer(_ context.Context, _ *btcec.PublicKey,
 	_ []net.Addr) error {
 
 	if m.fail {
