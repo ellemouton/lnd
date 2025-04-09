@@ -4350,7 +4350,7 @@ func TestSwitchDustForwarding(t *testing.T) {
 
 	// Wait until Bob is almost at the fee threshold.
 	bobMbox := n.bobServer.htlcSwitch.mailOrchestrator.GetOrCreateMailBox(
-		n.firstBobChannelLink.ChanID(),
+		ctx, n.firstBobChannelLink.ChanID(),
 		n.firstBobChannelLink.ShortChanID(),
 	)
 	assertAlmostDust(n.firstBobChannelLink, bobMbox, lntypes.Local)
@@ -4483,7 +4483,8 @@ func TestSwitchDustForwarding(t *testing.T) {
 	// under the fee threshold.
 	aliceOrch := n.aliceServer.htlcSwitch.mailOrchestrator
 	aliceMbox := aliceOrch.GetOrCreateMailBox(
-		n.aliceChannelLink.ChanID(), n.aliceChannelLink.ShortChanID(),
+		ctx, n.aliceChannelLink.ChanID(),
+		n.aliceChannelLink.ShortChanID(),
 	)
 	assertAlmostDust(n.aliceChannelLink, aliceMbox, lntypes.Remote)
 
@@ -4591,6 +4592,7 @@ func sendDustHtlcs(t *testing.T, n *threeHopNetwork, alice bool,
 // channel state, so this only tests the switch-mailbox interaction.
 func TestSwitchMailboxDust(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	alicePeer, err := newMockServer(
 		t, "alice", testStartingHeight, nil, testDefaultDelta,
@@ -4609,7 +4611,7 @@ func TestSwitchMailboxDust(t *testing.T) {
 
 	s, err := initSwitchWithTempDB(t, testStartingHeight)
 	require.NoError(t, err)
-	err = s.Start(context.Background())
+	err = s.Start(ctx)
 	require.NoError(t, err)
 	defer func() {
 		_ = s.Stop()
@@ -4660,7 +4662,9 @@ func TestSwitchMailboxDust(t *testing.T) {
 	// to the point where another would put Alice over the fee threshold.
 	aliceCount := 1428
 
-	mailbox := s.mailOrchestrator.GetOrCreateMailBox(chanID1, aliceChanID)
+	mailbox := s.mailOrchestrator.GetOrCreateMailBox(
+		ctx, chanID1, aliceChanID,
+	)
 
 	for i := 0; i < aliceCount; i++ {
 		alicePkt := &htlcPacket{
@@ -4681,7 +4685,7 @@ func TestSwitchMailboxDust(t *testing.T) {
 
 	// Sending one more HTLC to Alice should result in the fee threshold
 	// being breached.
-	err = s.SendHTLC(context.Background(), aliceChanID, 0, addMsg)
+	err = s.SendHTLC(ctx, aliceChanID, 0, addMsg)
 	require.ErrorIs(t, err, errFeeExposureExceeded)
 
 	// We'll now call ForwardPackets from Bob to ensure that the mailbox
@@ -4700,7 +4704,7 @@ func TestSwitchMailboxDust(t *testing.T) {
 		},
 	}
 
-	err = s.ForwardPackets(context.Background(), nil, packet)
+	err = s.ForwardPackets(ctx, nil, packet)
 	require.NoError(t, err)
 
 	// Bob should receive a failure from the switch.

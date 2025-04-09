@@ -218,7 +218,7 @@ func newMailboxContextWithClock(t *testing.T,
 		forwardPackets:    ctx.forward,
 		clock:             clock,
 	})
-	ctx.mailbox.Start()
+	ctx.mailbox.Start(context.Background())
 	t.Cleanup(ctx.mailbox.Stop)
 
 	return ctx
@@ -245,7 +245,7 @@ func newMailboxContext(t *testing.T, startTime time.Time,
 		clock:             ctx.clock,
 		expiry:            expiry,
 	})
-	ctx.mailbox.Start()
+	ctx.mailbox.Start(context.Background())
 	t.Cleanup(ctx.mailbox.Stop)
 
 	return ctx
@@ -334,6 +334,7 @@ func (c *mailboxContext) checkFails(adds []*htlcPacket) {
 // TestMailBoxFailAdd asserts that FailAdd returns a response to the switch
 // under various interleavings with other operations on the mailbox.
 func TestMailBoxFailAdd(t *testing.T) {
+	t.Parallel()
 	var (
 		batchDelay       = time.Second
 		expiry           = time.Minute
@@ -346,7 +347,7 @@ func TestMailBoxFailAdd(t *testing.T) {
 
 	failAdds := func(adds []*htlcPacket) {
 		for _, add := range adds {
-			ctx.mailbox.FailAdd(add)
+			ctx.mailbox.FailAdd(context.Background(), add)
 		}
 	}
 
@@ -541,7 +542,7 @@ func TestMailBoxDuplicateAddPacket(t *testing.T) {
 	t.Parallel()
 
 	ctx := newMailboxContext(t, time.Now(), testExpiry)
-	ctx.mailbox.Start()
+	ctx.mailbox.Start(context.Background())
 
 	addTwice := func(t *testing.T, pkt *htlcPacket) {
 		// The first add should succeed.
@@ -697,6 +698,7 @@ func testMailBoxDust(t *testing.T, chantype channeldb.ChannelType) {
 // readily to mailboxes for channels that are already in the live state.
 func TestMailOrchestrator(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	failMailboxUpdate := func(_ context.Context, outScid,
 		mboxScid lnwire.ShortChannelID) lnwire.FailureMessage {
@@ -738,11 +740,11 @@ func TestMailOrchestrator(t *testing.T) {
 		}
 		sentPackets[i] = pkt
 
-		mo.Deliver(pkt.outgoingChanID, pkt)
+		require.NoError(t, mo.Deliver(ctx, pkt.outgoingChanID, pkt))
 	}
 
 	// Now, initialize a new mailbox for Alice's chanid.
-	mailbox := mo.GetOrCreateMailBox(chanID1, aliceChanID)
+	mailbox := mo.GetOrCreateMailBox(ctx, chanID1, aliceChanID)
 
 	// Verify that no messages are received, since Alice's mailbox has not
 	// been made live.
@@ -787,7 +789,7 @@ func TestMailOrchestrator(t *testing.T) {
 
 	// For the second half of the test, create a new mailbox for Bob and
 	// immediately make it live with an assigned short chan id.
-	mailbox = mo.GetOrCreateMailBox(chanID2, bobChanID)
+	mailbox = mo.GetOrCreateMailBox(ctx, chanID2, bobChanID)
 	mo.BindLiveShortChanID(mailbox, chanID2, bobChanID)
 
 	// Create the second half of our htlcs, and deliver them via the
@@ -806,7 +808,7 @@ func TestMailOrchestrator(t *testing.T) {
 		}
 		sentPackets[i] = pkt
 
-		mo.Deliver(pkt.incomingChanID, pkt)
+		require.NoError(t, mo.Deliver(ctx, pkt.incomingChanID, pkt))
 
 		timeout := time.After(50 * time.Millisecond)
 		select {

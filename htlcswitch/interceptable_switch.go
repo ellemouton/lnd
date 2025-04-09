@@ -751,9 +751,11 @@ func (f *interceptedForward) ResumeModified(
 // Fail notifies the intention to Fail an existing hold forward with an
 // encrypted failure reason.
 func (f *interceptedForward) Fail(reason []byte) error {
+	ctx := context.TODO()
+
 	obfuscatedReason := f.packet.obfuscator.IntermediateEncrypt(reason)
 
-	return f.resolve(&lnwire.UpdateFailHTLC{
+	return f.resolve(ctx, &lnwire.UpdateFailHTLC{
 		Reason: obfuscatedReason,
 	})
 }
@@ -824,24 +826,29 @@ func (f *interceptedForward) FailWithCode(ctx context.Context,
 		return fmt.Errorf("failed to encrypt failure reason %w", err)
 	}
 
-	return f.resolve(&lnwire.UpdateFailHTLC{
+	return f.resolve(ctx, &lnwire.UpdateFailHTLC{
 		Reason: reason,
 	})
 }
 
 // Settle forwards a settled packet to the switch.
 func (f *interceptedForward) Settle(preimage lntypes.Preimage) error {
+	ctx := context.TODO()
+
 	if !preimage.Matches(f.htlc.PaymentHash) {
 		return errors.New("preimage does not match hash")
 	}
-	return f.resolve(&lnwire.UpdateFulfillHTLC{
+
+	return f.resolve(ctx, &lnwire.UpdateFulfillHTLC{
 		PaymentPreimage: preimage,
 	})
 }
 
 // resolve is used for both Settle and Fail and forwards the message to the
 // switch.
-func (f *interceptedForward) resolve(message lnwire.Message) error {
+func (f *interceptedForward) resolve(ctx context.Context,
+	message lnwire.Message) error {
+
 	pkt := &htlcPacket{
 		incomingChanID: f.packet.incomingChanID,
 		incomingHTLCID: f.packet.incomingHTLCID,
@@ -853,5 +860,8 @@ func (f *interceptedForward) resolve(message lnwire.Message) error {
 		obfuscator:     f.packet.obfuscator,
 		sourceRef:      f.packet.sourceRef,
 	}
-	return f.htlcSwitch.mailOrchestrator.Deliver(pkt.incomingChanID, pkt)
+
+	return f.htlcSwitch.mailOrchestrator.Deliver(
+		ctx, pkt.incomingChanID, pkt,
+	)
 }
