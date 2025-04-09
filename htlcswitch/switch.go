@@ -177,8 +177,8 @@ type Config struct {
 	// specified when we receive an incoming HTLC.  This will be used to
 	// provide payment senders our latest policy when sending encrypted
 	// error messages.
-	FetchLastChannelUpdate func(lnwire.ShortChannelID) (
-		*lnwire.ChannelUpdate1, error)
+	FetchLastChannelUpdate func(context.Context,
+		lnwire.ShortChannelID) (*lnwire.ChannelUpdate1, error)
 
 	// Notifier is an instance of a chain notifier that we'll use to signal
 	// the switch when a new block has arrived.
@@ -798,7 +798,7 @@ func (s *Switch) ForwardPackets(ctx context.Context, linkQuit <-chan struct{},
 		if update == nil {
 			// Fallback to the original non-option behavior.
 			update, err := s.cfg.FetchLastChannelUpdate(
-				incomingID,
+				ctx, incomingID,
 			)
 			if err != nil {
 				failure = &lnwire.FailTemporaryNodeFailure{}
@@ -2661,7 +2661,7 @@ func (s *Switch) failMailboxUpdate(ctx context.Context, outgoingScid,
 	if update == nil {
 		// Execute the fallback behavior.
 		var err error
-		update, err = s.cfg.FetchLastChannelUpdate(mailboxScid)
+		update, err = s.cfg.FetchLastChannelUpdate(ctx, mailboxScid)
 		if err != nil {
 			return &lnwire.FailTemporaryNodeFailure{}
 		}
@@ -2675,8 +2675,8 @@ func (s *Switch) failMailboxUpdate(ctx context.Context, outgoingScid,
 // the associated channel is not one of these, this function will return nil
 // and the caller is expected to handle this properly. In this case, a return
 // to the original non-alias behavior is expected.
-func (s *Switch) failAliasUpdate(_ context.Context, scid lnwire.ShortChannelID,
-	incoming bool) *lnwire.ChannelUpdate1 {
+func (s *Switch) failAliasUpdate(ctx context.Context,
+	scid lnwire.ShortChannelID, incoming bool) *lnwire.ChannelUpdate1 {
 
 	// This function does not defer the unlocking because of the database
 	// lookups for ChannelUpdate.
@@ -2699,7 +2699,9 @@ func (s *Switch) failAliasUpdate(_ context.Context, scid lnwire.ShortChannelID,
 				return nil
 			}
 
-			update, err := s.cfg.FetchLastChannelUpdate(baseScid)
+			update, err := s.cfg.FetchLastChannelUpdate(
+				ctx, baseScid,
+			)
 			if err != nil {
 				return nil
 			}
@@ -2723,7 +2725,7 @@ func (s *Switch) failAliasUpdate(_ context.Context, scid lnwire.ShortChannelID,
 
 		// Fetch the SCID via the confirmed SCID and replace it with
 		// the alias.
-		update, err := s.cfg.FetchLastChannelUpdate(realScid)
+		update, err := s.cfg.FetchLastChannelUpdate(ctx, realScid)
 		if err != nil {
 			return nil
 		}
@@ -2770,7 +2772,7 @@ func (s *Switch) failAliasUpdate(_ context.Context, scid lnwire.ShortChannelID,
 	}
 
 	// Fetch the ChannelUpdate via the real, confirmed SCID.
-	update, err := s.cfg.FetchLastChannelUpdate(scid)
+	update, err := s.cfg.FetchLastChannelUpdate(ctx, scid)
 	if err != nil {
 		return nil
 	}

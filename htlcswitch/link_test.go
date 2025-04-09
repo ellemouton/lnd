@@ -6217,7 +6217,7 @@ func TestCheckHtlcForward(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	fetchLastChannelUpdate := func(lnwire.ShortChannelID) (
+	fetchLastChannelUpdate := func(context.Context, lnwire.ShortChannelID) (
 		*lnwire.ChannelUpdate1, error) {
 
 		return &lnwire.ChannelUpdate1{}, nil

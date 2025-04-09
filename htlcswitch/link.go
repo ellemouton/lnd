@@ -121,7 +121,7 @@ type ChannelLinkConfig struct {
 	// specified when we receive an incoming HTLC.  This will be used to
 	// provide payment senders our latest policy when sending encrypted
 	// error messages.
-	FetchLastChannelUpdate func(lnwire.ShortChannelID) (
+	FetchLastChannelUpdate func(context.Context, lnwire.ShortChannelID) (
 		*lnwire.ChannelUpdate1, error)
 
 	// Peer is a lightning network node with which we have the channel link
@@ -876,7 +876,7 @@ func (l *channelLink) createFailureWithUpdate(ctx context.Context,
 	if update == nil {
 		// Fallback to the non-alias behavior.
 		var err error
-		update, err = l.cfg.FetchLastChannelUpdate(l.ShortChanID())
+		update, err = l.cfg.FetchLastChannelUpdate(ctx, l.ShortChanID())
 		if err != nil {
 			return &lnwire.FailTemporaryNodeFailure{}
 		}

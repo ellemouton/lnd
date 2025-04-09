@@ -795,7 +795,7 @@ func (f *interceptedForward) FailWithCode(ctx context.Context,
 			// Fallback to the original, non-alias behavior.
 			var err error
 			update, err = f.htlcSwitch.cfg.FetchLastChannelUpdate(
-				f.packet.incomingChanID,
+				ctx, f.packet.incomingChanID,
 			)
 			if err != nil {
 				return err
@@ -806,7 +806,7 @@ func (f *interceptedForward) FailWithCode(ctx context.Context,
 
 	case lnwire.CodeExpiryTooSoon:
 		update, err := f.htlcSwitch.cfg.FetchLastChannelUpdate(
-			f.packet.incomingChanID,
+			ctx, f.packet.incomingChanID,
 		)
 		if err != nil {
 			return err
