@@ -2065,7 +2065,7 @@ func (s *Switch) AddLink(ctx context.Context, link ChannelLink) error {
 	// Attach the Switch's failAliasUpdate function to the link.
 	link.attachFailAliasUpdate(s.failAliasUpdate)
 
-	if err := link.Start(); err != nil {
+	if err := link.Start(ctx); err != nil {
 		log.Errorf("AddLink failed to start link with chanID=%v: %v",
 			chanID, err)
 		s.removeLink(chanID)

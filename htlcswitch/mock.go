@@ -899,7 +899,7 @@ func (f *mockChannelLink) zeroConfConfirmed() bool {
 	return f.confirmedZC
 }
 
-func (f *mockChannelLink) Start() error {
+func (f *mockChannelLink) Start(_ context.Context) error {
 	f.mailBox.ResetMessages()
 	f.mailBox.ResetPackets()
 	return nil

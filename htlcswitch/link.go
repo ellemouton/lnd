@@ -530,12 +530,14 @@ var _ ChannelLink = (*channelLink)(nil)
 // link.
 //
 // NOTE: Part of the ChannelLink interface.
-func (l *channelLink) Start() error {
+func (l *channelLink) Start(ctx context.Context) error {
 	if !atomic.CompareAndSwapInt32(&l.started, 0, 1) {
 		err := fmt.Errorf("channel link(%v): already started", l)
 		l.log.Warn("already started")
 		return err
 	}
+
+	ctx, _ = l.cg.Create(ctx)
 
 	l.log.Info("starting")
 
@@ -598,7 +600,7 @@ func (l *channelLink) Start() error {
 	l.updateFeeTimer = time.NewTimer(l.randomFeeUpdateTimeout())
 
 	l.cg.WgAdd(1)
-	go l.htlcManager(context.TODO())
+	go l.htlcManager(ctx)
 
 	return nil
 }

@@ -329,7 +329,7 @@ type ChannelLink interface {
 		ts AuxTrafficShaper) fn.Result[OptionalBandwidth]
 
 	// Start starts the channel link.
-	Start() error
+	Start(ctx context.Context) error
 
 	// Stop requests the channel link to be shut down.
 	Stop()
