@@ -1,6 +1,7 @@
 package lnd
 
 import (
+	"context"
 	"testing"
 
 	"github.com/lightningnetwork/lnd/channeldb"
@@ -39,7 +40,8 @@ func TestWitnessBeaconIntercept(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(subscription.CancelSubscription)
 
-	require.NoError(t, interceptedFwd.Settle(preimage))
+	err = interceptedFwd.Settle(context.Background(), preimage)
+	require.NoError(t, err)
 
 	update := <-subscription.WitnessUpdates
 	require.Equal(t, preimage, update)

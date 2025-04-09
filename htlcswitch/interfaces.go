@@ -436,21 +436,21 @@ type InterceptedForward interface {
 	// Resume notifies the intention to resume an existing hold forward. This
 	// basically means the caller wants to resume with the default behavior for
 	// this htlc which usually means forward it.
-	Resume() error
+	Resume(ctx context.Context) error
 
 	// ResumeModified notifies the intention to resume an existing hold
 	// forward with modified fields.
-	ResumeModified(inAmountMsat,
+	ResumeModified(ctx context.Context, inAmountMsat,
 		outAmountMsat fn.Option[lnwire.MilliSatoshi],
 		outWireCustomRecords fn.Option[lnwire.CustomRecords]) error
 
 	// Settle notifies the intention to settle an existing hold
 	// forward with a given preimage.
-	Settle(lntypes.Preimage) error
+	Settle(context.Context, lntypes.Preimage) error
 
 	// Fail notifies the intention to fail an existing hold forward with an
 	// encrypted failure reason.
-	Fail(reason []byte) error
+	Fail(ctx context.Context, reason []byte) error
 
 	// FailWithCode notifies the intention to fail an existing hold forward
 	// with the specified failure code.

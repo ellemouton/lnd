@@ -297,7 +297,7 @@ func (s *InterceptableSwitch) run(ctx context.Context) error {
 		select {
 		// An interceptor registration or de-registration came in.
 		case interceptor := <-s.interceptorRegistration:
-			s.setInterceptor(interceptor)
+			s.setInterceptor(ctx, interceptor)
 
 		case packets := <-s.intercepted:
 			var notIntercepted []*htlcPacket
@@ -380,7 +380,9 @@ func (s *InterceptableSwitch) sendForward(fwd InterceptedForward) {
 	}
 }
 
-func (s *InterceptableSwitch) setInterceptor(interceptor ForwardInterceptor) {
+func (s *InterceptableSwitch) setInterceptor(ctx context.Context,
+	interceptor ForwardInterceptor) {
+
 	s.interceptor = interceptor
 
 	// Replay all currently held htlcs. When an interceptor is not required,
@@ -405,8 +407,10 @@ func (s *InterceptableSwitch) setInterceptor(interceptor ForwardInterceptor) {
 	// Interceptor is not required. Release held forwards.
 	log.Infof("Interceptor disconnected, resolving held packets")
 
-	s.heldHtlcSet.popAll(func(fwd InterceptedForward) {
-		err := fwd.Resume()
+	s.heldHtlcSet.popAll(ctx, func(ctx context.Context,
+		fwd InterceptedForward) {
+
+		err := fwd.Resume(ctx)
 		if err != nil {
 			log.Errorf("Failed to resume hold forward %v", err)
 		}
@@ -425,20 +429,20 @@ func (s *InterceptableSwitch) resolve(ctx context.Context,
 
 	switch res.Action {
 	case FwdActionResume:
-		return intercepted.Resume()
+		return intercepted.Resume(ctx)
 
 	case FwdActionResumeModified:
 		return intercepted.ResumeModified(
-			res.InAmountMsat, res.OutAmountMsat,
+			ctx, res.InAmountMsat, res.OutAmountMsat,
 			res.OutWireCustomRecords,
 		)
 
 	case FwdActionSettle:
-		return intercepted.Settle(res.Preimage)
+		return intercepted.Settle(ctx, res.Preimage)
 
 	case FwdActionFail:
 		if len(res.FailureMessage) > 0 {
-			return intercepted.Fail(res.FailureMessage)
+			return intercepted.Fail(ctx, res.FailureMessage)
 		}
 
 		return intercepted.FailWithCode(ctx, res.FailureCode)
@@ -670,8 +674,7 @@ func (f *interceptedForward) Packet() InterceptedPacket {
 }
 
 // Resume resumes the default behavior as if the packet was not intercepted.
-func (f *interceptedForward) Resume() error {
-	ctx := context.TODO()
+func (f *interceptedForward) Resume(ctx context.Context) error {
 	// Forward to the switch. A link quit channel isn't needed, because we
 	// are on a different thread now.
 	return f.htlcSwitch.ForwardPackets(ctx, nil, f.packet)
@@ -682,12 +685,10 @@ func (f *interceptedForward) Resume() error {
 // should be interpreted differently from the on-chain amount during further
 // validation. The presence of an output amount and/or custom records indicates
 // that those values should be modified on the outgoing HTLC.
-func (f *interceptedForward) ResumeModified(
+func (f *interceptedForward) ResumeModified(ctx context.Context,
 	inAmountMsat fn.Option[lnwire.MilliSatoshi],
 	outAmountMsat fn.Option[lnwire.MilliSatoshi],
 	outWireCustomRecords fn.Option[lnwire.CustomRecords]) error {
-
-	ctx := context.TODO()
 
 	// Convert the optional custom records to the correct type and validate
 	// them.
@@ -750,9 +751,7 @@ func (f *interceptedForward) ResumeModified(
 
 // Fail notifies the intention to Fail an existing hold forward with an
 // encrypted failure reason.
-func (f *interceptedForward) Fail(reason []byte) error {
-	ctx := context.TODO()
-
+func (f *interceptedForward) Fail(ctx context.Context, reason []byte) error {
 	obfuscatedReason := f.packet.obfuscator.IntermediateEncrypt(reason)
 
 	return f.resolve(ctx, &lnwire.UpdateFailHTLC{
@@ -832,8 +831,8 @@ func (f *interceptedForward) FailWithCode(ctx context.Context,
 }
 
 // Settle forwards a settled packet to the switch.
-func (f *interceptedForward) Settle(preimage lntypes.Preimage) error {
-	ctx := context.TODO()
+func (f *interceptedForward) Settle(ctx context.Context,
+	preimage lntypes.Preimage) error {
 
 	if !preimage.Matches(f.htlc.PaymentHash) {
 		return errors.New("preimage does not match hash")

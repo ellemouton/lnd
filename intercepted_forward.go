@@ -49,13 +49,14 @@ func (f *interceptedForward) Packet() htlcswitch.InterceptedPacket {
 // Resume notifies the intention to resume an existing hold forward. This
 // basically means the caller wants to resume with the default behavior for this
 // htlc which usually means forward it.
-func (f *interceptedForward) Resume() error {
+func (f *interceptedForward) Resume(context.Context) error {
 	return ErrCannotResume
 }
 
 // ResumeModified notifies the intention to resume an existing hold forward with
 // a modified htlc.
-func (f *interceptedForward) ResumeModified(_, _ fn.Option[lnwire.MilliSatoshi],
+func (f *interceptedForward) ResumeModified(_ context.Context, _,
+	_ fn.Option[lnwire.MilliSatoshi],
 	_ fn.Option[lnwire.CustomRecords]) error {
 
 	return ErrCannotResume
@@ -63,7 +64,7 @@ func (f *interceptedForward) ResumeModified(_, _ fn.Option[lnwire.MilliSatoshi],
 
 // Fail notifies the intention to fail an existing hold forward with an
 // encrypted failure reason.
-func (f *interceptedForward) Fail(_ []byte) error {
+func (f *interceptedForward) Fail(_ context.Context, _ []byte) error {
 	// We can't actively fail an htlc. The best we could do is abandon the
 	// resolver, but this wouldn't be a safe operation. There may be a race
 	// with the preimage beacon supplying a preimage. Therefore we don't
@@ -81,7 +82,9 @@ func (f *interceptedForward) FailWithCode(_ context.Context,
 
 // Settle notifies the intention to settle an existing hold forward with a given
 // preimage.
-func (f *interceptedForward) Settle(preimage lntypes.Preimage) error {
+func (f *interceptedForward) Settle(_ context.Context,
+	preimage lntypes.Preimage) error {
+
 	if !preimage.Matches(f.packet.Hash) {
 		return ErrPreimageMismatch
 	}

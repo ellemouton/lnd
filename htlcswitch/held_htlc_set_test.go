@@ -18,8 +18,8 @@ func TestHeldHtlcSetEmpty(t *testing.T) {
 	_, err := set.pop(models.CircuitKey{})
 	require.Error(t, err)
 
-	set.popAll(
-		func(_ InterceptedForward) {
+	set.popAll(context.Background(),
+		func(_ context.Context, _ InterceptedForward) {
 			require.Fail(t, "unexpected fwd")
 		},
 	)
@@ -67,13 +67,12 @@ func TestHeldHtlcSet(t *testing.T) {
 
 	// Test popping all forwards.
 	cbCalled = false
-	set.popAll(
-		func(_ InterceptedForward) {
-			cbCalled = true
+	set.popAll(context.Background(), func(_ context.Context,
+		_ InterceptedForward) {
 
-			require.Equal(t, fwd, poppedFwd)
-		},
-	)
+		cbCalled = true
+		require.Equal(t, fwd, poppedFwd)
+	})
 	require.True(t, cbCalled)
 
 	_, err = set.pop(key)
