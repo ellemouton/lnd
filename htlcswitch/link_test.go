@@ -1585,6 +1585,7 @@ func TestChannelLinkMultiHopInsufficientPayment(t *testing.T) {
 // from Alice if she received not suitable payment hash for htlc.
 func TestChannelLinkMultiHopUnknownPaymentHash(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	channels, _, err := createClusterChannels(
 		t, btcutil.SatoshiPerBitcoin*5, btcutil.SatoshiPerBitcoin*5,
@@ -1624,7 +1625,7 @@ func TestChannelLinkMultiHopUnknownPaymentHash(t *testing.T) {
 
 	// Send payment and expose err channel.
 	err = n.aliceServer.htlcSwitch.SendHTLC(
-		n.firstBobChannelLink.ShortChanID(), pid, htlc,
+		ctx, n.firstBobChannelLink.ShortChanID(), pid, htlc,
 	)
 	require.NoError(t, err, "unable to get send payment")
 
@@ -4518,6 +4519,7 @@ func TestChannelLinkUpdateCommitFee(t *testing.T) {
 // failures, reducing ambiguity when a batch is only partially processed.
 func TestChannelLinkAcceptDuplicatePayment(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	// First, we'll create our traditional three hop network. We'll only be
 	// interacting with and asserting the state of two of the end points
@@ -4559,7 +4561,7 @@ func TestChannelLinkAcceptDuplicatePayment(t *testing.T) {
 	// With the invoice now added to Carol's registry, we'll send the
 	// payment.
 	err = n.aliceServer.htlcSwitch.SendHTLC(
-		n.firstBobChannelLink.ShortChanID(), pid, htlc,
+		ctx, n.firstBobChannelLink.ShortChanID(), pid, htlc,
 	)
 	require.NoError(t, err, "unable to send payment to carol")
 
@@ -4571,7 +4573,7 @@ func TestChannelLinkAcceptDuplicatePayment(t *testing.T) {
 	// Now, if we attempt to send the payment *again* it should be rejected
 	// as it's a duplicate request.
 	err = n.aliceServer.htlcSwitch.SendHTLC(
-		n.firstBobChannelLink.ShortChanID(), pid, htlc,
+		ctx, n.firstBobChannelLink.ShortChanID(), pid, htlc,
 	)
 	if err != ErrDuplicateAdd {
 		t.Fatalf("ErrDuplicateAdd should have been "+

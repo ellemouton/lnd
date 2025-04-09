@@ -768,6 +768,8 @@ func preparePayment(sendingPeer, receivingPeer lnpeer.Peer,
 	sender := sendingPeer.(*mockServer)
 	receiver := receivingPeer.(*mockServer)
 
+	ctx := context.Background()
+
 	// Generate route convert it to blob, and return next destination for
 	// htlc add request.
 	blob, err := generateRoute(hops...)
@@ -785,17 +787,14 @@ func preparePayment(sendingPeer, receivingPeer lnpeer.Peer,
 
 	// Check who is last in the route and add invoice to server registry.
 	hash := invoice.Terms.PaymentPreimage.Hash()
-	if err := receiver.registry.AddInvoice(
-		context.Background(), *invoice, hash,
-	); err != nil {
+	err = receiver.registry.AddInvoice(ctx, *invoice, hash)
+	if err != nil {
 		return nil, nil, err
 	}
 
 	// Send payment and expose err channel.
 	return invoice, func() error {
-		err := sender.htlcSwitch.SendHTLC(
-			firstHop, pid, htlc,
-		)
+		err := sender.htlcSwitch.SendHTLC(ctx, firstHop, pid, htlc)
 		if err != nil {
 			return err
 		}
@@ -1321,6 +1320,8 @@ func (n *twoHopNetwork) makeHoldPayment(sendingPeer, receivingPeer lnpeer.Peer,
 	invoiceAmt, htlcAmt lnwire.MilliSatoshi,
 	timelock uint32, preimage lntypes.Preimage) chan error {
 
+	ctx := context.Background()
+
 	paymentErr := make(chan error, 1)
 
 	sender := sendingPeer.(*mockServer)
@@ -1352,15 +1353,14 @@ func (n *twoHopNetwork) makeHoldPayment(sendingPeer, receivingPeer lnpeer.Peer,
 	}
 
 	// Check who is last in the route and add invoice to server registry.
-	if err := receiver.registry.AddInvoice(
-		context.Background(), *invoice, rhash,
-	); err != nil {
+	err = receiver.registry.AddInvoice(ctx, *invoice, rhash)
+	if err != nil {
 		paymentErr <- err
 		return paymentErr
 	}
 
 	// Send payment and expose err channel.
-	err = sender.htlcSwitch.SendHTLC(firstHop, pid, htlc)
+	err = sender.htlcSwitch.SendHTLC(ctx, firstHop, pid, htlc)
 	if err != nil {
 		paymentErr <- err
 		return paymentErr
