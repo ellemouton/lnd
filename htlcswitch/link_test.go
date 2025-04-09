@@ -2253,7 +2253,7 @@ func newSingleLinkTestHarness(t *testing.T, chanAmt,
 
 	aliceLink := NewChannelLink(aliceCfg, aliceLc.channel)
 	start := func() error {
-		return aliceSwitch.AddLink(aliceLink)
+		return aliceSwitch.AddLink(context.Background(), aliceLink)
 	}
 	go func() {
 		if chanLink, ok := aliceLink.(*channelLink); ok {
@@ -4944,9 +4944,11 @@ func (h *persistentLinkHarness) restartLink(
 	}
 
 	aliceLink := NewChannelLink(aliceCfg, aliceChannel)
-	if err := h.hSwitch.AddLink(aliceLink); err != nil {
+	err := h.hSwitch.AddLink(context.Background(), aliceLink)
+	if err != nil {
 		return nil, nil, err
 	}
+
 	go func() {
 		if chanLink, ok := aliceLink.(*channelLink); ok {
 			for {

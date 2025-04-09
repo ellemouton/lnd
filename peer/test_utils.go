@@ -2,6 +2,7 @@ package peer
 
 import (
 	"bytes"
+	"context"
 	crand "crypto/rand"
 	"encoding/binary"
 	"io"
@@ -370,7 +371,8 @@ func (m *mockMessageSwitch) CircuitModifier() htlcswitch.CircuitModifier {
 func (m *mockMessageSwitch) RemoveLink(cid lnwire.ChannelID) {}
 
 // CreateAndAddLink currently returns a dummy value.
-func (m *mockMessageSwitch) CreateAndAddLink(cfg htlcswitch.ChannelLinkConfig,
+func (m *mockMessageSwitch) CreateAndAddLink(_ context.Context,
+	cfg htlcswitch.ChannelLinkConfig,
 	lnChan *lnwallet.LightningChannel) error {
 
 	return nil

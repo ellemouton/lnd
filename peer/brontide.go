@@ -753,6 +753,8 @@ func (p *Brontide) Start() error {
 		return nil
 	}
 
+	ctx := context.TODO()
+
 	// Once we've finished starting up the peer, we'll signal to other
 	// goroutines that the they can move forward to tear down the peer, or
 	// carry out other relevant changes.
@@ -858,10 +860,10 @@ func (p *Brontide) Start() error {
 	// Register the message router now as we may need to register some
 	// endpoints while loading the channels below.
 	p.msgRouter.WhenSome(func(router msgmux.Router) {
-		router.Start(context.Background())
+		router.Start(ctx)
 	})
 
-	msgs, err := p.loadActiveChannels(activeChans)
+	msgs, err := p.loadActiveChannels(ctx, activeChans)
 	if err != nil {
 		return fmt.Errorf("unable to load channels: %w", err)
 	}
@@ -1003,8 +1005,10 @@ func (p *Brontide) addrWithInternalKey(
 // channels returned by the database. It returns a slice of channel reestablish
 // messages that should be sent to the peer immediately, in case we have borked
 // channels that haven't been closed yet.
-func (p *Brontide) loadActiveChannels(chans []*channeldb.OpenChannel) (
-	[]lnwire.Message, error) {
+//
+// nolint:funlen
+func (p *Brontide) loadActiveChannels(ctx context.Context,
+	chans []*channeldb.OpenChannel) ([]lnwire.Message, error) {
 
 	// Return a slice of messages to send to the peers in case the channel
 	// cannot be loaded normally.
@@ -1307,7 +1311,7 @@ func (p *Brontide) loadActiveChannels(chans []*channeldb.OpenChannel) (
 		}
 
 		err = p.addLink(
-			&chanPoint, lnChan, forwardingPolicy, chainEvents,
+			ctx, &chanPoint, lnChan, forwardingPolicy, chainEvents,
 			true, shutdownMsg,
 		)
 		if err != nil {
@@ -1358,7 +1362,7 @@ func (p *Brontide) loadActiveChannels(chans []*channeldb.OpenChannel) (
 }
 
 // addLink creates and adds a new ChannelLink from the specified channel.
-func (p *Brontide) addLink(chanPoint *wire.OutPoint,
+func (p *Brontide) addLink(ctx context.Context, chanPoint *wire.OutPoint,
 	lnChan *lnwallet.LightningChannel,
 	forwardingPolicy *models.ForwardingPolicy,
 	chainEvents *contractcourt.ChainEventSubscription,
@@ -1450,7 +1454,7 @@ func (p *Brontide) addLink(chanPoint *wire.OutPoint,
 	// With the channel link created, we'll now notify the htlc switch so
 	// this channel can be used to dispatch local payments and also
 	// passively forward payments.
-	return p.cfg.Switch.CreateAndAddLink(linkCfg, lnChan)
+	return p.cfg.Switch.CreateAndAddLink(ctx, linkCfg, lnChan)
 }
 
 // maybeSendNodeAnn sends our node announcement to the remote peer if at least
@@ -5081,7 +5085,9 @@ func (p *Brontide) updateNextRevocation(c *channeldb.OpenChannel) error {
 // addActiveChannel adds a new active channel to the `activeChannels` map. It
 // takes a `channeldb.OpenChannel`, creates a `lnwallet.LightningChannel` from
 // it and assembles it with a channel link.
-func (p *Brontide) addActiveChannel(c *lnpeer.NewChannel) error {
+func (p *Brontide) addActiveChannel(ctx context.Context,
+	c *lnpeer.NewChannel) error {
+
 	chanPoint := c.FundingOutpoint
 	chanID := lnwire.NewChanIDFromOutPoint(chanPoint)
 
@@ -5143,7 +5149,7 @@ func (p *Brontide) addActiveChannel(c *lnpeer.NewChannel) error {
 
 	// Create the link and add it to the switch.
 	err = p.addLink(
-		&chanPoint, lnChan, initialPolicy, chainEvents,
+		ctx, &chanPoint, lnChan, initialPolicy, chainEvents,
 		shouldReestablish, fn.None[lnwire.Shutdown](),
 	)
 	if err != nil {
@@ -5180,6 +5186,8 @@ func (p *Brontide) addActiveChannel(c *lnpeer.NewChannel) error {
 // know this channel ID or not, we'll either add it to the `activeChannels` map
 // or init the next revocation for it.
 func (p *Brontide) handleNewActiveChannel(req *newChannelMsg) {
+	ctx := context.TODO()
+
 	newChan := req.channel
 	chanPoint := newChan.FundingOutpoint
 	chanID := lnwire.NewChanIDFromOutPoint(chanPoint)
@@ -5204,7 +5212,7 @@ func (p *Brontide) handleNewActiveChannel(req *newChannelMsg) {
 	}
 
 	// This is a new channel, we now add it to the map.
-	if err := p.addActiveChannel(req.channel); err != nil {
+	if err := p.addActiveChannel(ctx, req.channel); err != nil {
 		// Log and send back the error to the request.
 		p.log.Errorf(err.Error())
 		req.err <- err

@@ -2030,18 +2030,17 @@ func (s *Switch) Stop() error {
 
 // CreateAndAddLink will create a link and then add it to the internal maps
 // when given a ChannelLinkConfig and LightningChannel.
-func (s *Switch) CreateAndAddLink(linkCfg ChannelLinkConfig,
-	lnChan *lnwallet.LightningChannel) error {
+func (s *Switch) CreateAndAddLink(ctx context.Context,
+	linkCfg ChannelLinkConfig, lnChan *lnwallet.LightningChannel) error {
 
 	link := NewChannelLink(linkCfg, lnChan)
-	return s.AddLink(link)
+
+	return s.AddLink(ctx, link)
 }
 
 // AddLink is used to initiate the handling of the add link command. The
 // request will be propagated and handled in the main goroutine.
-func (s *Switch) AddLink(link ChannelLink) error {
-	ctx := context.TODO()
-
+func (s *Switch) AddLink(ctx context.Context, link ChannelLink) error {
 	s.indexMtx.Lock()
 	defer s.indexMtx.Unlock()
 

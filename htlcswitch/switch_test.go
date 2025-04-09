@@ -46,6 +46,7 @@ func genPreimage() ([32]byte, error) {
 // having removed it.
 func TestSwitchAddDuplicateLink(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	alicePeer, err := newMockServer(
 		t, "alice", testStartingHeight, nil, testDefaultDelta,
@@ -65,12 +66,12 @@ func TestSwitchAddDuplicateLink(t *testing.T) {
 		s, chanID1, aliceScid, emptyScid, alicePeer, false, false,
 		false, false,
 	)
-	if err := s.AddLink(aliceChannelLink); err != nil {
+	if err := s.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
 
 	// Alice should have a live link, adding again should fail.
-	if err := s.AddLink(aliceChannelLink); err == nil {
+	if err := s.AddLink(ctx, aliceChannelLink); err == nil {
 		t.Fatalf("adding duplicate link should have failed")
 	}
 
@@ -78,7 +79,7 @@ func TestSwitchAddDuplicateLink(t *testing.T) {
 	s.RemoveLink(chanID1)
 
 	// Alice has no links, adding should succeed.
-	if err := s.AddLink(aliceChannelLink); err != nil {
+	if err := s.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
 }
@@ -89,6 +90,7 @@ func TestSwitchAddDuplicateLink(t *testing.T) {
 // i.e. it has received ChannelReady from the remote peer.
 func TestSwitchHasActiveLink(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	alicePeer, err := newMockServer(
 		t, "alice", testStartingHeight, nil, testDefaultDelta,
@@ -108,7 +110,7 @@ func TestSwitchHasActiveLink(t *testing.T) {
 		s, chanID1, aliceScid, emptyScid, alicePeer, false, false,
 		false, false,
 	)
-	if err := s.AddLink(aliceChannelLink); err != nil {
+	if err := s.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
 
@@ -161,7 +163,7 @@ func TestSwitchSendPending(t *testing.T) {
 		s, chanID1, pendingChanID, emptyScid, alicePeer, false, false,
 		false, false,
 	)
-	if err := s.AddLink(aliceChannelLink); err != nil {
+	if err := s.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
 
@@ -169,7 +171,7 @@ func TestSwitchSendPending(t *testing.T) {
 		s, chanID2, bobChanID, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	if err := s.AddLink(bobChannelLink); err != nil {
+	if err := s.AddLink(ctx, bobChannelLink); err != nil {
 		t.Fatalf("unable to add bob link: %v", err)
 	}
 
@@ -499,7 +501,7 @@ func testSwitchForwardMapping(t *testing.T, alicePrivate, aliceZeroConf,
 		}
 	}
 
-	err = s.AddLink(aliceChannelLink)
+	err = s.AddLink(ctx, aliceChannelLink)
 	require.NoError(t, err)
 
 	// Bob will just have a non-option_scid_alias channel so no mapping is
@@ -514,7 +516,7 @@ func testSwitchForwardMapping(t *testing.T, alicePrivate, aliceZeroConf,
 		s, chanID2, bobScid, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	err = s.AddLink(bobChannelLink)
+	err = s.AddLink(ctx, bobChannelLink)
 	require.NoError(t, err)
 
 	// Generate preimage.
@@ -679,6 +681,8 @@ func TestSwitchSendHTLCMapping(t *testing.T) {
 func testSwitchSendHtlcMapping(t *testing.T, zeroConf, useAlias bool, alias,
 	realScid lnwire.ShortChannelID, optionFeature bool) {
 
+	ctx := context.Background()
+
 	peer, err := newMockServer(
 		t, "alice", testStartingHeight, nil, testDefaultDelta,
 	)
@@ -711,7 +715,7 @@ func testSwitchSendHtlcMapping(t *testing.T, zeroConf, useAlias bool, alias,
 		}
 	}
 
-	err = s.AddLink(link)
+	err = s.AddLink(ctx, link)
 	require.NoError(t, err)
 
 	// Generate preimage.
@@ -740,6 +744,7 @@ func testSwitchSendHtlcMapping(t *testing.T, zeroConf, useAlias bool, alias,
 // the aliasToReal and baseIndex maps.
 func TestSwitchUpdateScid(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	peer, err := newMockServer(
 		t, "alice", testStartingHeight, nil, testDefaultDelta,
@@ -774,7 +779,7 @@ func TestSwitchUpdateScid(t *testing.T) {
 	)
 	link.addAlias(alias2)
 
-	err = s.AddLink(link)
+	err = s.AddLink(ctx, link)
 	require.NoError(t, err)
 
 	// Assert that the zero-conf link does not have entries in the
@@ -843,7 +848,7 @@ func TestSwitchUpdateScid(t *testing.T) {
 	link2.addAlias(optionAlias)
 	link2.addAlias(optionAlias2)
 
-	err = s.AddLink(link2)
+	err = s.AddLink(ctx, link2)
 	require.NoError(t, err)
 
 	// Assert that the option-scid-alias link does have entries in the
@@ -910,10 +915,10 @@ func TestSwitchForward(t *testing.T) {
 		s, chanID2, bobChanID, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	if err := s.AddLink(aliceChannelLink); err != nil {
+	if err := s.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
-	if err := s.AddLink(bobChannelLink); err != nil {
+	if err := s.AddLink(ctx, bobChannelLink); err != nil {
 		t.Fatalf("unable to add bob link: %v", err)
 	}
 
@@ -1028,10 +1033,10 @@ func TestSwitchForwardFailAfterFullAdd(t *testing.T) {
 		s, chanID2, bobChanID, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	if err := s.AddLink(aliceChannelLink); err != nil {
+	if err := s.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
-	if err := s.AddLink(bobChannelLink); err != nil {
+	if err := s.AddLink(ctx, bobChannelLink); err != nil {
 		t.Fatalf("unable to add bob link: %v", err)
 	}
 
@@ -1120,10 +1125,10 @@ func TestSwitchForwardFailAfterFullAdd(t *testing.T) {
 		s2, chanID2, bobChanID, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	if err := s2.AddLink(aliceChannelLink); err != nil {
+	if err := s2.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
-	if err := s2.AddLink(bobChannelLink); err != nil {
+	if err := s2.AddLink(ctx, bobChannelLink); err != nil {
 		t.Fatalf("unable to add bob link: %v", err)
 	}
 
@@ -1215,10 +1220,10 @@ func TestSwitchForwardSettleAfterFullAdd(t *testing.T) {
 		s, chanID2, bobChanID, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	if err := s.AddLink(aliceChannelLink); err != nil {
+	if err := s.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
-	if err := s.AddLink(bobChannelLink); err != nil {
+	if err := s.AddLink(ctx, bobChannelLink); err != nil {
 		t.Fatalf("unable to add bob link: %v", err)
 	}
 
@@ -1307,10 +1312,10 @@ func TestSwitchForwardSettleAfterFullAdd(t *testing.T) {
 		s2, chanID2, bobChanID, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	if err := s2.AddLink(aliceChannelLink); err != nil {
+	if err := s2.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
-	if err := s2.AddLink(bobChannelLink); err != nil {
+	if err := s2.AddLink(ctx, bobChannelLink); err != nil {
 		t.Fatalf("unable to add bob link: %v", err)
 	}
 
@@ -1405,10 +1410,10 @@ func TestSwitchForwardDropAfterFullAdd(t *testing.T) {
 		s, chanID2, bobChanID, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	if err := s.AddLink(aliceChannelLink); err != nil {
+	if err := s.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
-	if err := s.AddLink(bobChannelLink); err != nil {
+	if err := s.AddLink(ctx, bobChannelLink); err != nil {
 		t.Fatalf("unable to add bob link: %v", err)
 	}
 
@@ -1489,10 +1494,10 @@ func TestSwitchForwardDropAfterFullAdd(t *testing.T) {
 		s2, chanID2, bobChanID, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	if err := s2.AddLink(aliceChannelLink); err != nil {
+	if err := s2.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
-	if err := s2.AddLink(bobChannelLink); err != nil {
+	if err := s2.AddLink(ctx, bobChannelLink); err != nil {
 		t.Fatalf("unable to add bob link: %v", err)
 	}
 
@@ -1558,10 +1563,10 @@ func TestSwitchForwardFailAfterHalfAdd(t *testing.T) {
 		s, chanID2, bobChanID, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	if err := s.AddLink(aliceChannelLink); err != nil {
+	if err := s.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
-	if err := s.AddLink(bobChannelLink); err != nil {
+	if err := s.AddLink(ctx, bobChannelLink); err != nil {
 		t.Fatalf("unable to add bob link: %v", err)
 	}
 
@@ -1637,10 +1642,10 @@ func TestSwitchForwardFailAfterHalfAdd(t *testing.T) {
 		s2, chanID2, bobChanID, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	if err := s2.AddLink(aliceChannelLink); err != nil {
+	if err := s2.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
-	if err := s2.AddLink(bobChannelLink); err != nil {
+	if err := s2.AddLink(ctx, bobChannelLink); err != nil {
 		t.Fatalf("unable to add bob link: %v", err)
 	}
 
@@ -1712,10 +1717,10 @@ func TestSwitchForwardCircuitPersistence(t *testing.T) {
 		s, chanID2, bobChanID, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	if err := s.AddLink(aliceChannelLink); err != nil {
+	if err := s.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
-	if err := s.AddLink(bobChannelLink); err != nil {
+	if err := s.AddLink(ctx, bobChannelLink); err != nil {
 		t.Fatalf("unable to add bob link: %v", err)
 	}
 
@@ -1790,10 +1795,10 @@ func TestSwitchForwardCircuitPersistence(t *testing.T) {
 		s2, chanID2, bobChanID, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	if err := s2.AddLink(aliceChannelLink); err != nil {
+	if err := s2.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
-	if err := s2.AddLink(bobChannelLink); err != nil {
+	if err := s2.AddLink(ctx, bobChannelLink); err != nil {
 		t.Fatalf("unable to add bob link: %v", err)
 	}
 
@@ -1876,10 +1881,10 @@ func TestSwitchForwardCircuitPersistence(t *testing.T) {
 		s3, chanID2, bobChanID, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	if err := s3.AddLink(aliceChannelLink); err != nil {
+	if err := s3.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
-	if err := s3.AddLink(bobChannelLink); err != nil {
+	if err := s3.AddLink(ctx, bobChannelLink); err != nil {
 		t.Fatalf("unable to add bob link: %v", err)
 	}
 
@@ -1902,6 +1907,9 @@ type multiHopFwdTest struct {
 // through the same channel in the case where the switch is configured to allow
 // and disallow same channel circular forwards.
 func TestCircularForwards(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
 	chanID1, aliceChanID := genID()
 	preimage := [sha256.Size]byte{1}
 	hash := sha256.Sum256(preimage[:])
@@ -1958,7 +1966,7 @@ func TestCircularForwards(t *testing.T) {
 				true, false, false, false,
 			)
 
-			if err := s.AddLink(aliceChannelLink); err != nil {
+			if err := s.AddLink(ctx, aliceChannelLink); err != nil {
 				t.Fatalf("unable to add alice link: %v", err)
 			}
 
@@ -2250,13 +2258,13 @@ func testSkipIneligibleLinksMultiHopForward(t *testing.T,
 	)
 	bobChannelLink2.checkHtlcForwardResult = testCase.failure2
 
-	if err := s.AddLink(aliceChannelLink); err != nil {
+	if err := s.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
-	if err := s.AddLink(bobChannelLink1); err != nil {
+	if err := s.AddLink(ctx, bobChannelLink1); err != nil {
 		t.Fatalf("unable to add bob link: %v", err)
 	}
-	if err := s.AddLink(bobChannelLink2); err != nil {
+	if err := s.AddLink(ctx, bobChannelLink2); err != nil {
 		t.Fatalf("unable to add bob link: %v", err)
 	}
 
@@ -2337,6 +2345,8 @@ func TestSkipPolicyUnsatisfiedLinkLocalForward(t *testing.T) {
 func testSkipLinkLocalForward(t *testing.T, eligible bool,
 	policyResult lnwire.FailureMessage) {
 
+	ctx := context.Background()
+
 	// We'll create a single link for this test, marking it as being unable
 	// to forward form the get go.
 	alicePeer, err := newMockServer(
@@ -2360,7 +2370,7 @@ func testSkipLinkLocalForward(t *testing.T, eligible bool,
 	aliceChannelLink.checkHtlcTransitResult = NewLinkError(
 		policyResult,
 	)
-	if err := s.AddLink(aliceChannelLink); err != nil {
+	if err := s.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
 
@@ -2419,10 +2429,10 @@ func TestSwitchCancel(t *testing.T) {
 		s, chanID2, bobChanID, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	if err := s.AddLink(aliceChannelLink); err != nil {
+	if err := s.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
-	if err := s.AddLink(bobChannelLink); err != nil {
+	if err := s.AddLink(ctx, bobChannelLink); err != nil {
 		t.Fatalf("unable to add bob link: %v", err)
 	}
 
@@ -2529,10 +2539,10 @@ func TestSwitchAddSamePayment(t *testing.T) {
 		s, chanID2, bobChanID, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	if err := s.AddLink(aliceChannelLink); err != nil {
+	if err := s.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
-	if err := s.AddLink(bobChannelLink); err != nil {
+	if err := s.AddLink(ctx, bobChannelLink); err != nil {
 		t.Fatalf("unable to add bob link: %v", err)
 	}
 
@@ -2661,6 +2671,7 @@ func TestSwitchAddSamePayment(t *testing.T) {
 // users when response is came back from channel link.
 func TestSwitchSendPayment(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	alicePeer, err := newMockServer(
 		t, "alice", testStartingHeight, nil, testDefaultDelta,
@@ -2669,7 +2680,7 @@ func TestSwitchSendPayment(t *testing.T) {
 
 	s, err := initSwitchWithTempDB(t, testStartingHeight)
 	require.NoError(t, err, "unable to init switch")
-	if err := s.Start(context.Background()); err != nil {
+	if err := s.Start(ctx); err != nil {
 		t.Fatalf("unable to start switch: %v", err)
 	}
 	defer s.Stop()
@@ -2680,7 +2691,7 @@ func TestSwitchSendPayment(t *testing.T) {
 		s, chanID1, aliceChanID, emptyScid, alicePeer, true, false,
 		false, false,
 	)
-	if err := s.AddLink(aliceChannelLink); err != nil {
+	if err := s.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add link: %v", err)
 	}
 
@@ -3178,6 +3189,7 @@ func TestSwitchGetAttemptResult(t *testing.T) {
 // if the failure cannot be decrypted.
 func TestInvalidFailure(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	alicePeer, err := newMockServer(
 		t, "alice", testStartingHeight, nil, testDefaultDelta,
@@ -3186,7 +3198,7 @@ func TestInvalidFailure(t *testing.T) {
 
 	s, err := initSwitchWithTempDB(t, testStartingHeight)
 	require.NoError(t, err, "unable to init switch")
-	if err := s.Start(context.Background()); err != nil {
+	if err := s.Start(ctx); err != nil {
 		t.Fatalf("unable to start switch: %v", err)
 	}
 	defer s.Stop()
@@ -3198,7 +3210,7 @@ func TestInvalidFailure(t *testing.T) {
 		s, chanID1, aliceChanID, emptyScid, alicePeer, true, false,
 		false, false,
 	)
-	if err := s.AddLink(aliceChannelLink); err != nil {
+	if err := s.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add link: %v", err)
 	}
 
@@ -3808,6 +3820,8 @@ type interceptableSwitchTestContext struct {
 func newInterceptableSwitchTestContext(
 	t *testing.T) *interceptableSwitchTestContext {
 
+	ctx := context.Background()
+
 	chanID1, chanID2, aliceChanID, bobChanID := genIDs()
 
 	alicePeer, err := newMockServer(
@@ -3837,16 +3851,16 @@ func newInterceptableSwitchTestContext(
 		s, chanID2, bobChanID, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	if err := s.AddLink(aliceChannelLink); err != nil {
+	if err := s.AddLink(ctx, aliceChannelLink); err != nil {
 		t.Fatalf("unable to add alice link: %v", err)
 	}
-	if err := s.AddLink(bobChannelLink); err != nil {
+	if err := s.AddLink(ctx, bobChannelLink); err != nil {
 		t.Fatalf("unable to add bob link: %v", err)
 	}
 
 	preimage := [sha256.Size]byte{1}
 
-	ctx := &interceptableSwitchTestContext{
+	tCtx := &interceptableSwitchTestContext{
 		t:                  t,
 		preimage:           preimage,
 		rhash:              sha256.Sum256(preimage[:]),
@@ -3863,7 +3877,7 @@ func newInterceptableSwitchTestContext(
 		s:                s,
 	}
 
-	return ctx
+	return tCtx
 }
 
 func (c *interceptableSwitchTestContext) createTestPacket() *htlcPacket {
@@ -4625,21 +4639,21 @@ func TestSwitchMailboxDust(t *testing.T) {
 		s, chanID1, aliceChanID, emptyScid, alicePeer, true, false,
 		false, false,
 	)
-	err = s.AddLink(aliceLink)
+	err = s.AddLink(ctx, aliceLink)
 	require.NoError(t, err)
 
 	bobLink := newMockChannelLink(
 		s, chanID2, bobChanID, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	err = s.AddLink(bobLink)
+	err = s.AddLink(ctx, bobLink)
 	require.NoError(t, err)
 
 	carolLink := newMockChannelLink(
 		s, chanID3, carolChanID, emptyScid, carolPeer, true, false,
 		false, false,
 	)
-	err = s.AddLink(carolLink)
+	err = s.AddLink(ctx, carolLink)
 	require.NoError(t, err)
 
 	// mockChannelLink sets the local and remote dust limits of the mailbox
@@ -4724,6 +4738,7 @@ func TestSwitchMailboxDust(t *testing.T) {
 // resolution messages.
 func TestSwitchResolution(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	alicePeer, err := newMockServer(
 		t, "alice", testStartingHeight, nil, testDefaultDelta,
@@ -4756,9 +4771,9 @@ func TestSwitchResolution(t *testing.T) {
 		s, chanID2, bobChanID, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	err = s.AddLink(aliceChannelLink)
+	err = s.AddLink(ctx, aliceChannelLink)
 	require.NoError(t, err)
-	err = s.AddLink(bobChannelLink)
+	err = s.AddLink(ctx, bobChannelLink)
 	require.NoError(t, err)
 
 	// Create an add htlcPacket that Alice will send to Bob.
@@ -4819,7 +4834,7 @@ func TestSwitchResolution(t *testing.T) {
 	require.Equal(t, preimage, *resMsgs[0].PreImage)
 
 	// Now we'll restart Alice's link and delete the circuit.
-	err = s.AddLink(aliceChannelLink)
+	err = s.AddLink(ctx, aliceChannelLink)
 	require.NoError(t, err)
 
 	// Alice will receive the packet and open the circuit.
@@ -4849,9 +4864,9 @@ func TestSwitchResolution(t *testing.T) {
 		_ = s.Stop()
 	}()
 
-	err = s.AddLink(aliceChannelLink)
+	err = s.AddLink(ctx, aliceChannelLink)
 	require.NoError(t, err)
-	err = s.AddLink(bobChannelLink)
+	err = s.AddLink(ctx, bobChannelLink)
 	require.NoError(t, err)
 
 	// Alice should not receive a packet since the Switch should have
@@ -4900,6 +4915,7 @@ func TestSwitchForwardFailAlias(t *testing.T) {
 
 func testSwitchForwardFailAlias(t *testing.T, zeroConf bool) {
 	t.Parallel()
+	ctx := context.Background()
 
 	chanID1, chanID2, aliceChanID, bobChanID := genIDs()
 
@@ -4943,14 +4959,14 @@ func testSwitchForwardFailAlias(t *testing.T, zeroConf bool) {
 		)
 		aliceLink.addAlias(aliceAlias)
 	}
-	err = s.AddLink(aliceLink)
+	err = s.AddLink(ctx, aliceLink)
 	require.NoError(t, err)
 
 	bobLink := newMockChannelLink(
 		s, chanID2, bobChanID, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	err = s.AddLink(bobLink)
+	err = s.AddLink(ctx, bobLink)
 	require.NoError(t, err)
 
 	// Create a packet that will be sent from Alice to Bob via the switch.
@@ -5014,14 +5030,14 @@ func testSwitchForwardFailAlias(t *testing.T, zeroConf bool) {
 		)
 		aliceLink2.addAlias(aliceAlias)
 	}
-	err = s2.AddLink(aliceLink2)
+	err = s2.AddLink(ctx, aliceLink2)
 	require.NoError(t, err)
 
 	bobLink2 := newMockChannelLink(
 		s2, chanID2, bobChanID, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	err = s2.AddLink(bobLink2)
+	err = s2.AddLink(ctx, bobLink2)
 	require.NoError(t, err)
 
 	// Reforward the ogPacket and wait for Alice to receive a failure
@@ -5112,6 +5128,7 @@ func TestSwitchAliasFailAdd(t *testing.T) {
 
 func testSwitchAliasFailAdd(t *testing.T, zeroConf, private, useAlias bool) {
 	t.Parallel()
+	ctx := context.Background()
 
 	chanID1, chanID2, aliceChanID, bobChanID := genIDs()
 
@@ -5166,14 +5183,14 @@ func testSwitchAliasFailAdd(t *testing.T, zeroConf, private, useAlias bool) {
 		aliceLink.addAlias(aliceAlias)
 		aliceLink.addAlias(aliceAlias2)
 	}
-	err = s.AddLink(aliceLink)
+	err = s.AddLink(ctx, aliceLink)
 	require.NoError(t, err)
 
 	bobLink := newMockChannelLink(
 		s, chanID2, bobChanID, emptyScid, bobPeer, true, true, false,
 		false,
 	)
-	err = s.AddLink(bobLink)
+	err = s.AddLink(ctx, bobLink)
 	require.NoError(t, err)
 
 	// Create a packet that Bob will send to Alice via ForwardPackets.
@@ -5304,6 +5321,7 @@ func testSwitchHandlePacketForward(t *testing.T, zeroConf, private,
 	useAlias, optionFeature bool) {
 
 	t.Parallel()
+	ctx := context.Background()
 
 	// Create a link for Alice that we'll add to the switch.
 	harness, err :=
@@ -5364,7 +5382,7 @@ func testSwitchHandlePacketForward(t *testing.T, zeroConf, private,
 		aliceChannelState.ChanType |= channeldb.ZeroConfBit
 	}
 
-	err = s.AddLink(aliceLink)
+	err = s.AddLink(ctx, aliceLink)
 	require.NoError(t, err)
 
 	// Add a mockChannelLink for Bob.
@@ -5378,7 +5396,7 @@ func testSwitchHandlePacketForward(t *testing.T, zeroConf, private,
 		s, bobChanID, bobScid, emptyScid, bobPeer, true, false, false,
 		false,
 	)
-	err = s.AddLink(bobLink)
+	err = s.AddLink(ctx, bobLink)
 	require.NoError(t, err)
 
 	preimage := [sha256.Size]byte{1}
@@ -5503,7 +5521,7 @@ func testSwitchAliasInterceptFail(t *testing.T, zeroConf bool) {
 		aliceLink.addAlias(aliceAlias)
 		aliceLink.addAlias(aliceAlias2)
 	}
-	err = s.AddLink(aliceLink)
+	err = s.AddLink(ctx, aliceLink)
 	require.NoError(t, err)
 
 	// Now we'll create the packet that will be sent from the Alice link.
