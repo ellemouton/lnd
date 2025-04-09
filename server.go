@@ -4577,6 +4577,8 @@ func (s *server) addPeer(p *peer.Brontide) {
 //
 // NOTE: This MUST be launched as a goroutine.
 func (s *server) peerInitializer(p *peer.Brontide) {
+	ctx := context.TODO()
+
 	defer s.wg.Done()
 
 	pubBytes := p.IdentityKey().SerializeCompressed()
@@ -4604,7 +4606,7 @@ func (s *server) peerInitializer(p *peer.Brontide) {
 
 	// Start the peer! If an error occurs, we Disconnect the peer, which
 	// will unblock the peerTerminationWatcher.
-	if err := p.Start(); err != nil {
+	if err := p.Start(ctx); err != nil {
 		srvrLog.Warnf("Starting peer=%x got error: %v", pubBytes, err)
 
 		p.Disconnect(fmt.Errorf("unable to start peer: %w", err))

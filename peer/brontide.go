@@ -748,12 +748,12 @@ func NewBrontide(cfg Config) *Brontide {
 
 // Start starts all helper goroutines the peer needs for normal operations.  In
 // the case this peer has already been started, then this function is a noop.
-func (p *Brontide) Start() error {
+func (p *Brontide) Start(ctx context.Context) error {
 	if atomic.AddInt32(&p.started, 1) != 1 {
 		return nil
 	}
 
-	ctx := context.TODO()
+	ctx, _ = p.cg.Create(ctx)
 
 	// Once we've finished starting up the peer, we'll signal to other
 	// goroutines that the they can move forward to tear down the peer, or
@@ -895,7 +895,7 @@ func (p *Brontide) Start() error {
 	p.cg.WgAdd(4)
 	go p.queueHandler()
 	go p.writeHandler()
-	go p.channelManager()
+	go p.channelManager(ctx)
 	go p.readHandler()
 
 	// Signal to any external processes that the peer is now active.
@@ -2871,13 +2871,31 @@ func (p *Brontide) genDeliveryScript() ([]byte, error) {
 // channels maintained with the remote peer.
 //
 // NOTE: This method MUST be run as a goroutine.
-func (p *Brontide) channelManager() {
+func (p *Brontide) channelManager(ctx context.Context) {
 	defer p.cg.WgDone()
 
 	// reenableTimeout will fire once after the configured channel status
 	// interval has elapsed. This will trigger us to sign new channel
 	// updates and broadcast them with the "disabled" flag unset.
 	reenableTimeout := time.After(p.cfg.ChanActiveTimeout)
+
+	// resetChannelState is a helper that resets all active channels to
+	// their default state. This should be used if we are exiting.
+	resetChannelState := func() {
+		p.activeChannels.ForEach(func(_ lnwire.ChannelID,
+			lc *lnwallet.LightningChannel) error {
+
+			// Exit if the channel is nil as it's a pending
+			// channel.
+			if lc == nil {
+				return nil
+			}
+
+			lc.ResetState()
+
+			return nil
+		})
+	}
 
 out:
 	for {
@@ -2894,7 +2912,7 @@ out:
 		// funding workflow. We'll initialize the necessary local
 		// state, and notify the htlc switch of a new link.
 		case req := <-p.newActiveChannel:
-			p.handleNewActiveChannel(req)
+			p.handleNewActiveChannel(ctx, req)
 
 		// The funding flow for a pending channel is failed, we will
 		// remove it from Brontide.
@@ -2949,21 +2967,16 @@ out:
 			}
 
 		case <-p.cg.Done():
-			// As, we've been signalled to exit, we'll reset all
-			// our active channel back to their default state.
-			p.activeChannels.ForEach(func(_ lnwire.ChannelID,
-				lc *lnwallet.LightningChannel) error {
+			// As, we've been signalled to exit, we'll reset all our
+			// active channel back to their default state.
+			resetChannelState()
 
-				// Exit if the channel is nil as it's a pending
-				// channel.
-				if lc == nil {
-					return nil
-				}
+			break out
 
-				lc.ResetState()
-
-				return nil
-			})
+		case <-ctx.Done():
+			// As, we've been signalled to exit, we'll reset all our
+			// active channel back to their default state.
+			resetChannelState()
 
 			break out
 		}
@@ -5185,8 +5198,8 @@ func (p *Brontide) addActiveChannel(ctx context.Context,
 // handleNewActiveChannel handles a `newChannelMsg` request. Depending on we
 // know this channel ID or not, we'll either add it to the `activeChannels` map
 // or init the next revocation for it.
-func (p *Brontide) handleNewActiveChannel(req *newChannelMsg) {
-	ctx := context.TODO()
+func (p *Brontide) handleNewActiveChannel(ctx context.Context,
+	req *newChannelMsg) {
 
 	newChan := req.channel
 	chanPoint := newChan.FundingOutpoint

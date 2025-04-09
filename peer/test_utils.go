@@ -339,7 +339,7 @@ func createTestPeerWithChannel(t *testing.T, updateChan func(a,
 	alicePeer.activeChannels.Store(chanID, channelAlice)
 
 	alicePeer.cg.WgAdd(1)
-	go alicePeer.channelManager()
+	go alicePeer.channelManager(context.Background())
 
 	return &peerTestCtx{
 		peer:       alicePeer,
@@ -783,7 +783,7 @@ func startPeer(t *testing.T, mockConn *mockMessageConn,
 	// indicates a successful startup.
 	done := make(chan struct{})
 	go func() {
-		require.NoError(t, peer.Start())
+		require.NoError(t, peer.Start(context.Background()))
 		close(done)
 	}()
 
