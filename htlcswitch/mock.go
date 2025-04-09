@@ -735,7 +735,7 @@ type mockChannelLink struct {
 
 	checkHtlcForwardResult *LinkError
 
-	failAliasUpdate func(sid lnwire.ShortChannelID,
+	failAliasUpdate func(_ context.Context, sid lnwire.ShortChannelID,
 		incoming bool) *lnwire.ChannelUpdate1
 
 	confirmedZC bool
@@ -872,7 +872,8 @@ func (f *mockChannelLink) AttachMailBox(mailBox MailBox) {
 }
 
 func (f *mockChannelLink) attachFailAliasUpdate(closure func(
-	sid lnwire.ShortChannelID, incoming bool) *lnwire.ChannelUpdate1) {
+	ctx context.Context, sid lnwire.ShortChannelID,
+	incoming bool) *lnwire.ChannelUpdate1) {
 
 	f.failAliasUpdate = closure
 }

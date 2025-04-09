@@ -316,7 +316,7 @@ func (s *InterceptableSwitch) run(ctx context.Context) error {
 				}
 			}
 			err := s.htlcSwitch.ForwardPackets(
-				packets.linkQuit, notIntercepted...,
+				ctx, packets.linkQuit, notIntercepted...,
 			)
 			if err != nil {
 				log.Errorf("Cannot forward packets: %v", err)
@@ -671,9 +671,10 @@ func (f *interceptedForward) Packet() InterceptedPacket {
 
 // Resume resumes the default behavior as if the packet was not intercepted.
 func (f *interceptedForward) Resume() error {
+	ctx := context.TODO()
 	// Forward to the switch. A link quit channel isn't needed, because we
 	// are on a different thread now.
-	return f.htlcSwitch.ForwardPackets(nil, f.packet)
+	return f.htlcSwitch.ForwardPackets(ctx, nil, f.packet)
 }
 
 // ResumeModified resumes the default behavior with field modifications. The
@@ -685,6 +686,8 @@ func (f *interceptedForward) ResumeModified(
 	inAmountMsat fn.Option[lnwire.MilliSatoshi],
 	outAmountMsat fn.Option[lnwire.MilliSatoshi],
 	outWireCustomRecords fn.Option[lnwire.CustomRecords]) error {
+
+	ctx := context.TODO()
 
 	// Convert the optional custom records to the correct type and validate
 	// them.
@@ -742,7 +745,7 @@ func (f *interceptedForward) ResumeModified(
 
 	// Forward to the switch. A link quit channel isn't needed, because we
 	// are on a different thread now.
-	return f.htlcSwitch.ForwardPackets(nil, f.packet)
+	return f.htlcSwitch.ForwardPackets(ctx, nil, f.packet)
 }
 
 // Fail notifies the intention to Fail an existing hold forward with an
@@ -757,7 +760,7 @@ func (f *interceptedForward) Fail(reason []byte) error {
 
 // FailWithCode notifies the intention to fail an existing hold forward with the
 // specified failure code.
-func (f *interceptedForward) FailWithCode(_ context.Context,
+func (f *interceptedForward) FailWithCode(ctx context.Context,
 	code lnwire.FailCode) error {
 
 	shaOnionBlob := func() [32]byte {
@@ -785,7 +788,7 @@ func (f *interceptedForward) FailWithCode(_ context.Context,
 
 	case lnwire.CodeTemporaryChannelFailure:
 		update := f.htlcSwitch.failAliasUpdate(
-			f.packet.incomingChanID, true,
+			ctx, f.packet.incomingChanID, true,
 		)
 		if update == nil {
 			// Fallback to the original, non-alias behavior.

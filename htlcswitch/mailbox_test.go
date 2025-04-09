@@ -1,6 +1,7 @@
 package htlcswitch
 
 import (
+	"context"
 	prand "math/rand"
 	"reflect"
 	"testing"
@@ -206,7 +207,7 @@ func newMailboxContextWithClock(t *testing.T,
 		forwards: make(chan *htlcPacket, 1),
 	}
 
-	failMailboxUpdate := func(outScid,
+	failMailboxUpdate := func(_ context.Context, outScid,
 		mboxScid lnwire.ShortChannelID) lnwire.FailureMessage {
 
 		return &lnwire.FailTemporaryNodeFailure{}
@@ -232,7 +233,7 @@ func newMailboxContext(t *testing.T, startTime time.Time,
 		forwards: make(chan *htlcPacket, 1),
 	}
 
-	failMailboxUpdate := func(outScid,
+	failMailboxUpdate := func(_ context.Context, outScid,
 		mboxScid lnwire.ShortChannelID) lnwire.FailureMessage {
 
 		return &lnwire.FailTemporaryNodeFailure{}
@@ -250,7 +251,7 @@ func newMailboxContext(t *testing.T, startTime time.Time,
 	return ctx
 }
 
-func (c *mailboxContext) forward(_ <-chan struct{},
+func (c *mailboxContext) forward(_ context.Context, _ <-chan struct{},
 	pkts ...*htlcPacket) error {
 
 	for _, pkt := range pkts {
@@ -697,7 +698,7 @@ func testMailBoxDust(t *testing.T, chantype channeldb.ChannelType) {
 func TestMailOrchestrator(t *testing.T) {
 	t.Parallel()
 
-	failMailboxUpdate := func(outScid,
+	failMailboxUpdate := func(_ context.Context, outScid,
 		mboxScid lnwire.ShortChannelID) lnwire.FailureMessage {
 
 		return &lnwire.FailTemporaryNodeFailure{}
@@ -706,7 +707,7 @@ func TestMailOrchestrator(t *testing.T) {
 	// First, we'll create a new instance of our orchestrator.
 	mo := newMailOrchestrator(&mailOrchConfig{
 		failMailboxUpdate: failMailboxUpdate,
-		forwardPackets: func(_ <-chan struct{},
+		forwardPackets: func(_ context.Context, _ <-chan struct{},
 			pkts ...*htlcPacket) error {
 
 			return nil

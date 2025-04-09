@@ -677,7 +677,7 @@ func (s *Switch) IsForwardedHTLC(chanID lnwire.ShortChannelID,
 // given to forward them through the router. The sending link's quit channel is
 // used to prevent deadlocks when the switch stops a link in the midst of
 // forwarding.
-func (s *Switch) ForwardPackets(linkQuit <-chan struct{},
+func (s *Switch) ForwardPackets(ctx context.Context, linkQuit <-chan struct{},
 	packets ...*htlcPacket) error {
 
 	var (
@@ -707,6 +707,8 @@ func (s *Switch) ForwardPackets(linkQuit <-chan struct{},
 	// so, we exit early to avoid incrementing the switch's waitgroup while
 	// it is already in the process of shutting down.
 	select {
+	case <-ctx.Done():
+		return ctx.Err()
 	case <-linkQuit:
 		return nil
 	case <-s.quit:
@@ -730,7 +732,7 @@ func (s *Switch) ForwardPackets(linkQuit <-chan struct{},
 			circuits = append(circuits, circuit)
 			addBatch = append(addBatch, packet)
 		default:
-			err := s.routeAsync(packet, fwdChan, linkQuit)
+			err := s.routeAsync(ctx, packet, fwdChan, linkQuit)
 			if err != nil {
 				return fmt.Errorf("failed to forward packet %w",
 					err)
@@ -776,7 +778,7 @@ func (s *Switch) ForwardPackets(linkQuit <-chan struct{},
 	// Now, forward any packets for circuits that were successfully added to
 	// the switch's circuit map.
 	for _, packet := range addedPackets {
-		err := s.routeAsync(packet, fwdChan, linkQuit)
+		err := s.routeAsync(ctx, packet, fwdChan, linkQuit)
 		if err != nil {
 			return fmt.Errorf("failed to forward packet %w", err)
 		}
@@ -792,7 +794,7 @@ func (s *Switch) ForwardPackets(linkQuit <-chan struct{},
 
 		// If the incoming channel is an option_scid_alias channel,
 		// then we'll need to replace the SCID in the ChannelUpdate.
-		update := s.failAliasUpdate(incomingID, true)
+		update := s.failAliasUpdate(ctx, incomingID, true)
 		if update == nil {
 			// Fallback to the original non-option behavior.
 			update, err := s.cfg.FetchLastChannelUpdate(
@@ -854,8 +856,8 @@ func (s *Switch) logFwdErrs(num *int, wg *sync.WaitGroup, fwdChan chan error) {
 // provided so that the send can be canceled if either the link or the switch
 // receive a shutdown requuest. This method does not wait for a response from
 // the htlcForwarder before returning.
-func (s *Switch) routeAsync(packet *htlcPacket, errChan chan error,
-	linkQuit <-chan struct{}) error {
+func (s *Switch) routeAsync(ctx context.Context, packet *htlcPacket,
+	errChan chan error, linkQuit <-chan struct{}) error {
 
 	command := &plexPacket{
 		pkt: packet,
@@ -863,6 +865,8 @@ func (s *Switch) routeAsync(packet *htlcPacket, errChan chan error,
 	}
 
 	select {
+	case <-ctx.Done():
+		return ctx.Err()
 	case s.htlcPlex <- command:
 		return nil
 	case <-linkQuit:
@@ -1779,13 +1783,13 @@ func (s *Switch) Start(ctx context.Context) error {
 	s.wg.Add(1)
 	go s.htlcForwarder(ctx)
 
-	if err := s.reforwardResponses(); err != nil {
+	if err := s.reforwardResponses(ctx); err != nil {
 		s.Stop()
 		log.Errorf("unable to reforward responses: %v", err)
 		return err
 	}
 
-	if err := s.reforwardResolutions(); err != nil {
+	if err := s.reforwardResolutions(ctx); err != nil {
 		// We are already stopping so we can ignore the error.
 		_ = s.Stop()
 		log.Errorf("unable to reforward resolutions: %v", err)
@@ -1798,7 +1802,7 @@ func (s *Switch) Start(ctx context.Context) error {
 // reforwardResolutions fetches the set of resolution messages stored on-disk
 // and reforwards them if their circuits are still open. If the circuits have
 // been deleted, then we will delete the resolution message from the database.
-func (s *Switch) reforwardResolutions() error {
+func (s *Switch) reforwardResolutions(ctx context.Context) error {
 	// Fetch all stored resolution messages, deleting the ones that are
 	// resolved.
 	resMsgs, err := s.resMsgStore.fetchAllResolutionMsg()
@@ -1849,7 +1853,7 @@ func (s *Switch) reforwardResolutions() error {
 	// We'll now dispatch the set of resolution messages to the proper
 	// destination. An error is only encountered here if the switch is
 	// shutting down.
-	if err := s.ForwardPackets(nil, switchPackets...); err != nil {
+	if err := s.ForwardPackets(ctx, nil, switchPackets...); err != nil {
 		return err
 	}
 
@@ -1861,7 +1865,7 @@ func (s *Switch) reforwardResolutions() error {
 // used to resurrect the switch's mailboxes after a restart. This also runs for
 // waiting close channels since there may be settles or fails that need to be
 // reforwarded before they completely close.
-func (s *Switch) reforwardResponses() error {
+func (s *Switch) reforwardResponses(ctx context.Context) error {
 	openChannels, err := s.cfg.FetchAllChannels()
 	if err != nil {
 		return err
@@ -1894,7 +1898,7 @@ func (s *Switch) reforwardResponses() error {
 			return err
 		}
 
-		s.reforwardSettleFails(fwdPkgs)
+		s.reforwardSettleFails(ctx, fwdPkgs)
 	}
 
 	return nil
@@ -1927,7 +1931,9 @@ func (s *Switch) loadChannelFwdPkgs(source lnwire.ShortChannelID) ([]*channeldb.
 // outgoing link never comes back online.
 //
 // NOTE: This should mimic the behavior processRemoteSettleFails.
-func (s *Switch) reforwardSettleFails(fwdPkgs []*channeldb.FwdPkg) {
+func (s *Switch) reforwardSettleFails(ctx context.Context,
+	fwdPkgs []*channeldb.FwdPkg) {
+
 	for _, fwdPkg := range fwdPkgs {
 		switchPackets := make([]*htlcPacket, 0, len(fwdPkg.SettleFails))
 		for i, update := range fwdPkg.SettleFails {
@@ -1989,7 +1995,8 @@ func (s *Switch) reforwardSettleFails(fwdPkgs []*channeldb.FwdPkg) {
 		// Since this send isn't tied to a specific link, we pass a nil
 		// link quit channel, meaning the send will fail only if the
 		// switch receives a shutdown request.
-		if err := s.ForwardPackets(nil, switchPackets...); err != nil {
+		err := s.ForwardPackets(ctx, nil, switchPackets...)
+		if err != nil {
 			log.Errorf("Unhandled error while reforwarding packets "+
 				"settle/fail over htlcswitch: %v", err)
 		}
@@ -2639,13 +2646,13 @@ func (s *Switch) dustExceedsFeeThreshold(link ChannelLink,
 // used in the onion. The mailboxScid is the SCID that the mailbox and link
 // use. The mailboxScid is only used in the non-alias case, so it is always
 // the confirmed SCID.
-func (s *Switch) failMailboxUpdate(outgoingScid,
+func (s *Switch) failMailboxUpdate(ctx context.Context, outgoingScid,
 	mailboxScid lnwire.ShortChannelID) lnwire.FailureMessage {
 
 	// Try to use the failAliasUpdate function in case this is a channel
 	// that uses aliases. If it returns nil, we'll fallback to the original
 	// pre-alias behavior.
-	update := s.failAliasUpdate(outgoingScid, false)
+	update := s.failAliasUpdate(ctx, outgoingScid, false)
 	if update == nil {
 		// Execute the fallback behavior.
 		var err error
@@ -2663,7 +2670,7 @@ func (s *Switch) failMailboxUpdate(outgoingScid,
 // the associated channel is not one of these, this function will return nil
 // and the caller is expected to handle this properly. In this case, a return
 // to the original non-alias behavior is expected.
-func (s *Switch) failAliasUpdate(scid lnwire.ShortChannelID,
+func (s *Switch) failAliasUpdate(_ context.Context, scid lnwire.ShortChannelID,
 	incoming bool) *lnwire.ChannelUpdate1 {
 
 	// This function does not defer the unlocking because of the database
