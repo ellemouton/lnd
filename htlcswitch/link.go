@@ -859,7 +859,7 @@ type failCb func(update *lnwire.ChannelUpdate1) lnwire.FailureMessage
 // outgoing HTLC. It may return a FailureMessage that references a channel's
 // alias. If the channel does not have an alias, then the regular channel
 // update from disk will be returned.
-func (l *channelLink) createFailureWithUpdate(incoming bool,
+func (l *channelLink) createFailureWithUpdate(_ context.Context, incoming bool,
 	outgoingScid lnwire.ShortChannelID, cb failCb) lnwire.FailureMessage {
 
 	// Determine which SCID to use in case we need to use aliases in the
@@ -1043,7 +1043,7 @@ func (l *channelLink) resolveFwdPkgs(ctx context.Context) error {
 	l.log.Debugf("loaded %d fwd pks", len(fwdPkgs))
 
 	for _, fwdPkg := range fwdPkgs {
-		if err := l.resolveFwdPkg(fwdPkg); err != nil {
+		if err := l.resolveFwdPkg(ctx, fwdPkg); err != nil {
 			return err
 		}
 	}
@@ -1060,7 +1060,9 @@ func (l *channelLink) resolveFwdPkgs(ctx context.Context) error {
 // resolveFwdPkg interprets the FwdState of the provided package, either
 // reprocesses any outstanding htlcs in the package, or performs garbage
 // collection on the package.
-func (l *channelLink) resolveFwdPkg(fwdPkg *channeldb.FwdPkg) error {
+func (l *channelLink) resolveFwdPkg(ctx context.Context,
+	fwdPkg *channeldb.FwdPkg) error {
+
 	// Remove any completed packages to clear up space.
 	if fwdPkg.State == channeldb.FwdStateCompleted {
 		l.log.Debugf("removing completed fwd pkg for height=%d",
@@ -1091,7 +1093,7 @@ func (l *channelLink) resolveFwdPkg(fwdPkg *channeldb.FwdPkg) error {
 	// shove the entire, original set of adds down the pipeline so that the
 	// batch of adds presented to the sphinx router does not ever change.
 	if !fwdPkg.AckFilter.IsFull() {
-		l.processRemoteAdds(fwdPkg)
+		l.processRemoteAdds(ctx, fwdPkg)
 
 		// If the link failed during processing the adds, we must
 		// return to ensure we won't attempted to update the state
@@ -2539,10 +2541,10 @@ func (l *channelLink) handleUpstreamMsg(ctx context.Context,
 		// check since processing those can't result in further updates
 		// to this channel link.
 		if l.quiescer.CanSendUpdates() {
-			l.processRemoteAdds(fwdPkg)
+			l.processRemoteAdds(ctx, fwdPkg)
 		} else {
 			l.quiescer.OnResume(func() {
-				l.processRemoteAdds(fwdPkg)
+				l.processRemoteAdds(ctx, fwdPkg)
 			})
 		}
 		l.processRemoteSettleFails(fwdPkg)
@@ -3257,8 +3259,8 @@ func (l *channelLink) UpdateForwardingPolicy(
 // issue.
 //
 // NOTE: Part of the ChannelLink interface.
-func (l *channelLink) CheckHtlcForward(payHash [32]byte, incomingHtlcAmt,
-	amtToForward lnwire.MilliSatoshi, incomingTimeout,
+func (l *channelLink) CheckHtlcForward(ctx context.Context, payHash [32]byte,
+	incomingHtlcAmt, amtToForward lnwire.MilliSatoshi, incomingTimeout,
 	outgoingTimeout uint32, inboundFee models.InboundFee,
 	heightNow uint32, originalScid lnwire.ShortChannelID,
 	customRecords lnwire.CustomRecords) *LinkError {
@@ -3303,13 +3305,15 @@ func (l *channelLink) CheckHtlcForward(payHash [32]byte, incomingHtlcAmt,
 		cb := func(upd *lnwire.ChannelUpdate1) lnwire.FailureMessage {
 			return lnwire.NewFeeInsufficient(amtToForward, *upd)
 		}
-		failure := l.createFailureWithUpdate(false, originalScid, cb)
+		failure := l.createFailureWithUpdate(
+			ctx, false, originalScid, cb,
+		)
 		return NewLinkError(failure)
 	}
 
 	// Check whether the outgoing htlc satisfies the channel policy.
 	err := l.canSendHtlc(
-		policy, payHash, amtToForward, outgoingTimeout, heightNow,
+		ctx, policy, payHash, amtToForward, outgoingTimeout, heightNow,
 		originalScid, customRecords,
 	)
 	if err != nil {
@@ -3333,7 +3337,10 @@ func (l *channelLink) CheckHtlcForward(payHash [32]byte, incomingHtlcAmt,
 				incomingTimeout, *upd,
 			)
 		}
-		failure := l.createFailureWithUpdate(false, originalScid, cb)
+		failure := l.createFailureWithUpdate(
+			ctx, false, originalScid, cb,
+		)
+
 		return NewLinkError(failure)
 	}
 
@@ -3345,7 +3352,7 @@ func (l *channelLink) CheckHtlcForward(payHash [32]byte, incomingHtlcAmt,
 // valid protocol failure message should be returned in order to signal
 // the violation. This call is intended to be used for locally initiated
 // payments for which there is no corresponding incoming htlc.
-func (l *channelLink) CheckHtlcTransit(payHash [32]byte,
+func (l *channelLink) CheckHtlcTransit(ctx context.Context, payHash [32]byte,
 	amt lnwire.MilliSatoshi, timeout uint32, heightNow uint32,
 	customRecords lnwire.CustomRecords) *LinkError {
 
@@ -3357,15 +3364,16 @@ func (l *channelLink) CheckHtlcTransit(payHash [32]byte,
 	// trying to send over a local link. This causes the fallback mechanism
 	// to occur.
 	return l.canSendHtlc(
-		policy, payHash, amt, timeout, heightNow, hop.Source,
+		ctx, policy, payHash, amt, timeout, heightNow, hop.Source,
 		customRecords,
 	)
 }
 
 // canSendHtlc checks whether the given htlc parameters satisfy
 // the channel's amount and time lock constraints.
-func (l *channelLink) canSendHtlc(policy models.ForwardingPolicy,
-	payHash [32]byte, amt lnwire.MilliSatoshi, timeout uint32,
+func (l *channelLink) canSendHtlc(ctx context.Context,
+	policy models.ForwardingPolicy, payHash [32]byte,
+	amt lnwire.MilliSatoshi, timeout uint32,
 	heightNow uint32, originalScid lnwire.ShortChannelID,
 	customRecords lnwire.CustomRecords) *LinkError {
 
@@ -3382,7 +3390,10 @@ func (l *channelLink) canSendHtlc(policy models.ForwardingPolicy,
 		cb := func(upd *lnwire.ChannelUpdate1) lnwire.FailureMessage {
 			return lnwire.NewAmountBelowMinimum(amt, *upd)
 		}
-		failure := l.createFailureWithUpdate(false, originalScid, cb)
+		failure := l.createFailureWithUpdate(
+			ctx, false, originalScid, cb,
+		)
+
 		return NewLinkError(failure)
 	}
 
@@ -3397,8 +3408,13 @@ func (l *channelLink) canSendHtlc(policy models.ForwardingPolicy,
 		cb := func(upd *lnwire.ChannelUpdate1) lnwire.FailureMessage {
 			return lnwire.NewTemporaryChannelFailure(upd)
 		}
-		failure := l.createFailureWithUpdate(false, originalScid, cb)
-		return NewDetailedLinkError(failure, OutgoingFailureHTLCExceedsMax)
+		failure := l.createFailureWithUpdate(
+			ctx, false, originalScid, cb,
+		)
+
+		return NewDetailedLinkError(
+			failure, OutgoingFailureHTLCExceedsMax,
+		)
 	}
 
 	// We want to avoid offering an HTLC which will expire in the near
@@ -3412,7 +3428,10 @@ func (l *channelLink) canSendHtlc(policy models.ForwardingPolicy,
 		cb := func(upd *lnwire.ChannelUpdate1) lnwire.FailureMessage {
 			return lnwire.NewExpiryTooSoon(*upd)
 		}
-		failure := l.createFailureWithUpdate(false, originalScid, cb)
+		failure := l.createFailureWithUpdate(
+			ctx, false, originalScid, cb,
+		)
+
 		return NewLinkError(failure)
 	}
 
@@ -3466,7 +3485,10 @@ func (l *channelLink) canSendHtlc(policy models.ForwardingPolicy,
 		cb := func(upd *lnwire.ChannelUpdate1) lnwire.FailureMessage {
 			return lnwire.NewTemporaryChannelFailure(upd)
 		}
-		failure := l.createFailureWithUpdate(false, originalScid, cb)
+		failure := l.createFailureWithUpdate(
+			ctx, false, originalScid, cb,
+		)
+
 		return NewDetailedLinkError(
 			failure, OutgoingFailureInsufficientBalance,
 		)
@@ -3726,7 +3748,9 @@ func (l *channelLink) processRemoteSettleFails(fwdPkg *channeldb.FwdPkg) {
 // have already been acknowledged in the forwarding package will be ignored.
 //
 //nolint:funlen
-func (l *channelLink) processRemoteAdds(fwdPkg *channeldb.FwdPkg) {
+func (l *channelLink) processRemoteAdds(ctx context.Context,
+	fwdPkg *channeldb.FwdPkg) {
+
 	l.log.Tracef("processing %d remote adds for height %d",
 		len(fwdPkg.Adds), fwdPkg.Height)
 
@@ -4049,7 +4073,7 @@ func (l *channelLink) processRemoteAdds(fwdPkg *channeldb.FwdPkg) {
 				}
 
 				failure := l.createFailureWithUpdate(
-					true, hop.Source, cb,
+					ctx, true, hop.Source, cb,
 				)
 
 				l.sendHTLCError(

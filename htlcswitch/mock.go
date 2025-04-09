@@ -269,7 +269,7 @@ func (s *mockServer) Start() error {
 		return errors.New("mock server already started")
 	}
 
-	if err := s.htlcSwitch.Start(); err != nil {
+	if err := s.htlcSwitch.Start(context.Background()); err != nil {
 		return err
 	}
 
@@ -844,14 +844,15 @@ func (f *mockChannelLink) HandleChannelUpdate(lnwire.Message) {
 
 func (f *mockChannelLink) UpdateForwardingPolicy(_ models.ForwardingPolicy) {
 }
-func (f *mockChannelLink) CheckHtlcForward([32]byte, lnwire.MilliSatoshi,
-	lnwire.MilliSatoshi, uint32, uint32, models.InboundFee, uint32,
-	lnwire.ShortChannelID, lnwire.CustomRecords) *LinkError {
+func (f *mockChannelLink) CheckHtlcForward(context.Context, [32]byte,
+	lnwire.MilliSatoshi, lnwire.MilliSatoshi, uint32, uint32,
+	models.InboundFee, uint32, lnwire.ShortChannelID,
+	lnwire.CustomRecords) *LinkError {
 
 	return f.checkHtlcForwardResult
 }
 
-func (f *mockChannelLink) CheckHtlcTransit(payHash [32]byte,
+func (f *mockChannelLink) CheckHtlcTransit(_ context.Context, payHash [32]byte,
 	amt lnwire.MilliSatoshi, timeout uint32,
 	heightNow uint32, _ lnwire.CustomRecords) *LinkError {
 

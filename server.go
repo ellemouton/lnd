@@ -2347,7 +2347,7 @@ func (s *server) Start(ctx context.Context) error {
 		// relies on htlcSwitch to deliver resolution message upon
 		// start.
 		cleanup = cleanup.add(s.htlcSwitch.Stop)
-		if err := s.htlcSwitch.Start(); err != nil {
+		if err := s.htlcSwitch.Start(ctx); err != nil {
 			startErr = err
 			return
 		}

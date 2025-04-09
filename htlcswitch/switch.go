@@ -249,9 +249,6 @@ type Switch struct {
 	// This will be retrieved by the registered links atomically.
 	bestHeight uint32
 
-	wg   sync.WaitGroup
-	quit chan struct{}
-
 	// cfg is a copy of the configuration struct that the htlc switch
 	// service was initialized with.
 	cfg *Config
@@ -355,6 +352,10 @@ type Switch struct {
 	// key includes the value itself and also any other aliases. This MUST
 	// be accessed with the indexMtx.
 	baseIndex map[lnwire.ShortChannelID]lnwire.ShortChannelID
+
+	wg     sync.WaitGroup
+	quit   chan struct{}
+	cancel fn.Option[context.CancelFunc]
 }
 
 // New creates the new instance of htlc switch.
@@ -548,6 +549,8 @@ func (s *Switch) CleanStore(keepPids map[uint64]struct{}) error {
 func (s *Switch) SendHTLC(firstHop lnwire.ShortChannelID, attemptID uint64,
 	htlc *lnwire.UpdateAddHTLC) error {
 
+	ctx := context.TODO()
+
 	// Generate and send new update packet, if error will be received on
 	// this stage it means that packet haven't left boundaries of our
 	// system and something wrong happened.
@@ -562,7 +565,7 @@ func (s *Switch) SendHTLC(firstHop lnwire.ShortChannelID, attemptID uint64,
 	// Attempt to fetch the target link before creating a circuit so that
 	// we don't leave dangling circuits. The getLocalLink method does not
 	// require the circuit variable to be set on the *htlcPacket.
-	link, linkErr := s.getLocalLink(packet, htlc)
+	link, linkErr := s.getLocalLink(ctx, packet, htlc)
 	if linkErr != nil {
 		// Notify the htlc notifier of a link failure on our outgoing
 		// link. Incoming timelock/amount values are not set because
@@ -874,8 +877,8 @@ func (s *Switch) routeAsync(packet *htlcPacket, errChan chan error,
 // getLocalLink handles the addition of a htlc for a send that originates from
 // our node. It returns the link that the htlc should be forwarded outwards on,
 // and a link error if the htlc cannot be forwarded.
-func (s *Switch) getLocalLink(pkt *htlcPacket, htlc *lnwire.UpdateAddHTLC) (
-	ChannelLink, *LinkError) {
+func (s *Switch) getLocalLink(ctx context.Context, pkt *htlcPacket,
+	htlc *lnwire.UpdateAddHTLC) (ChannelLink, *LinkError) {
 
 	// Try to find links by node destination.
 	s.indexMtx.RLock()
@@ -920,7 +923,7 @@ func (s *Switch) getLocalLink(pkt *htlcPacket, htlc *lnwire.UpdateAddHTLC) (
 	// Ensure that the htlc satisfies the outgoing channel policy.
 	currentHeight := atomic.LoadUint32(&s.bestHeight)
 	htlcErr := link.CheckHtlcTransit(
-		htlc.PaymentHash, htlc.Amount, htlc.Expiry, currentHeight,
+		ctx, htlc.PaymentHash, htlc.Amount, htlc.Expiry, currentHeight,
 		htlc.CustomRecords,
 	)
 	if htlcErr != nil {
@@ -1118,13 +1121,15 @@ func (s *Switch) parseFailedPayment(deobfuscator ErrorDecrypter,
 // handlePacketForward is used in cases when we need forward the htlc update
 // from one channel link to another and be able to propagate the settle/fail
 // updates back. This behaviour is achieved by creation of payment circuits.
-func (s *Switch) handlePacketForward(packet *htlcPacket) error {
+func (s *Switch) handlePacketForward(ctx context.Context,
+	packet *htlcPacket) error {
+
 	switch htlc := packet.htlc.(type) {
 	// Channel link forwarded us a new htlc, therefore we initiate the
 	// payment circuit within our internal state so we can properly forward
 	// the ultimate settle message back latter.
 	case *lnwire.UpdateAddHTLC:
-		return s.handlePacketAdd(packet, htlc)
+		return s.handlePacketAdd(ctx, packet, htlc)
 
 	case *lnwire.UpdateFulfillHTLC:
 		return s.handlePacketSettle(packet)
@@ -1458,7 +1463,9 @@ func (s *Switch) CloseLink(ctx context.Context, chanPoint *wire.OutPoint,
 // total link capacity.
 //
 // NOTE: This MUST be run as a goroutine.
-func (s *Switch) htlcForwarder() {
+//
+//nolint:funlen
+func (s *Switch) htlcForwarder(ctx context.Context) {
 	defer s.wg.Done()
 
 	defer func() {
@@ -1618,7 +1625,7 @@ out:
 			// encounter is due to the circuit already being
 			// closed. This is fine, as processing this message is
 			// meant to be idempotent.
-			err = s.handlePacketForward(pkt)
+			err = s.handlePacketForward(ctx, pkt)
 			if err != nil {
 				log.Errorf("Unable to forward resolution msg: %v", err)
 			}
@@ -1627,7 +1634,7 @@ out:
 		// packet concretely, then either forward it along, or
 		// interpret a return packet to a locally initialized one.
 		case cmd := <-s.htlcPlex:
-			cmd.err <- s.handlePacketForward(cmd.pkt)
+			cmd.err <- s.handlePacketForward(ctx, cmd.pkt)
 
 		// When this time ticks, then it indicates that we should
 		// collect all the forwarding events since the last internal,
@@ -1746,18 +1753,24 @@ out:
 
 		case <-s.quit:
 			return
+
+		case <-ctx.Done():
+			return
 		}
 	}
 }
 
 // Start starts all helper goroutines required for the operation of the switch.
-func (s *Switch) Start() error {
+func (s *Switch) Start(ctx context.Context) error {
 	if !atomic.CompareAndSwapInt32(&s.started, 0, 1) {
 		log.Warn("Htlc Switch already started")
 		return errors.New("htlc switch already started")
 	}
 
 	log.Infof("HTLC Switch starting")
+
+	ctx, cancel := context.WithCancel(ctx)
+	s.cancel = fn.Some(cancel)
 
 	blockEpochStream, err := s.cfg.Notifier.RegisterBlockEpochNtfn(nil)
 	if err != nil {
@@ -1766,7 +1779,7 @@ func (s *Switch) Start() error {
 	s.blockEpochStream = blockEpochStream
 
 	s.wg.Add(1)
-	go s.htlcForwarder()
+	go s.htlcForwarder(ctx)
 
 	if err := s.reforwardResponses(); err != nil {
 		s.Stop()
@@ -1996,8 +2009,8 @@ func (s *Switch) Stop() error {
 	log.Info("HTLC Switch shutting down...")
 	defer log.Debug("HTLC Switch shutdown complete")
 
+	s.cancel.WhenSome(func(fn context.CancelFunc) { fn() })
 	close(s.quit)
-
 	s.wg.Wait()
 
 	// Wait until all active goroutines have finished exiting before
@@ -2824,7 +2837,7 @@ func (s *Switch) AddAliasForLink(chanID lnwire.ChannelID,
 }
 
 // handlePacketAdd handles forwarding an Add packet.
-func (s *Switch) handlePacketAdd(packet *htlcPacket,
+func (s *Switch) handlePacketAdd(ctx context.Context, packet *htlcPacket,
 	htlc *lnwire.UpdateAddHTLC) error {
 
 	// Check if the node is set to reject all onward HTLCs and also make
@@ -2897,7 +2910,7 @@ func (s *Switch) handlePacketAdd(packet *htlcPacket,
 			// forwarding conditions of this target link.
 			currentHeight := atomic.LoadUint32(&s.bestHeight)
 			failure = link.CheckHtlcForward(
-				htlc.PaymentHash, packet.incomingAmount,
+				ctx, htlc.PaymentHash, packet.incomingAmount,
 				packet.amount, packet.incomingTimeout,
 				packet.outgoingTimeout, packet.inboundFee,
 				currentHeight, packet.originalOutgoingChanID,

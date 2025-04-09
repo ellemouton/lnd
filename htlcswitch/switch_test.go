@@ -54,7 +54,7 @@ func TestSwitchAddDuplicateLink(t *testing.T) {
 
 	s, err := initSwitchWithTempDB(t, testStartingHeight)
 	require.NoError(t, err, "unable to init switch")
-	if err := s.Start(); err != nil {
+	if err := s.Start(context.Background()); err != nil {
 		t.Fatalf("unable to start switch: %v", err)
 	}
 	defer s.Stop()
@@ -97,7 +97,7 @@ func TestSwitchHasActiveLink(t *testing.T) {
 
 	s, err := initSwitchWithTempDB(t, testStartingHeight)
 	require.NoError(t, err, "unable to init switch")
-	if err := s.Start(); err != nil {
+	if err := s.Start(context.Background()); err != nil {
 		t.Fatalf("unable to start switch: %v", err)
 	}
 	defer s.Stop()
@@ -147,7 +147,7 @@ func TestSwitchSendPending(t *testing.T) {
 
 	s, err := initSwitchWithTempDB(t, testStartingHeight)
 	require.NoError(t, err, "unable to init switch")
-	if err := s.Start(); err != nil {
+	if err := s.Start(context.Background()); err != nil {
 		t.Fatalf("unable to start switch: %v", err)
 	}
 	defer s.Stop()
@@ -471,7 +471,7 @@ func testSwitchForwardMapping(t *testing.T, alicePrivate, aliceZeroConf,
 
 	s, err := initSwitchWithTempDB(t, testStartingHeight)
 	require.NoError(t, err)
-	err = s.Start()
+	err = s.Start(context.Background())
 	require.NoError(t, err)
 	defer func() { _ = s.Stop() }()
 
@@ -683,7 +683,7 @@ func testSwitchSendHtlcMapping(t *testing.T, zeroConf, useAlias bool, alias,
 
 	s, err := initSwitchWithTempDB(t, testStartingHeight)
 	require.NoError(t, err)
-	err = s.Start()
+	err = s.Start(context.Background())
 	require.NoError(t, err)
 	defer func() { _ = s.Stop() }()
 
@@ -745,7 +745,7 @@ func TestSwitchUpdateScid(t *testing.T) {
 
 	s, err := initSwitchWithTempDB(t, testStartingHeight)
 	require.NoError(t, err)
-	err = s.Start()
+	err = s.Start(context.Background())
 	require.NoError(t, err)
 	defer func() { _ = s.Stop() }()
 
@@ -891,7 +891,7 @@ func TestSwitchForward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to init switch: %v", err)
 	}
-	if err := s.Start(); err != nil {
+	if err := s.Start(context.Background()); err != nil {
 		t.Fatalf("unable to start switch: %v", err)
 	}
 	defer s.Stop()
@@ -1006,7 +1006,7 @@ func TestSwitchForwardFailAfterFullAdd(t *testing.T) {
 
 	s, err := initSwitchWithDB(testStartingHeight, cdb)
 	require.NoError(t, err, "unable to init switch")
-	if err := s.Start(); err != nil {
+	if err := s.Start(context.Background()); err != nil {
 		t.Fatalf("unable to start switch: %v", err)
 	}
 
@@ -1098,7 +1098,7 @@ func TestSwitchForwardFailAfterFullAdd(t *testing.T) {
 
 	s2, err := initSwitchWithDB(testStartingHeight, cdb2)
 	require.NoError(t, err, "unable reinit switch")
-	if err := s2.Start(); err != nil {
+	if err := s2.Start(context.Background()); err != nil {
 		t.Fatalf("unable to restart switch: %v", err)
 	}
 
@@ -1192,7 +1192,7 @@ func TestSwitchForwardSettleAfterFullAdd(t *testing.T) {
 
 	s, err := initSwitchWithDB(testStartingHeight, cdb)
 	require.NoError(t, err, "unable to init switch")
-	if err := s.Start(); err != nil {
+	if err := s.Start(context.Background()); err != nil {
 		t.Fatalf("unable to start switch: %v", err)
 	}
 
@@ -1284,7 +1284,7 @@ func TestSwitchForwardSettleAfterFullAdd(t *testing.T) {
 
 	s2, err := initSwitchWithDB(testStartingHeight, cdb2)
 	require.NoError(t, err, "unable reinit switch")
-	if err := s2.Start(); err != nil {
+	if err := s2.Start(context.Background()); err != nil {
 		t.Fatalf("unable to restart switch: %v", err)
 	}
 
@@ -1381,7 +1381,7 @@ func TestSwitchForwardDropAfterFullAdd(t *testing.T) {
 
 	s, err := initSwitchWithDB(testStartingHeight, cdb)
 	require.NoError(t, err, "unable to init switch")
-	if err := s.Start(); err != nil {
+	if err := s.Start(context.Background()); err != nil {
 		t.Fatalf("unable to start switch: %v", err)
 	}
 
@@ -1465,7 +1465,7 @@ func TestSwitchForwardDropAfterFullAdd(t *testing.T) {
 
 	s2, err := initSwitchWithDB(testStartingHeight, cdb2)
 	require.NoError(t, err, "unable reinit switch")
-	if err := s2.Start(); err != nil {
+	if err := s2.Start(context.Background()); err != nil {
 		t.Fatalf("unable to restart switch: %v", err)
 	}
 
@@ -1533,7 +1533,7 @@ func TestSwitchForwardFailAfterHalfAdd(t *testing.T) {
 
 	s, err := initSwitchWithDB(testStartingHeight, cdb)
 	require.NoError(t, err, "unable to init switch")
-	if err := s.Start(); err != nil {
+	if err := s.Start(context.Background()); err != nil {
 		t.Fatalf("unable to start switch: %v", err)
 	}
 
@@ -1612,7 +1612,7 @@ func TestSwitchForwardFailAfterHalfAdd(t *testing.T) {
 
 	s2, err := initSwitchWithDB(testStartingHeight, cdb2)
 	require.NoError(t, err, "unable reinit switch")
-	if err := s2.Start(); err != nil {
+	if err := s2.Start(context.Background()); err != nil {
 		t.Fatalf("unable to restart switch: %v", err)
 	}
 
@@ -1686,7 +1686,7 @@ func TestSwitchForwardCircuitPersistence(t *testing.T) {
 
 	s, err := initSwitchWithDB(testStartingHeight, cdb)
 	require.NoError(t, err, "unable to init switch")
-	if err := s.Start(); err != nil {
+	if err := s.Start(context.Background()); err != nil {
 		t.Fatalf("unable to start switch: %v", err)
 	}
 
@@ -1764,7 +1764,7 @@ func TestSwitchForwardCircuitPersistence(t *testing.T) {
 
 	s2, err := initSwitchWithDB(testStartingHeight, cdb2)
 	require.NoError(t, err, "unable reinit switch")
-	if err := s2.Start(); err != nil {
+	if err := s2.Start(context.Background()); err != nil {
 		t.Fatalf("unable to restart switch: %v", err)
 	}
 
@@ -1854,7 +1854,7 @@ func TestSwitchForwardCircuitPersistence(t *testing.T) {
 
 	s3, err := initSwitchWithDB(testStartingHeight, cdb3)
 	require.NoError(t, err, "unable reinit switch")
-	if err := s3.Start(); err != nil {
+	if err := s3.Start(context.Background()); err != nil {
 		t.Fatalf("unable to restart switch: %v", err)
 	}
 	defer s3.Stop()
@@ -1935,7 +1935,7 @@ func TestCircularForwards(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unable to init switch: %v", err)
 			}
-			if err := s.Start(); err != nil {
+			if err := s.Start(context.Background()); err != nil {
 				t.Fatalf("unable to start switch: %v", err)
 			}
 			defer func() { _ = s.Stop() }()
@@ -2107,7 +2107,7 @@ func TestCheckCircularForward(t *testing.T) {
 
 			s, err := initSwitchWithTempDB(t, testStartingHeight)
 			require.NoError(t, err)
-			err = s.Start()
+			err = s.Start(context.Background())
 			require.NoError(t, err)
 			defer func() { _ = s.Stop() }()
 
@@ -2212,7 +2212,7 @@ func testSkipIneligibleLinksMultiHopForward(t *testing.T,
 
 	s, err := initSwitchWithTempDB(t, testStartingHeight)
 	require.NoError(t, err, "unable to init switch")
-	if err := s.Start(); err != nil {
+	if err := s.Start(context.Background()); err != nil {
 		t.Fatalf("unable to start switch: %v", err)
 	}
 	defer s.Stop()
@@ -2335,7 +2335,7 @@ func testSkipLinkLocalForward(t *testing.T, eligible bool,
 
 	s, err := initSwitchWithTempDB(t, testStartingHeight)
 	require.NoError(t, err, "unable to init switch")
-	if err := s.Start(); err != nil {
+	if err := s.Start(context.Background()); err != nil {
 		t.Fatalf("unable to start switch: %v", err)
 	}
 	defer s.Stop()
@@ -2390,7 +2390,7 @@ func TestSwitchCancel(t *testing.T) {
 
 	s, err := initSwitchWithTempDB(t, testStartingHeight)
 	require.NoError(t, err, "unable to init switch")
-	if err := s.Start(); err != nil {
+	if err := s.Start(context.Background()); err != nil {
 		t.Fatalf("unable to start switch: %v", err)
 	}
 	defer s.Stop()
@@ -2501,7 +2501,7 @@ func TestSwitchAddSamePayment(t *testing.T) {
 
 	s, err := initSwitchWithTempDB(t, testStartingHeight)
 	require.NoError(t, err, "unable to init switch")
-	if err := s.Start(); err != nil {
+	if err := s.Start(context.Background()); err != nil {
 		t.Fatalf("unable to start switch: %v", err)
 	}
 	defer s.Stop()
@@ -2654,7 +2654,7 @@ func TestSwitchSendPayment(t *testing.T) {
 
 	s, err := initSwitchWithTempDB(t, testStartingHeight)
 	require.NoError(t, err, "unable to init switch")
-	if err := s.Start(); err != nil {
+	if err := s.Start(context.Background()); err != nil {
 		t.Fatalf("unable to start switch: %v", err)
 	}
 	defer s.Stop()
@@ -3068,7 +3068,7 @@ func TestSwitchGetAttemptResult(t *testing.T) {
 
 	s, err := initSwitchWithTempDB(t, testStartingHeight)
 	require.NoError(t, err, "unable to init switch")
-	if err := s.Start(); err != nil {
+	if err := s.Start(context.Background()); err != nil {
 		t.Fatalf("unable to start switch: %v", err)
 	}
 	defer s.Stop()
@@ -3171,7 +3171,7 @@ func TestInvalidFailure(t *testing.T) {
 
 	s, err := initSwitchWithTempDB(t, testStartingHeight)
 	require.NoError(t, err, "unable to init switch")
-	if err := s.Start(); err != nil {
+	if err := s.Start(context.Background()); err != nil {
 		t.Fatalf("unable to start switch: %v", err)
 	}
 	defer s.Stop()
@@ -3809,7 +3809,7 @@ func newInterceptableSwitchTestContext(
 
 	s, err := initSwitchWithDB(testStartingHeight, cdb)
 	require.NoError(t, err, "unable to init switch")
-	if err := s.Start(); err != nil {
+	if err := s.Start(context.Background()); err != nil {
 		t.Fatalf("unable to start switch: %v", err)
 	}
 
@@ -4588,7 +4588,7 @@ func TestSwitchMailboxDust(t *testing.T) {
 
 	s, err := initSwitchWithTempDB(t, testStartingHeight)
 	require.NoError(t, err)
-	err = s.Start()
+	err = s.Start(context.Background())
 	require.NoError(t, err)
 	defer func() {
 		_ = s.Stop()
@@ -4718,7 +4718,7 @@ func TestSwitchResolution(t *testing.T) {
 	// guard, guaranteeing it executes at most once.
 	t.Cleanup(func() { var _ = s.Stop() })
 
-	err = s.Start()
+	err = s.Start(context.Background())
 	require.NoError(t, err)
 
 	chanID1, chanID2, aliceChanID, bobChanID := genIDs()
@@ -4818,7 +4818,7 @@ func TestSwitchResolution(t *testing.T) {
 	s, err = initSwitchWithDB(testStartingHeight, switchDB)
 	require.NoError(t, err)
 
-	err = s.Start()
+	err = s.Start(context.Background())
 	require.NoError(t, err)
 	defer func() {
 		_ = s.Stop()
@@ -4895,7 +4895,7 @@ func testSwitchForwardFailAlias(t *testing.T, zeroConf bool) {
 	s, err := initSwitchWithDB(testStartingHeight, cdb)
 	require.NoError(t, err)
 
-	err = s.Start()
+	err = s.Start(context.Background())
 	require.NoError(t, err)
 
 	// Make Alice's channel zero-conf or option-scid-alias (feature bit).
@@ -4969,7 +4969,7 @@ func testSwitchForwardFailAlias(t *testing.T, zeroConf bool) {
 	s2, err := initSwitchWithDB(testStartingHeight, cdb2)
 	require.NoError(t, err)
 
-	err = s2.Start()
+	err = s2.Start(context.Background())
 	require.NoError(t, err)
 
 	defer func() {
@@ -5110,7 +5110,7 @@ func testSwitchAliasFailAdd(t *testing.T, zeroConf, private, useAlias bool) {
 	// Change the mailOrchestrator's expiry to a second.
 	s.mailOrchestrator.cfg.expiry = time.Second
 
-	err = s.Start()
+	err = s.Start(context.Background())
 	require.NoError(t, err)
 
 	defer func() {
@@ -5291,7 +5291,7 @@ func testSwitchHandlePacketForward(t *testing.T, zeroConf, private,
 	if err != nil {
 		t.Fatalf("unable to init switch: %v", err)
 	}
-	if err := s.Start(); err != nil {
+	if err := s.Start(context.Background()); err != nil {
 		t.Fatalf("unable to start switch: %v", err)
 	}
 	defer func() {
@@ -5446,7 +5446,7 @@ func testSwitchAliasInterceptFail(t *testing.T, zeroConf bool) {
 	s, err := initSwitchWithDB(testStartingHeight, cdb)
 	require.NoError(t, err)
 
-	err = s.Start()
+	err = s.Start(context.Background())
 	require.NoError(t, err)
 
 	defer func() {
