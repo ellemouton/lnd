@@ -2353,7 +2353,7 @@ func (s *server) Start(ctx context.Context) error {
 		}
 
 		cleanup = cleanup.add(s.interceptableSwitch.Stop)
-		if err := s.interceptableSwitch.Start(); err != nil {
+		if err := s.interceptableSwitch.Start(ctx); err != nil {
 			startErr = err
 			return
 		}

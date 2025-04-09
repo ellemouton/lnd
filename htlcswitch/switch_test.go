@@ -3893,6 +3893,7 @@ func (c *interceptableSwitchTestContext) createSettlePacket(
 
 func TestSwitchHoldForward(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	c := newInterceptableSwitchTestContext(t)
 	defer c.finish()
@@ -3911,7 +3912,7 @@ func TestSwitchHoldForward(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	require.NoError(t, switchForwardInterceptor.Start())
+	require.NoError(t, switchForwardInterceptor.Start(ctx))
 
 	switchForwardInterceptor.SetInterceptor(c.forwardInterceptor.InterceptForwardHtlc)
 	linkQuit := make(chan struct{})
@@ -4115,7 +4116,7 @@ func TestSwitchHoldForward(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	require.NoError(t, switchForwardInterceptor.Start())
+	require.NoError(t, switchForwardInterceptor.Start(ctx))
 
 	// Forward a fresh packet. It is expected to be failed immediately,
 	// because there is no interceptor registered.
@@ -4183,6 +4184,7 @@ func TestSwitchHoldForward(t *testing.T) {
 
 func TestInterceptableSwitchWatchDog(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	c := newInterceptableSwitchTestContext(t)
 	defer c.finish()
@@ -4202,7 +4204,7 @@ func TestInterceptableSwitchWatchDog(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	require.NoError(t, switchForwardInterceptor.Start())
+	require.NoError(t, switchForwardInterceptor.Start(ctx))
 
 	// Set interceptor.
 	switchForwardInterceptor.SetInterceptor(
@@ -5439,6 +5441,7 @@ func TestSwitchAliasInterceptFail(t *testing.T) {
 
 func testSwitchAliasInterceptFail(t *testing.T, zeroConf bool) {
 	t.Parallel()
+	ctx := context.Background()
 
 	chanID, aliceScid := genID()
 
@@ -5524,14 +5527,14 @@ func testSwitchAliasInterceptFail(t *testing.T, zeroConf bool) {
 		},
 	)
 	require.NoError(t, err)
-	require.NoError(t, interceptSwitch.Start())
+	require.NoError(t, interceptSwitch.Start(ctx))
 	interceptSwitch.SetInterceptor(forwardInterceptor.InterceptForwardHtlc)
 
 	err = interceptSwitch.ForwardPackets(nil, false, ogPacket)
 	require.NoError(t, err)
 
 	inCircuit := forwardInterceptor.getIntercepted().IncomingCircuit
-	require.NoError(t, interceptSwitch.resolve(&FwdResolution{
+	require.NoError(t, interceptSwitch.resolve(ctx, &FwdResolution{
 		Action:      FwdActionFail,
 		Key:         inCircuit,
 		FailureCode: lnwire.CodeTemporaryChannelFailure,

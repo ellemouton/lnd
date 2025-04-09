@@ -1,6 +1,7 @@
 package htlcswitch
 
 import (
+	"context"
 	"testing"
 
 	"github.com/lightningnetwork/lnd/graph/db/models"
@@ -80,6 +81,8 @@ func TestHeldHtlcSet(t *testing.T) {
 }
 
 func TestHeldHtlcSetAutoFails(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
 	set := newHeldHtlcSet()
 
 	key := models.CircuitKey{
@@ -98,8 +101,8 @@ func TestHeldHtlcSetAutoFails(t *testing.T) {
 	// Test popping auto fails up to one block before the auto-fail height
 	// of our forward.
 	set.popAutoFails(
-		autoFailHeight-1,
-		func(_ InterceptedForward) {
+		ctx, autoFailHeight-1,
+		func(_ context.Context, _ InterceptedForward) {
 			require.Fail(t, "unexpected fwd")
 		},
 	)
@@ -107,8 +110,8 @@ func TestHeldHtlcSetAutoFails(t *testing.T) {
 	// Popping succeeds at the auto-fail height.
 	cbCalled := false
 	set.popAutoFails(
-		autoFailHeight,
-		func(poppedFwd InterceptedForward) {
+		ctx, autoFailHeight,
+		func(_ context.Context, poppedFwd InterceptedForward) {
 			cbCalled = true
 
 			require.Equal(t, fwd, poppedFwd)
@@ -118,8 +121,8 @@ func TestHeldHtlcSetAutoFails(t *testing.T) {
 
 	// After this, there should be nothing more to pop.
 	set.popAutoFails(
-		autoFailHeight,
-		func(_ InterceptedForward) {
+		ctx, autoFailHeight,
+		func(_ context.Context, _ InterceptedForward) {
 			require.Fail(t, "unexpected fwd")
 		},
 	)

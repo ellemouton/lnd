@@ -454,7 +454,7 @@ type InterceptedForward interface {
 
 	// FailWithCode notifies the intention to fail an existing hold forward
 	// with the specified failure code.
-	FailWithCode(code lnwire.FailCode) error
+	FailWithCode(ctx context.Context, code lnwire.FailCode) error
 }
 
 // htlcNotifier is an interface which represents the input side of the
