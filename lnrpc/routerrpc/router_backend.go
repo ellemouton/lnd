@@ -55,8 +55,8 @@ type RouterBackend struct {
 
 	// FetchChannelEndpoints returns the pubkeys of both endpoints of the
 	// given channel id.
-	FetchChannelEndpoints func(chanID uint64) (route.Vertex,
-		route.Vertex, error)
+	FetchChannelEndpoints func(ctx context.Context,
+		chanID uint64) (route.Vertex, route.Vertex, error)
 
 	// FindRoute is a closure that abstracts away how we locate/query for
 	// routes.
@@ -161,7 +161,7 @@ type MissionControl interface {
 func (r *RouterBackend) QueryRoutes(ctx context.Context,
 	in *lnrpc.QueryRoutesRequest) (*lnrpc.QueryRoutesResponse, error) {
 
-	routeReq, err := r.parseQueryRoutesRequest(in)
+	routeReq, err := r.parseQueryRoutesRequest(ctx, in)
 	if err != nil {
 		return nil, err
 	}
@@ -198,9 +198,9 @@ func parsePubKey(key string) (route.Vertex, error) {
 	return route.NewVertexFromBytes(pubKeyBytes)
 }
 
-func (r *RouterBackend) parseIgnored(in *lnrpc.QueryRoutesRequest) (
-	map[route.Vertex]struct{}, map[routing.DirectedNodePair]struct{},
-	error) {
+func (r *RouterBackend) parseIgnored(ctx context.Context,
+	in *lnrpc.QueryRoutesRequest) (map[route.Vertex]struct{},
+	map[routing.DirectedNodePair]struct{}, error) {
 
 	ignoredNodes := make(map[route.Vertex]struct{})
 	for _, ignorePubKey := range in.IgnoredNodes {
@@ -215,7 +215,7 @@ func (r *RouterBackend) parseIgnored(in *lnrpc.QueryRoutesRequest) (
 
 	// Convert deprecated ignoredEdges to pairs.
 	for _, ignoredEdge := range in.IgnoredEdges {
-		pair, err := r.rpcEdgeToPair(ignoredEdge)
+		pair, err := r.rpcEdgeToPair(ctx, ignoredEdge)
 		if err != nil {
 			log.Warnf("Ignore channel %v skipped: %v",
 				ignoredEdge.ChannelId, err)
@@ -244,8 +244,8 @@ func (r *RouterBackend) parseIgnored(in *lnrpc.QueryRoutesRequest) (
 	return ignoredNodes, ignoredPairs, nil
 }
 
-func (r *RouterBackend) parseQueryRoutesRequest(in *lnrpc.QueryRoutesRequest) (
-	*routing.RouteRequest, error) {
+func (r *RouterBackend) parseQueryRoutesRequest(ctx context.Context,
+	in *lnrpc.QueryRoutesRequest) (*routing.RouteRequest, error) {
 
 	// Parse the hex-encoded source public key into a full public key that
 	// we can properly manipulate.
@@ -367,7 +367,7 @@ func (r *RouterBackend) parseQueryRoutesRequest(in *lnrpc.QueryRoutesRequest) (
 	// the path finding algorithm is unaware of this value.
 	cltvLimit -= uint32(finalCLTVDelta)
 
-	ignoredNodes, ignoredPairs, err := r.parseIgnored(in)
+	ignoredNodes, ignoredPairs, err := r.parseIgnored(ctx, in)
 	if err != nil {
 		return nil, err
 	}
@@ -567,10 +567,10 @@ func unmarshalBlindedHop(rpcHop *lnrpc.BlindedHop) (*sphinx.BlindedHopInfo,
 
 // rpcEdgeToPair looks up the provided channel and returns the channel endpoints
 // as a directed pair.
-func (r *RouterBackend) rpcEdgeToPair(e *lnrpc.EdgeLocator) (
-	routing.DirectedNodePair, error) {
+func (r *RouterBackend) rpcEdgeToPair(ctx context.Context,
+	e *lnrpc.EdgeLocator) (routing.DirectedNodePair, error) {
 
-	a, b, err := r.FetchChannelEndpoints(e.ChannelId)
+	a, b, err := r.FetchChannelEndpoints(ctx, e.ChannelId)
 	if err != nil {
 		return routing.DirectedNodePair{}, err
 	}
@@ -737,7 +737,7 @@ func UnmarshallHopWithPubkey(rpcHop *lnrpc.Hop, pubkey route.Vertex) (*route.Hop
 
 // UnmarshallHop unmarshalls an rpc hop that may or may not contain a node
 // pubkey.
-func (r *RouterBackend) UnmarshallHop(rpcHop *lnrpc.Hop,
+func (r *RouterBackend) UnmarshallHop(ctx context.Context, rpcHop *lnrpc.Hop,
 	prevNodePubKey [33]byte) (*route.Hop, error) {
 
 	var pubKeyBytes [33]byte
@@ -753,7 +753,7 @@ func (r *RouterBackend) UnmarshallHop(rpcHop *lnrpc.Hop,
 		// If no pub key is given of the hop, the local channel graph
 		// needs to be queried to complete the information necessary for
 		// routing. Discard edge policies, because they may be nil.
-		node1, node2, err := r.FetchChannelEndpoints(rpcHop.ChanId)
+		node1, node2, err := r.FetchChannelEndpoints(ctx, rpcHop.ChanId)
 		if err != nil {
 			return nil, err
 		}
@@ -774,14 +774,14 @@ func (r *RouterBackend) UnmarshallHop(rpcHop *lnrpc.Hop,
 
 // UnmarshallRoute unmarshalls an rpc route. For hops that don't specify a
 // pubkey, the channel graph is queried.
-func (r *RouterBackend) UnmarshallRoute(rpcroute *lnrpc.Route) (
-	*route.Route, error) {
+func (r *RouterBackend) UnmarshallRoute(ctx context.Context,
+	rpcroute *lnrpc.Route) (*route.Route, error) {
 
 	prevNodePubKey := r.SelfNode
 
 	hops := make([]*route.Hop, len(rpcroute.Hops))
 	for i, hop := range rpcroute.Hops {
-		routeHop, err := r.UnmarshallHop(hop, prevNodePubKey)
+		routeHop, err := r.UnmarshallHop(ctx, hop, prevNodePubKey)
 		if err != nil {
 			return nil, err
 		}

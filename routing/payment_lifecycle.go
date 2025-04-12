@@ -128,7 +128,7 @@ const (
 // results is sent back. then process its result here. When there's no need to
 // wait for results, the method will exit with `stepExit` such that the payment
 // lifecycle loop will terminate.
-func (p *paymentLifecycle) decideNextStep(
+func (p *paymentLifecycle) decideNextStep(ctx context.Context,
 	payment DBMPPayment) (stateStep, error) {
 
 	// Check whether we could make new HTLC attempts.
@@ -168,7 +168,7 @@ func (p *paymentLifecycle) decideNextStep(
 		// stepSkip and move to the next lifecycle iteration, which will
 		// refresh the payment and wait for the next attempt result, if
 		// any.
-		_, err := p.handleAttemptResult(r.attempt, r.result)
+		_, err := p.handleAttemptResult(ctx, r.attempt, r.result)
 
 		// We would only get a DB-related error here, which will cause
 		// us to abort the payment flow.
@@ -255,7 +255,7 @@ lifecycle:
 		}
 
 		// Now decide the next step of the current lifecycle.
-		step, err := p.decideNextStep(payment)
+		step, err := p.decideNextStep(ctx, payment)
 		if err != nil {
 			return exitWithErr(err)
 		}
@@ -695,7 +695,7 @@ func (p *paymentLifecycle) sendAttempt(ctx context.Context,
 		log.Errorf("Failed sending attempt %d for payment %v to "+
 			"switch: %v", attempt.AttemptID, p.identifier, err)
 
-		return p.handleSwitchErr(attempt, err)
+		return p.handleSwitchErr(ctx, attempt, err)
 	}
 
 	log.Debugf("Attempt %v for payment %v successfully sent to switch, "+
@@ -808,7 +808,8 @@ func (p *paymentLifecycle) failPaymentAndAttempt(
 // the error type, the error is either the final outcome of the payment or we
 // need to continue with an alternative route. A final outcome is indicated by
 // a non-nil reason value.
-func (p *paymentLifecycle) handleSwitchErr(attempt *channeldb.HTLCAttempt,
+func (p *paymentLifecycle) handleSwitchErr(ctx context.Context,
+	attempt *channeldb.HTLCAttempt,
 	sendErr error) (*attemptResult, error) {
 
 	internalErrorReason := channeldb.FailureReasonError
@@ -894,7 +895,7 @@ func (p *paymentLifecycle) handleSwitchErr(attempt *channeldb.HTLCAttempt,
 	// route, the failure message will be nil.
 	failureMessage := rtErr.WireMessage()
 	err := p.handleFailureMessage(
-		&attempt.Route, failureSourceIdx, failureMessage,
+		ctx, &attempt.Route, failureSourceIdx, failureMessage,
 	)
 	if err != nil {
 		return p.failPaymentAndAttempt(
@@ -910,8 +911,9 @@ func (p *paymentLifecycle) handleSwitchErr(attempt *channeldb.HTLCAttempt,
 
 // handleFailureMessage tries to apply a channel update present in the failure
 // message if any.
-func (p *paymentLifecycle) handleFailureMessage(rt *route.Route,
-	errorSourceIdx int, failure lnwire.FailureMessage) error {
+func (p *paymentLifecycle) handleFailureMessage(ctx context.Context,
+	rt *route.Route, errorSourceIdx int,
+	failure lnwire.FailureMessage) error {
 
 	if failure == nil {
 		return nil
@@ -974,7 +976,7 @@ func (p *paymentLifecycle) handleFailureMessage(rt *route.Route,
 	}
 
 	// Apply channel update to the channel edge policy in our db.
-	if !p.router.cfg.ApplyChannelUpdate(update) {
+	if !p.router.cfg.ApplyChannelUpdate(ctx, update) {
 		log.Debugf("Invalid channel update received: node=%v",
 			errVertex)
 	}
@@ -1103,13 +1105,14 @@ func (p *paymentLifecycle) reloadPayment() (DBMPPayment,
 
 // handleAttemptResult processes the result of an HTLC attempt returned from
 // the htlcswitch.
-func (p *paymentLifecycle) handleAttemptResult(attempt *channeldb.HTLCAttempt,
+func (p *paymentLifecycle) handleAttemptResult(ctx context.Context,
+	attempt *channeldb.HTLCAttempt,
 	result *htlcswitch.PaymentResult) (*attemptResult, error) {
 
 	// If the result has an error, we need to further process it by failing
 	// the attempt and maybe fail the payment.
 	if result.Error != nil {
-		return p.handleSwitchErr(attempt, result.Error)
+		return p.handleSwitchErr(ctx, attempt, result.Error)
 	}
 
 	// We got an attempt settled result back from the switch.
@@ -1152,7 +1155,7 @@ func (p *paymentLifecycle) handleAttemptResult(attempt *channeldb.HTLCAttempt,
 // available from the Switch, then records the attempt outcome with the control
 // tower. An attemptResult is returned, indicating the final outcome of this
 // HTLC attempt.
-func (p *paymentLifecycle) collectAndHandleResult(
+func (p *paymentLifecycle) collectAndHandleResult(ctx context.Context,
 	attempt *channeldb.HTLCAttempt) (*attemptResult, error) {
 
 	result, err := p.collectResult(attempt)
@@ -1160,5 +1163,5 @@ func (p *paymentLifecycle) collectAndHandleResult(
 		return nil, err
 	}
 
-	return p.handleAttemptResult(attempt, result)
+	return p.handleAttemptResult(ctx, attempt, result)
 }

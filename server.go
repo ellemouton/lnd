@@ -556,7 +556,7 @@ func noiseDial(idKey keychain.SingleKeyECDH,
 // passed listener address.
 //
 //nolint:funlen
-func newServer(_ context.Context, cfg *Config, listenAddrs []net.Addr,
+func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	dbs *DatabaseInstances, cc *chainreg.ChainControl,
 	nodeKeyDesc *keychain.KeyDescriptor,
 	chansToRestore walletunlocker.ChannelsToRecover,
@@ -1466,7 +1466,7 @@ func newServer(_ context.Context, cfg *Config, listenAddrs []net.Addr,
 		*models.ChannelEdgePolicy, error) {
 
 		info, e1, e2, err := s.graphDB.FetchChannelEdgesByID(
-			scid.ToUint64(),
+			ctx, scid.ToUint64(),
 		)
 		if errors.Is(err, graphdb.ErrEdgeNotFound) {
 			// This is unlikely but there is a slim chance of this
@@ -5252,10 +5252,12 @@ func (s *server) fetchLastChanUpdate() func(context.Context,
 
 	ourPubKey := s.identityECDH.PubKey().SerializeCompressed()
 
-	return func(_ context.Context,
+	return func(ctx context.Context,
 		cid lnwire.ShortChannelID) (*lnwire.ChannelUpdate1, error) {
 
-		info, edge1, edge2, err := s.graphBuilder.GetChannelByID(cid)
+		info, edge1, edge2, err := s.graphBuilder.GetChannelByID(
+			ctx, cid,
+		)
 		if err != nil {
 			return nil, err
 		}

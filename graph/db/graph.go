@@ -1,6 +1,7 @@
 package graphdb
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/batch"
+	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -51,8 +53,9 @@ type ChannelGraph struct {
 	*KVStore
 	*topologyManager
 
-	quit chan struct{}
-	wg   sync.WaitGroup
+	quit   chan struct{}
+	wg     sync.WaitGroup
+	cancel fn.Option[context.CancelFunc]
 }
 
 // NewChannelGraph creates a new ChannelGraph instance with the given backend.
@@ -94,6 +97,9 @@ func (c *ChannelGraph) Start() error {
 	log.Debugf("ChannelGraph starting")
 	defer log.Debug("ChannelGraph started")
 
+	ctx, cancel := context.WithCancel(context.Background())
+	c.cancel = fn.Some(cancel)
+
 	if c.graphCache != nil {
 		if err := c.populateCache(); err != nil {
 			return fmt.Errorf("could not populate the graph "+
@@ -102,7 +108,7 @@ func (c *ChannelGraph) Start() error {
 	}
 
 	c.wg.Add(1)
-	go c.handleTopologySubscriptions()
+	go c.handleTopologySubscriptions(ctx)
 
 	return nil
 }
@@ -117,6 +123,7 @@ func (c *ChannelGraph) Stop() error {
 	defer log.Debug("ChannelGraph shutdown complete")
 
 	close(c.quit)
+	c.cancel.WhenSome(func(fn context.CancelFunc) { fn() })
 	c.wg.Wait()
 
 	return nil
@@ -127,7 +134,7 @@ func (c *ChannelGraph) Stop() error {
 // synchronously.
 //
 // NOTE: this MUST be run in a goroutine.
-func (c *ChannelGraph) handleTopologySubscriptions() {
+func (c *ChannelGraph) handleTopologySubscriptions(ctx context.Context) {
 	defer c.wg.Done()
 
 	for {
@@ -139,7 +146,7 @@ func (c *ChannelGraph) handleTopologySubscriptions() {
 			// synchronously so that we can guarantee the order of
 			// notification delivery.
 			c.wg.Add(1)
-			go c.handleTopologyUpdate(update)
+			go c.handleTopologyUpdate(ctx, update)
 
 			// TODO(roasbeef): remove all unconnected vertexes
 			// after N blocks pass with no corresponding

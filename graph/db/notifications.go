@@ -1,6 +1,7 @@
 package graphdb
 
 import (
+	"context"
 	"fmt"
 	"image/color"
 	"net"
@@ -195,11 +196,11 @@ func (c *ChannelGraph) notifyTopologyChange(topologyDiff *TopologyChange) {
 // notifications to registered clients.
 //
 // NOTE: must be run inside goroutine.
-func (c *ChannelGraph) handleTopologyUpdate(update any) {
+func (c *ChannelGraph) handleTopologyUpdate(ctx context.Context, update any) {
 	defer c.wg.Done()
 
 	topChange := &TopologyChange{}
-	err := c.addToTopologyChange(topChange, update)
+	err := c.addToTopologyChange(ctx, topChange, update)
 	if err != nil {
 		log.Errorf("unable to update topology change notification: %v",
 			err)
@@ -366,8 +367,8 @@ type ChannelEdgeUpdate struct {
 // constitutes. This function will also fetch any required auxiliary
 // information required to create the topology change update from the graph
 // database.
-func (c *ChannelGraph) addToTopologyChange(update *TopologyChange,
-	msg any) error {
+func (c *ChannelGraph) addToTopologyChange(ctx context.Context,
+	update *TopologyChange, msg any) error {
 
 	switch m := msg.(type) {
 
@@ -401,7 +402,7 @@ func (c *ChannelGraph) addToTopologyChange(update *TopologyChange,
 		// We'll need to fetch the edge's information from the database
 		// in order to get the information concerning which nodes are
 		// being connected.
-		edgeInfo, _, _, err := c.FetchChannelEdgesByID(m.ChannelID)
+		edgeInfo, _, _, err := c.FetchChannelEdgesByID(ctx, m.ChannelID)
 		if err != nil {
 			return errors.Errorf("unable fetch channel edge: %v",
 				err)

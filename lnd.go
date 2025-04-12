@@ -663,7 +663,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, implCfg *ImplementationCfg,
 	// Now we have created all dependencies necessary to populate and
 	// start the RPC server.
 	err = rpcServer.addDeps(
-		server, interceptorChain.MacaroonService(), cfg.SubRPCServers,
+		ctx, server, interceptorChain.MacaroonService(), cfg.SubRPCServers,
 		atplManager, server.invoices, tower, multiAcceptor,
 		server.invoiceHtlcModifier,
 	)

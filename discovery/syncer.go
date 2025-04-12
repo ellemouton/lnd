@@ -1449,7 +1449,7 @@ func (g *GossipSyncer) FilterGossipMsgs(ctx context.Context,
 				// If not, we'll attempt to query the database
 				// to see if we know of the updates.
 				chanUpdates, err = g.cfg.channelSeries.FetchChanUpdates(
-					g.cfg.chainHash, msg.ShortChannelID,
+					ctx, g.cfg.chainHash, msg.ShortChannelID,
 				)
 				if err != nil {
 					log.Warnf("no channel updates found for "+
