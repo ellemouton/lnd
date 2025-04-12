@@ -182,7 +182,8 @@ type DB interface {
 	// last time the edge was updated for both directed edges are returned
 	// along with the boolean. If it is not found, then the zombie index is
 	// checked and its result is returned as the second boolean.
-	HasChannelEdge(chanID uint64) (time.Time, time.Time, bool, bool, error)
+	HasChannelEdge(ctx context.Context, chanID uint64) (time.Time,
+		time.Time, bool, bool, error)
 
 	// FetchChannelEdgesByID attempts to lookup the two directed edges for
 	// the channel identified by the channel ID. If the channel can't be

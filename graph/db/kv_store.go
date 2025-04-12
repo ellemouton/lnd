@@ -1158,7 +1158,7 @@ func (c *KVStore) addChannelEdge(tx kvdb.RwTx,
 // was updated for both directed edges are returned along with the boolean. If
 // it is not found, then the zombie index is checked and its result is returned
 // as the second boolean.
-func (c *KVStore) HasChannelEdge(
+func (c *KVStore) HasChannelEdge(_ context.Context,
 	chanID uint64) (time.Time, time.Time, bool, bool, error) {
 
 	var (

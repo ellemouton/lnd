@@ -1020,7 +1020,9 @@ func (b *Builder) addNode(node *models.LightningNode,
 func (b *Builder) AddEdge(edge *models.ChannelEdgeInfo,
 	op ...batch.SchedulerOption) error {
 
-	err := b.addEdge(edge, op...)
+	ctx := context.TODO()
+
+	err := b.addEdge(ctx, edge, op...)
 	if err != nil {
 		logNetworkMsgProcessError(err)
 
@@ -1038,7 +1040,7 @@ func (b *Builder) AddEdge(edge *models.ChannelEdgeInfo,
 //
 // TODO(elle): this currently also does funding-transaction validation. But this
 // should be moved to the gossiper instead.
-func (b *Builder) addEdge(edge *models.ChannelEdgeInfo,
+func (b *Builder) addEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 	op ...batch.SchedulerOption) error {
 
 	log.Debugf("Received ChannelEdgeInfo for channel %v", edge.ChannelID)
@@ -1046,7 +1048,7 @@ func (b *Builder) addEdge(edge *models.ChannelEdgeInfo,
 	// Prior to processing the announcement we first check if we
 	// already know of this channel, if so, then we can exit early.
 	_, _, exists, isZombie, err := b.cfg.Graph.HasChannelEdge(
-		edge.ChannelID,
+		ctx, edge.ChannelID,
 	)
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
 		return errors.Errorf("unable to check for edge existence: %v",
@@ -1121,7 +1123,9 @@ func (b *Builder) addEdge(edge *models.ChannelEdgeInfo,
 func (b *Builder) UpdateEdge(update *models.ChannelEdgePolicy,
 	op ...batch.SchedulerOption) error {
 
-	err := b.updateEdge(update, op...)
+	ctx := context.TODO()
+
+	err := b.updateEdge(ctx, update, op...)
 	if err != nil {
 		logNetworkMsgProcessError(err)
 
@@ -1135,8 +1139,8 @@ func (b *Builder) UpdateEdge(update *models.ChannelEdgePolicy,
 // persisted in the graph, and then applies it to the graph if the update is
 // considered fresh enough and if we actually have a channel persisted for the
 // given update.
-func (b *Builder) updateEdge(policy *models.ChannelEdgePolicy,
-	op ...batch.SchedulerOption) error {
+func (b *Builder) updateEdge(ctx context.Context,
+	policy *models.ChannelEdgePolicy, op ...batch.SchedulerOption) error {
 
 	log.Debugf("Received ChannelEdgePolicy for channel %v",
 		policy.ChannelID)
@@ -1148,7 +1152,7 @@ func (b *Builder) updateEdge(policy *models.ChannelEdgePolicy,
 	defer b.channelEdgeMtx.Unlock(policy.ChannelID)
 
 	edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
-		b.cfg.Graph.HasChannelEdge(policy.ChannelID)
+		b.cfg.Graph.HasChannelEdge(ctx, policy.ChannelID)
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
 		return errors.Errorf("unable to check for edge existence: %v",
 			err)
@@ -1333,8 +1337,10 @@ func (b *Builder) IsPublicNode(node route.Vertex) (bool, error) {
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (b *Builder) IsKnownEdge(chanID lnwire.ShortChannelID) bool {
+	ctx := context.TODO()
+
 	_, _, exists, isZombie, _ := b.cfg.Graph.HasChannelEdge(
-		chanID.ToUint64(),
+		ctx, chanID.ToUint64(),
 	)
 
 	return exists || isZombie
@@ -1345,7 +1351,11 @@ func (b *Builder) IsKnownEdge(chanID lnwire.ShortChannelID) bool {
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (b *Builder) IsZombieEdge(chanID lnwire.ShortChannelID) (bool, error) {
-	_, _, _, isZombie, err := b.cfg.Graph.HasChannelEdge(chanID.ToUint64())
+	ctx := context.TODO()
+
+	_, _, _, isZombie, err := b.cfg.Graph.HasChannelEdge(
+		ctx, chanID.ToUint64(),
+	)
 
 	return isZombie, err
 }
@@ -1357,8 +1367,10 @@ func (b *Builder) IsZombieEdge(chanID lnwire.ShortChannelID) (bool, error) {
 func (b *Builder) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 	timestamp time.Time, flags lnwire.ChanUpdateChanFlags) bool {
 
+	ctx := context.TODO()
+
 	edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
-		b.cfg.Graph.HasChannelEdge(chanID.ToUint64())
+		b.cfg.Graph.HasChannelEdge(ctx, chanID.ToUint64())
 	if err != nil {
 		log.Debugf("Check stale edge policy got error: %v", err)
 		return false
