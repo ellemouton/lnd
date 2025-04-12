@@ -108,7 +108,7 @@ type PaymentAttemptDispatcher interface {
 	// forward a fully encoded payment to the first hop in the route
 	// denoted by its public key. A non-nil error is to be returned if the
 	// payment was unsuccessful.
-	SendHTLC(firstHop lnwire.ShortChannelID,
+	SendHTLC(ctx context.Context, firstHop lnwire.ShortChannelID,
 		attemptID uint64,
 		htlcAdd *lnwire.UpdateAddHTLC) error
 
