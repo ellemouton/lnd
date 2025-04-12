@@ -629,6 +629,8 @@ type Brontide struct {
 
 	// log is a peer-specific logging instance.
 	log btclog.Logger
+
+	cancel fn.Option[context.CancelFunc]
 }
 
 // A compile-time check to ensure that Brontide satisfies the lnpeer.Peer
@@ -752,6 +754,9 @@ func (p *Brontide) Start() error {
 	if atomic.AddInt32(&p.started, 1) != 1 {
 		return nil
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	p.cancel = fn.Some(cancel)
 
 	// Once we've finished starting up the peer, we'll signal to other
 	// goroutines that the they can move forward to tear down the peer, or
@@ -912,7 +917,7 @@ func (p *Brontide) Start() error {
 	// announcements through their timestamps.
 	p.cg.WgAdd(2)
 	go p.maybeSendNodeAnn(activeChans)
-	go p.maybeSendChannelUpdates()
+	go p.maybeSendChannelUpdates(ctx)
 
 	return nil
 }
@@ -1487,7 +1492,7 @@ func (p *Brontide) maybeSendNodeAnn(channels []*channeldb.OpenChannel) {
 
 // maybeSendChannelUpdates sends our channel updates to the remote peer if we
 // have any active channels with them.
-func (p *Brontide) maybeSendChannelUpdates() {
+func (p *Brontide) maybeSendChannelUpdates(ctx context.Context) {
 	defer p.cg.WgDone()
 
 	// If we don't have any active channels, then we can exit early.
@@ -1521,7 +1526,6 @@ func (p *Brontide) maybeSendChannelUpdates() {
 		// to fetch the update to send to the remote peer. If the
 		// channel is pending, and not a zero conf channel, we'll get
 		// an error here which we'll ignore.
-		ctx := context.TODO()
 		chanUpd, err := p.cfg.FetchLastChanUpdate(ctx, scid)
 		if err != nil {
 			p.log.Debugf("Unable to fetch channel update for "+
@@ -1706,7 +1710,7 @@ type msgStream struct {
 
 	peer *Brontide
 
-	apply func(lnwire.Message)
+	apply func(context.Context, lnwire.Message)
 
 	startMsg string
 	stopMsg  string
@@ -1718,8 +1722,9 @@ type msgStream struct {
 
 	producerSema chan struct{}
 
-	wg   sync.WaitGroup
-	quit chan struct{}
+	wg     sync.WaitGroup
+	quit   chan struct{}
+	cancel fn.Option[context.CancelFunc]
 }
 
 // newMsgStream creates a new instance of a chanMsgStream for a particular
@@ -1728,7 +1733,7 @@ type msgStream struct {
 // sane value that avoids blocking unnecessarily, but doesn't allow an
 // unbounded amount of memory to be allocated to buffer incoming messages.
 func newMsgStream(p *Brontide, startMsg, stopMsg string, bufSize uint32,
-	apply func(lnwire.Message)) *msgStream {
+	apply func(context.Context, lnwire.Message)) *msgStream {
 
 	stream := &msgStream{
 		peer:         p,
@@ -1754,7 +1759,11 @@ func newMsgStream(p *Brontide, startMsg, stopMsg string, bufSize uint32,
 // Start starts the chanMsgStream.
 func (ms *msgStream) Start() {
 	ms.wg.Add(1)
-	go ms.msgConsumer()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ms.cancel = fn.Some(cancel)
+
+	go ms.msgConsumer(ctx)
 }
 
 // Stop stops the chanMsgStream.
@@ -1775,7 +1784,7 @@ func (ms *msgStream) Stop() {
 
 // msgConsumer is the main goroutine that streams messages from the peer's
 // readHandler directly to the target channel.
-func (ms *msgStream) msgConsumer() {
+func (ms *msgStream) msgConsumer(ctx context.Context) {
 	defer ms.wg.Done()
 	defer peerLog.Tracef(ms.stopMsg)
 	defer atomic.StoreInt32(&ms.streamShutdown, 1)
@@ -1799,6 +1808,9 @@ func (ms *msgStream) msgConsumer() {
 			case <-ms.quit:
 				ms.msgCond.L.Unlock()
 				return
+			case <-ctx.Done():
+				ms.msgCond.L.Unlock()
+				return
 			default:
 			}
 		}
@@ -1812,7 +1824,7 @@ func (ms *msgStream) msgConsumer() {
 
 		ms.msgCond.L.Unlock()
 
-		ms.apply(msg)
+		ms.apply(ctx, msg)
 
 		// We've just successfully processed an item, so we'll signal
 		// to the producer that a new slot in the buffer. We'll use
@@ -1823,6 +1835,8 @@ func (ms *msgStream) msgConsumer() {
 		case <-ms.peer.cg.Done():
 			return
 		case <-ms.quit:
+			return
+		case <-ctx.Done():
 			return
 		}
 	}
@@ -1930,7 +1944,7 @@ func waitUntilLinkActive(p *Brontide,
 func newChanMsgStream(p *Brontide, cid lnwire.ChannelID) *msgStream {
 	var chanLink htlcswitch.ChannelUpdateHandler
 
-	apply := func(msg lnwire.Message) {
+	apply := func(ctx context.Context, msg lnwire.Message) {
 		// This check is fine because if the link no longer exists, it will
 		// be removed from the activeChannels map and subsequent messages
 		// shouldn't reach the chan msg stream.
@@ -1951,6 +1965,8 @@ func newChanMsgStream(p *Brontide, cid lnwire.ChannelID) *msgStream {
 		select {
 		case <-p.cg.Done():
 			return
+		case <-ctx.Done():
+			return
 		default:
 		}
 
@@ -1969,11 +1985,7 @@ func newChanMsgStream(p *Brontide, cid lnwire.ChannelID) *msgStream {
 // authenticated gossiper. This stream should be used to forward all remote
 // channel announcements.
 func newDiscMsgStream(p *Brontide) *msgStream {
-	apply := func(msg lnwire.Message) {
-		// TODO(elle): thread contexts through the peer system properly
-		// so that a parent context can be passed in here.
-		ctx := context.TODO()
-
+	apply := func(ctx context.Context, msg lnwire.Message) {
 		// TODO(yy): `ProcessRemoteAnnouncement` returns an error chan
 		// and we need to process it.
 		p.cfg.AuthGossiper.ProcessRemoteAnnouncement(ctx, msg, p)
