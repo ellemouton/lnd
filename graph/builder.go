@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -11,6 +12,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/lightningnetwork/lnd/batch"
 	"github.com/lightningnetwork/lnd/chainntnfs"
+	"github.com/lightningnetwork/lnd/fn/v2"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/kvdb"
@@ -135,8 +137,9 @@ type Builder struct {
 	// announcements over a window of defaultStatInterval.
 	stats *builderStats
 
-	quit chan struct{}
-	wg   sync.WaitGroup
+	quit   chan struct{}
+	wg     sync.WaitGroup
+	cancel fn.Option[context.CancelFunc]
 }
 
 // A compile time check to ensure Builder implements the
@@ -163,6 +166,9 @@ func (b *Builder) Start() error {
 
 	log.Info("Builder starting")
 
+	ctx, cancel := context.WithCancel(context.Background())
+	b.cancel = fn.Some(cancel)
+
 	bestHash, bestHeight, err := b.cfg.Chain.GetBestBlock()
 	if err != nil {
 		return err
@@ -170,7 +176,7 @@ func (b *Builder) Start() error {
 
 	// If the graph has never been pruned, or hasn't fully been created yet,
 	// then we don't treat this as an explicit error.
-	if _, _, err := b.cfg.Graph.PruneTip(); err != nil {
+	if _, _, err := b.cfg.Graph.PruneTip(ctx); err != nil {
 		switch {
 		case errors.Is(err, graphdb.ErrGraphNeverPruned):
 			fallthrough
@@ -180,7 +186,7 @@ func (b *Builder) Start() error {
 			// the prune height to the current best height of the
 			// chain backend.
 			_, err = b.cfg.Graph.PruneGraph(
-				nil, bestHash, uint32(bestHeight),
+				ctx, nil, bestHash, uint32(bestHeight),
 			)
 			if err != nil {
 				return err
@@ -204,7 +210,7 @@ func (b *Builder) Start() error {
 			}
 
 			log.Info("Initial zombie prune starting")
-			if err := b.pruneZombieChans(); err != nil {
+			if err := b.pruneZombieChans(ctx); err != nil {
 				log.Errorf("Unable to prune zombies: %v", err)
 			}
 		})
@@ -225,7 +231,7 @@ func (b *Builder) Start() error {
 		// FilteredChainView instance.  We do this before, as otherwise
 		// we may miss on-chain events as the filter hasn't properly
 		// been applied.
-		channelView, err := b.cfg.Graph.ChannelView()
+		channelView, err := b.cfg.Graph.ChannelView(ctx)
 		if err != nil && !errors.Is(
 			err, graphdb.ErrGraphNoEdgesFound,
 		) {
@@ -256,14 +262,14 @@ func (b *Builder) Start() error {
 		// Before we begin normal operation of the router, we first need
 		// to synchronize the channel graph to the latest state of the
 		// UTXO set.
-		if err := b.syncGraphWithChain(); err != nil {
+		if err := b.syncGraphWithChain(ctx); err != nil {
 			return err
 		}
 
 		// Finally, before we proceed, we'll prune any unconnected nodes
 		// from the graph in order to ensure we maintain a tight graph
 		// of "useful" nodes.
-		err = b.cfg.Graph.PruneGraphNodes()
+		err = b.cfg.Graph.PruneGraphNodes(ctx)
 		if err != nil &&
 			!errors.Is(err, graphdb.ErrGraphNodesNotFound) {
 
@@ -272,7 +278,7 @@ func (b *Builder) Start() error {
 	}
 
 	b.wg.Add(1)
-	go b.networkHandler()
+	go b.networkHandler(ctx)
 
 	log.Debug("Builder started")
 
@@ -297,6 +303,7 @@ func (b *Builder) Stop() error {
 		}
 	}
 
+	b.cancel.WhenSome(func(fn context.CancelFunc) { fn() })
 	close(b.quit)
 	b.wg.Wait()
 
@@ -309,7 +316,7 @@ func (b *Builder) Stop() error {
 // the latest UTXO set state. This process involves pruning from the channel
 // graph any channels which have been closed by spending their funding output
 // since we've been down.
-func (b *Builder) syncGraphWithChain() error {
+func (b *Builder) syncGraphWithChain(ctx context.Context) error {
 	// First, we'll need to check to see if we're already in sync with the
 	// latest state of the UTXO set.
 	bestHash, bestHeight, err := b.cfg.Chain.GetBestBlock()
@@ -318,7 +325,7 @@ func (b *Builder) syncGraphWithChain() error {
 	}
 	b.bestHeight.Store(uint32(bestHeight))
 
-	pruneHash, pruneHeight, err := b.cfg.Graph.PruneTip()
+	pruneHash, pruneHeight, err := b.cfg.Graph.PruneTip(ctx)
 	if err != nil {
 		switch {
 		// If the graph has never been pruned, or hasn't fully been
@@ -360,12 +367,12 @@ func (b *Builder) syncGraphWithChain() error {
 			"(hash=%v)", pruneHeight, pruneHash)
 		// Prune the graph for every channel that was opened at height
 		// >= pruneHeight.
-		_, err := b.cfg.Graph.DisconnectBlockAtHeight(pruneHeight)
+		_, err := b.cfg.Graph.DisconnectBlockAtHeight(ctx, pruneHeight)
 		if err != nil {
 			return err
 		}
 
-		pruneHash, pruneHeight, err = b.cfg.Graph.PruneTip()
+		pruneHash, pruneHeight, err = b.cfg.Graph.PruneTip(ctx)
 		switch {
 		// If at this point the graph has never been pruned, we can exit
 		// as this entails we are back to the point where it hasn't seen
@@ -438,7 +445,7 @@ func (b *Builder) syncGraphWithChain() error {
 	// With the spent outputs gathered, attempt to prune the channel graph,
 	// also passing in the best hash+height so the prune tip can be updated.
 	closedChans, err := b.cfg.Graph.PruneGraph(
-		spentOutputs, bestHash, uint32(bestHeight),
+		ctx, spentOutputs, bestHash, uint32(bestHeight),
 	)
 	if err != nil {
 		return err
@@ -505,7 +512,7 @@ func (b *Builder) IsZombieChannel(updateTime1,
 // we'll also consider channels zombies if *both* edges are disabled. This
 // usually signals that a channel has been closed on-chain. We do this
 // periodically to keep a healthy, lively routing table.
-func (b *Builder) pruneZombieChans() error {
+func (b *Builder) pruneZombieChans(ctx context.Context) error {
 	chansToPrune := make(map[uint64]struct{})
 	chanExpiry := b.cfg.ChannelPruneExpiry
 
@@ -568,14 +575,14 @@ func (b *Builder) pruneZombieChans() error {
 	// both edges. If they're both disabled, then we can interpret this as
 	// the channel being closed and can prune it from our graph.
 	if b.cfg.AssumeChannelValid {
-		disabledChanIDs, err := b.cfg.Graph.DisabledChannelIDs()
+		disabledChanIDs, err := b.cfg.Graph.DisabledChannelIDs(ctx)
 		if err != nil {
 			return fmt.Errorf("unable to get disabled channels "+
 				"ids chans: %v", err)
 		}
 
 		disabledEdges, err := b.cfg.Graph.FetchChanInfos(
-			disabledChanIDs,
+			ctx, disabledChanIDs,
 		)
 		if err != nil {
 			return fmt.Errorf("unable to fetch disabled channels "+
@@ -593,7 +600,7 @@ func (b *Builder) pruneZombieChans() error {
 
 	startTime := time.Unix(0, 0)
 	endTime := time.Now().Add(-1 * chanExpiry)
-	oldEdges, err := b.cfg.Graph.ChanUpdatesInHorizon(startTime, endTime)
+	oldEdges, err := b.cfg.Graph.ChanUpdatesInHorizon(ctx, startTime, endTime)
 	if err != nil {
 		return fmt.Errorf("unable to fetch expired channel updates "+
 			"chans: %v", err)
@@ -620,7 +627,7 @@ func (b *Builder) pruneZombieChans() error {
 		log.Tracef("Pruning zombie channel with ChannelID(%v)", chanID)
 	}
 	err = b.cfg.Graph.DeleteChannelEdges(
-		b.cfg.StrictZombiePruning, true, toPrune...,
+		ctx, b.cfg.StrictZombiePruning, true, toPrune...,
 	)
 	if err != nil {
 		return fmt.Errorf("unable to delete zombie channels: %w", err)
@@ -628,7 +635,7 @@ func (b *Builder) pruneZombieChans() error {
 
 	// With the channels pruned, we'll also attempt to prune any nodes that
 	// were a part of them.
-	err = b.cfg.Graph.PruneGraphNodes()
+	err = b.cfg.Graph.PruneGraphNodes(ctx)
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNodesNotFound) {
 		return fmt.Errorf("unable to prune graph nodes: %w", err)
 	}
@@ -642,7 +649,7 @@ func (b *Builder) pruneZombieChans() error {
 // updates, and registering new topology clients.
 //
 // NOTE: This MUST be run as a goroutine.
-func (b *Builder) networkHandler() {
+func (b *Builder) networkHandler(ctx context.Context) {
 	defer b.wg.Done()
 
 	graphPruneTicker := time.NewTicker(b.cfg.GraphPruneInterval)
@@ -674,7 +681,7 @@ func (b *Builder) networkHandler() {
 			// Update the channel graph to reflect that this block
 			// was disconnected.
 			_, err := b.cfg.Graph.DisconnectBlockAtHeight(
-				blockHeight,
+				ctx, blockHeight,
 			)
 			if err != nil {
 				log.Errorf("unable to prune graph with stale "+
@@ -701,7 +708,7 @@ func (b *Builder) networkHandler() {
 			switch {
 			case chainUpdate.Height == currentHeight+1:
 				err := b.updateGraphWithClosedChannels(
-					chainUpdate,
+					ctx, chainUpdate,
 				)
 				if err != nil {
 					log.Errorf("unable to prune graph "+
@@ -714,7 +721,7 @@ func (b *Builder) networkHandler() {
 					currentHeight+1, chainUpdate.Height)
 
 				err := b.getMissingBlocks(
-					currentHeight, chainUpdate,
+					ctx, currentHeight, chainUpdate,
 				)
 				if err != nil {
 					log.Errorf("unable to retrieve missing"+
@@ -735,7 +742,7 @@ func (b *Builder) networkHandler() {
 		// state of the known graph to filter out any zombie channels
 		// for pruning.
 		case <-graphPruneTicker.C:
-			if err := b.pruneZombieChans(); err != nil {
+			if err := b.pruneZombieChans(ctx); err != nil {
 				log.Errorf("Unable to prune zombies: %v", err)
 			}
 
@@ -755,13 +762,15 @@ func (b *Builder) networkHandler() {
 		// loop so the wait group can be decremented.
 		case <-b.quit:
 			return
+		case <-ctx.Done():
+			return
 		}
 	}
 }
 
 // getMissingBlocks walks through all missing blocks and updates the graph
 // closed channels accordingly.
-func (b *Builder) getMissingBlocks(currentHeight uint32,
+func (b *Builder) getMissingBlocks(ctx context.Context, currentHeight uint32,
 	chainUpdate *chainview.FilteredBlock) error {
 
 	outdatedHash, err := b.cfg.Chain.GetBlockHash(int64(currentHeight))
@@ -810,7 +819,7 @@ func (b *Builder) getMissingBlocks(currentHeight uint32,
 		}
 
 		err = b.updateGraphWithClosedChannels(
-			filteredBlock,
+			ctx, filteredBlock,
 		)
 		if err != nil {
 			return err
@@ -822,7 +831,7 @@ func (b *Builder) getMissingBlocks(currentHeight uint32,
 
 // updateGraphWithClosedChannels prunes the channel graph of closed channels
 // that are no longer needed.
-func (b *Builder) updateGraphWithClosedChannels(
+func (b *Builder) updateGraphWithClosedChannels(ctx context.Context,
 	chainUpdate *chainview.FilteredBlock) error {
 
 	// Once a new block arrives, we update our running track of the height
@@ -847,8 +856,8 @@ func (b *Builder) updateGraphWithClosedChannels(
 	// With the spent outputs gathered, attempt to prune the channel graph,
 	// also passing in the hash+height of the block being pruned so the
 	// prune tip can be updated.
-	chansClosed, err := b.cfg.Graph.PruneGraph(spentOutputs,
-		&chainUpdate.Hash, chainUpdate.Height)
+	chansClosed, err := b.cfg.Graph.PruneGraph(
+		ctx, spentOutputs, &chainUpdate.Hash, chainUpdate.Height)
 	if err != nil {
 		log.Errorf("unable to prune routing table: %v", err)
 		return err
@@ -865,7 +874,7 @@ func (b *Builder) updateGraphWithClosedChannels(
 // timestamp. ErrIgnored will be returned if we already have the node, and
 // ErrOutdated will be returned if we have a timestamp that's after the new
 // timestamp.
-func (b *Builder) assertNodeAnnFreshness(node route.Vertex,
+func (b *Builder) assertNodeAnnFreshness(ctx context.Context, node route.Vertex,
 	msgTimestamp time.Time) error {
 
 	// If we are not already aware of this node, it means that we don't
@@ -873,7 +882,7 @@ func (b *Builder) assertNodeAnnFreshness(node route.Vertex,
 	// node announcements, we will ignore such nodes. If we do know about
 	// this node, check that this update brings info newer than what we
 	// already have.
-	lastUpdate, exists, err := b.cfg.Graph.HasLightningNode(node)
+	lastUpdate, exists, err := b.cfg.Graph.HasLightningNode(ctx, node)
 	if err != nil {
 		return errors.Errorf("unable to query for the "+
 			"existence of node: %v", err)
@@ -898,12 +907,12 @@ func (b *Builder) assertNodeAnnFreshness(node route.Vertex,
 
 // MarkZombieEdge adds a channel that failed complete validation into the zombie
 // index so we can avoid having to re-validate it in the future.
-func (b *Builder) MarkZombieEdge(chanID uint64) error {
+func (b *Builder) MarkZombieEdge(ctx context.Context, chanID uint64) error {
 	// If the edge fails validation we'll mark the edge itself as a zombie
 	// so we don't continue to request it. We use the "zero key" for both
 	// node pubkeys so this edge can't be resurrected.
 	var zeroKey [33]byte
-	err := b.cfg.Graph.MarkEdgeZombie(chanID, zeroKey, zeroKey)
+	err := b.cfg.Graph.MarkEdgeZombie(ctx, chanID, zeroKey, zeroKey)
 	if err != nil {
 		return fmt.Errorf("unable to mark spent chan(id=%v) as a "+
 			"zombie: %w", chanID, err)
@@ -914,8 +923,10 @@ func (b *Builder) MarkZombieEdge(chanID uint64) error {
 
 // ApplyChannelUpdate validates a channel update and if valid, applies it to the
 // database. It returns a bool indicating whether the updates were successful.
-func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
-	ch, _, _, err := b.GetChannelByID(msg.ShortChannelID)
+func (b *Builder) ApplyChannelUpdate(ctx context.Context,
+	msg *lnwire.ChannelUpdate1) bool {
+
+	ch, _, _, err := b.GetChannelByID(ctx, msg.ShortChannelID)
 	if err != nil {
 		log.Errorf("Unable to retrieve channel by id: %v", err)
 		return false
@@ -944,7 +955,7 @@ func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 		return false
 	}
 
-	err = b.UpdateEdge(&models.ChannelEdgePolicy{
+	err = b.UpdateEdge(ctx, &models.ChannelEdgePolicy{
 		SigBytes:                  msg.Signature.ToSignatureBytes(),
 		ChannelID:                 msg.ShortChannelID.ToUint64(),
 		LastUpdate:                time.Unix(int64(msg.Timestamp), 0),
@@ -970,10 +981,10 @@ func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 // be ignored.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) AddNode(node *models.LightningNode,
+func (b *Builder) AddNode(ctx context.Context, node *models.LightningNode,
 	op ...batch.SchedulerOption) error {
 
-	err := b.addNode(node, op...)
+	err := b.addNode(ctx, node, op...)
 	if err != nil {
 		logNetworkMsgProcessError(err)
 
@@ -987,18 +998,18 @@ func (b *Builder) AddNode(node *models.LightningNode,
 // currently have persisted in the graph, and then adds it to the graph. If we
 // already know about the node, then we only update our DB if the new update
 // has a newer timestamp than the last one we received.
-func (b *Builder) addNode(node *models.LightningNode,
+func (b *Builder) addNode(ctx context.Context, node *models.LightningNode,
 	op ...batch.SchedulerOption) error {
 
 	// Before we add the node to the database, we'll check to see if the
 	// announcement is "fresh" or not. If it isn't, then we'll return an
 	// error.
-	err := b.assertNodeAnnFreshness(node.PubKeyBytes, node.LastUpdate)
+	err := b.assertNodeAnnFreshness(ctx, node.PubKeyBytes, node.LastUpdate)
 	if err != nil {
 		return err
 	}
 
-	if err := b.cfg.Graph.AddLightningNode(node, op...); err != nil {
+	if err := b.cfg.Graph.AddLightningNode(ctx, node, op...); err != nil {
 		return errors.Errorf("unable to add node %x to the "+
 			"graph: %v", node.PubKeyBytes, err)
 	}
@@ -1014,10 +1025,10 @@ func (b *Builder) addNode(node *models.LightningNode,
 // in construction of payment path.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) AddEdge(edge *models.ChannelEdgeInfo,
+func (b *Builder) AddEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 	op ...batch.SchedulerOption) error {
 
-	err := b.addEdge(edge, op...)
+	err := b.addEdge(ctx, edge, op...)
 	if err != nil {
 		logNetworkMsgProcessError(err)
 
@@ -1035,7 +1046,7 @@ func (b *Builder) AddEdge(edge *models.ChannelEdgeInfo,
 //
 // TODO(elle): this currently also does funding-transaction validation. But this
 // should be moved to the gossiper instead.
-func (b *Builder) addEdge(edge *models.ChannelEdgeInfo,
+func (b *Builder) addEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 	op ...batch.SchedulerOption) error {
 
 	log.Debugf("Received ChannelEdgeInfo for channel %v", edge.ChannelID)
@@ -1043,7 +1054,7 @@ func (b *Builder) addEdge(edge *models.ChannelEdgeInfo,
 	// Prior to processing the announcement we first check if we
 	// already know of this channel, if so, then we can exit early.
 	_, _, exists, isZombie, err := b.cfg.Graph.HasChannelEdge(
-		edge.ChannelID,
+		ctx, edge.ChannelID,
 	)
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
 		return errors.Errorf("unable to check for edge existence: %v",
@@ -1058,7 +1069,7 @@ func (b *Builder) addEdge(edge *models.ChannelEdgeInfo,
 			edge.ChannelID)
 	}
 
-	if err := b.cfg.Graph.AddChannelEdge(edge, op...); err != nil {
+	if err := b.cfg.Graph.AddChannelEdge(ctx, edge, op...); err != nil {
 		return fmt.Errorf("unable to add edge: %w", err)
 	}
 
@@ -1115,10 +1126,10 @@ func (b *Builder) addEdge(edge *models.ChannelEdgeInfo,
 // considered as not fully constructed.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) UpdateEdge(update *models.ChannelEdgePolicy,
+func (b *Builder) UpdateEdge(ctx context.Context, update *models.ChannelEdgePolicy,
 	op ...batch.SchedulerOption) error {
 
-	err := b.updateEdge(update, op...)
+	err := b.updateEdge(ctx, update, op...)
 	if err != nil {
 		logNetworkMsgProcessError(err)
 
@@ -1132,8 +1143,8 @@ func (b *Builder) UpdateEdge(update *models.ChannelEdgePolicy,
 // persisted in the graph, and then applies it to the graph if the update is
 // considered fresh enough and if we actually have a channel persisted for the
 // given update.
-func (b *Builder) updateEdge(policy *models.ChannelEdgePolicy,
-	op ...batch.SchedulerOption) error {
+func (b *Builder) updateEdge(ctx context.Context,
+	policy *models.ChannelEdgePolicy, op ...batch.SchedulerOption) error {
 
 	log.Debugf("Received ChannelEdgePolicy for channel %v",
 		policy.ChannelID)
@@ -1145,7 +1156,7 @@ func (b *Builder) updateEdge(policy *models.ChannelEdgePolicy,
 	defer b.channelEdgeMtx.Unlock(policy.ChannelID)
 
 	edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
-		b.cfg.Graph.HasChannelEdge(policy.ChannelID)
+		b.cfg.Graph.HasChannelEdge(ctx, policy.ChannelID)
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
 		return errors.Errorf("unable to check for edge existence: %v",
 			err)
@@ -1206,7 +1217,7 @@ func (b *Builder) updateEdge(policy *models.ChannelEdgePolicy,
 
 	// Now that we know this isn't a stale update, we'll apply the new edge
 	// policy to the proper directional edge within the channel graph.
-	if err = b.cfg.Graph.UpdateEdgePolicy(policy, op...); err != nil {
+	if err = b.cfg.Graph.UpdateEdgePolicy(ctx, policy, op...); err != nil {
 		err := errors.Errorf("unable to add channel: %v", err)
 		log.Error(err)
 		return err
@@ -1249,12 +1260,11 @@ func (b *Builder) SyncedHeight() uint32 {
 // GetChannelByID return the channel by the channel id.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) GetChannelByID(chanID lnwire.ShortChannelID) (
-	*models.ChannelEdgeInfo,
-	*models.ChannelEdgePolicy,
-	*models.ChannelEdgePolicy, error) {
+func (b *Builder) GetChannelByID(ctx context.Context,
+	chanID lnwire.ShortChannelID) (*models.ChannelEdgeInfo,
+	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error) {
 
-	return b.cfg.Graph.FetchChannelEdgesByID(chanID.ToUint64())
+	return b.cfg.Graph.FetchChannelEdgesByID(ctx, chanID.ToUint64())
 }
 
 // FetchLightningNode attempts to look up a target node by its identity public
@@ -1263,19 +1273,19 @@ func (b *Builder) GetChannelByID(chanID lnwire.ShortChannelID) (
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (b *Builder) FetchLightningNode(
-	node route.Vertex) (*models.LightningNode, error) {
+	ctx context.Context, node route.Vertex) (*models.LightningNode, error) {
 
-	return b.cfg.Graph.FetchLightningNode(node)
+	return b.cfg.Graph.FetchLightningNode(ctx, node)
 }
 
 // ForAllOutgoingChannels is used to iterate over all outgoing channels owned by
 // the router.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) ForAllOutgoingChannels(cb func(*models.ChannelEdgeInfo,
+func (b *Builder) ForAllOutgoingChannels(ctx context.Context, cb func(*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy) error) error {
 
-	return b.cfg.Graph.ForEachNodeChannel(b.cfg.SelfNode,
+	return b.cfg.Graph.ForEachNodeChannel(ctx, b.cfg.SelfNode,
 		func(_ kvdb.RTx, c *models.ChannelEdgeInfo,
 			e *models.ChannelEdgePolicy,
 			_ *models.ChannelEdgePolicy) error {
@@ -1294,22 +1304,22 @@ func (b *Builder) ForAllOutgoingChannels(cb func(*models.ChannelEdgeInfo,
 // properly announce the edge to the rest of the network.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) AddProof(chanID lnwire.ShortChannelID,
+func (b *Builder) AddProof(ctx context.Context, chanID lnwire.ShortChannelID,
 	proof *models.ChannelAuthProof) error {
 
-	return b.cfg.Graph.AddEdgeProof(chanID, proof)
+	return b.cfg.Graph.AddEdgeProof(ctx, chanID, proof)
 }
 
 // IsStaleNode returns true if the graph source has a node announcement for the
 // target node with a more recent timestamp.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsStaleNode(node route.Vertex,
+func (b *Builder) IsStaleNode(ctx context.Context, node route.Vertex,
 	timestamp time.Time) bool {
 
 	// If our attempt to assert that the node announcement is fresh fails,
 	// then we know that this is actually a stale announcement.
-	err := b.assertNodeAnnFreshness(node, timestamp)
+	err := b.assertNodeAnnFreshness(ctx, node, timestamp)
 	if err != nil {
 		log.Debugf("Checking stale node %x got %v", node, err)
 		return true
@@ -1322,17 +1332,17 @@ func (b *Builder) IsStaleNode(node route.Vertex,
 // the graph from the graph's source node's point of view.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsPublicNode(node route.Vertex) (bool, error) {
-	return b.cfg.Graph.IsPublicNode(node)
+func (b *Builder) IsPublicNode(ctx context.Context, node route.Vertex) (bool, error) {
+	return b.cfg.Graph.IsPublicNode(ctx, node)
 }
 
 // IsKnownEdge returns true if the graph source already knows of the passed
 // channel ID either as a live or zombie edge.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsKnownEdge(chanID lnwire.ShortChannelID) bool {
+func (b *Builder) IsKnownEdge(ctx context.Context, chanID lnwire.ShortChannelID) bool {
 	_, _, exists, isZombie, _ := b.cfg.Graph.HasChannelEdge(
-		chanID.ToUint64(),
+		ctx, chanID.ToUint64(),
 	)
 
 	return exists || isZombie
@@ -1342,8 +1352,10 @@ func (b *Builder) IsKnownEdge(chanID lnwire.ShortChannelID) bool {
 // as a zombie edge.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsZombieEdge(chanID lnwire.ShortChannelID) (bool, error) {
-	_, _, _, isZombie, err := b.cfg.Graph.HasChannelEdge(chanID.ToUint64())
+func (b *Builder) IsZombieEdge(ctx context.Context, chanID lnwire.ShortChannelID) (bool, error) {
+	_, _, _, isZombie, err := b.cfg.Graph.HasChannelEdge(
+		ctx, chanID.ToUint64(),
+	)
 
 	return isZombie, err
 }
@@ -1352,11 +1364,11 @@ func (b *Builder) IsZombieEdge(chanID lnwire.ShortChannelID) (bool, error) {
 // the passed channel ID (and flags) that have a more recent timestamp.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
+func (b *Builder) IsStaleEdgePolicy(ctx context.Context, chanID lnwire.ShortChannelID,
 	timestamp time.Time, flags lnwire.ChanUpdateChanFlags) bool {
 
 	edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
-		b.cfg.Graph.HasChannelEdge(chanID.ToUint64())
+		b.cfg.Graph.HasChannelEdge(ctx, chanID.ToUint64())
 	if err != nil {
 		log.Debugf("Check stale edge policy got error: %v", err)
 		return false
@@ -1408,6 +1420,6 @@ func (b *Builder) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 // MarkEdgeLive clears an edge from our zombie index, deeming it as live.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) MarkEdgeLive(chanID lnwire.ShortChannelID) error {
-	return b.cfg.Graph.MarkEdgeLive(chanID.ToUint64())
+func (b *Builder) MarkEdgeLive(ctx context.Context, chanID lnwire.ShortChannelID) error {
+	return b.cfg.Graph.MarkEdgeLive(ctx, chanID.ToUint64())
 }
