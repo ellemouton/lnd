@@ -23,20 +23,20 @@ type ChannelGraphTimeSeries interface {
 	// height that's close to the current tip of the main chain as we
 	// know it.  We'll use this to start our QueryChannelRange dance with
 	// the remote node.
-	HighestChanID(chain chainhash.Hash) (*lnwire.ShortChannelID, error)
+	HighestChanID(ctx context.Context, chain chainhash.Hash) (*lnwire.ShortChannelID, error)
 
 	// UpdatesInHorizon returns all known channel and node updates with an
 	// update timestamp between the start time and end time. We'll use this
 	// to catch up a remote node to the set of channel updates that they
 	// may have missed out on within the target chain.
-	UpdatesInHorizon(chain chainhash.Hash,
+	UpdatesInHorizon(ctx context.Context, chain chainhash.Hash,
 		startTime time.Time, endTime time.Time) ([]lnwire.Message, error)
 
 	// FilterKnownChanIDs takes a target chain, and a set of channel ID's,
 	// and returns a filtered set of chan ID's. This filtered set of chan
 	// ID's represents the ID's that we don't know of which were in the
 	// passed superSet.
-	FilterKnownChanIDs(chain chainhash.Hash,
+	FilterKnownChanIDs(ctx context.Context, chain chainhash.Hash,
 		superSet []graphdb.ChannelUpdateInfo,
 		isZombieChan func(time.Time, time.Time) bool) (
 		[]lnwire.ShortChannelID, error)
@@ -45,7 +45,7 @@ type ChannelGraphTimeSeries interface {
 	// between the start height and the end height. The channel IDs are
 	// grouped by their common block height. We'll use this to to a remote
 	// peer's QueryChannelRange message.
-	FilterChannelRange(chain chainhash.Hash, startHeight, endHeight uint32,
+	FilterChannelRange(ctx context.Context, chain chainhash.Hash, startHeight, endHeight uint32,
 		withTimestamps bool) ([]graphdb.BlockChannelRange, error)
 
 	// FetchChanAnns returns a full set of channel announcements as well as
@@ -54,7 +54,7 @@ type ChannelGraphTimeSeries interface {
 	// remote peer. The response will contain a unique set of
 	// ChannelAnnouncements, the latest ChannelUpdate for each of the
 	// announcements, and a unique set of NodeAnnouncements.
-	FetchChanAnns(chain chainhash.Hash,
+	FetchChanAnns(ctx context.Context, chain chainhash.Hash,
 		shortChanIDs []lnwire.ShortChannelID) ([]lnwire.Message, error)
 
 	// FetchChanUpdates returns the latest channel update messages for the
@@ -88,8 +88,10 @@ func NewChanSeries(graph *graphdb.ChannelGraph) *ChanSeries {
 // this to start our QueryChannelRange dance with the remote node.
 //
 // NOTE: This is part of the ChannelGraphTimeSeries interface.
-func (c *ChanSeries) HighestChanID(chain chainhash.Hash) (*lnwire.ShortChannelID, error) {
-	chanID, err := c.graph.HighestChanID()
+func (c *ChanSeries) HighestChanID(ctx context.Context,
+	chain chainhash.Hash) (*lnwire.ShortChannelID, error) {
+
+	chanID, err := c.graph.HighestChanID(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -104,17 +106,16 @@ func (c *ChanSeries) HighestChanID(chain chainhash.Hash) (*lnwire.ShortChannelID
 // within the target chain.
 //
 // NOTE: This is part of the ChannelGraphTimeSeries interface.
-func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
+func (c *ChanSeries) UpdatesInHorizon(ctx context.Context,
+	chain chainhash.Hash,
 	startTime time.Time, endTime time.Time) ([]lnwire.Message, error) {
-
-	ctx := context.TODO()
 
 	var updates []lnwire.Message
 
 	// First, we'll query for all the set of channels that have an update
 	// that falls within the specified horizon.
 	chansInHorizon, err := c.graph.ChanUpdatesInHorizon(
-		startTime, endTime,
+		ctx, startTime, endTime,
 	)
 	if err != nil {
 		return nil, err
@@ -204,12 +205,12 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 // represents the ID's that we don't know of which were in the passed superSet.
 //
 // NOTE: This is part of the ChannelGraphTimeSeries interface.
-func (c *ChanSeries) FilterKnownChanIDs(_ chainhash.Hash,
+func (c *ChanSeries) FilterKnownChanIDs(ctx context.Context, _ chainhash.Hash,
 	superSet []graphdb.ChannelUpdateInfo,
 	isZombieChan func(time.Time, time.Time) bool) (
 	[]lnwire.ShortChannelID, error) {
 
-	newChanIDs, err := c.graph.FilterKnownChanIDs(superSet, isZombieChan)
+	newChanIDs, err := c.graph.FilterKnownChanIDs(ctx, superSet, isZombieChan)
 	if err != nil {
 		return nil, err
 	}
@@ -230,12 +231,12 @@ func (c *ChanSeries) FilterKnownChanIDs(_ chainhash.Hash,
 // message.
 //
 // NOTE: This is part of the ChannelGraphTimeSeries interface.
-func (c *ChanSeries) FilterChannelRange(_ chainhash.Hash, startHeight,
+func (c *ChanSeries) FilterChannelRange(ctx context.Context, _ chainhash.Hash, startHeight,
 	endHeight uint32, withTimestamps bool) ([]graphdb.BlockChannelRange,
 	error) {
 
 	return c.graph.FilterChannelRange(
-		startHeight, endHeight, withTimestamps,
+		ctx, startHeight, endHeight, withTimestamps,
 	)
 }
 
@@ -246,7 +247,7 @@ func (c *ChanSeries) FilterChannelRange(_ chainhash.Hash, startHeight,
 // for each of the announcements, and a unique set of NodeAnnouncements.
 //
 // NOTE: This is part of the ChannelGraphTimeSeries interface.
-func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
+func (c *ChanSeries) FetchChanAnns(ctx context.Context, chain chainhash.Hash,
 	shortChanIDs []lnwire.ShortChannelID) ([]lnwire.Message, error) {
 
 	chanIDs := make([]uint64, 0, len(shortChanIDs))
@@ -254,7 +255,7 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 		chanIDs = append(chanIDs, chanID.ToUint64())
 	}
 
-	channels, err := c.graph.FetchChanInfos(chanIDs)
+	channels, err := c.graph.FetchChanInfos(ctx, chanIDs)
 	if err != nil {
 		return nil, err
 	}

@@ -287,7 +287,7 @@ func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
 // information. Note that this method is expected to only be called to update an
 // already present node from a node announcement, or to insert a node found in a
 // channel update.
-func (c *ChannelGraph) AddLightningNode(node *models.LightningNode,
+func (c *ChannelGraph) AddLightningNode(ctx context.Context, node *models.LightningNode,
 	op ...batch.SchedulerOption) error {
 
 	c.cacheMu.Lock()
@@ -337,7 +337,8 @@ func (c *ChannelGraph) DeleteLightningNode(nodePub route.Vertex) error {
 // involved in creation of the channel, and the set of features that the channel
 // supports. The chanPoint and chanID are used to uniquely identify the edge
 // globally within the database.
-func (c *ChannelGraph) AddChannelEdge(edge *models.ChannelEdgeInfo,
+func (c *ChannelGraph) AddChannelEdge(ctx context.Context,
+	edge *models.ChannelEdgeInfo,
 	op ...batch.SchedulerOption) error {
 
 	c.cacheMu.Lock()
@@ -364,7 +365,7 @@ func (c *ChannelGraph) AddChannelEdge(edge *models.ChannelEdgeInfo,
 // MarkEdgeLive clears an edge from our zombie index, deeming it as live.
 // If the cache is enabled, the edge will be added back to the graph cache if
 // we still have a record of this channel in the DB.
-func (c *ChannelGraph) MarkEdgeLive(_ context.Context, chanID uint64) error {
+func (c *ChannelGraph) MarkEdgeLive(ctx context.Context, chanID uint64) error {
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 
@@ -376,7 +377,7 @@ func (c *ChannelGraph) MarkEdgeLive(_ context.Context, chanID uint64) error {
 	if c.graphCache != nil {
 		// We need to add the channel back into our graph cache,
 		// otherwise we won't use it for path finding.
-		infos, err := c.KVStore.FetchChanInfos([]uint64{chanID})
+		infos, err := c.KVStore.FetchChanInfos(ctx, []uint64{chanID})
 		if err != nil {
 			return err
 		}
@@ -401,7 +402,7 @@ func (c *ChannelGraph) MarkEdgeLive(_ context.Context, chanID uint64) error {
 // that we require the node that failed to send the fresh update to be the one
 // that resurrects the channel from its zombie state. The markZombie bool
 // denotes whether to mark the channel as a zombie.
-func (c *ChannelGraph) DeleteChannelEdges(strictZombiePruning, markZombie bool,
+func (c *ChannelGraph) DeleteChannelEdges(ctx context.Context, strictZombiePruning, markZombie bool,
 	chanIDs ...uint64) error {
 
 	c.cacheMu.Lock()
@@ -535,7 +536,7 @@ func (c *ChannelGraph) PruneGraphNodes(_ context.Context) error {
 // words, we perform a set difference of our set of chan ID's and the ones
 // passed in. This method can be used by callers to determine the set of
 // channels another peer knows of that we don't.
-func (c *ChannelGraph) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo,
+func (c *ChannelGraph) FilterKnownChanIDs(_ context.Context, chansInfo []ChannelUpdateInfo,
 	isZombieChan func(time.Time, time.Time) bool) ([]uint64, error) {
 
 	unknown, knownZombies, err := c.KVStore.FilterKnownChanIDs(chansInfo)
@@ -585,7 +586,7 @@ func (c *ChannelGraph) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo,
 // MarkEdgeZombie attempts to mark a channel identified by its channel ID as a
 // zombie. This method is used on an ad-hoc basis, when channels need to be
 // marked as zombies outside the normal pruning cycle.
-func (c *ChannelGraph) MarkEdgeZombie(chanID uint64,
+func (c *ChannelGraph) MarkEdgeZombie(ctx context.Context, chanID uint64,
 	pubKey1, pubKey2 [33]byte) error {
 
 	c.cacheMu.Lock()
@@ -610,7 +611,7 @@ func (c *ChannelGraph) MarkEdgeZombie(chanID uint64,
 // updated, otherwise it's the second node's information. The node ordering is
 // determined by the lexicographical ordering of the identity public keys of the
 // nodes on either side of the channel.
-func (c *ChannelGraph) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
+func (c *ChannelGraph) UpdateEdgePolicy(_ context.Context, edge *models.ChannelEdgePolicy,
 	op ...batch.SchedulerOption) error {
 
 	c.cacheMu.Lock()

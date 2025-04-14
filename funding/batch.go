@@ -95,7 +95,7 @@ type ChannelOpener func(*InitFundingMsg) (chan *lnrpc.OpenStatusUpdate,
 
 // ChannelAbandoner is a function that can abandon a channel in the local
 // database, graph and arbitrator state.
-type ChannelAbandoner func(*wire.OutPoint) error
+type ChannelAbandoner func(context.Context, *wire.OutPoint) error
 
 // WalletKitServer is a local interface that abstracts away the methods we need
 // from the wallet kit sub server instance.
@@ -524,7 +524,7 @@ func (b *Batcher) cleanup(ctx context.Context) {
 			continue
 		}
 
-		err := b.cfg.ChannelAbandoner(channel.chanPoint)
+		err := b.cfg.ChannelAbandoner(ctx, channel.chanPoint)
 		if err != nil {
 			log.Debugf(errMsgTpl, "abandon pending open channel",
 				err)

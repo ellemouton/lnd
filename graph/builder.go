@@ -575,14 +575,14 @@ func (b *Builder) pruneZombieChans(ctx context.Context) error {
 	// both edges. If they're both disabled, then we can interpret this as
 	// the channel being closed and can prune it from our graph.
 	if b.cfg.AssumeChannelValid {
-		disabledChanIDs, err := b.cfg.Graph.DisabledChannelIDs()
+		disabledChanIDs, err := b.cfg.Graph.DisabledChannelIDs(ctx)
 		if err != nil {
 			return fmt.Errorf("unable to get disabled channels "+
 				"ids chans: %v", err)
 		}
 
 		disabledEdges, err := b.cfg.Graph.FetchChanInfos(
-			disabledChanIDs,
+			ctx, disabledChanIDs,
 		)
 		if err != nil {
 			return fmt.Errorf("unable to fetch disabled channels "+
@@ -600,7 +600,7 @@ func (b *Builder) pruneZombieChans(ctx context.Context) error {
 
 	startTime := time.Unix(0, 0)
 	endTime := time.Now().Add(-1 * chanExpiry)
-	oldEdges, err := b.cfg.Graph.ChanUpdatesInHorizon(startTime, endTime)
+	oldEdges, err := b.cfg.Graph.ChanUpdatesInHorizon(ctx, startTime, endTime)
 	if err != nil {
 		return fmt.Errorf("unable to fetch expired channel updates "+
 			"chans: %v", err)
@@ -627,7 +627,7 @@ func (b *Builder) pruneZombieChans(ctx context.Context) error {
 		log.Tracef("Pruning zombie channel with ChannelID(%v)", chanID)
 	}
 	err = b.cfg.Graph.DeleteChannelEdges(
-		b.cfg.StrictZombiePruning, true, toPrune...,
+		ctx, b.cfg.StrictZombiePruning, true, toPrune...,
 	)
 	if err != nil {
 		return fmt.Errorf("unable to delete zombie channels: %w", err)
@@ -874,7 +874,7 @@ func (b *Builder) updateGraphWithClosedChannels(ctx context.Context,
 // timestamp. ErrIgnored will be returned if we already have the node, and
 // ErrOutdated will be returned if we have a timestamp that's after the new
 // timestamp.
-func (b *Builder) assertNodeAnnFreshness(node route.Vertex,
+func (b *Builder) assertNodeAnnFreshness(ctx context.Context, node route.Vertex,
 	msgTimestamp time.Time) error {
 
 	// If we are not already aware of this node, it means that we don't
@@ -882,7 +882,7 @@ func (b *Builder) assertNodeAnnFreshness(node route.Vertex,
 	// node announcements, we will ignore such nodes. If we do know about
 	// this node, check that this update brings info newer than what we
 	// already have.
-	lastUpdate, exists, err := b.cfg.Graph.HasLightningNode(node)
+	lastUpdate, exists, err := b.cfg.Graph.HasLightningNode(ctx, node)
 	if err != nil {
 		return errors.Errorf("unable to query for the "+
 			"existence of node: %v", err)
@@ -907,12 +907,12 @@ func (b *Builder) assertNodeAnnFreshness(node route.Vertex,
 
 // MarkZombieEdge adds a channel that failed complete validation into the zombie
 // index so we can avoid having to re-validate it in the future.
-func (b *Builder) MarkZombieEdge(chanID uint64) error {
+func (b *Builder) MarkZombieEdge(ctx context.Context, chanID uint64) error {
 	// If the edge fails validation we'll mark the edge itself as a zombie
 	// so we don't continue to request it. We use the "zero key" for both
 	// node pubkeys so this edge can't be resurrected.
 	var zeroKey [33]byte
-	err := b.cfg.Graph.MarkEdgeZombie(chanID, zeroKey, zeroKey)
+	err := b.cfg.Graph.MarkEdgeZombie(ctx, chanID, zeroKey, zeroKey)
 	if err != nil {
 		return fmt.Errorf("unable to mark spent chan(id=%v) as a "+
 			"zombie: %w", chanID, err)
@@ -984,7 +984,9 @@ func (b *Builder) ApplyChannelUpdate(ctx context.Context,
 func (b *Builder) AddNode(node *models.LightningNode,
 	op ...batch.SchedulerOption) error {
 
-	err := b.addNode(node, op...)
+	ctx := context.TODO()
+
+	err := b.addNode(ctx, node, op...)
 	if err != nil {
 		logNetworkMsgProcessError(err)
 
@@ -998,18 +1000,18 @@ func (b *Builder) AddNode(node *models.LightningNode,
 // currently have persisted in the graph, and then adds it to the graph. If we
 // already know about the node, then we only update our DB if the new update
 // has a newer timestamp than the last one we received.
-func (b *Builder) addNode(node *models.LightningNode,
+func (b *Builder) addNode(ctx context.Context, node *models.LightningNode,
 	op ...batch.SchedulerOption) error {
 
 	// Before we add the node to the database, we'll check to see if the
 	// announcement is "fresh" or not. If it isn't, then we'll return an
 	// error.
-	err := b.assertNodeAnnFreshness(node.PubKeyBytes, node.LastUpdate)
+	err := b.assertNodeAnnFreshness(ctx, node.PubKeyBytes, node.LastUpdate)
 	if err != nil {
 		return err
 	}
 
-	if err := b.cfg.Graph.AddLightningNode(node, op...); err != nil {
+	if err := b.cfg.Graph.AddLightningNode(ctx, node, op...); err != nil {
 		return errors.Errorf("unable to add node %x to the "+
 			"graph: %v", node.PubKeyBytes, err)
 	}
@@ -1071,7 +1073,7 @@ func (b *Builder) addEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 			edge.ChannelID)
 	}
 
-	if err := b.cfg.Graph.AddChannelEdge(edge, op...); err != nil {
+	if err := b.cfg.Graph.AddChannelEdge(ctx, edge, op...); err != nil {
 		return fmt.Errorf("unable to add edge: %w", err)
 	}
 
@@ -1221,7 +1223,7 @@ func (b *Builder) updateEdge(ctx context.Context,
 
 	// Now that we know this isn't a stale update, we'll apply the new edge
 	// policy to the proper directional edge within the channel graph.
-	if err = b.cfg.Graph.UpdateEdgePolicy(policy, op...); err != nil {
+	if err = b.cfg.Graph.UpdateEdgePolicy(ctx, policy, op...); err != nil {
 		err := errors.Errorf("unable to add channel: %v", err)
 		log.Error(err)
 		return err
@@ -1327,9 +1329,11 @@ func (b *Builder) AddProof(chanID lnwire.ShortChannelID,
 func (b *Builder) IsStaleNode(node route.Vertex,
 	timestamp time.Time) bool {
 
+	ctx := context.TODO()
+
 	// If our attempt to assert that the node announcement is fresh fails,
 	// then we know that this is actually a stale announcement.
-	err := b.assertNodeAnnFreshness(node, timestamp)
+	err := b.assertNodeAnnFreshness(ctx, node, timestamp)
 	if err != nil {
 		log.Debugf("Checking stale node %x got %v", node, err)
 		return true

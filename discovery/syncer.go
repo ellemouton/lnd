@@ -774,7 +774,7 @@ func isLegacyReplyChannelRange(query *lnwire.QueryChannelRange,
 // processChanRangeReply is called each time the GossipSyncer receives a new
 // reply to the initial range query to discover new channels that it didn't
 // previously know of.
-func (g *GossipSyncer) processChanRangeReply(_ context.Context,
+func (g *GossipSyncer) processChanRangeReply(ctx context.Context,
 	msg *lnwire.ReplyChannelRange) error {
 
 	// isStale returns whether the timestamp is too far into the past.
@@ -920,7 +920,7 @@ func (g *GossipSyncer) processChanRangeReply(_ context.Context,
 	// Otherwise, this is the final response, so we'll now check to see
 	// which channels they know of that we don't.
 	newChans, err := g.cfg.channelSeries.FilterKnownChanIDs(
-		g.cfg.chainHash, g.bufferedChanRangeReplies,
+		ctx, g.cfg.chainHash, g.bufferedChanRangeReplies,
 		g.cfg.isStillZombieChannel,
 	)
 	if err != nil {
@@ -965,12 +965,12 @@ func (g *GossipSyncer) processChanRangeReply(_ context.Context,
 // party when we're kicking off the channel graph synchronization upon
 // connection. The historicalQuery boolean can be used to generate a query from
 // the genesis block of the chain.
-func (g *GossipSyncer) genChanRangeQuery(_ context.Context,
+func (g *GossipSyncer) genChanRangeQuery(ctx context.Context,
 	historicalQuery bool) (*lnwire.QueryChannelRange, error) {
 
 	// First, we'll query our channel graph time series for its highest
 	// known channel ID.
-	newestChan, err := g.cfg.channelSeries.HighestChanID(g.cfg.chainHash)
+	newestChan, err := g.cfg.channelSeries.HighestChanID(ctx, g.cfg.chainHash)
 	if err != nil {
 		return nil, err
 	}
@@ -1084,7 +1084,7 @@ func (g *GossipSyncer) replyChanRangeQuery(ctx context.Context,
 	startBlock := query.FirstBlockHeight
 	endBlock := query.LastBlockHeight()
 	channelRanges, err := g.cfg.channelSeries.FilterChannelRange(
-		query.ChainHash, startBlock, endBlock, withTimestamps,
+		ctx, query.ChainHash, startBlock, endBlock, withTimestamps,
 	)
 	if err != nil {
 		return err
@@ -1258,7 +1258,7 @@ func (g *GossipSyncer) replyShortChanIDs(ctx context.Context,
 	// the requirement of being a chan ann, chan update, or a node ann
 	// related to the set of queried channels.
 	replyMsgs, err := g.cfg.channelSeries.FetchChanAnns(
-		query.ChainHash, query.ShortChanIDs,
+		ctx, query.ChainHash, query.ShortChanIDs,
 	)
 	if err != nil {
 		return fmt.Errorf("unable to fetch chan anns for %v..., %w",
@@ -1323,7 +1323,7 @@ func (g *GossipSyncer) ApplyGossipFilter(ctx context.Context,
 	// Now that the remote peer has applied their filter, we'll query the
 	// database for all the messages that are beyond this filter.
 	newUpdatestoSend, err := g.cfg.channelSeries.UpdatesInHorizon(
-		g.cfg.chainHash, startTime, endTime,
+		ctx, g.cfg.chainHash, startTime, endTime,
 	)
 	if err != nil {
 		returnSema()
