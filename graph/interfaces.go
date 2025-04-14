@@ -103,7 +103,7 @@ type DB interface {
 	// has been used to prune channels in the graph. Knowing the "prune tip"
 	// allows callers to tell if the graph is currently in sync with the
 	// current best known UTXO state.
-	PruneTip() (*chainhash.Hash, uint32, error)
+	PruneTip(ctx context.Context) (*chainhash.Hash, uint32, error)
 
 	// PruneGraph prunes newly closed channels from the channel graph in
 	// response to a new block being solved on the network. Any transactions
@@ -113,21 +113,22 @@ type DB interface {
 	// ensure the graph is fully in sync with the current UTXO state. A
 	// slice of channels that have been closed by the target block are
 	// returned if the function succeeds without error.
-	PruneGraph(spentOutputs []*wire.OutPoint, blockHash *chainhash.Hash,
+	PruneGraph(ctx context.Context, spentOutputs []*wire.OutPoint,
+		blockHash *chainhash.Hash,
 		blockHeight uint32) ([]*models.ChannelEdgeInfo, error)
 
 	// ChannelView returns the verifiable edge information for each active
 	// channel within the known channel graph. The set of UTXO's (along with
 	// their scripts) returned are the ones that need to be watched on
 	// chain to detect channel closes on the resident blockchain.
-	ChannelView() ([]graphdb.EdgePoint, error)
+	ChannelView(ctx context.Context) ([]graphdb.EdgePoint, error)
 
 	// PruneGraphNodes is a garbage collection method which attempts to
 	// prune out any nodes from the channel graph that are currently
 	// unconnected. This ensure that we only maintain a graph of reachable
 	// nodes. In the event that a pruned node gains more channels, it will
 	// be re-added back to the graph.
-	PruneGraphNodes() error
+	PruneGraphNodes(ctx context.Context) error
 
 	// SourceNode returns the source node of the graph. The source node is
 	// treated as the center node within a star-graph. This method may be
@@ -173,8 +174,8 @@ type DB interface {
 	// set to the last prune height valid for the remaining chain.
 	// Channels that were removed from the graph resulting from the
 	// disconnected block are returned.
-	DisconnectBlockAtHeight(height uint32) ([]*models.ChannelEdgeInfo,
-		error)
+	DisconnectBlockAtHeight(ctx context.Context,
+		height uint32) ([]*models.ChannelEdgeInfo, error)
 
 	// HasChannelEdge returns true if the database knows of a channel edge
 	// with the passed channel ID, and false otherwise. If an edge with that
@@ -196,7 +197,7 @@ type DB interface {
 	// zombie within the database. In this case, the ChannelEdgePolicy's
 	// will be nil, and the ChannelEdgeInfo will only include the public
 	// keys of each node.
-	FetchChannelEdgesByID(_ context.Context,
+	FetchChannelEdgesByID(ctx context.Context,
 		chanID uint64) (*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error)
 
@@ -245,8 +246,8 @@ type DB interface {
 	// FetchLightningNode attempts to look up a target node by its identity
 	// public key. If the node isn't found in the database, then
 	// ErrGraphNodeNotFound is returned.
-	FetchLightningNode(nodePub route.Vertex) (*models.LightningNode,
-		error)
+	FetchLightningNode(ctx context.Context,
+		nodePub route.Vertex) (*models.LightningNode, error)
 
 	// ForEachNodeChannel iterates through all channels of the given node,
 	// executing the passed callback with an edge info structure and the
@@ -257,22 +258,22 @@ type DB interface {
 	// to the caller.
 	//
 	// Unknown policies are passed into the callback as nil values.
-	ForEachNodeChannel(nodePub route.Vertex, cb func(kvdb.RTx,
-		*models.ChannelEdgeInfo,
-		*models.ChannelEdgePolicy,
-		*models.ChannelEdgePolicy) error) error
+	ForEachNodeChannel(ctx context.Context, nodePub route.Vertex,
+		cb func(kvdb.RTx, *models.ChannelEdgeInfo,
+			*models.ChannelEdgePolicy,
+			*models.ChannelEdgePolicy) error) error
 
 	// AddEdgeProof sets the proof of an existing edge in the graph
 	// database.
-	AddEdgeProof(chanID lnwire.ShortChannelID,
+	AddEdgeProof(ctx context.Context, chanID lnwire.ShortChannelID,
 		proof *models.ChannelAuthProof) error
 
 	// IsPublicNode is a helper method that determines whether the node with
 	// the given public key is seen as a public node in the graph from the
 	// graph's source node's point of view.
-	IsPublicNode(pubKey [33]byte) (bool, error)
+	IsPublicNode(ctx context.Context, pubKey [33]byte) (bool, error)
 
 	// MarkEdgeLive clears an edge from our zombie index, deeming it as
 	// live.
-	MarkEdgeLive(chanID uint64) error
+	MarkEdgeLive(ctx context.Context, chanID uint64) error
 }

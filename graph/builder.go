@@ -12,6 +12,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/lightningnetwork/lnd/batch"
 	"github.com/lightningnetwork/lnd/chainntnfs"
+	"github.com/lightningnetwork/lnd/fn/v2"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/kvdb"
@@ -136,8 +137,9 @@ type Builder struct {
 	// announcements over a window of defaultStatInterval.
 	stats *builderStats
 
-	quit chan struct{}
-	wg   sync.WaitGroup
+	quit   chan struct{}
+	wg     sync.WaitGroup
+	cancel fn.Option[context.CancelFunc]
 }
 
 // A compile time check to ensure Builder implements the
@@ -164,6 +166,9 @@ func (b *Builder) Start() error {
 
 	log.Info("Builder starting")
 
+	ctx, cancel := context.WithCancel(context.Background())
+	b.cancel = fn.Some(cancel)
+
 	bestHash, bestHeight, err := b.cfg.Chain.GetBestBlock()
 	if err != nil {
 		return err
@@ -171,7 +176,7 @@ func (b *Builder) Start() error {
 
 	// If the graph has never been pruned, or hasn't fully been created yet,
 	// then we don't treat this as an explicit error.
-	if _, _, err := b.cfg.Graph.PruneTip(); err != nil {
+	if _, _, err := b.cfg.Graph.PruneTip(ctx); err != nil {
 		switch {
 		case errors.Is(err, graphdb.ErrGraphNeverPruned):
 			fallthrough
@@ -181,7 +186,7 @@ func (b *Builder) Start() error {
 			// the prune height to the current best height of the
 			// chain backend.
 			_, err = b.cfg.Graph.PruneGraph(
-				nil, bestHash, uint32(bestHeight),
+				ctx, nil, bestHash, uint32(bestHeight),
 			)
 			if err != nil {
 				return err
@@ -205,7 +210,7 @@ func (b *Builder) Start() error {
 			}
 
 			log.Info("Initial zombie prune starting")
-			if err := b.pruneZombieChans(); err != nil {
+			if err := b.pruneZombieChans(ctx); err != nil {
 				log.Errorf("Unable to prune zombies: %v", err)
 			}
 		})
@@ -226,7 +231,7 @@ func (b *Builder) Start() error {
 		// FilteredChainView instance.  We do this before, as otherwise
 		// we may miss on-chain events as the filter hasn't properly
 		// been applied.
-		channelView, err := b.cfg.Graph.ChannelView()
+		channelView, err := b.cfg.Graph.ChannelView(ctx)
 		if err != nil && !errors.Is(
 			err, graphdb.ErrGraphNoEdgesFound,
 		) {
@@ -257,14 +262,14 @@ func (b *Builder) Start() error {
 		// Before we begin normal operation of the router, we first need
 		// to synchronize the channel graph to the latest state of the
 		// UTXO set.
-		if err := b.syncGraphWithChain(); err != nil {
+		if err := b.syncGraphWithChain(ctx); err != nil {
 			return err
 		}
 
 		// Finally, before we proceed, we'll prune any unconnected nodes
 		// from the graph in order to ensure we maintain a tight graph
 		// of "useful" nodes.
-		err = b.cfg.Graph.PruneGraphNodes()
+		err = b.cfg.Graph.PruneGraphNodes(ctx)
 		if err != nil &&
 			!errors.Is(err, graphdb.ErrGraphNodesNotFound) {
 
@@ -273,7 +278,7 @@ func (b *Builder) Start() error {
 	}
 
 	b.wg.Add(1)
-	go b.networkHandler()
+	go b.networkHandler(ctx)
 
 	log.Debug("Builder started")
 
@@ -298,6 +303,7 @@ func (b *Builder) Stop() error {
 		}
 	}
 
+	b.cancel.WhenSome(func(fn context.CancelFunc) { fn() })
 	close(b.quit)
 	b.wg.Wait()
 
@@ -310,7 +316,7 @@ func (b *Builder) Stop() error {
 // the latest UTXO set state. This process involves pruning from the channel
 // graph any channels which have been closed by spending their funding output
 // since we've been down.
-func (b *Builder) syncGraphWithChain() error {
+func (b *Builder) syncGraphWithChain(ctx context.Context) error {
 	// First, we'll need to check to see if we're already in sync with the
 	// latest state of the UTXO set.
 	bestHash, bestHeight, err := b.cfg.Chain.GetBestBlock()
@@ -319,7 +325,7 @@ func (b *Builder) syncGraphWithChain() error {
 	}
 	b.bestHeight.Store(uint32(bestHeight))
 
-	pruneHash, pruneHeight, err := b.cfg.Graph.PruneTip()
+	pruneHash, pruneHeight, err := b.cfg.Graph.PruneTip(ctx)
 	if err != nil {
 		switch {
 		// If the graph has never been pruned, or hasn't fully been
@@ -361,12 +367,12 @@ func (b *Builder) syncGraphWithChain() error {
 			"(hash=%v)", pruneHeight, pruneHash)
 		// Prune the graph for every channel that was opened at height
 		// >= pruneHeight.
-		_, err := b.cfg.Graph.DisconnectBlockAtHeight(pruneHeight)
+		_, err := b.cfg.Graph.DisconnectBlockAtHeight(ctx, pruneHeight)
 		if err != nil {
 			return err
 		}
 
-		pruneHash, pruneHeight, err = b.cfg.Graph.PruneTip()
+		pruneHash, pruneHeight, err = b.cfg.Graph.PruneTip(ctx)
 		switch {
 		// If at this point the graph has never been pruned, we can exit
 		// as this entails we are back to the point where it hasn't seen
@@ -439,7 +445,7 @@ func (b *Builder) syncGraphWithChain() error {
 	// With the spent outputs gathered, attempt to prune the channel graph,
 	// also passing in the best hash+height so the prune tip can be updated.
 	closedChans, err := b.cfg.Graph.PruneGraph(
-		spentOutputs, bestHash, uint32(bestHeight),
+		ctx, spentOutputs, bestHash, uint32(bestHeight),
 	)
 	if err != nil {
 		return err
@@ -506,7 +512,7 @@ func (b *Builder) IsZombieChannel(updateTime1,
 // we'll also consider channels zombies if *both* edges are disabled. This
 // usually signals that a channel has been closed on-chain. We do this
 // periodically to keep a healthy, lively routing table.
-func (b *Builder) pruneZombieChans() error {
+func (b *Builder) pruneZombieChans(ctx context.Context) error {
 	chansToPrune := make(map[uint64]struct{})
 	chanExpiry := b.cfg.ChannelPruneExpiry
 
@@ -629,7 +635,7 @@ func (b *Builder) pruneZombieChans() error {
 
 	// With the channels pruned, we'll also attempt to prune any nodes that
 	// were a part of them.
-	err = b.cfg.Graph.PruneGraphNodes()
+	err = b.cfg.Graph.PruneGraphNodes(ctx)
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNodesNotFound) {
 		return fmt.Errorf("unable to prune graph nodes: %w", err)
 	}
@@ -643,7 +649,7 @@ func (b *Builder) pruneZombieChans() error {
 // updates, and registering new topology clients.
 //
 // NOTE: This MUST be run as a goroutine.
-func (b *Builder) networkHandler() {
+func (b *Builder) networkHandler(ctx context.Context) {
 	defer b.wg.Done()
 
 	graphPruneTicker := time.NewTicker(b.cfg.GraphPruneInterval)
@@ -675,7 +681,7 @@ func (b *Builder) networkHandler() {
 			// Update the channel graph to reflect that this block
 			// was disconnected.
 			_, err := b.cfg.Graph.DisconnectBlockAtHeight(
-				blockHeight,
+				ctx, blockHeight,
 			)
 			if err != nil {
 				log.Errorf("unable to prune graph with stale "+
@@ -702,7 +708,7 @@ func (b *Builder) networkHandler() {
 			switch {
 			case chainUpdate.Height == currentHeight+1:
 				err := b.updateGraphWithClosedChannels(
-					chainUpdate,
+					ctx, chainUpdate,
 				)
 				if err != nil {
 					log.Errorf("unable to prune graph "+
@@ -715,7 +721,7 @@ func (b *Builder) networkHandler() {
 					currentHeight+1, chainUpdate.Height)
 
 				err := b.getMissingBlocks(
-					currentHeight, chainUpdate,
+					ctx, currentHeight, chainUpdate,
 				)
 				if err != nil {
 					log.Errorf("unable to retrieve missing"+
@@ -736,7 +742,7 @@ func (b *Builder) networkHandler() {
 		// state of the known graph to filter out any zombie channels
 		// for pruning.
 		case <-graphPruneTicker.C:
-			if err := b.pruneZombieChans(); err != nil {
+			if err := b.pruneZombieChans(ctx); err != nil {
 				log.Errorf("Unable to prune zombies: %v", err)
 			}
 
@@ -756,13 +762,15 @@ func (b *Builder) networkHandler() {
 		// loop so the wait group can be decremented.
 		case <-b.quit:
 			return
+		case <-ctx.Done():
+			return
 		}
 	}
 }
 
 // getMissingBlocks walks through all missing blocks and updates the graph
 // closed channels accordingly.
-func (b *Builder) getMissingBlocks(currentHeight uint32,
+func (b *Builder) getMissingBlocks(ctx context.Context, currentHeight uint32,
 	chainUpdate *chainview.FilteredBlock) error {
 
 	outdatedHash, err := b.cfg.Chain.GetBlockHash(int64(currentHeight))
@@ -811,7 +819,7 @@ func (b *Builder) getMissingBlocks(currentHeight uint32,
 		}
 
 		err = b.updateGraphWithClosedChannels(
-			filteredBlock,
+			ctx, filteredBlock,
 		)
 		if err != nil {
 			return err
@@ -823,7 +831,7 @@ func (b *Builder) getMissingBlocks(currentHeight uint32,
 
 // updateGraphWithClosedChannels prunes the channel graph of closed channels
 // that are no longer needed.
-func (b *Builder) updateGraphWithClosedChannels(
+func (b *Builder) updateGraphWithClosedChannels(ctx context.Context,
 	chainUpdate *chainview.FilteredBlock) error {
 
 	// Once a new block arrives, we update our running track of the height
@@ -848,8 +856,8 @@ func (b *Builder) updateGraphWithClosedChannels(
 	// With the spent outputs gathered, attempt to prune the channel graph,
 	// also passing in the hash+height of the block being pruned so the
 	// prune tip can be updated.
-	chansClosed, err := b.cfg.Graph.PruneGraph(spentOutputs,
-		&chainUpdate.Hash, chainUpdate.Height)
+	chansClosed, err := b.cfg.Graph.PruneGraph(
+		ctx, spentOutputs, &chainUpdate.Hash, chainUpdate.Height)
 	if err != nil {
 		log.Errorf("unable to prune routing table: %v", err)
 		return err
@@ -1271,7 +1279,9 @@ func (b *Builder) GetChannelByID(ctx context.Context,
 func (b *Builder) FetchLightningNode(
 	node route.Vertex) (*models.LightningNode, error) {
 
-	return b.cfg.Graph.FetchLightningNode(node)
+	ctx := context.TODO()
+
+	return b.cfg.Graph.FetchLightningNode(ctx, node)
 }
 
 // ForAllOutgoingChannels is used to iterate over all outgoing channels owned by
@@ -1281,7 +1291,9 @@ func (b *Builder) FetchLightningNode(
 func (b *Builder) ForAllOutgoingChannels(cb func(*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy) error) error {
 
-	return b.cfg.Graph.ForEachNodeChannel(b.cfg.SelfNode,
+	ctx := context.TODO()
+
+	return b.cfg.Graph.ForEachNodeChannel(ctx, b.cfg.SelfNode,
 		func(_ kvdb.RTx, c *models.ChannelEdgeInfo,
 			e *models.ChannelEdgePolicy,
 			_ *models.ChannelEdgePolicy) error {
@@ -1303,7 +1315,9 @@ func (b *Builder) ForAllOutgoingChannels(cb func(*models.ChannelEdgeInfo,
 func (b *Builder) AddProof(chanID lnwire.ShortChannelID,
 	proof *models.ChannelAuthProof) error {
 
-	return b.cfg.Graph.AddEdgeProof(chanID, proof)
+	ctx := context.TODO()
+
+	return b.cfg.Graph.AddEdgeProof(ctx, chanID, proof)
 }
 
 // IsStaleNode returns true if the graph source has a node announcement for the
@@ -1329,7 +1343,9 @@ func (b *Builder) IsStaleNode(node route.Vertex,
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (b *Builder) IsPublicNode(node route.Vertex) (bool, error) {
-	return b.cfg.Graph.IsPublicNode(node)
+	ctx := context.TODO()
+
+	return b.cfg.Graph.IsPublicNode(ctx, node)
 }
 
 // IsKnownEdge returns true if the graph source already knows of the passed
@@ -1423,5 +1439,7 @@ func (b *Builder) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (b *Builder) MarkEdgeLive(chanID lnwire.ShortChannelID) error {
-	return b.cfg.Graph.MarkEdgeLive(chanID.ToUint64())
+	ctx := context.TODO()
+
+	return b.cfg.Graph.MarkEdgeLive(ctx, chanID.ToUint64())
 }

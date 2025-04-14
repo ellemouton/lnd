@@ -2,6 +2,7 @@ package localchans
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -39,8 +40,9 @@ type Manager struct {
 
 	// ForAllOutgoingChannels is required to iterate over all our local
 	// channels. The ChannelEdgePolicy parameter may be nil.
-	ForAllOutgoingChannels func(cb func(*models.ChannelEdgeInfo,
-		*models.ChannelEdgePolicy) error) error
+	ForAllOutgoingChannels func(ctx context.Context,
+		cb func(*models.ChannelEdgeInfo,
+			*models.ChannelEdgePolicy) error) error
 
 	// FetchChannel is used to query local channel parameters. Optionally an
 	// existing db tx can be supplied.
@@ -60,7 +62,7 @@ type Manager struct {
 
 // UpdatePolicy updates the policy for the specified channels on disk and in
 // the active links.
-func (r *Manager) UpdatePolicy(newSchema routing.ChannelPolicy,
+func (r *Manager) UpdatePolicy(ctx context.Context, newSchema routing.ChannelPolicy,
 	createMissingEdge bool, chanPoints ...wire.OutPoint) (
 	[]*lnrpc.FailedUpdate, error) {
 
@@ -151,7 +153,7 @@ func (r *Manager) UpdatePolicy(newSchema routing.ChannelPolicy,
 	// Next, we'll loop over all the outgoing channels the router knows of.
 	// If we have a filter then we'll only collect those channels, otherwise
 	// we'll collect them all.
-	err := r.ForAllOutgoingChannels(processChan)
+	err := r.ForAllOutgoingChannels(ctx, processChan)
 	if err != nil {
 		return nil, err
 	}

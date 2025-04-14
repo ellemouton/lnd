@@ -6949,7 +6949,7 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 	// With the public key decoded, attempt to fetch the node corresponding
 	// to this public key. If the node cannot be found, then an error will
 	// be returned.
-	node, err := graph.FetchLightningNode(pubKey)
+	node, err := graph.FetchLightningNode(ctx, pubKey)
 	switch {
 	case errors.Is(err, graphdb.ErrGraphNodeNotFound):
 		return nil, status.Error(codes.NotFound, err.Error())
@@ -6965,7 +6965,8 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 		channels      []*lnrpc.ChannelEdge
 	)
 
-	err = graph.ForEachNodeChannel(node.PubKeyBytes,
+	err = graph.ForEachNodeChannel(
+		ctx, node.PubKeyBytes,
 		func(_ kvdb.RTx, edge *models.ChannelEdgeInfo,
 			c1, c2 *models.ChannelEdgePolicy) error {
 
@@ -7647,7 +7648,8 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 	}
 
 	var feeReports []*lnrpc.ChannelFeeReport
-	err = channelGraph.ForEachNodeChannel(selfNode.PubKeyBytes,
+	err = channelGraph.ForEachNodeChannel(
+		ctx, selfNode.PubKeyBytes,
 		func(_ kvdb.RTx, chanInfo *models.ChannelEdgeInfo,
 			edgePolicy, _ *models.ChannelEdgePolicy) error {
 
@@ -7924,8 +7926,9 @@ func (r *rpcServer) UpdateChannelPolicy(ctx context.Context,
 
 	// With the scope resolved, we'll now send this to the local channel
 	// manager so it can propagate the new policy for our target channel(s).
-	failedUpdates, err := r.server.localChanMgr.UpdatePolicy(chanPolicy,
-		req.CreateMissingEdge, targetChans...)
+	failedUpdates, err := r.server.localChanMgr.UpdatePolicy(
+		ctx, chanPolicy, req.CreateMissingEdge, targetChans...,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -8001,7 +8004,9 @@ func (r *rpcServer) ForwardingHistory(ctx context.Context,
 	chanToPeerAlias := make(map[lnwire.ShortChannelID]string)
 
 	// Helper function to extract a peer's node alias given its SCID.
-	getRemoteAlias := func(chanID lnwire.ShortChannelID) (string, error) {
+	getRemoteAlias := func(ctx context.Context,
+		chanID lnwire.ShortChannelID) (string, error) {
+
 		// If we'd previously seen this chanID then return the cached
 		// peer alias.
 		if peerAlias, ok := chanToPeerAlias[chanID]; ok {
@@ -8026,7 +8031,7 @@ func (r *rpcServer) ForwardingHistory(ctx context.Context,
 			return "", err
 		}
 
-		peer, err := r.server.graphDB.FetchLightningNode(vertex)
+		peer, err := r.server.graphDB.FetchLightningNode(ctx, vertex)
 		if err != nil {
 			return "", err
 		}
@@ -8070,12 +8075,12 @@ func (r *rpcServer) ForwardingHistory(ctx context.Context,
 		}
 
 		if req.PeerAliasLookup {
-			aliasIn, err := getRemoteAlias(event.IncomingChanID)
+			aliasIn, err := getRemoteAlias(ctx, event.IncomingChanID)
 			if err != nil {
 				aliasIn = fmt.Sprintf("unable to lookup peer "+
 					"alias: %v", err)
 			}
-			aliasOut, err := getRemoteAlias(event.OutgoingChanID)
+			aliasOut, err := getRemoteAlias(ctx, event.OutgoingChanID)
 			if err != nil {
 				aliasOut = fmt.Sprintf("unable to lookup peer"+
 					"alias: %v", err)
