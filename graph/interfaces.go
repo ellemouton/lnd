@@ -24,53 +24,53 @@ type ChannelGraphSource interface {
 	// AddNode is used to add information about a node to the router
 	// database. If the node with this pubkey is not present in an existing
 	// channel, it will be ignored.
-	AddNode(node *models.LightningNode,
+	AddNode(ctx context.Context, node *models.LightningNode,
 		op ...batch.SchedulerOption) error
 
 	// AddEdge is used to add edge/channel to the topology of the router,
 	// after all information about channel will be gathered this
 	// edge/channel might be used in construction of payment path.
-	AddEdge(edge *models.ChannelEdgeInfo,
+	AddEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 		op ...batch.SchedulerOption) error
 
 	// AddProof updates the channel edge info with proof which is needed to
 	// properly announce the edge to the rest of the network.
-	AddProof(chanID lnwire.ShortChannelID,
+	AddProof(ctx context.Context, chanID lnwire.ShortChannelID,
 		proof *models.ChannelAuthProof) error
 
 	// UpdateEdge is used to update edge information, without this message
 	// edge considered as not fully constructed.
-	UpdateEdge(policy *models.ChannelEdgePolicy,
+	UpdateEdge(ctx context.Context, policy *models.ChannelEdgePolicy,
 		op ...batch.SchedulerOption) error
 
 	// IsStaleNode returns true if the graph source has a node announcement
 	// for the target node with a more recent timestamp. This method will
 	// also return true if we don't have an active channel announcement for
 	// the target node.
-	IsStaleNode(node route.Vertex, timestamp time.Time) bool
+	IsStaleNode(ctx context.Context, node route.Vertex, timestamp time.Time) bool
 
 	// IsPublicNode determines whether the given vertex is seen as a public
 	// node in the graph from the graph's source node's point of view.
-	IsPublicNode(node route.Vertex) (bool, error)
+	IsPublicNode(ctx context.Context, node route.Vertex) (bool, error)
 
 	// IsKnownEdge returns true if the graph source already knows of the
 	// passed channel ID either as a live or zombie edge.
-	IsKnownEdge(chanID lnwire.ShortChannelID) bool
+	IsKnownEdge(ctx context.Context, chanID lnwire.ShortChannelID) bool
 
 	// IsStaleEdgePolicy returns true if the graph source has a channel
 	// edge for the passed channel ID (and flags) that have a more recent
 	// timestamp.
-	IsStaleEdgePolicy(chanID lnwire.ShortChannelID, timestamp time.Time,
+	IsStaleEdgePolicy(ctx context.Context, chanID lnwire.ShortChannelID, timestamp time.Time,
 		flags lnwire.ChanUpdateChanFlags) bool
 
 	// MarkEdgeLive clears an edge from our zombie index, deeming it as
 	// live.
-	MarkEdgeLive(chanID lnwire.ShortChannelID) error
+	MarkEdgeLive(ctx context.Context, chanID lnwire.ShortChannelID) error
 
 	// ForAllOutgoingChannels is used to iterate over all channels
 	// emanating from the "source" node which is the center of the
 	// star-graph.
-	ForAllOutgoingChannels(cb func(c *models.ChannelEdgeInfo,
+	ForAllOutgoingChannels(ctx context.Context, cb func(c *models.ChannelEdgeInfo,
 		e *models.ChannelEdgePolicy) error) error
 
 	// CurrentBlockHeight returns the block height from POV of the router
@@ -85,14 +85,14 @@ type ChannelGraphSource interface {
 	// FetchLightningNode attempts to look up a target node by its identity
 	// public key. channeldb.ErrGraphNodeNotFound is returned if the node
 	// doesn't exist within the graph.
-	FetchLightningNode(route.Vertex) (*models.LightningNode, error)
+	FetchLightningNode(context.Context, route.Vertex) (*models.LightningNode, error)
 
 	// MarkZombieEdge marks the channel with the given ID as a zombie edge.
 	MarkZombieEdge(ctx context.Context, chanID uint64) error
 
 	// IsZombieEdge returns true if the edge with the given channel ID is
 	// currently marked as a zombie edge.
-	IsZombieEdge(chanID lnwire.ShortChannelID) (bool, error)
+	IsZombieEdge(ctx context.Context, chanID lnwire.ShortChannelID) (bool, error)
 }
 
 // DB is an interface describing a persisted Lightning Network graph.

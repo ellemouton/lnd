@@ -1226,8 +1226,8 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		PropagateChanPolicyUpdate: s.authGossiper.PropagateChanPolicyUpdate,
 		UpdateForwardingPolicies:  s.htlcSwitch.UpdateForwardingPolicies,
 		FetchChannel:              s.chanStateDB.FetchChannel,
-		AddEdge: func(edge *models.ChannelEdgeInfo) error {
-			return s.graphBuilder.AddEdge(edge)
+		AddEdge: func(ctx context.Context, edge *models.ChannelEdgeInfo) error {
+			return s.graphBuilder.AddEdge(ctx, edge)
 		},
 	}
 

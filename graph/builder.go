@@ -955,7 +955,7 @@ func (b *Builder) ApplyChannelUpdate(ctx context.Context,
 		return false
 	}
 
-	err = b.UpdateEdge(&models.ChannelEdgePolicy{
+	err = b.UpdateEdge(ctx, &models.ChannelEdgePolicy{
 		SigBytes:                  msg.Signature.ToSignatureBytes(),
 		ChannelID:                 msg.ShortChannelID.ToUint64(),
 		LastUpdate:                time.Unix(int64(msg.Timestamp), 0),
@@ -981,10 +981,8 @@ func (b *Builder) ApplyChannelUpdate(ctx context.Context,
 // be ignored.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) AddNode(node *models.LightningNode,
+func (b *Builder) AddNode(ctx context.Context, node *models.LightningNode,
 	op ...batch.SchedulerOption) error {
-
-	ctx := context.TODO()
 
 	err := b.addNode(ctx, node, op...)
 	if err != nil {
@@ -1027,10 +1025,8 @@ func (b *Builder) addNode(ctx context.Context, node *models.LightningNode,
 // in construction of payment path.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) AddEdge(edge *models.ChannelEdgeInfo,
+func (b *Builder) AddEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 	op ...batch.SchedulerOption) error {
-
-	ctx := context.TODO()
 
 	err := b.addEdge(ctx, edge, op...)
 	if err != nil {
@@ -1130,10 +1126,8 @@ func (b *Builder) addEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 // considered as not fully constructed.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) UpdateEdge(update *models.ChannelEdgePolicy,
+func (b *Builder) UpdateEdge(ctx context.Context, update *models.ChannelEdgePolicy,
 	op ...batch.SchedulerOption) error {
-
-	ctx := context.TODO()
 
 	err := b.updateEdge(ctx, update, op...)
 	if err != nil {
@@ -1279,9 +1273,7 @@ func (b *Builder) GetChannelByID(ctx context.Context,
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (b *Builder) FetchLightningNode(
-	node route.Vertex) (*models.LightningNode, error) {
-
-	ctx := context.TODO()
+	ctx context.Context, node route.Vertex) (*models.LightningNode, error) {
 
 	return b.cfg.Graph.FetchLightningNode(ctx, node)
 }
@@ -1290,10 +1282,8 @@ func (b *Builder) FetchLightningNode(
 // the router.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) ForAllOutgoingChannels(cb func(*models.ChannelEdgeInfo,
+func (b *Builder) ForAllOutgoingChannels(ctx context.Context, cb func(*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy) error) error {
-
-	ctx := context.TODO()
 
 	return b.cfg.Graph.ForEachNodeChannel(ctx, b.cfg.SelfNode,
 		func(_ kvdb.RTx, c *models.ChannelEdgeInfo,
@@ -1314,10 +1304,8 @@ func (b *Builder) ForAllOutgoingChannels(cb func(*models.ChannelEdgeInfo,
 // properly announce the edge to the rest of the network.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) AddProof(chanID lnwire.ShortChannelID,
+func (b *Builder) AddProof(ctx context.Context, chanID lnwire.ShortChannelID,
 	proof *models.ChannelAuthProof) error {
-
-	ctx := context.TODO()
 
 	return b.cfg.Graph.AddEdgeProof(ctx, chanID, proof)
 }
@@ -1326,10 +1314,8 @@ func (b *Builder) AddProof(chanID lnwire.ShortChannelID,
 // target node with a more recent timestamp.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsStaleNode(node route.Vertex,
+func (b *Builder) IsStaleNode(ctx context.Context, node route.Vertex,
 	timestamp time.Time) bool {
-
-	ctx := context.TODO()
 
 	// If our attempt to assert that the node announcement is fresh fails,
 	// then we know that this is actually a stale announcement.
@@ -1346,9 +1332,7 @@ func (b *Builder) IsStaleNode(node route.Vertex,
 // the graph from the graph's source node's point of view.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsPublicNode(node route.Vertex) (bool, error) {
-	ctx := context.TODO()
-
+func (b *Builder) IsPublicNode(ctx context.Context, node route.Vertex) (bool, error) {
 	return b.cfg.Graph.IsPublicNode(ctx, node)
 }
 
@@ -1356,9 +1340,7 @@ func (b *Builder) IsPublicNode(node route.Vertex) (bool, error) {
 // channel ID either as a live or zombie edge.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsKnownEdge(chanID lnwire.ShortChannelID) bool {
-	ctx := context.TODO()
-
+func (b *Builder) IsKnownEdge(ctx context.Context, chanID lnwire.ShortChannelID) bool {
 	_, _, exists, isZombie, _ := b.cfg.Graph.HasChannelEdge(
 		ctx, chanID.ToUint64(),
 	)
@@ -1370,9 +1352,7 @@ func (b *Builder) IsKnownEdge(chanID lnwire.ShortChannelID) bool {
 // as a zombie edge.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsZombieEdge(chanID lnwire.ShortChannelID) (bool, error) {
-	ctx := context.TODO()
-
+func (b *Builder) IsZombieEdge(ctx context.Context, chanID lnwire.ShortChannelID) (bool, error) {
 	_, _, _, isZombie, err := b.cfg.Graph.HasChannelEdge(
 		ctx, chanID.ToUint64(),
 	)
@@ -1384,10 +1364,8 @@ func (b *Builder) IsZombieEdge(chanID lnwire.ShortChannelID) (bool, error) {
 // the passed channel ID (and flags) that have a more recent timestamp.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
+func (b *Builder) IsStaleEdgePolicy(ctx context.Context, chanID lnwire.ShortChannelID,
 	timestamp time.Time, flags lnwire.ChanUpdateChanFlags) bool {
-
-	ctx := context.TODO()
 
 	edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
 		b.cfg.Graph.HasChannelEdge(ctx, chanID.ToUint64())
@@ -1442,8 +1420,6 @@ func (b *Builder) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 // MarkEdgeLive clears an edge from our zombie index, deeming it as live.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) MarkEdgeLive(chanID lnwire.ShortChannelID) error {
-	ctx := context.TODO()
-
+func (b *Builder) MarkEdgeLive(ctx context.Context, chanID lnwire.ShortChannelID) error {
 	return b.cfg.Graph.MarkEdgeLive(ctx, chanID.ToUint64())
 }
