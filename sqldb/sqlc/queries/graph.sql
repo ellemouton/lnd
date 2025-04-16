@@ -237,6 +237,15 @@ WHERE outpoint = $1 AND version = $2;
 SELECT * FROM channels
 WHERE outpoint = $1 AND version = $2;
 
+-- name: GetV1DisabledSCIDs :many
+SELECT c.scid
+FROM channels c
+         JOIN channel_policies cp ON cp.channel_id = c.id
+         JOIN channel_policy_v1_data v1 ON v1.channel_policy_id = cp.id
+WHERE v1.disabled = true
+GROUP BY c.scid
+HAVING COUNT(*) > 1;
+
 -- name: DeleteChannel :exec
 DELETE FROM channels WHERE id = $1;
 

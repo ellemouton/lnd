@@ -100,6 +100,7 @@ type SQLQueries interface {
 	GetPublicV1ChannelsBySCID(ctx context.Context, arg sqlc.GetPublicV1ChannelsBySCIDParams) ([]sqlc.Channel, error)
 	GetChannelByOutpointAndVersion(ctx context.Context, arg sqlc.GetChannelByOutpointAndVersionParams) (sqlc.Channel, error)
 	GetSCIDByOutpointAndVersion(ctx context.Context, arg sqlc.GetSCIDByOutpointAndVersionParams) ([]byte, error)
+	GetV1DisabledSCIDs(ctx context.Context) ([][]byte, error)
 
 	/*
 		Channel Policy Queries
@@ -1804,6 +1805,33 @@ func (s *SQLStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 	}
 
 	return deleted, nil
+}
+
+func (s *SQLStore) DisabledChannelIDs() ([]uint64, error) {
+	var (
+		ctx     = context.TODO()
+		readTx  = NewReadTx()
+		chanIDs []uint64
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+		dbChanIDs, err := db.GetV1DisabledSCIDs(ctx)
+		if err != nil {
+			return fmt.Errorf("unable to fetch disabled "+
+				"channels: %w", err)
+		}
+
+		for _, dbChanID := range dbChanIDs {
+			chanIDs = append(chanIDs, byteOrder.Uint64(dbChanID))
+		}
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch disabled channels: %w",
+			err)
+	}
+
+	return chanIDs, nil
 }
 
 func forEachNodeDirectedChannel(ctx context.Context, db SQLQueries,
