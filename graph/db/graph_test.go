@@ -3149,7 +3149,7 @@ func TestChannelEdgePruningUpdateIndexDeletion(t *testing.T) {
 func TestPruneGraphNodes(t *testing.T) {
 	t.Parallel()
 
-	graph, err := MakeTestGraph(t)
+	graph, err := MakeTestGraphNew(t)
 	require.NoError(t, err, "unable to make test database")
 
 	// We'll start off by inserting our source node, to ensure that it's

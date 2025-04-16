@@ -68,6 +68,15 @@ SELECT EXISTS (
     WHERE n.pub_key = $1
 );
 
+-- name: GetUnconnectedNodes :many
+SELECT n.id, n.pub_key
+FROM nodes n
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM channels c
+    WHERE c.node_id_1 = n.id OR c.node_id_2 = n.id
+);
+
 /* ─────────────────────────────────────────────
    nodes_v1_data table queries
    ─────────────────────────────────────────────
@@ -176,6 +185,11 @@ SELECT sn.node_id, n.pub_key
 FROM source_nodes sn
    JOIN nodes n ON sn.node_id = n.id
 WHERE n.version = $1;
+
+-- name: GetSourceNodes :many
+SELECT sn.node_id, n.pub_key, n.version
+FROM source_nodes sn
+         JOIN nodes n ON sn.node_id = n.id;
 
 /* ─────────────────────────────────────────────
    features table queries
@@ -445,3 +459,32 @@ SELECT *
 FROM zombie_channels
 WHERE scid = $1
   AND version = $2;
+
+/* ─────────────────────────────────────────────
+    prune_log table queries
+    ─────────────────────────────────────────────
+*/
+
+-- name: UpsertPruneLogEntry :exec
+INSERT INTO prune_log (
+    block_height, block_hash
+) VALUES (
+    $1, $2
+)
+ON CONFLICT(block_height) DO UPDATE SET
+    block_hash = EXCLUDED.block_hash;
+
+-- name: DeletePruneLogEntry :exec
+DELETE FROM prune_log
+WHERE block_height = $1;
+
+-- name: GetPruneTip :one
+SELECT block_height, block_hash
+FROM prune_log
+ORDER BY block_height DESC
+LIMIT 1;
+
+-- name: DeletePruneLogEntriesInRange :exec
+DELETE FROM prune_log
+WHERE block_height >= sqlc.arg(start_height)
+  AND block_height <= sqlc.arg(end_height);
