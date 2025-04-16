@@ -3679,7 +3679,7 @@ func TestGraphZombieIndex(t *testing.T) {
 	t.Parallel()
 
 	// We'll start by creating our test graph along with a test edge.
-	graph, err := MakeTestGraph(t)
+	graph, err := MakeTestGraphNew(t)
 	require.NoError(t, err, "unable to create test database")
 
 	node1 := createTestVertex(t)

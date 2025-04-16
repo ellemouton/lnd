@@ -47,6 +47,19 @@ func (q *Queries) AddSourceNode(ctx context.Context, nodeID int64) error {
 	return err
 }
 
+const countZombieChannels = `-- name: CountZombieChannels :one
+SELECT COUNT(*)
+FROM zombie_channels
+WHERE version = $1
+`
+
+func (q *Queries) CountZombieChannels(ctx context.Context, version int16) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countZombieChannels, version)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createChannel = `-- name: CreateChannel :one
 /* ─────────────────────────────────────────────
    channels table queries
@@ -262,6 +275,15 @@ func (q *Queries) CreateV1ChannelProof(ctx context.Context, arg CreateV1ChannelP
 	return err
 }
 
+const deleteChannel = `-- name: DeleteChannel :exec
+DELETE FROM channels WHERE id = $1
+`
+
+func (q *Queries) DeleteChannel(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteChannel, id)
+	return err
+}
+
 const deleteChannelPolicyExtraType = `-- name: DeleteChannelPolicyExtraType :exec
 DELETE FROM channel_policy_extra_types
 WHERE channel_policy_id = $1 AND type = $2
@@ -341,6 +363,22 @@ type DeleteNodeFeatureParams struct {
 
 func (q *Queries) DeleteNodeFeature(ctx context.Context, arg DeleteNodeFeatureParams) error {
 	_, err := q.db.ExecContext(ctx, deleteNodeFeature, arg.NodeID, arg.FeatureID)
+	return err
+}
+
+const deleteZombieChannel = `-- name: DeleteZombieChannel :exec
+DELETE FROM zombie_channels
+WHERE scid = $1
+  AND version = $2
+`
+
+type DeleteZombieChannelParams struct {
+	Scid    int64
+	Version int16
+}
+
+func (q *Queries) DeleteZombieChannel(ctx context.Context, arg DeleteZombieChannelParams) error {
+	_, err := q.db.ExecContext(ctx, deleteZombieChannel, arg.Scid, arg.Version)
 	return err
 }
 
@@ -952,6 +990,30 @@ func (q *Queries) GetV1NodesByLastUpdateRange(ctx context.Context, arg GetV1Node
 	return items, nil
 }
 
+const getZombieChannel = `-- name: GetZombieChannel :one
+SELECT scid, version, node_key_1, node_key_2
+FROM zombie_channels
+WHERE scid = $1
+  AND version = $2
+`
+
+type GetZombieChannelParams struct {
+	Scid    int64
+	Version int16
+}
+
+func (q *Queries) GetZombieChannel(ctx context.Context, arg GetZombieChannelParams) (ZombieChannel, error) {
+	row := q.db.QueryRowContext(ctx, getZombieChannel, arg.Scid, arg.Version)
+	var i ZombieChannel
+	err := row.Scan(
+		&i.Scid,
+		&i.Version,
+		&i.NodeKey1,
+		&i.NodeKey2,
+	)
+	return i, err
+}
+
 const highestSCID = `-- name: HighestSCID :one
 SELECT scid
 FROM channels
@@ -1044,6 +1106,27 @@ type InsertNodeFeatureParams struct {
 func (q *Queries) InsertNodeFeature(ctx context.Context, arg InsertNodeFeatureParams) error {
 	_, err := q.db.ExecContext(ctx, insertNodeFeature, arg.NodeID, arg.FeatureID)
 	return err
+}
+
+const isZombieChannel = `-- name: IsZombieChannel :one
+SELECT EXISTS (
+    SELECT 1
+    FROM zombie_channels
+    WHERE scid = $1
+    AND version = $2
+) AS is_zombie
+`
+
+type IsZombieChannelParams struct {
+	Scid    int64
+	Version int16
+}
+
+func (q *Queries) IsZombieChannel(ctx context.Context, arg IsZombieChannelParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, isZombieChannel, arg.Scid, arg.Version)
+	var is_zombie bool
+	err := row.Scan(&is_zombie)
+	return is_zombie, err
 }
 
 const listAllChannelsByVersion = `-- name: ListAllChannelsByVersion :many
@@ -1339,5 +1422,36 @@ type UpsertV1NodeDataParams struct {
 
 func (q *Queries) UpsertV1NodeData(ctx context.Context, arg UpsertV1NodeDataParams) error {
 	_, err := q.db.ExecContext(ctx, upsertV1NodeData, arg.NodeID, arg.LastUpdate, arg.Color)
+	return err
+}
+
+const upsertZombieChannel = `-- name: UpsertZombieChannel :exec
+/* ─────────────────────────────────────────────
+   zombie_channels table queries
+   ─────────────────────────────────────────────
+*/
+
+INSERT INTO zombie_channels (scid, version, node_key_1, node_key_2)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (scid, version)
+    DO UPDATE SET
+                  node_key_1 = COALESCE(EXCLUDED.node_key_1, zombie_channels.node_key_1),
+                  node_key_2 = COALESCE(EXCLUDED.node_key_2, zombie_channels.node_key_2)
+`
+
+type UpsertZombieChannelParams struct {
+	Scid     int64
+	Version  int16
+	NodeKey1 []byte
+	NodeKey2 []byte
+}
+
+func (q *Queries) UpsertZombieChannel(ctx context.Context, arg UpsertZombieChannelParams) error {
+	_, err := q.db.ExecContext(ctx, upsertZombieChannel,
+		arg.Scid,
+		arg.Version,
+		arg.NodeKey1,
+		arg.NodeKey2,
+	)
 	return err
 }

@@ -220,6 +220,9 @@ FROM channels c
 WHERE c.scid >= sqlc.arg(start_scid)
   AND c.scid < sqlc.arg(end_scid);
 
+-- name: DeleteChannel :exec
+DELETE FROM channels WHERE id = $1;
+
 /* ─────────────────────────────────────────────
    channels_v1_data table queries
    ─────────────────────────────────────────────
@@ -380,3 +383,39 @@ SELECT * FROM channel_policy_extra_types WHERE channel_policy_id = $1;
 DELETE FROM channel_policy_extra_types
 WHERE channel_policy_id = $1 AND type = $2;
 
+/* ─────────────────────────────────────────────
+   zombie_channels table queries
+   ─────────────────────────────────────────────
+*/
+
+-- name: UpsertZombieChannel :exec
+INSERT INTO zombie_channels (scid, version, node_key_1, node_key_2)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (scid, version)
+    DO UPDATE SET
+                  node_key_1 = COALESCE(EXCLUDED.node_key_1, zombie_channels.node_key_1),
+                  node_key_2 = COALESCE(EXCLUDED.node_key_2, zombie_channels.node_key_2);
+
+-- name: DeleteZombieChannel :exec
+DELETE FROM zombie_channels
+WHERE scid = $1
+  AND version = $2;
+
+-- name: CountZombieChannels :one
+SELECT COUNT(*)
+FROM zombie_channels
+WHERE version = $1;
+
+-- name: IsZombieChannel :one
+SELECT EXISTS (
+    SELECT 1
+    FROM zombie_channels
+    WHERE scid = $1
+    AND version = $2
+) AS is_zombie;
+
+-- name: GetZombieChannel :one
+SELECT *
+FROM zombie_channels
+WHERE scid = $1
+  AND version = $2;
