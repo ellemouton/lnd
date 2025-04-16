@@ -65,6 +65,7 @@ type Querier interface {
 	GetNodeFeatures(ctx context.Context, nodeID int64) ([]GetNodeFeaturesRow, error)
 	GetNodeIDByPubKeyAndVersion(ctx context.Context, arg GetNodeIDByPubKeyAndVersionParams) (int64, error)
 	GetPublicV1ChannelsBySCID(ctx context.Context, arg GetPublicV1ChannelsBySCIDParams) ([]Channel, error)
+	GetSCIDByOutpointAndVersion(ctx context.Context, arg GetSCIDByOutpointAndVersionParams) ([]byte, error)
 	GetSourceNodesByVersion(ctx context.Context, version int16) ([]GetSourceNodesByVersionRow, error)
 	GetV1ChannelPolicyByChannelAndNode(ctx context.Context, arg GetV1ChannelPolicyByChannelAndNodeParams) (GetV1ChannelPolicyByChannelAndNodeRow, error)
 	GetV1ChannelProof(ctx context.Context, channelID int64) (V1ChannelProof, error)
