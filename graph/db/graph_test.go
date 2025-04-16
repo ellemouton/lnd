@@ -2053,7 +2053,7 @@ func TestNodeUpdatesInHorizon(t *testing.T) {
 func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 	t.Parallel()
 
-	graph, err := MakeTestGraph(t)
+	graph, err := MakeTestGraphNew(t)
 	require.NoError(t, err)
 
 	var (
@@ -2119,7 +2119,7 @@ func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 func TestFilterKnownChanIDs(t *testing.T) {
 	t.Parallel()
 
-	graph, err := MakeTestGraph(t)
+	graph, err := MakeTestGraphNew(t)
 	require.NoError(t, err, "unable to make test database")
 
 	isZombieUpdate := func(updateTime1 time.Time,
