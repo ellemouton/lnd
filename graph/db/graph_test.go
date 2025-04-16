@@ -1778,7 +1778,7 @@ func TestHighestChanID(t *testing.T) {
 func TestChanUpdatesInHorizon(t *testing.T) {
 	t.Parallel()
 
-	graph, err := MakeTestGraph(t)
+	graph, err := MakeTestGraphNew(t)
 	require.NoError(t, err, "unable to make test database")
 
 	// If we issue an arbitrary query before any channel updates are

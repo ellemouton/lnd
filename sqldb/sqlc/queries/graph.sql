@@ -295,6 +295,14 @@ SET timelock = $2,
     signature = $6
 WHERE id = $1;
 
+-- name: GetV1ChannelsByPolicyLastUpdateRange :many
+SELECT DISTINCT c.*
+FROM channels c
+         JOIN channel_policies cp ON cp.channel_id = c.id
+         JOIN channel_policy_v1_data v1 ON v1.channel_policy_id = cp.id
+WHERE v1.last_update >= sqlc.arg(start_time)
+  AND v1.last_update < sqlc.arg(end_time);
+
 /* ─────────────────────────────────────────────
    channel_policy_v1_data table queries
    ─────────────────────────────────────────────
