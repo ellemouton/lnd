@@ -220,6 +220,10 @@ FROM channels c
 WHERE c.scid >= sqlc.arg(start_scid)
   AND c.scid < sqlc.arg(end_scid);
 
+-- name: GetSCIDByOutpointAndVersion :one
+SELECT scid from channels
+WHERE outpoint = $1 AND version = $2;
+
 -- name: GetChannelByOutpointAndVersion :one
 SELECT * FROM channels
 WHERE outpoint = $1 AND version = $2;
