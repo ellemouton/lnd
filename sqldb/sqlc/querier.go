@@ -11,14 +11,18 @@ import (
 )
 
 type Querier interface {
+	AddChannelPolicyExtraType(ctx context.Context, arg AddChannelPolicyExtraTypeParams) error
 	AddSourceNode(ctx context.Context, nodeID int64) error
 	ClearKVInvoiceHashIndex(ctx context.Context) error
 	CreateChannel(ctx context.Context, arg CreateChannelParams) (int64, error)
+	CreateChannelPolicy(ctx context.Context, arg CreateChannelPolicyParams) (int64, error)
+	CreateChannelPolicyV1Data(ctx context.Context, arg CreateChannelPolicyV1DataParams) error
 	CreateChannelsV1Data(ctx context.Context, arg CreateChannelsV1DataParams) error
 	CreateFeature(ctx context.Context, bit int32) (int64, error)
 	CreateNode(ctx context.Context, arg CreateNodeParams) (int64, error)
 	CreateV1ChannelProof(ctx context.Context, arg CreateV1ChannelProofParams) error
 	DeleteCanceledInvoices(ctx context.Context) (sql.Result, error)
+	DeleteChannelPolicyExtraType(ctx context.Context, arg DeleteChannelPolicyExtraTypeParams) error
 	DeleteExtraChannelType(ctx context.Context, arg DeleteExtraChannelTypeParams) error
 	DeleteExtraNodeType(ctx context.Context, arg DeleteExtraNodeTypeParams) error
 	DeleteInvoice(ctx context.Context, arg DeleteInvoiceParams) (sql.Result, error)
@@ -31,6 +35,11 @@ type Querier interface {
 	FilterInvoices(ctx context.Context, arg FilterInvoicesParams) ([]Invoice, error)
 	GetAMPInvoiceID(ctx context.Context, setID []byte) (int64, error)
 	GetChannelBySCIDAndVersion(ctx context.Context, arg GetChannelBySCIDAndVersionParams) (Channel, error)
+	GetChannelFeatures(ctx context.Context, channelID int64) ([]GetChannelFeaturesRow, error)
+	GetChannelPolicyByChannelAndNode(ctx context.Context, arg GetChannelPolicyByChannelAndNodeParams) (ChannelPolicy, error)
+	GetChannelPolicyExtraTypes(ctx context.Context, channelPolicyID int64) ([]ChannelPolicyExtraType, error)
+	GetChannelPolicyV1Data(ctx context.Context, channelPolicyID int64) (ChannelPolicyV1Datum, error)
+	GetChannelsV1Data(ctx context.Context, channelID int64) (ChannelsV1Datum, error)
 	GetDatabaseVersion(ctx context.Context) (int32, error)
 	GetExtraChannelTypes(ctx context.Context, channelID int64) ([]ChannelExtraType, error)
 	GetExtraNodeTypes(ctx context.Context, nodeID int64) ([]NodeExtraType, error)
@@ -52,6 +61,8 @@ type Querier interface {
 	GetNodeFeatures(ctx context.Context, nodeID int64) ([]GetNodeFeaturesRow, error)
 	GetNodeIDByPubKeyAndVersion(ctx context.Context, arg GetNodeIDByPubKeyAndVersionParams) (int64, error)
 	GetSourceNodesByVersion(ctx context.Context, version int16) ([]GetSourceNodesByVersionRow, error)
+	GetV1ChannelPolicyByChannelAndNode(ctx context.Context, arg GetV1ChannelPolicyByChannelAndNodeParams) (GetV1ChannelPolicyByChannelAndNodeRow, error)
+	GetV1ChannelProof(ctx context.Context, channelID int64) (V1ChannelProof, error)
 	GetV1NodeData(ctx context.Context, nodeID int64) (NodesV1Datum, error)
 	InsertAMPSubInvoice(ctx context.Context, arg InsertAMPSubInvoiceParams) error
 	InsertAMPSubInvoiceHTLC(ctx context.Context, arg InsertAMPSubInvoiceHTLCParams) error
@@ -64,6 +75,7 @@ type Querier interface {
 	InsertMigratedInvoice(ctx context.Context, arg InsertMigratedInvoiceParams) (int64, error)
 	InsertNodeAddress(ctx context.Context, arg InsertNodeAddressParams) error
 	InsertNodeFeature(ctx context.Context, arg InsertNodeFeatureParams) error
+	ListChannelsByNodeIDAndVersion(ctx context.Context, arg ListChannelsByNodeIDAndVersionParams) ([]Channel, error)
 	NextInvoiceSettleIndex(ctx context.Context) (int64, error)
 	OnAMPSubInvoiceCanceled(ctx context.Context, arg OnAMPSubInvoiceCanceledParams) error
 	OnAMPSubInvoiceCreated(ctx context.Context, arg OnAMPSubInvoiceCreatedParams) error
@@ -75,6 +87,8 @@ type Querier interface {
 	SetMigration(ctx context.Context, arg SetMigrationParams) error
 	UpdateAMPSubInvoiceHTLCPreimage(ctx context.Context, arg UpdateAMPSubInvoiceHTLCPreimageParams) (sql.Result, error)
 	UpdateAMPSubInvoiceState(ctx context.Context, arg UpdateAMPSubInvoiceStateParams) error
+	UpdateChannelPolicy(ctx context.Context, arg UpdateChannelPolicyParams) error
+	UpdateChannelPolicyV1Data(ctx context.Context, arg UpdateChannelPolicyV1DataParams) error
 	UpdateInvoiceAmountPaid(ctx context.Context, arg UpdateInvoiceAmountPaidParams) (sql.Result, error)
 	UpdateInvoiceHTLC(ctx context.Context, arg UpdateInvoiceHTLCParams) error
 	UpdateInvoiceHTLCs(ctx context.Context, arg UpdateInvoiceHTLCsParams) error
