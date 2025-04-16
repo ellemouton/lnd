@@ -189,6 +189,10 @@ SELECT * FROM channels
 WHERE version = $1
   AND (node_id_1 = $2 OR node_id_2 = $2);
 
+-- name: ListAllChannelsByVersion :many
+SELECT * FROM channels
+WHERE version = $1;
+
 /* ─────────────────────────────────────────────
    channels_v1_data table queries
    ─────────────────────────────────────────────
