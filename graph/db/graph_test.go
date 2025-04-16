@@ -1937,7 +1937,7 @@ func TestChanUpdatesInHorizon(t *testing.T) {
 func TestNodeUpdatesInHorizon(t *testing.T) {
 	t.Parallel()
 
-	graph, err := MakeTestGraph(t)
+	graph, err := MakeTestGraphNew(t)
 	require.NoError(t, err, "unable to make test database")
 
 	startTime := time.Unix(1234, 0)
@@ -3254,7 +3254,7 @@ func TestAddChannelEdgeShellNodes(t *testing.T) {
 func TestNodePruningUpdateIndexDeletion(t *testing.T) {
 	t.Parallel()
 
-	graph, err := MakeTestGraph(t)
+	graph, err := MakeTestGraphNew(t)
 	require.NoError(t, err, "unable to make test database")
 
 	// We'll first populate our graph with a single node that will be
