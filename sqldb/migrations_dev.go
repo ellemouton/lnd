@@ -13,4 +13,9 @@ var migrationAdditions = []MigrationConfig{
 		Version:       9,
 		SchemaVersion: 8,
 	},
+	{
+		Name:          "000010_channel_policies",
+		Version:       10,
+		SchemaVersion: 9,
+	},
 }

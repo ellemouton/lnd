@@ -1049,7 +1049,7 @@ func newEdgePolicy(chanID uint64, updateTime int64) *models.ChannelEdgePolicy {
 func TestForEachSourceNodeChannel(t *testing.T) {
 	t.Parallel()
 
-	graph, err := MakeTestGraph(t)
+	graph, err := MakeTestGraphNew(t)
 	require.NoError(t, err, "unable to make test database")
 
 	// Create a source node (A) and set it as such in the DB.
@@ -3951,7 +3951,7 @@ func TestBatchedAddChannelEdge(t *testing.T) {
 func TestBatchedUpdateEdgePolicy(t *testing.T) {
 	t.Parallel()
 
-	graph, err := MakeTestGraph(t)
+	graph, err := MakeTestGraphNew(t)
 	require.Nil(t, err)
 
 	// We'd like to test the update of edges inserted into the database, so
