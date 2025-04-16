@@ -1660,6 +1660,68 @@ func (s *SQLStore) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo) ([]uint64,
 	return newChanIDs, knownZombies, nil
 }
 
+func (s *SQLStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
+	var (
+		ctx    = context.TODO()
+		readTx = NewReadTx()
+		edges  []ChannelEdge
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+		for _, chanID := range chanIDs {
+			var chanIDB [8]byte
+			byteOrder.PutUint64(chanIDB[:], chanID)
+
+			dbChan, err := db.GetChannelBySCIDAndVersion(
+				ctx, sqlc.GetChannelBySCIDAndVersionParams{
+					Scid:    chanIDB[:],
+					Version: int16(ProtocolV1),
+				},
+			)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			} else if err != nil {
+				return fmt.Errorf("unable to fetch channel: %w",
+					err)
+			}
+
+			channel, p1, p2, err := buildChannel(
+				ctx, db, s.cfg.ChainHash, dbChan,
+			)
+			if err != nil {
+				return fmt.Errorf("unable to build channel: %w",
+					err)
+			}
+
+			node1, err := getNodeByDBID(ctx, db, dbChan.NodeID1)
+			if err != nil {
+				return fmt.Errorf("unable to fetch "+
+					"node(id=%d): %w", dbChan.NodeID1, err)
+			}
+
+			node2, err := getNodeByDBID(ctx, db, dbChan.NodeID2)
+			if err != nil {
+				return fmt.Errorf("unable to fetch "+
+					"node(id=%d): %w", dbChan.NodeID2, err)
+			}
+
+			edges = append(edges, ChannelEdge{
+				Info:    channel,
+				Policy1: p1,
+				Policy2: p2,
+				Node1:   node1,
+				Node2:   node2,
+			})
+		}
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch channels: %w", err)
+	}
+
+	return edges, nil
+}
+
 // DeleteChannelEdges removes edges with the given channel IDs from the
 // database and marks them as zombies. This ensures that we're unable to re-add
 // it to our database once again. If an edge does not exist within the
