@@ -788,6 +788,51 @@ func (q *Queries) GetV1ChannelProof(ctx context.Context, channelID int64) (V1Cha
 	return i, err
 }
 
+const getV1ChannelsByPolicyLastUpdateRange = `-- name: GetV1ChannelsByPolicyLastUpdateRange :many
+SELECT DISTINCT c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity
+FROM channels c
+         JOIN channel_policies cp ON cp.channel_id = c.id
+         JOIN channel_policy_v1_data v1 ON v1.channel_policy_id = cp.id
+WHERE v1.last_update >= $1
+  AND v1.last_update < $2
+`
+
+type GetV1ChannelsByPolicyLastUpdateRangeParams struct {
+	StartTime int64
+	EndTime   int64
+}
+
+func (q *Queries) GetV1ChannelsByPolicyLastUpdateRange(ctx context.Context, arg GetV1ChannelsByPolicyLastUpdateRangeParams) ([]Channel, error) {
+	rows, err := q.db.QueryContext(ctx, getV1ChannelsByPolicyLastUpdateRange, arg.StartTime, arg.EndTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Channel
+	for rows.Next() {
+		var i Channel
+		if err := rows.Scan(
+			&i.ID,
+			&i.Version,
+			&i.Scid,
+			&i.NodeID1,
+			&i.NodeID2,
+			&i.Outpoint,
+			&i.Capacity,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getV1NodeData = `-- name: GetV1NodeData :one
 SELECT node_id, last_update, color
 FROM nodes_v1_data
