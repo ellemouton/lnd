@@ -54,6 +54,10 @@ FROM nodes
 WHERE pub_key = $1
   AND version = $2;
 
+-- name: ListNodesByVersion :many
+SELECT id, pub_key
+FROM nodes
+WHERE version = $1;
 
 /* ─────────────────────────────────────────────
    nodes_v1_data table queries

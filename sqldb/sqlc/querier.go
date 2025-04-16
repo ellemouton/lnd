@@ -82,6 +82,7 @@ type Querier interface {
 	ListAllChannelsByVersion(ctx context.Context, version int16) ([]Channel, error)
 	ListChannelsByNodeIDAndVersion(ctx context.Context, arg ListChannelsByNodeIDAndVersionParams) ([]Channel, error)
 	ListNodeIDsAndPubKeysByVersion(ctx context.Context, version int16) ([]ListNodeIDsAndPubKeysByVersionRow, error)
+	ListNodesByVersion(ctx context.Context, version int16) ([]ListNodesByVersionRow, error)
 	NextInvoiceSettleIndex(ctx context.Context) (int64, error)
 	OnAMPSubInvoiceCanceled(ctx context.Context, arg OnAMPSubInvoiceCanceledParams) error
 	OnAMPSubInvoiceCreated(ctx context.Context, arg OnAMPSubInvoiceCreatedParams) error
