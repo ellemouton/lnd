@@ -208,6 +208,13 @@ WHERE version = $1
 ORDER BY scid DESC
 LIMIT 1;
 
+-- name: GetPublicV1ChannelsBySCID :many
+SELECT c.*
+FROM channels c
+         JOIN v1_channel_proofs p ON p.channel_id = c.id
+WHERE c.scid >= sqlc.arg(start_scid)
+  AND c.scid < sqlc.arg(end_scid);
+
 /* ─────────────────────────────────────────────
    channels_v1_data table queries
    ─────────────────────────────────────────────

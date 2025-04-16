@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"sort"
 	"strconv"
 	"time"
 
@@ -93,6 +94,7 @@ type SQLQueries interface {
 	InsertChannelFeature(ctx context.Context, arg sqlc.InsertChannelFeatureParams) error
 	GetChannelFeatures(ctx context.Context, channelID int64) ([]sqlc.GetChannelFeaturesRow, error)
 	ListAllChannelsByVersion(ctx context.Context, version int16) ([]sqlc.Channel, error)
+	GetPublicV1ChannelsBySCID(ctx context.Context, arg sqlc.GetPublicV1ChannelsBySCIDParams) ([]sqlc.Channel, error)
 
 	/*
 		Channel Policy Queries
@@ -988,6 +990,131 @@ func (s *SQLStore) ChanUpdatesInHorizon(startTime,
 	}
 
 	return edges, nil
+}
+
+func (s *SQLStore) FilterChannelRange(startHeight, endHeight uint32,
+	withTimestamps bool) ([]BlockChannelRange, error) {
+
+	var (
+		ctx       = context.TODO()
+		readTx    = NewReadTx()
+		startSCID = &lnwire.ShortChannelID{
+			BlockHeight: startHeight,
+		}
+		endSCID = lnwire.ShortChannelID{
+			BlockHeight: endHeight,
+			TxIndex:     math.MaxUint32 & 0x00ffffff,
+			TxPosition:  math.MaxUint16,
+		}
+	)
+
+	var chanIDStart [8]byte
+	byteOrder.PutUint64(chanIDStart[:], startSCID.ToUint64())
+	var chanIDEnd [8]byte
+	byteOrder.PutUint64(chanIDEnd[:], endSCID.ToUint64())
+
+	// 1) get all channels where channelID is between start and end chan ID.
+	// 2) skip if not public (ie, no channel_proof)
+	// 3) collect that channel.
+	// 4) if timestamps are wanted, fetch both policies for node 1 and node2
+	//    and add those timestamps to the collected channel.
+	channelsPerBlock := make(map[uint32][]ChannelUpdateInfo)
+	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+		dbChans, err := db.GetPublicV1ChannelsBySCID(
+			ctx, sqlc.GetPublicV1ChannelsBySCIDParams{
+				StartScid: chanIDStart[:],
+				EndScid:   chanIDEnd[:],
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("unable to fetch channel range: %w",
+				err)
+		}
+
+		for _, dbChan := range dbChans {
+			cid := lnwire.NewShortChanIDFromInt(
+				byteOrder.Uint64(dbChan.Scid),
+			)
+			chanInfo := NewChannelUpdateInfo(
+				cid, time.Time{}, time.Time{},
+			)
+
+			if !withTimestamps {
+				channelsPerBlock[cid.BlockHeight] = append(
+					channelsPerBlock[cid.BlockHeight],
+					chanInfo,
+				)
+
+				continue
+			}
+
+			//nolint:ll
+			node1Policy, err := db.GetV1ChannelPolicyByChannelAndNode(
+				ctx, sqlc.GetV1ChannelPolicyByChannelAndNodeParams{
+					ChannelID: dbChan.ID,
+					NodeID:    dbChan.NodeID1,
+				},
+			)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("unable to fetch node1 "+
+					"policy: %w", err)
+			} else if err == nil {
+				chanInfo.Node1UpdateTimestamp = time.Unix(
+					node1Policy.LastUpdate, 0,
+				)
+			}
+
+			//nolint:ll
+			node2Policy, err := db.GetV1ChannelPolicyByChannelAndNode(
+				ctx, sqlc.GetV1ChannelPolicyByChannelAndNodeParams{
+					ChannelID: dbChan.ID,
+					NodeID:    dbChan.NodeID2,
+				},
+			)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("unable to fetch node2 "+
+					"policy: %w", err)
+			} else if err == nil {
+				chanInfo.Node2UpdateTimestamp = time.Unix(
+					node2Policy.LastUpdate, 0,
+				)
+			}
+
+			channelsPerBlock[cid.BlockHeight] = append(
+				channelsPerBlock[cid.BlockHeight], chanInfo,
+			)
+		}
+
+		return nil
+	}, func() {
+		channelsPerBlock = make(map[uint32][]ChannelUpdateInfo)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch channel range: %w", err)
+	}
+
+	if len(channelsPerBlock) == 0 {
+		return nil, nil
+	}
+
+	// Return the channel ranges in ascending block height order.
+	blocks := make([]uint32, 0, len(channelsPerBlock))
+	for block := range channelsPerBlock {
+		blocks = append(blocks, block)
+	}
+	sort.Slice(blocks, func(i, j int) bool {
+		return blocks[i] < blocks[j]
+	})
+
+	channelRanges := make([]BlockChannelRange, 0, len(channelsPerBlock))
+	for _, block := range blocks {
+		channelRanges = append(channelRanges, BlockChannelRange{
+			Height:   block,
+			Channels: channelsPerBlock[block],
+		})
+	}
+
+	return channelRanges, nil
 }
 
 // insertV1Node creates a new V1 node record.
