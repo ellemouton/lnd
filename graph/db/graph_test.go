@@ -241,7 +241,7 @@ func TestPartialNode(t *testing.T) {
 func TestAliasLookup(t *testing.T) {
 	t.Parallel()
 
-	graph := MakeTestGraph(t)
+	graph := MakeTestGraphNew(t)
 
 	// We'd like to test the alias index within the database, so first
 	// create a new test node.
