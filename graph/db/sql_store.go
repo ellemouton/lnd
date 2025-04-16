@@ -108,6 +108,7 @@ type SQLQueries interface {
 	DeleteChannelPolicyExtraType(ctx context.Context, arg sqlc.DeleteChannelPolicyExtraTypeParams) error
 	GetChannelPolicyByChannelAndNode(ctx context.Context, arg sqlc.GetChannelPolicyByChannelAndNodeParams) (sqlc.ChannelPolicy, error)
 	GetChannelPolicyExtraTypes(ctx context.Context, channelPolicyID int64) ([]sqlc.ChannelPolicyExtraType, error)
+	GetV1ChannelsByPolicyLastUpdateRange(ctx context.Context, arg sqlc.GetV1ChannelsByPolicyLastUpdateRangeParams) ([]sqlc.Channel, error)
 
 	/*
 		Source node queries.
@@ -889,6 +890,64 @@ func (s *SQLStore) HighestChanID() (uint64, error) {
 	}
 
 	return highestChanID, nil
+}
+
+func (s *SQLStore) ChanUpdatesInHorizon(startTime,
+	endTime time.Time) ([]ChannelEdge, error) {
+
+	var (
+		ctx    = context.TODO()
+		readTx = NewReadTx()
+		edges  []ChannelEdge
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+		dbChans, err := db.GetV1ChannelsByPolicyLastUpdateRange(
+			ctx, sqlc.GetV1ChannelsByPolicyLastUpdateRangeParams{
+				StartTime: startTime.Unix(),
+				EndTime:   endTime.Unix(),
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("unable to fetch channels: %w", err)
+		}
+
+		for _, dbChan := range dbChans {
+			channel, p1, p2, err := buildChannel(
+				ctx, db, s.cfg.ChainHash, dbChan,
+			)
+			if err != nil {
+				return fmt.Errorf("unable to build channel: %w",
+					err)
+			}
+
+			node1, err := getNodeByDBID(ctx, db, dbChan.NodeID1)
+			if err != nil {
+				return fmt.Errorf("unable to fetch node(%d): "+
+					"%w", dbChan.NodeID1, err)
+			}
+
+			node2, err := getNodeByDBID(ctx, db, dbChan.NodeID2)
+			if err != nil {
+				return fmt.Errorf("unable to fetch node(%d): "+
+					"%w", dbChan.NodeID2, err)
+			}
+
+			edges = append(edges, ChannelEdge{
+				Info:    channel,
+				Policy1: p1,
+				Policy2: p2,
+				Node1:   node1,
+				Node2:   node2,
+			})
+		}
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch channels: %w", err)
+	}
+
+	return edges, nil
 }
 
 // insertV1Node creates a new V1 node record.
