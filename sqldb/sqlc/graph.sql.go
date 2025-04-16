@@ -687,6 +687,25 @@ func (q *Queries) GetNodeFeatures(ctx context.Context, nodeID int64) ([]GetNodeF
 	return items, nil
 }
 
+const getNodeIDByPubKeyAndVersion = `-- name: GetNodeIDByPubKeyAndVersion :one
+SELECT id
+FROM nodes
+WHERE pub_key = $1
+  AND version = $2
+`
+
+type GetNodeIDByPubKeyAndVersionParams struct {
+	PubKey  []byte
+	Version int16
+}
+
+func (q *Queries) GetNodeIDByPubKeyAndVersion(ctx context.Context, arg GetNodeIDByPubKeyAndVersionParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getNodeIDByPubKeyAndVersion, arg.PubKey, arg.Version)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getPublicV1ChannelsBySCID = `-- name: GetPublicV1ChannelsBySCID :many
 SELECT c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity
 FROM channels c
