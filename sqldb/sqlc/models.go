@@ -28,6 +28,33 @@ type AmpSubInvoiceHtlc struct {
 	Preimage   []byte
 }
 
+type Channel struct {
+	ID       int64
+	Version  int16
+	Scid     []byte
+	NodeID1  int64
+	NodeID2  int64
+	Outpoint string
+	Capacity int64
+}
+
+type ChannelExtraType struct {
+	ChannelID int64
+	Type      int64
+	Value     []byte
+}
+
+type ChannelFeature struct {
+	ChannelID int64
+	FeatureID int64
+}
+
+type ChannelsV1Datum struct {
+	ChannelID   int64
+	BitcoinKey1 []byte
+	BitcoinKey2 []byte
+}
+
 type Feature struct {
 	ID  int64
 	Bit int32
@@ -142,4 +169,12 @@ type NodesV1Datum struct {
 
 type SourceNode struct {
 	NodeID int64
+}
+
+type V1ChannelProof struct {
+	ChannelID         int64
+	Node1Signature    []byte
+	Node2Signature    []byte
+	Bitcoin1Signature []byte
+	Bitcoin2Signature []byte
 }

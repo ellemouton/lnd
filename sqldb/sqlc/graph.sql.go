@@ -10,6 +10,68 @@ import (
 	"database/sql"
 )
 
+const createChannel = `-- name: CreateChannel :one
+/* ─────────────────────────────────────────────
+   channels table queries
+   ─────────────────────────────────────────────
+*/
+
+INSERT INTO channels (
+    version, scid, node_id_1, node_id_2,
+    outpoint, capacity
+) VALUES (
+    $1, $2, $3, $4, $5, $6
+)
+RETURNING id
+`
+
+type CreateChannelParams struct {
+	Version  int16
+	Scid     []byte
+	NodeID1  int64
+	NodeID2  int64
+	Outpoint string
+	Capacity int64
+}
+
+func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createChannel,
+		arg.Version,
+		arg.Scid,
+		arg.NodeID1,
+		arg.NodeID2,
+		arg.Outpoint,
+		arg.Capacity,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const createChannelsV1Data = `-- name: CreateChannelsV1Data :exec
+/* ─────────────────────────────────────────────
+   channels_v1_data table queries
+   ─────────────────────────────────────────────
+*/
+
+INSERT INTO channels_v1_data (
+    channel_id, bitcoin_key_1, bitcoin_key_2
+) VALUES (
+    $1, $2, $3
+)
+`
+
+type CreateChannelsV1DataParams struct {
+	ChannelID   int64
+	BitcoinKey1 []byte
+	BitcoinKey2 []byte
+}
+
+func (q *Queries) CreateChannelsV1Data(ctx context.Context, arg CreateChannelsV1DataParams) error {
+	_, err := q.db.ExecContext(ctx, createChannelsV1Data, arg.ChannelID, arg.BitcoinKey1, arg.BitcoinKey2)
+	return err
+}
+
 const createFeature = `-- name: CreateFeature :one
 /* ─────────────────────────────────────────────
    features table queries
@@ -61,6 +123,55 @@ func (q *Queries) CreateNode(ctx context.Context, arg CreateNodeParams) (int64, 
 	return id, err
 }
 
+const createV1ChannelProof = `-- name: CreateV1ChannelProof :exec
+/* ─────────────────────────────────────────────
+   channels_v1_channel_proofs table queries
+   ─────────────────────────────────────────────
+*/
+
+INSERT INTO v1_channel_proofs (
+    channel_id, node_1_signature, node_2_signature,
+    bitcoin_1_signature, bitcoin_2_signature
+) VALUES (
+     $1, $2, $3, $4, $5
+)
+`
+
+type CreateV1ChannelProofParams struct {
+	ChannelID         int64
+	Node1Signature    []byte
+	Node2Signature    []byte
+	Bitcoin1Signature []byte
+	Bitcoin2Signature []byte
+}
+
+func (q *Queries) CreateV1ChannelProof(ctx context.Context, arg CreateV1ChannelProofParams) error {
+	_, err := q.db.ExecContext(ctx, createV1ChannelProof,
+		arg.ChannelID,
+		arg.Node1Signature,
+		arg.Node2Signature,
+		arg.Bitcoin1Signature,
+		arg.Bitcoin2Signature,
+	)
+	return err
+}
+
+const deleteExtraChannelType = `-- name: DeleteExtraChannelType :exec
+DELETE FROM channel_extra_types
+WHERE channel_id = $1
+  AND type = $2
+`
+
+type DeleteExtraChannelTypeParams struct {
+	ChannelID int64
+	Type      int64
+}
+
+func (q *Queries) DeleteExtraChannelType(ctx context.Context, arg DeleteExtraChannelTypeParams) error {
+	_, err := q.db.ExecContext(ctx, deleteExtraChannelType, arg.ChannelID, arg.Type)
+	return err
+}
+
 const deleteExtraNodeType = `-- name: DeleteExtraNodeType :exec
 DELETE FROM node_extra_types
 WHERE node_id = $1
@@ -110,6 +221,60 @@ type DeleteNodeFeatureParams struct {
 func (q *Queries) DeleteNodeFeature(ctx context.Context, arg DeleteNodeFeatureParams) error {
 	_, err := q.db.ExecContext(ctx, deleteNodeFeature, arg.NodeID, arg.FeatureID)
 	return err
+}
+
+const getChannelBySCIDAndVersion = `-- name: GetChannelBySCIDAndVersion :one
+SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity FROM channels
+WHERE scid = $1 AND version = $2
+`
+
+type GetChannelBySCIDAndVersionParams struct {
+	Scid    []byte
+	Version int16
+}
+
+func (q *Queries) GetChannelBySCIDAndVersion(ctx context.Context, arg GetChannelBySCIDAndVersionParams) (Channel, error) {
+	row := q.db.QueryRowContext(ctx, getChannelBySCIDAndVersion, arg.Scid, arg.Version)
+	var i Channel
+	err := row.Scan(
+		&i.ID,
+		&i.Version,
+		&i.Scid,
+		&i.NodeID1,
+		&i.NodeID2,
+		&i.Outpoint,
+		&i.Capacity,
+	)
+	return i, err
+}
+
+const getExtraChannelTypes = `-- name: GetExtraChannelTypes :many
+SELECT channel_id, type, value
+FROM channel_extra_types
+WHERE channel_id = $1
+`
+
+func (q *Queries) GetExtraChannelTypes(ctx context.Context, channelID int64) ([]ChannelExtraType, error) {
+	rows, err := q.db.QueryContext(ctx, getExtraChannelTypes, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ChannelExtraType
+	for rows.Next() {
+		var i ChannelExtraType
+		if err := rows.Scan(&i.ChannelID, &i.Type, &i.Value); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getExtraNodeTypes = `-- name: GetExtraNodeTypes :many
@@ -272,6 +437,29 @@ func (q *Queries) GetV1NodeData(ctx context.Context, nodeID int64) (NodesV1Datum
 	return i, err
 }
 
+const insertChannelFeature = `-- name: InsertChannelFeature :exec
+/* ─────────────────────────────────────────────
+   channel_features table queries
+   ─────────────────────────────────────────────
+*/
+
+INSERT INTO channel_features (
+    channel_id, feature_id
+) VALUES (
+    $1, $2
+)
+`
+
+type InsertChannelFeatureParams struct {
+	ChannelID int64
+	FeatureID int64
+}
+
+func (q *Queries) InsertChannelFeature(ctx context.Context, arg InsertChannelFeatureParams) error {
+	_, err := q.db.ExecContext(ctx, insertChannelFeature, arg.ChannelID, arg.FeatureID)
+	return err
+}
+
 const insertNodeAddress = `-- name: InsertNodeAddress :exec
 /* ─────────────────────────────────────────────
    node_addresses table queries
@@ -343,6 +531,31 @@ type UpdateNodeParams struct {
 
 func (q *Queries) UpdateNode(ctx context.Context, arg UpdateNodeParams) error {
 	_, err := q.db.ExecContext(ctx, updateNode, arg.ID, arg.Alias, arg.Signature)
+	return err
+}
+
+const upsertChannelExtraType = `-- name: UpsertChannelExtraType :exec
+/* ─────────────────────────────────────────────
+   channel_extra_types table queries
+   ─────────────────────────────────────────────
+*/
+
+INSERT INTO channel_extra_types (
+    channel_id, type, value
+)
+VALUES ($1, $2, $3)
+ON CONFLICT (type, channel_id)
+    DO UPDATE SET value = EXCLUDED.value
+`
+
+type UpsertChannelExtraTypeParams struct {
+	ChannelID int64
+	Type      int64
+	Value     []byte
+}
+
+func (q *Queries) UpsertChannelExtraType(ctx context.Context, arg UpsertChannelExtraTypeParams) error {
+	_, err := q.db.ExecContext(ctx, upsertChannelExtraType, arg.ChannelID, arg.Type, arg.Value)
 	return err
 }
 

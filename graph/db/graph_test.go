@@ -98,7 +98,7 @@ func createTestVertex(t testing.TB) *models.LightningNode {
 func TestNodeCRUD(t *testing.T) {
 	t.Parallel()
 
-	graph, err := MakeTestGraph(t)
+	graph, err := MakeTestGraphNew(t)
 	require.NoError(t, err, "unable to make test database")
 
 	node1 := createTestVertex(t)
@@ -197,7 +197,7 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 func TestPartialNode(t *testing.T) {
 	t.Parallel()
 
-	graph, err := MakeTestGraph(t)
+	graph, err := MakeTestGraphNew(t)
 	require.NoError(t, err, "unable to make test database")
 
 	// To insert a partial node, we need to add a channel edge that has
@@ -3217,7 +3217,7 @@ func TestPruneGraphNodes(t *testing.T) {
 func TestAddChannelEdgeShellNodes(t *testing.T) {
 	t.Parallel()
 
-	graph, err := MakeTestGraph(t)
+	graph, err := MakeTestGraphNew(t)
 	require.NoError(t, err, "unable to make test database")
 
 	// To start, we'll create two nodes, and only add one of them to the
