@@ -139,3 +139,81 @@ INSERT INTO features (bit)
 VALUES ($1)
 ON CONFLICT (bit) DO UPDATE SET bit = EXCLUDED.bit
 RETURNING id;
+
+/* ─────────────────────────────────────────────
+   channels table queries
+   ─────────────────────────────────────────────
+*/
+
+-- name: CreateChannel :one
+INSERT INTO channels (
+    version, scid, node_id_1, node_id_2,
+    outpoint, capacity
+) VALUES (
+    $1, $2, $3, $4, $5, $6
+)
+RETURNING id;
+
+-- name: GetChannelBySCIDAndVersion :one
+SELECT * FROM channels
+WHERE scid = $1 AND version = $2;
+
+/* ─────────────────────────────────────────────
+   channels_v1_data table queries
+   ─────────────────────────────────────────────
+*/
+
+-- name: CreateChannelsV1Data :exec
+INSERT INTO channels_v1_data (
+    channel_id, bitcoin_key_1, bitcoin_key_2
+) VALUES (
+    $1, $2, $3
+);
+
+/* ─────────────────────────────────────────────
+   channels_v1_channel_proofs table queries
+   ─────────────────────────────────────────────
+*/
+
+-- name: CreateV1ChannelProof :exec
+INSERT INTO v1_channel_proofs (
+    channel_id, node_1_signature, node_2_signature,
+    bitcoin_1_signature, bitcoin_2_signature
+) VALUES (
+     $1, $2, $3, $4, $5
+);
+
+/* ─────────────────────────────────────────────
+   channel_features table queries
+   ─────────────────────────────────────────────
+*/
+
+-- name: InsertChannelFeature :exec
+INSERT INTO channel_features (
+    channel_id, feature_id
+) VALUES (
+    $1, $2
+);
+
+/* ─────────────────────────────────────────────
+   channel_extra_types table queries
+   ─────────────────────────────────────────────
+*/
+
+-- name: UpsertChannelExtraType :exec
+INSERT INTO channel_extra_types (
+    channel_id, type, value
+)
+VALUES ($1, $2, $3)
+ON CONFLICT (type, channel_id)
+    DO UPDATE SET value = EXCLUDED.value;
+
+-- name: GetExtraChannelTypes :many
+SELECT *
+FROM channel_extra_types
+WHERE channel_id = $1;
+
+-- name: DeleteExtraChannelType :exec
+DELETE FROM channel_extra_types
+WHERE channel_id = $1
+  AND type = $2;

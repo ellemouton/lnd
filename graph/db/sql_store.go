@@ -65,6 +65,18 @@ type SQLQueries interface {
 		Feature queries.
 	*/
 	CreateFeature(ctx context.Context, bit int32) (int64, error)
+
+	/*
+		Channel queries.
+	*/
+	CreateChannel(ctx context.Context, arg sqlc.CreateChannelParams) (int64, error)
+	CreateChannelsV1Data(ctx context.Context, arg sqlc.CreateChannelsV1DataParams) error
+	CreateV1ChannelProof(ctx context.Context, arg sqlc.CreateV1ChannelProofParams) error
+	DeleteExtraChannelType(ctx context.Context, arg sqlc.DeleteExtraChannelTypeParams) error
+	GetChannelBySCIDAndVersion(ctx context.Context, arg sqlc.GetChannelBySCIDAndVersionParams) (sqlc.Channel, error)
+	GetExtraChannelTypes(ctx context.Context, channelID int64) ([]sqlc.ChannelExtraType, error)
+	InsertChannelFeature(ctx context.Context, arg sqlc.InsertChannelFeatureParams) error
+	UpsertChannelExtraType(ctx context.Context, arg sqlc.UpsertChannelExtraTypeParams) error
 }
 
 // BatchedSQLQueries is a version of SQLQueries that's capable of batched
@@ -332,6 +344,41 @@ func fetchNodeFeatures(ctx context.Context, queries SQLQueries,
 	}
 
 	return getNodeFeatures(ctx, queries, id)
+}
+
+func (s *SQLStore) AddChannelEdge(edge *models.ChannelEdgeInfo,
+	_ ...batch.SchedulerOption) error {
+
+	ctx := context.TODO()
+
+	var writeTxOpts TxOptions
+	err := s.db.ExecTx(ctx, &writeTxOpts, func(db SQLQueries) error {
+		var chanIDB [8]byte
+		byteOrder.PutUint64(chanIDB[:], edge.ChannelID)
+
+		// Make sure that this channel does not already exist in the
+		// database.
+		_, err := db.GetChannelBySCIDAndVersion(
+			ctx, sqlc.GetChannelBySCIDAndVersionParams{
+				Scid:    chanIDB[:],
+				Version: int16(ProtocolV1),
+			})
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err == nil {
+			return ErrEdgeAlreadyExist
+		}
+
+		_, err = insertChannel(ctx, db, edge)
+
+		return err
+	}, func() {})
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // upsertV1Node first checks if an entry for this V1 node already exists in
@@ -902,4 +949,201 @@ func getNodeExtraSignedFields(ctx context.Context, db SQLQueries,
 	}
 
 	return extraFields, nil
+}
+
+type dbChanInfo struct {
+	channelID int64
+	node1ID   int64
+	node2ID   int64
+}
+
+func insertChannel(ctx context.Context, db SQLQueries,
+	edge *models.ChannelEdgeInfo) (*dbChanInfo, error) {
+
+	// Make sure that at least a "shell" entry for each node is present in
+	// the nodes table.
+	node1DBID, err := maybeCreateShellNode(ctx, db, edge.NodeKey1Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create shell node: %w", err)
+	}
+
+	node2DBID, err := maybeCreateShellNode(ctx, db, edge.NodeKey2Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create shell node: %w", err)
+	}
+
+	var chanIDB [8]byte
+	byteOrder.PutUint64(chanIDB[:], edge.ChannelID)
+
+	dbChanID, err := db.CreateChannel(
+		ctx, sqlc.CreateChannelParams{
+			Version:  int16(ProtocolV1),
+			Scid:     chanIDB[:],
+			NodeID1:  node1DBID,
+			NodeID2:  node2DBID,
+			Outpoint: edge.ChannelPoint.String(),
+			Capacity: int64(edge.Capacity),
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to insert channel: %w", err)
+	}
+
+	err = db.CreateChannelsV1Data(ctx, sqlc.CreateChannelsV1DataParams{
+		ChannelID:   dbChanID,
+		BitcoinKey1: edge.BitcoinKey1Bytes[:],
+		BitcoinKey2: edge.BitcoinKey2Bytes[:],
+	})
+	if err != nil {
+		return nil, fmt.Errorf("unable to insert channel v1 data: %w",
+			err)
+	}
+
+	if edge.AuthProof != nil {
+		proof := edge.AuthProof
+
+		err = db.CreateV1ChannelProof(
+			ctx, sqlc.CreateV1ChannelProofParams{
+				ChannelID:         dbChanID,
+				Node1Signature:    proof.NodeSig1Bytes,
+				Node2Signature:    proof.NodeSig2Bytes,
+				Bitcoin1Signature: proof.BitcoinSig1Bytes,
+				Bitcoin2Signature: proof.BitcoinSig2Bytes,
+			},
+		)
+		if err != nil {
+			return nil, fmt.Errorf("unable to insert channel "+
+				"proof: %w", err)
+		}
+	}
+
+	if len(edge.Features) != 0 {
+		chanFeatures := lnwire.NewRawFeatureVector()
+		err := chanFeatures.Decode(bytes.NewReader(edge.Features))
+		if err != nil {
+			return nil, err
+		}
+
+		fv := lnwire.NewFeatureVector(chanFeatures, lnwire.Features)
+		for feature := range fv.Features() {
+			featureID, err := db.CreateFeature(ctx, int32(feature))
+			if err != nil {
+				return nil, fmt.Errorf("unable to create "+
+					"feature(%v): %w", feature, err)
+			}
+
+			err = db.InsertChannelFeature(
+				ctx, sqlc.InsertChannelFeatureParams{
+					ChannelID: dbChanID,
+					FeatureID: featureID,
+				},
+			)
+			if err != nil {
+				return nil, fmt.Errorf("unable to insert "+
+					"channel(%d) feature(%v): %w", dbChanID,
+					feature, err)
+			}
+		}
+	}
+
+	extra, err := marshalExtraOpaqueData(edge.ExtraOpaqueData)
+	if err != nil {
+		return nil, fmt.Errorf("unable to marshal extra opaque data: %w",
+			err)
+	}
+
+	err = upsertChannelExtraSignedFields(ctx, db, dbChanID, extra)
+	if err != nil {
+		return nil, fmt.Errorf("unable to insert channel extra "+
+			"types: %w", err)
+	}
+
+	return &dbChanInfo{
+		channelID: dbChanID,
+		node1ID:   node1DBID,
+		node2ID:   node2DBID,
+	}, nil
+}
+
+func maybeCreateShellNode(ctx context.Context, db SQLQueries,
+	pubKey route.Vertex) (int64, error) {
+
+	dbNode, err := db.GetNodeByPubKeyAndVersion(
+		ctx, sqlc.GetNodeByPubKeyAndVersionParams{
+			PubKey:  pubKey[:],
+			Version: int16(ProtocolV1),
+		},
+	)
+	// The node exists. Return the ID.
+	if err == nil {
+		return dbNode.ID, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+
+	// Otherwise, the node does not exist, so we create a shell entry for
+	// it.
+	id, err := db.CreateNode(ctx, sqlc.CreateNodeParams{
+		Version: int16(ProtocolV1),
+		PubKey:  pubKey[:],
+	})
+	if err != nil {
+		return 0, fmt.Errorf("unable to create shell node: %w", err)
+	}
+
+	return id, nil
+}
+
+func upsertChannelExtraSignedFields(ctx context.Context, db SQLQueries,
+	channelID int64, extraFields map[uint64][]byte) error {
+
+	// Get any existing extra signed fields for the channel.
+	existingFields, err := db.GetExtraChannelTypes(ctx, channelID)
+	if err != nil {
+		return err
+	}
+
+	// Make a lookup map of the existing field types so that we can use it
+	// to keep track of any fields we should delete.
+	m := make(map[uint64]bool)
+	for _, field := range existingFields {
+		m[uint64(field.Type)] = true
+	}
+
+	// For all the new fields, we'll upsert them and remove them from the
+	// map of existing fields.
+	for tlvType, value := range extraFields {
+		err = db.UpsertChannelExtraType(
+			ctx, sqlc.UpsertChannelExtraTypeParams{
+				ChannelID: channelID,
+				Type:      int64(tlvType),
+				Value:     value,
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("unable to upsert channel(%d) extra "+
+				"signed field(%v): %w", channelID, tlvType, err)
+		}
+
+		// Remove the field from the map of existing fields if it was
+		// present.
+		delete(m, tlvType)
+	}
+
+	// For all the fields that are left in the map of existing fields, we'll
+	// delete them as they are no longer present in the new set of fields.
+	for tlvType := range m {
+		err = db.DeleteExtraChannelType(
+			ctx, sqlc.DeleteExtraChannelTypeParams{
+				ChannelID: channelID,
+				Type:      int64(tlvType),
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("unable to delete channel(%d) extra "+
+				"signed field(%v): %w", channelID, tlvType, err)
+		}
+	}
+
+	return nil
 }
