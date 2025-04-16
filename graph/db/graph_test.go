@@ -98,7 +98,12 @@ func createTestVertex(t testing.TB) *models.LightningNode {
 func TestNodeInsertionAndDeletion(t *testing.T) {
 	t.Parallel()
 
+<<<<<<< HEAD
 	graph := MakeTestGraph(t)
+=======
+	graph, err := MakeTestGraphNew(t)
+	require.NoError(t, err, "unable to make test database")
+>>>>>>> 92ec85f2a (sqldb+graphdb: SQL backend for Node CRUD)
 
 	// We'd like to test basic insertion/deletion for vertexes from the
 	// graph, so we'll create a test vertex to start with.
@@ -4207,7 +4212,7 @@ func TestLightningNodePersistence(t *testing.T) {
 	t.Parallel()
 
 	// Create a new test graph instance.
-	graph := MakeTestGraph(t)
+	graph := MakeTestGraphNew(t)
 
 	nodeAnnBytes, err := hex.DecodeString(testNodeAnn)
 	require.NoError(t, err)
