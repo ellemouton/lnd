@@ -27,6 +27,14 @@ FROM nodes
 WHERE pub_key = $1
   AND version = $2;
 
+-- name: GetV1NodesByLastUpdateRange :many
+SELECT n.*
+FROM nodes n
+         JOIN nodes_v1_data v1 ON n.id = v1.node_id
+WHERE n.version = 1
+  AND v1.last_update >= sqlc.arg(start_time)
+  AND v1.last_update < sqlc.arg(end_time);
+
 -- name: DeleteNode :exec
 DELETE FROM nodes WHERE id = $1;
 
