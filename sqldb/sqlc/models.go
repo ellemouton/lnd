@@ -202,3 +202,10 @@ type V1ChannelProof struct {
 	Bitcoin1Signature []byte
 	Bitcoin2Signature []byte
 }
+
+type ZombieChannel struct {
+	Scid     int64
+	Version  int16
+	NodeKey1 []byte
+	NodeKey2 []byte
+}
