@@ -135,6 +135,22 @@ WHERE node_id = $1
   AND type = $2;
 
 /* ─────────────────────────────────────────────
+   source_nodes table queries
+   ─────────────────────────────────────────────
+*/
+
+-- name: AddSourceNode :exec
+INSERT INTO source_nodes (node_id)
+VALUES ($1)
+ON CONFLICT (node_id) DO NOTHING;
+
+-- name: GetSourceNodesByVersion :many
+SELECT sn.node_id, n.pub_key
+FROM source_nodes sn
+   JOIN nodes n ON sn.node_id = n.id
+WHERE n.version = $1;
+
+/* ─────────────────────────────────────────────
    features table queries
    ─────────────────────────────────────────────
  */

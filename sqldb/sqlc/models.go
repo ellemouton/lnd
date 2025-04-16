@@ -167,6 +167,10 @@ type NodesV1Datum struct {
 	Color      string
 }
 
+type SourceNode struct {
+	NodeID int64
+}
+
 type V1ChannelProof struct {
 	ChannelID         int64
 	Node1Signature    []byte

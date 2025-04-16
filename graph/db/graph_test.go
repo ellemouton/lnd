@@ -277,7 +277,7 @@ func TestAliasLookup(t *testing.T) {
 func TestSourceNode(t *testing.T) {
 	t.Parallel()
 
-	graph := MakeTestGraph(t)
+	graph := MakeTestGraphNew(t)
 
 	// We'd like to test the setting/getting of the source node, so we
 	// first create a fake node to use within the test.

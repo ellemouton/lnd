@@ -10,6 +10,22 @@ import (
 	"database/sql"
 )
 
+const addSourceNode = `-- name: AddSourceNode :exec
+/* ─────────────────────────────────────────────
+   source_nodes table queries
+   ─────────────────────────────────────────────
+*/
+
+INSERT INTO source_nodes (node_id)
+VALUES ($1)
+ON CONFLICT (node_id) DO NOTHING
+`
+
+func (q *Queries) AddSourceNode(ctx context.Context, nodeID int64) error {
+	_, err := q.db.ExecContext(ctx, addSourceNode, nodeID)
+	return err
+}
+
 const createChannel = `-- name: CreateChannel :one
 /* ─────────────────────────────────────────────
    channels table queries
@@ -459,6 +475,41 @@ func (q *Queries) GetNodeIDByPubKeyAndVersion(ctx context.Context, arg GetNodeID
 	var id int64
 	err := row.Scan(&id)
 	return id, err
+}
+
+const getSourceNodesByVersion = `-- name: GetSourceNodesByVersion :many
+SELECT sn.node_id, n.pub_key
+FROM source_nodes sn
+   JOIN nodes n ON sn.node_id = n.id
+WHERE n.version = $1
+`
+
+type GetSourceNodesByVersionRow struct {
+	NodeID int64
+	PubKey []byte
+}
+
+func (q *Queries) GetSourceNodesByVersion(ctx context.Context, version int16) ([]GetSourceNodesByVersionRow, error) {
+	rows, err := q.db.QueryContext(ctx, getSourceNodesByVersion, version)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetSourceNodesByVersionRow
+	for rows.Next() {
+		var i GetSourceNodesByVersionRow
+		if err := rows.Scan(&i.NodeID, &i.PubKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getV1NodeData = `-- name: GetV1NodeData :one
