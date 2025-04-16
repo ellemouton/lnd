@@ -341,6 +341,24 @@ func (q *Queries) GetNodeAddresses(ctx context.Context, nodeID int64) ([]GetNode
 	return items, nil
 }
 
+const getNodeAliasByPubKeyAndVersion = `-- name: GetNodeAliasByPubKeyAndVersion :one
+SELECT alias
+FROM nodes
+WHERE pub_key = $1 AND version = $2
+`
+
+type GetNodeAliasByPubKeyAndVersionParams struct {
+	PubKey  []byte
+	Version int16
+}
+
+func (q *Queries) GetNodeAliasByPubKeyAndVersion(ctx context.Context, arg GetNodeAliasByPubKeyAndVersionParams) (sql.NullString, error) {
+	row := q.db.QueryRowContext(ctx, getNodeAliasByPubKeyAndVersion, arg.PubKey, arg.Version)
+	var alias sql.NullString
+	err := row.Scan(&alias)
+	return alias, err
+}
+
 const getNodeByID = `-- name: GetNodeByID :one
 SELECT id, version, pub_key, alias, signature
 FROM nodes

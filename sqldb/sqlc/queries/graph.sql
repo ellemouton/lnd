@@ -36,6 +36,11 @@ FROM nodes
 WHERE pub_key = $1
   AND version = $2;
 
+-- name: GetNodeAliasByPubKeyAndVersion :one
+SELECT alias
+FROM nodes
+WHERE pub_key = $1 AND version = $2;
+
 /* ─────────────────────────────────────────────
    nodes_v1_data table queries
    ─────────────────────────────────────────────

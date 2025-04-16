@@ -45,6 +45,7 @@ type Querier interface {
 	GetKVInvoicePaymentHashByAddIndex(ctx context.Context, addIndex int64) ([]byte, error)
 	GetMigration(ctx context.Context, version int32) (time.Time, error)
 	GetNodeAddresses(ctx context.Context, nodeID int64) ([]GetNodeAddressesRow, error)
+	GetNodeAliasByPubKeyAndVersion(ctx context.Context, arg GetNodeAliasByPubKeyAndVersionParams) (sql.NullString, error)
 	GetNodeByID(ctx context.Context, id int64) (Node, error)
 	GetNodeByPubKeyAndVersion(ctx context.Context, arg GetNodeByPubKeyAndVersionParams) (Node, error)
 	GetNodeFeatures(ctx context.Context, nodeID int64) ([]GetNodeFeaturesRow, error)
