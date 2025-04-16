@@ -1158,6 +1158,40 @@ func (q *Queries) ListNodeIDsAndPubKeysByVersion(ctx context.Context, version in
 	return items, nil
 }
 
+const listNodesByVersion = `-- name: ListNodesByVersion :many
+SELECT id, pub_key
+FROM nodes
+WHERE version = $1
+`
+
+type ListNodesByVersionRow struct {
+	ID     int64
+	PubKey []byte
+}
+
+func (q *Queries) ListNodesByVersion(ctx context.Context, version int16) ([]ListNodesByVersionRow, error) {
+	rows, err := q.db.QueryContext(ctx, listNodesByVersion, version)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListNodesByVersionRow
+	for rows.Next() {
+		var i ListNodesByVersionRow
+		if err := rows.Scan(&i.ID, &i.PubKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateChannelPolicy = `-- name: UpdateChannelPolicy :exec
 UPDATE channel_policies
 SET timelock = $2,
