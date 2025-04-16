@@ -98,6 +98,7 @@ type SQLQueries interface {
 	ListAllChannelsByVersion(ctx context.Context, version int16) ([]sqlc.Channel, error)
 	GetPublicV1ChannelsBySCID(ctx context.Context, arg sqlc.GetPublicV1ChannelsBySCIDParams) ([]sqlc.Channel, error)
 	GetChannelByOutpointAndVersion(ctx context.Context, arg sqlc.GetChannelByOutpointAndVersionParams) (sqlc.Channel, error)
+	GetSCIDByOutpointAndVersion(ctx context.Context, arg sqlc.GetSCIDByOutpointAndVersionParams) ([]byte, error)
 
 	/*
 		Channel Policy Queries
@@ -1000,6 +1001,123 @@ func (s *SQLStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 	}
 
 	return edge, policy1, policy2, nil
+}
+
+// HasChannelEdge returns true if the database knows of a channel edge with the
+// passed channel ID, and false otherwise. If an edge with that ID is found
+// within the graph, then two time stamps representing the last time the edge
+// was updated for both directed edges are returned along with the boolean. If
+// it is not found, then the zombie index is checked and its result is returned
+// as the second boolean.
+//
+// NOTE: part of the V1Store interface.
+func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
+	bool, error) {
+
+	ctx := context.TODO()
+
+	var (
+		readTx          = NewReadTx()
+		exists          bool
+		isZombie        bool
+		node1LastUpdate time.Time
+		node2LastUpdate time.Time
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+		var chanIDB [8]byte
+		byteOrder.PutUint64(chanIDB[:], chanID)
+
+		channel, err := db.GetChannelBySCIDAndVersion(
+			ctx, sqlc.GetChannelBySCIDAndVersionParams{
+				Scid:    chanIDB[:],
+				Version: int16(ProtocolV1),
+			},
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			// Check if it is a zombie channel.
+			isZombie, err = db.IsZombieChannel(
+				ctx, sqlc.IsZombieChannelParams{
+					Scid:    int64(chanID),
+					Version: int16(ProtocolV1),
+				},
+			)
+			if err != nil {
+				return fmt.Errorf("could not check if channel "+
+					"is zombie: %w", err)
+			}
+
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("unable to fetch channel: %w", err)
+		}
+
+		exists = true
+
+		policy1, err := db.GetV1ChannelPolicyByChannelAndNode(
+			ctx, sqlc.GetV1ChannelPolicyByChannelAndNodeParams{
+				ChannelID: channel.ID,
+				NodeID:    channel.NodeID1,
+			},
+		)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("unable to fetch channel policy: %w",
+				err)
+		} else if err == nil {
+			node1LastUpdate = time.Unix(policy1.LastUpdate, 0)
+		}
+
+		policy2, err := db.GetV1ChannelPolicyByChannelAndNode(
+			ctx, sqlc.GetV1ChannelPolicyByChannelAndNodeParams{
+				ChannelID: channel.ID,
+				NodeID:    channel.NodeID2,
+			},
+		)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("unable to fetch channel policy: %w",
+				err)
+		} else if err == nil {
+			node2LastUpdate = time.Unix(policy2.LastUpdate, 0)
+		}
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return time.Time{}, time.Time{}, false, false,
+			fmt.Errorf("unable to fetch channel: %w", err)
+	}
+
+	return node1LastUpdate, node2LastUpdate, exists, isZombie, nil
+}
+
+func (s *SQLStore) ChannelID(chanPoint *wire.OutPoint) (uint64, error) {
+	var (
+		ctx       = context.TODO()
+		readTx    = NewReadTx()
+		channelID uint64
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+		chanID, err := db.GetSCIDByOutpointAndVersion(
+			ctx, sqlc.GetSCIDByOutpointAndVersionParams{
+				Outpoint: chanPoint.String(),
+				Version:  int16(ProtocolV1),
+			},
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrEdgeNotFound
+		} else if err != nil {
+			return fmt.Errorf("unable to fetch channel ID: %w",
+				err)
+		}
+
+		channelID = byteOrder.Uint64(chanID)
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return 0, fmt.Errorf("unable to fetch channel ID: %w", err)
+	}
+
+	return channelID, nil
 }
 
 func (s *SQLStore) ChanUpdatesInHorizon(startTime,

@@ -730,7 +730,7 @@ func createChannelEdge(node1, node2 *models.LightningNode) (
 func TestEdgeInfoUpdates(t *testing.T) {
 	t.Parallel()
 
-	graph, err := MakeTestGraph(t)
+	graph, err := MakeTestGraphNew(t)
 	require.NoError(t, err, "unable to make test database")
 
 	// We'd like to test the update of edges inserted into the database, so
