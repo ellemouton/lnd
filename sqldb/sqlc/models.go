@@ -191,6 +191,11 @@ type NodesV1Datum struct {
 	Color      string
 }
 
+type PruneLog struct {
+	BlockHeight int64
+	BlockHash   []byte
+}
+
 type SourceNode struct {
 	NodeID int64
 }

@@ -366,6 +366,32 @@ func (q *Queries) DeleteNodeFeature(ctx context.Context, arg DeleteNodeFeaturePa
 	return err
 }
 
+const deletePruneLogEntriesInRange = `-- name: DeletePruneLogEntriesInRange :exec
+DELETE FROM prune_log
+WHERE block_height >= $1
+  AND block_height <= $2
+`
+
+type DeletePruneLogEntriesInRangeParams struct {
+	StartHeight int64
+	EndHeight   int64
+}
+
+func (q *Queries) DeletePruneLogEntriesInRange(ctx context.Context, arg DeletePruneLogEntriesInRangeParams) error {
+	_, err := q.db.ExecContext(ctx, deletePruneLogEntriesInRange, arg.StartHeight, arg.EndHeight)
+	return err
+}
+
+const deletePruneLogEntry = `-- name: DeletePruneLogEntry :exec
+DELETE FROM prune_log
+WHERE block_height = $1
+`
+
+func (q *Queries) DeletePruneLogEntry(ctx context.Context, blockHeight int64) error {
+	_, err := q.db.ExecContext(ctx, deletePruneLogEntry, blockHeight)
+	return err
+}
+
 const deleteZombieChannel = `-- name: DeleteZombieChannel :exec
 DELETE FROM zombie_channels
 WHERE scid = $1
@@ -769,6 +795,20 @@ func (q *Queries) GetNodeIDByPubKeyAndVersion(ctx context.Context, arg GetNodeID
 	return id, err
 }
 
+const getPruneTip = `-- name: GetPruneTip :one
+SELECT block_height, block_hash
+FROM prune_log
+ORDER BY block_height DESC
+LIMIT 1
+`
+
+func (q *Queries) GetPruneTip(ctx context.Context) (PruneLog, error) {
+	row := q.db.QueryRowContext(ctx, getPruneTip)
+	var i PruneLog
+	err := row.Scan(&i.BlockHeight, &i.BlockHash)
+	return i, err
+}
+
 const getPublicV1ChannelsBySCID = `-- name: GetPublicV1ChannelsBySCID :many
 SELECT c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity
 FROM channels c
@@ -830,6 +870,41 @@ func (q *Queries) GetSCIDByOutpointAndVersion(ctx context.Context, arg GetSCIDBy
 	return scid, err
 }
 
+const getSourceNodes = `-- name: GetSourceNodes :many
+SELECT sn.node_id, n.pub_key, n.version
+FROM source_nodes sn
+         JOIN nodes n ON sn.node_id = n.id
+`
+
+type GetSourceNodesRow struct {
+	NodeID  int64
+	PubKey  []byte
+	Version int16
+}
+
+func (q *Queries) GetSourceNodes(ctx context.Context) ([]GetSourceNodesRow, error) {
+	rows, err := q.db.QueryContext(ctx, getSourceNodes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetSourceNodesRow
+	for rows.Next() {
+		var i GetSourceNodesRow
+		if err := rows.Scan(&i.NodeID, &i.PubKey, &i.Version); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getSourceNodesByVersion = `-- name: GetSourceNodesByVersion :many
 SELECT sn.node_id, n.pub_key
 FROM source_nodes sn
@@ -852,6 +927,44 @@ func (q *Queries) GetSourceNodesByVersion(ctx context.Context, version int16) ([
 	for rows.Next() {
 		var i GetSourceNodesByVersionRow
 		if err := rows.Scan(&i.NodeID, &i.PubKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getUnconnectedNodes = `-- name: GetUnconnectedNodes :many
+SELECT n.id, n.pub_key
+FROM nodes n
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM channels c
+    WHERE c.node_id_1 = n.id OR c.node_id_2 = n.id
+)
+`
+
+type GetUnconnectedNodesRow struct {
+	ID     int64
+	PubKey []byte
+}
+
+func (q *Queries) GetUnconnectedNodes(ctx context.Context) ([]GetUnconnectedNodesRow, error) {
+	rows, err := q.db.QueryContext(ctx, getUnconnectedNodes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetUnconnectedNodesRow
+	for rows.Next() {
+		var i GetUnconnectedNodesRow
+		if err := rows.Scan(&i.ID, &i.PubKey); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1488,6 +1601,31 @@ type UpsertNodeExtraTypeParams struct {
 
 func (q *Queries) UpsertNodeExtraType(ctx context.Context, arg UpsertNodeExtraTypeParams) error {
 	_, err := q.db.ExecContext(ctx, upsertNodeExtraType, arg.NodeID, arg.Type, arg.Value)
+	return err
+}
+
+const upsertPruneLogEntry = `-- name: UpsertPruneLogEntry :exec
+/* ─────────────────────────────────────────────
+    prune_log table queries
+    ─────────────────────────────────────────────
+*/
+
+INSERT INTO prune_log (
+    block_height, block_hash
+) VALUES (
+    $1, $2
+)
+ON CONFLICT(block_height) DO UPDATE SET
+    block_hash = EXCLUDED.block_hash
+`
+
+type UpsertPruneLogEntryParams struct {
+	BlockHeight int64
+	BlockHash   []byte
+}
+
+func (q *Queries) UpsertPruneLogEntry(ctx context.Context, arg UpsertPruneLogEntryParams) error {
+	_, err := q.db.ExecContext(ctx, upsertPruneLogEntry, arg.BlockHeight, arg.BlockHash)
 	return err
 }
 

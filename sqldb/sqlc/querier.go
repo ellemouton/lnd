@@ -31,6 +31,8 @@ type Querier interface {
 	DeleteNode(ctx context.Context, id int64) error
 	DeleteNodeAddresses(ctx context.Context, nodeID int64) error
 	DeleteNodeFeature(ctx context.Context, arg DeleteNodeFeatureParams) error
+	DeletePruneLogEntriesInRange(ctx context.Context, arg DeletePruneLogEntriesInRangeParams) error
+	DeletePruneLogEntry(ctx context.Context, blockHeight int64) error
 	DeleteZombieChannel(ctx context.Context, arg DeleteZombieChannelParams) error
 	FetchAMPSubInvoiceHTLCs(ctx context.Context, arg FetchAMPSubInvoiceHTLCsParams) ([]FetchAMPSubInvoiceHTLCsRow, error)
 	FetchAMPSubInvoices(ctx context.Context, arg FetchAMPSubInvoicesParams) ([]AmpSubInvoice, error)
@@ -64,9 +66,12 @@ type Querier interface {
 	GetNodeByPubKeyAndVersion(ctx context.Context, arg GetNodeByPubKeyAndVersionParams) (Node, error)
 	GetNodeFeatures(ctx context.Context, nodeID int64) ([]GetNodeFeaturesRow, error)
 	GetNodeIDByPubKeyAndVersion(ctx context.Context, arg GetNodeIDByPubKeyAndVersionParams) (int64, error)
+	GetPruneTip(ctx context.Context) (PruneLog, error)
 	GetPublicV1ChannelsBySCID(ctx context.Context, arg GetPublicV1ChannelsBySCIDParams) ([]Channel, error)
 	GetSCIDByOutpointAndVersion(ctx context.Context, arg GetSCIDByOutpointAndVersionParams) ([]byte, error)
+	GetSourceNodes(ctx context.Context) ([]GetSourceNodesRow, error)
 	GetSourceNodesByVersion(ctx context.Context, version int16) ([]GetSourceNodesByVersionRow, error)
+	GetUnconnectedNodes(ctx context.Context) ([]GetUnconnectedNodesRow, error)
 	GetV1ChannelPolicyByChannelAndNode(ctx context.Context, arg GetV1ChannelPolicyByChannelAndNodeParams) (GetV1ChannelPolicyByChannelAndNodeRow, error)
 	GetV1ChannelProof(ctx context.Context, channelID int64) (V1ChannelProof, error)
 	GetV1ChannelsByPolicyLastUpdateRange(ctx context.Context, arg GetV1ChannelsByPolicyLastUpdateRangeParams) ([]Channel, error)
@@ -113,6 +118,7 @@ type Querier interface {
 	UpsertAMPSubInvoice(ctx context.Context, arg UpsertAMPSubInvoiceParams) (sql.Result, error)
 	UpsertChannelExtraType(ctx context.Context, arg UpsertChannelExtraTypeParams) error
 	UpsertNodeExtraType(ctx context.Context, arg UpsertNodeExtraTypeParams) error
+	UpsertPruneLogEntry(ctx context.Context, arg UpsertPruneLogEntryParams) error
 	UpsertV1NodeData(ctx context.Context, arg UpsertV1NodeDataParams) error
 	UpsertZombieChannel(ctx context.Context, arg UpsertZombieChannelParams) error
 }
