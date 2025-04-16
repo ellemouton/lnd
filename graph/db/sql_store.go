@@ -54,6 +54,7 @@ type SQLQueries interface {
 	DeleteNode(ctx context.Context, id int64) error
 	ListNodeIDsAndPubKeysByVersion(ctx context.Context, version int16) ([]sqlc.ListNodeIDsAndPubKeysByVersionRow, error)
 	HighestSCID(ctx context.Context, version int16) ([]byte, error)
+	GetV1NodesByLastUpdateRange(ctx context.Context, arg sqlc.GetV1NodesByLastUpdateRangeParams) ([]sqlc.Node, error)
 
 	UpsertNodeExtraType(ctx context.Context, arg sqlc.UpsertNodeExtraTypeParams) error
 	GetExtraNodeTypes(ctx context.Context, nodeID int64) ([]sqlc.NodeExtraType, error)
@@ -859,6 +860,45 @@ func (s *SQLStore) HighestChanID() (uint64, error) {
 	}
 
 	return highestChanID, nil
+}
+
+func (s *SQLStore) NodeUpdatesInHorizon(startTime,
+	endTime time.Time) ([]models.LightningNode, error) {
+
+	ctx := context.TODO()
+
+	var (
+		readTx = NewReadTx()
+		nodes  []models.LightningNode
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+		dbNodes, err := db.GetV1NodesByLastUpdateRange(
+			ctx, sqlc.GetV1NodesByLastUpdateRangeParams{
+				StartTime: startTime.Unix(),
+				EndTime:   endTime.Unix(),
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("unable to fetch nodes: %w", err)
+		}
+
+		for _, dbNode := range dbNodes {
+			node, err := buildNode(ctx, db, &dbNode)
+			if err != nil {
+				return fmt.Errorf("unable to build node: %w",
+					err)
+			}
+
+			nodes = append(nodes, *node)
+		}
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch nodes: %w", err)
+	}
+
+	return nodes, nil
 }
 
 func (s *SQLStore) ChanUpdatesInHorizon(startTime,

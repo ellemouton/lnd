@@ -846,6 +846,49 @@ func (q *Queries) GetV1NodeData(ctx context.Context, nodeID int64) (NodesV1Datum
 	return i, err
 }
 
+const getV1NodesByLastUpdateRange = `-- name: GetV1NodesByLastUpdateRange :many
+SELECT n.id, n.version, n.pub_key, n.alias, n.signature
+FROM nodes n
+         JOIN nodes_v1_data v1 ON n.id = v1.node_id
+WHERE n.version = 1
+  AND v1.last_update >= $1
+  AND v1.last_update < $2
+`
+
+type GetV1NodesByLastUpdateRangeParams struct {
+	StartTime int64
+	EndTime   int64
+}
+
+func (q *Queries) GetV1NodesByLastUpdateRange(ctx context.Context, arg GetV1NodesByLastUpdateRangeParams) ([]Node, error) {
+	rows, err := q.db.QueryContext(ctx, getV1NodesByLastUpdateRange, arg.StartTime, arg.EndTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Node
+	for rows.Next() {
+		var i Node
+		if err := rows.Scan(
+			&i.ID,
+			&i.Version,
+			&i.PubKey,
+			&i.Alias,
+			&i.Signature,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const highestSCID = `-- name: HighestSCID :one
 SELECT scid
 FROM channels
