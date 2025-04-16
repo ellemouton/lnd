@@ -4142,7 +4142,13 @@ func TestGraphLoading(t *testing.T) {
 	t.Parallel()
 
 	// Next, create the graph for the first time.
-	graphStore := NewTestDB(t)
+	backend, backendCleanup, err := kvdb.GetTestBackend(t.TempDir(), "cgr")
+	require.NoError(t, err)
+
+	t.Cleanup(backendCleanup)
+
+	graphStore, err := NewKVStore(backend)
+	require.NoError(t, err)
 
 	graph, err := NewChannelGraph(graphStore)
 	require.NoError(t, err)
