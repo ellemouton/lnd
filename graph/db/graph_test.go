@@ -98,12 +98,7 @@ func createTestVertex(t testing.TB) *models.LightningNode {
 func TestNodeInsertionAndDeletion(t *testing.T) {
 	t.Parallel()
 
-<<<<<<< HEAD
-	graph := MakeTestGraph(t)
-=======
-	graph, err := MakeTestGraphNew(t)
-	require.NoError(t, err, "unable to make test database")
->>>>>>> 92ec85f2a (sqldb+graphdb: SQL backend for Node CRUD)
+	graph := MakeTestGraphNew(t)
 
 	// We'd like to test basic insertion/deletion for vertexes from the
 	// graph, so we'll create a test vertex to start with.
@@ -180,7 +175,7 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 func TestPartialNode(t *testing.T) {
 	t.Parallel()
 
-	graph := MakeTestGraph(t)
+	graph := MakeTestGraphNew(t)
 
 	// To insert a partial node, we need to add a channel edge that has
 	// node keys for nodes we are not yet aware
@@ -3254,7 +3249,7 @@ func TestPruneGraphNodes(t *testing.T) {
 func TestAddChannelEdgeShellNodes(t *testing.T) {
 	t.Parallel()
 
-	graph := MakeTestGraph(t)
+	graph := MakeTestGraphNew(t)
 
 	// To start, we'll create two nodes, and only add one of them to the
 	// channel graph.
