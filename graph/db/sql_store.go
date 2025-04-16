@@ -47,16 +47,21 @@ type SQLQueries interface {
 	UpdateNode(ctx context.Context, arg sqlc.UpdateNodeParams) error
 	GetNodeByID(ctx context.Context, id int64) (sqlc.Node, error)
 	GetNodeByPubKeyAndVersion(ctx context.Context, arg sqlc.GetNodeByPubKeyAndVersionParams) (sqlc.Node, error)
+	GetNodeAliasByPubKeyAndVersion(ctx context.Context, arg sqlc.GetNodeAliasByPubKeyAndVersionParams) (sql.NullString, error)
 	DeleteNode(ctx context.Context, id int64) error
+
 	UpsertNodeExtraType(ctx context.Context, arg sqlc.UpsertNodeExtraTypeParams) error
 	GetExtraNodeTypes(ctx context.Context, nodeID int64) ([]sqlc.NodeExtraType, error)
 	DeleteExtraNodeType(ctx context.Context, arg sqlc.DeleteExtraNodeTypeParams) error
+
 	InsertNodeFeature(ctx context.Context, arg sqlc.InsertNodeFeatureParams) error
 	GetNodeFeatures(ctx context.Context, nodeID int64) ([]sqlc.GetNodeFeaturesRow, error)
 	DeleteNodeFeature(ctx context.Context, arg sqlc.DeleteNodeFeatureParams) error
+
 	InsertNodeAddress(ctx context.Context, arg sqlc.InsertNodeAddressParams) error
 	GetNodeAddresses(ctx context.Context, nodeID int64) ([]sqlc.GetNodeAddressesRow, error)
 	DeleteNodeAddresses(ctx context.Context, nodeID int64) error
+
 	UpsertV1NodeData(ctx context.Context, arg sqlc.UpsertV1NodeDataParams) error
 	GetV1NodeData(ctx context.Context, nodeID int64) (sqlc.NodesV1Datum, error)
 
@@ -351,6 +356,43 @@ func (s *SQLStore) AddChannelEdge(edge *models.ChannelEdgeInfo,
 	s.chanCache.remove(edge.ChannelID)
 
 	return nil
+}
+
+// LookupAlias attempts to return the alias as advertised by the target node.
+//
+// NOTE: part of the V1Store interface.
+func (s *SQLStore) LookupAlias(pub *btcec.PublicKey) (string, error) {
+	var (
+		ctx    = context.TODO()
+		readTx = NewReadTx()
+		alias  string
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+		dbAlias, err := db.GetNodeAliasByPubKeyAndVersion(
+			ctx, sqlc.GetNodeAliasByPubKeyAndVersionParams{
+				PubKey:  pub.SerializeCompressed(),
+				Version: int16(ProtocolV1),
+			},
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNodeAliasNotFound
+		} else if err != nil {
+			return fmt.Errorf("unable to fetch node: %w", err)
+		}
+
+		if !dbAlias.Valid {
+			return ErrNodeAliasNotFound
+		}
+
+		alias = dbAlias.String
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return "", fmt.Errorf("unable to look up alias: %w", err)
+	}
+
+	return alias, nil
 }
 
 // upsertV1Node first checks if an entry for this V1 node already exists in
