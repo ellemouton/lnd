@@ -53,6 +53,7 @@ type SQLQueries interface {
 	GetNodeAliasByPubKeyAndVersion(ctx context.Context, arg sqlc.GetNodeAliasByPubKeyAndVersionParams) (sql.NullString, error)
 	DeleteNode(ctx context.Context, id int64) error
 	ListNodeIDsAndPubKeysByVersion(ctx context.Context, version int16) ([]sqlc.ListNodeIDsAndPubKeysByVersionRow, error)
+	HighestSCID(ctx context.Context, version int16) ([]byte, error)
 
 	UpsertNodeExtraType(ctx context.Context, arg sqlc.UpsertNodeExtraTypeParams) error
 	GetExtraNodeTypes(ctx context.Context, nodeID int64) ([]sqlc.NodeExtraType, error)
@@ -830,6 +831,33 @@ func (s *SQLStore) ForEachChannel(cb func(*models.ChannelEdgeInfo,
 
 		return nil
 	}, func() {})
+}
+
+func (s *SQLStore) HighestChanID() (uint64, error) {
+	ctx := context.TODO()
+
+	var (
+		readTx        = NewReadTx()
+		highestChanID uint64
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+		chanID, err := db.HighestSCID(ctx, int16(ProtocolV1))
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("unable to fetch highest chan ID: %w",
+				err)
+		}
+
+		highestChanID = byteOrder.Uint64(chanID)
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return 0, fmt.Errorf("unable to fetch highest chan ID: %w", err)
+	}
+
+	return highestChanID, nil
 }
 
 // insertV1Node creates a new V1 node record.

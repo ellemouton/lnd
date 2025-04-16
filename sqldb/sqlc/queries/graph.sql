@@ -187,6 +187,13 @@ WHERE version = $1
 SELECT * FROM channels
 WHERE version = $1;
 
+-- name: HighestSCID :one
+SELECT scid
+FROM channels
+WHERE version = $1
+ORDER BY scid DESC
+LIMIT 1;
+
 /* ─────────────────────────────────────────────
    channels_v1_data table queries
    ─────────────────────────────────────────────

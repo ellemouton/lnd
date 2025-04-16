@@ -801,6 +801,21 @@ func (q *Queries) GetV1NodeData(ctx context.Context, nodeID int64) (NodesV1Datum
 	return i, err
 }
 
+const highestSCID = `-- name: HighestSCID :one
+SELECT scid
+FROM channels
+WHERE version = $1
+ORDER BY scid DESC
+LIMIT 1
+`
+
+func (q *Queries) HighestSCID(ctx context.Context, version int16) ([]byte, error) {
+	row := q.db.QueryRowContext(ctx, highestSCID, version)
+	var scid []byte
+	err := row.Scan(&scid)
+	return scid, err
+}
+
 const insertChannelFeature = `-- name: InsertChannelFeature :exec
 /* ─────────────────────────────────────────────
    channel_features table queries
