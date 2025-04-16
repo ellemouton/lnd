@@ -70,6 +70,7 @@ type Querier interface {
 	GetV1ChannelPolicyByChannelAndNode(ctx context.Context, arg GetV1ChannelPolicyByChannelAndNodeParams) (GetV1ChannelPolicyByChannelAndNodeRow, error)
 	GetV1ChannelProof(ctx context.Context, channelID int64) (V1ChannelProof, error)
 	GetV1ChannelsByPolicyLastUpdateRange(ctx context.Context, arg GetV1ChannelsByPolicyLastUpdateRangeParams) ([]Channel, error)
+	GetV1DisabledSCIDs(ctx context.Context) ([][]byte, error)
 	GetV1NodeData(ctx context.Context, nodeID int64) (NodesV1Datum, error)
 	GetV1NodesByLastUpdateRange(ctx context.Context, arg GetV1NodesByLastUpdateRangeParams) ([]Node, error)
 	GetZombieChannel(ctx context.Context, arg GetZombieChannelParams) (ZombieChannel, error)
