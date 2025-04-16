@@ -65,6 +65,15 @@ SELECT id, pub_key
 FROM nodes
 WHERE version = $1;
 
+-- name: IsPublicV1Node :one
+SELECT EXISTS (
+    SELECT 1
+    FROM channels c
+             JOIN v1_channel_proofs v1p ON c.id = v1p.channel_id
+             JOIN nodes n ON n.id = c.node_id_1 OR n.id = c.node_id_2
+    WHERE n.pub_key = $1
+);
+
 /* ─────────────────────────────────────────────
    nodes_v1_data table queries
    ─────────────────────────────────────────────
