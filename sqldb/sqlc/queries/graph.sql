@@ -220,6 +220,10 @@ FROM channels c
 WHERE c.scid >= sqlc.arg(start_scid)
   AND c.scid < sqlc.arg(end_scid);
 
+-- name: GetChannelByOutpointAndVersion :one
+SELECT * FROM channels
+WHERE outpoint = $1 AND version = $2;
+
 -- name: DeleteChannel :exec
 DELETE FROM channels WHERE id = $1;
 
