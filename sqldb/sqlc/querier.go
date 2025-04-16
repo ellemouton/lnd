@@ -14,6 +14,7 @@ type Querier interface {
 	AddChannelPolicyExtraType(ctx context.Context, arg AddChannelPolicyExtraTypeParams) error
 	AddSourceNode(ctx context.Context, nodeID int64) error
 	ClearKVInvoiceHashIndex(ctx context.Context) error
+	CountZombieChannels(ctx context.Context, version int16) (int64, error)
 	CreateChannel(ctx context.Context, arg CreateChannelParams) (int64, error)
 	CreateChannelPolicy(ctx context.Context, arg CreateChannelPolicyParams) (int64, error)
 	CreateChannelPolicyV1Data(ctx context.Context, arg CreateChannelPolicyV1DataParams) error
@@ -22,6 +23,7 @@ type Querier interface {
 	CreateNode(ctx context.Context, arg CreateNodeParams) (int64, error)
 	CreateV1ChannelProof(ctx context.Context, arg CreateV1ChannelProofParams) error
 	DeleteCanceledInvoices(ctx context.Context) (sql.Result, error)
+	DeleteChannel(ctx context.Context, id int64) error
 	DeleteChannelPolicyExtraType(ctx context.Context, arg DeleteChannelPolicyExtraTypeParams) error
 	DeleteExtraChannelType(ctx context.Context, arg DeleteExtraChannelTypeParams) error
 	DeleteExtraNodeType(ctx context.Context, arg DeleteExtraNodeTypeParams) error
@@ -29,6 +31,7 @@ type Querier interface {
 	DeleteNode(ctx context.Context, id int64) error
 	DeleteNodeAddresses(ctx context.Context, nodeID int64) error
 	DeleteNodeFeature(ctx context.Context, arg DeleteNodeFeatureParams) error
+	DeleteZombieChannel(ctx context.Context, arg DeleteZombieChannelParams) error
 	FetchAMPSubInvoiceHTLCs(ctx context.Context, arg FetchAMPSubInvoiceHTLCsParams) ([]FetchAMPSubInvoiceHTLCsRow, error)
 	FetchAMPSubInvoices(ctx context.Context, arg FetchAMPSubInvoicesParams) ([]AmpSubInvoice, error)
 	FetchSettledAMPSubInvoices(ctx context.Context, arg FetchSettledAMPSubInvoicesParams) ([]FetchSettledAMPSubInvoicesRow, error)
@@ -67,6 +70,7 @@ type Querier interface {
 	GetV1ChannelsByPolicyLastUpdateRange(ctx context.Context, arg GetV1ChannelsByPolicyLastUpdateRangeParams) ([]Channel, error)
 	GetV1NodeData(ctx context.Context, nodeID int64) (NodesV1Datum, error)
 	GetV1NodesByLastUpdateRange(ctx context.Context, arg GetV1NodesByLastUpdateRangeParams) ([]Node, error)
+	GetZombieChannel(ctx context.Context, arg GetZombieChannelParams) (ZombieChannel, error)
 	HighestSCID(ctx context.Context, version int16) ([]byte, error)
 	InsertAMPSubInvoice(ctx context.Context, arg InsertAMPSubInvoiceParams) error
 	InsertAMPSubInvoiceHTLC(ctx context.Context, arg InsertAMPSubInvoiceHTLCParams) error
@@ -79,6 +83,7 @@ type Querier interface {
 	InsertMigratedInvoice(ctx context.Context, arg InsertMigratedInvoiceParams) (int64, error)
 	InsertNodeAddress(ctx context.Context, arg InsertNodeAddressParams) error
 	InsertNodeFeature(ctx context.Context, arg InsertNodeFeatureParams) error
+	IsZombieChannel(ctx context.Context, arg IsZombieChannelParams) (bool, error)
 	ListAllChannelsByVersion(ctx context.Context, version int16) ([]Channel, error)
 	ListChannelsByNodeIDAndVersion(ctx context.Context, arg ListChannelsByNodeIDAndVersionParams) ([]Channel, error)
 	ListNodeIDsAndPubKeysByVersion(ctx context.Context, version int16) ([]ListNodeIDsAndPubKeysByVersionRow, error)
@@ -105,6 +110,7 @@ type Querier interface {
 	UpsertChannelExtraType(ctx context.Context, arg UpsertChannelExtraTypeParams) error
 	UpsertNodeExtraType(ctx context.Context, arg UpsertNodeExtraTypeParams) error
 	UpsertV1NodeData(ctx context.Context, arg UpsertV1NodeDataParams) error
+	UpsertZombieChannel(ctx context.Context, arg UpsertZombieChannelParams) error
 }
 
 var _ Querier = (*Queries)(nil)
