@@ -97,6 +97,7 @@ type SQLQueries interface {
 	GetChannelFeatures(ctx context.Context, channelID int64) ([]sqlc.GetChannelFeaturesRow, error)
 	ListAllChannelsByVersion(ctx context.Context, version int16) ([]sqlc.Channel, error)
 	GetPublicV1ChannelsBySCID(ctx context.Context, arg sqlc.GetPublicV1ChannelsBySCIDParams) ([]sqlc.Channel, error)
+	GetChannelByOutpointAndVersion(ctx context.Context, arg sqlc.GetChannelByOutpointAndVersionParams) (sqlc.Channel, error)
 
 	/*
 		Channel Policy Queries
@@ -913,6 +914,89 @@ func (s *SQLStore) NodeUpdatesInHorizon(startTime,
 	}
 
 	return nodes, nil
+}
+
+func (s *SQLStore) FetchChannelEdgesByID(chanID uint64) (
+	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy, error) {
+
+	var (
+		ctx              = context.TODO()
+		readTx           = NewReadTx()
+		edge             *models.ChannelEdgeInfo
+		policy1, policy2 *models.ChannelEdgePolicy
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+		var chanIDB [8]byte
+		byteOrder.PutUint64(chanIDB[:], chanID)
+
+		dbChan, err := db.GetChannelBySCIDAndVersion(
+			ctx, sqlc.GetChannelBySCIDAndVersionParams{
+				Scid:    chanIDB[:],
+				Version: int16(ProtocolV1),
+			},
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrEdgeNotFound
+		} else if err != nil {
+			return fmt.Errorf("unable to fetch channel: %w", err)
+		}
+
+		edge, policy1, policy2, err = buildChannel(
+			ctx, db, s.cfg.ChainHash, dbChan,
+		)
+		if err != nil {
+			return fmt.Errorf("unable to build channel edge: %w", err)
+		}
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("could not fetch channel: %w",
+			err)
+	}
+
+	return edge, policy1, policy2, nil
+}
+
+func (s *SQLStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
+	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy, error) {
+
+	var (
+		ctx              = context.TODO()
+		readTx           = NewReadTx()
+		edge             *models.ChannelEdgeInfo
+		policy1, policy2 *models.ChannelEdgePolicy
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+		dbChan, err := db.GetChannelByOutpointAndVersion(
+			ctx, sqlc.GetChannelByOutpointAndVersionParams{
+				Outpoint: op.String(),
+				Version:  int16(ProtocolV1),
+			},
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrEdgeNotFound
+		} else if err != nil {
+			return fmt.Errorf("unable to fetch channel: %w", err)
+		}
+
+		edge, policy1, policy2, err = buildChannel(
+			ctx, db, s.cfg.ChainHash, dbChan,
+		)
+		if err != nil {
+			return fmt.Errorf("unable to build channel edge: %w", err)
+		}
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("could not fetch channel: %w",
+			err)
+	}
+
+	return edge, policy1, policy2, nil
 }
 
 func (s *SQLStore) ChanUpdatesInHorizon(startTime,
