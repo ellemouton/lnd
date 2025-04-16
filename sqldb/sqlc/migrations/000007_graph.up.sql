@@ -261,5 +261,14 @@ CREATE TABLE IF NOT EXISTS zombie_channels (
     node_key_1 BYTEA,
     node_key_2 BYTEA
 );
+
 CREATE UNIQUE INDEX IF NOT EXISTS zombie_channels_channel_id_version_idx
     ON zombie_channels(scid, version);
+
+CREATE TABLE IF NOT EXISTS prune_log (
+    -- The block height that the prune was performed at.
+    block_height BIGINT PRIMARY KEY,
+
+    -- The block hash that the prune was performed at.
+    block_hash BLOB NOT NULL
+);

@@ -59,6 +59,7 @@ type SQLQueries interface {
 	GetNodeIDByPubKeyAndVersion(ctx context.Context, arg sqlc.GetNodeIDByPubKeyAndVersionParams) (int64, error)
 	ListNodesByVersion(ctx context.Context, version int16) ([]sqlc.ListNodesByVersionRow, error)
 	IsPublicV1Node(ctx context.Context, pubKey []byte) (bool, error)
+	GetUnconnectedNodes(ctx context.Context) ([]sqlc.GetUnconnectedNodesRow, error)
 
 	UpsertNodeExtraType(ctx context.Context, arg sqlc.UpsertNodeExtraTypeParams) error
 	GetExtraNodeTypes(ctx context.Context, nodeID int64) ([]sqlc.NodeExtraType, error)
@@ -124,6 +125,7 @@ type SQLQueries interface {
 	*/
 	AddSourceNode(ctx context.Context, nodeID int64) error
 	GetSourceNodesByVersion(ctx context.Context, version int16) ([]sqlc.GetSourceNodesByVersionRow, error)
+	GetSourceNodes(ctx context.Context) ([]sqlc.GetSourceNodesRow, error)
 
 	/*
 		Zombie index queries
@@ -133,6 +135,14 @@ type SQLQueries interface {
 	DeleteZombieChannel(ctx context.Context, arg sqlc.DeleteZombieChannelParams) error
 	GetZombieChannel(ctx context.Context, arg sqlc.GetZombieChannelParams) (sqlc.ZombieChannel, error)
 	IsZombieChannel(ctx context.Context, arg sqlc.IsZombieChannelParams) (bool, error)
+
+	/*
+		Prune Log.
+	*/
+	GetPruneTip(ctx context.Context) (sqlc.PruneLog, error)
+	UpsertPruneLogEntry(ctx context.Context, arg sqlc.UpsertPruneLogEntryParams) error
+	DeletePruneLogEntriesInRange(ctx context.Context, arg sqlc.DeletePruneLogEntriesInRangeParams) error
+	DeletePruneLogEntry(ctx context.Context, blockHeight int64) error
 }
 
 // BatchedSQLQueries is a version of SQLQueries that's capable of batched
@@ -1807,6 +1817,69 @@ func (s *SQLStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 	return deleted, nil
 }
 
+// PruneGraphNodes is a garbage collection method which attempts to prune out
+// any nodes from the channel graph that are currently unconnected. This ensure
+// that we only maintain a graph of reachable nodes. In the event that a pruned
+// node gains more channels, it will be re-added back to the graph.
+//
+// NOTE: part of the V1Store interface.
+func (s *SQLStore) PruneGraphNodes() ([]route.Vertex, error) {
+	var (
+		ctx     = context.TODO()
+		writeTx TxOptions
+	)
+
+	var prunedNodes []route.Vertex
+	err := s.db.ExecTx(ctx, &writeTx, func(db SQLQueries) error {
+		var err error
+		prunedNodes, err = pruneGraphNodes(ctx, db)
+
+		return err
+	}, func() {})
+	if err != nil {
+		return nil, fmt.Errorf("unable to prune nodes: %w", err)
+	}
+
+	return prunedNodes, nil
+}
+
+// pruneGraphNodes deletes any node in the DB that doesn't have a channel
+// pointing to it.
+//
+// NOTE: this acts across protocol versions.
+func pruneGraphNodes(ctx context.Context, db SQLQueries) ([]route.Vertex,
+	error) {
+
+	nodes, err := db.GetUnconnectedNodes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch unconnected nodes: %w",
+			err)
+	}
+
+	sourceNodes, err := getSourceNodes(ctx, db)
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch source nodes: %w", err)
+	}
+
+	prunedNodes := make([]route.Vertex, 0, len(nodes))
+	for _, node := range nodes {
+		// Don't delete source nodes.
+		if _, ok := sourceNodes[node.ID]; ok {
+			continue
+		}
+
+		if err := db.DeleteNode(ctx, node.ID); err != nil {
+			return nil, fmt.Errorf("unable to delete node: %w", err)
+		}
+
+		var pubKey route.Vertex
+		copy(pubKey[:], node.PubKey)
+		prunedNodes = append(prunedNodes, pubKey)
+	}
+
+	return prunedNodes, nil
+}
+
 func (s *SQLStore) DisabledChannelIDs() ([]uint64, error) {
 	var (
 		ctx     = context.TODO()
@@ -1832,6 +1905,23 @@ func (s *SQLStore) DisabledChannelIDs() ([]uint64, error) {
 	}
 
 	return chanIDs, nil
+}
+
+// getSourceNodes returns a map of all source nodes in the database.
+func getSourceNodes(ctx context.Context, db SQLQueries) (map[int64]struct{},
+	error) {
+
+	nodes, err := db.GetSourceNodes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch source nodes: %w", err)
+	}
+
+	m := make(map[int64]struct{}, len(nodes))
+	for _, node := range nodes {
+		m[node.NodeID] = struct{}{}
+	}
+
+	return m, nil
 }
 
 func forEachNodeDirectedChannel(ctx context.Context, db SQLQueries,
