@@ -101,4 +101,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS node_addresses_unique ON node_addresses (
 );
 CREATE INDEX IF NOT EXISTS node_addresses_node_id_idx ON node_addresses(node_id);
 
-
+CREATE TABLE IF NOT EXISTS source_nodes (
+   node_id BIGINT PRIMARY KEY REFERENCES nodes (id) ON DELETE CASCADE
+);
