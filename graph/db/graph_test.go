@@ -126,7 +126,7 @@ func TestNodeCRUD(t *testing.T) {
 func TestNodeInsertionAndDeletion(t *testing.T) {
 	t.Parallel()
 
-	graph, err := MakeTestGraph(t)
+	graph, err := MakeTestGraphNew(t)
 	require.NoError(t, err, "unable to make test database")
 
 	// We'd like to test basic insertion/deletion for vertexes from the
@@ -4219,7 +4219,7 @@ func TestLightningNodePersistence(t *testing.T) {
 	t.Parallel()
 
 	// Create a new test graph instance.
-	graph, err := MakeTestGraph(t)
+	graph, err := MakeTestGraphNew(t)
 	require.NoError(t, err)
 
 	nodeAnnBytes, err := hex.DecodeString(testNodeAnn)
