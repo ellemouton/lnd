@@ -54,6 +54,13 @@ SELECT id, pub_key
 FROM nodes
 WHERE version = $1;
 
+-- name: GetNodeIDByPubKeyAndVersion :one
+SELECT id
+FROM nodes
+WHERE pub_key = $1
+  AND version = $2;
+
+
 /* ─────────────────────────────────────────────
    nodes_v1_data table queries
    ─────────────────────────────────────────────

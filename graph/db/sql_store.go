@@ -56,6 +56,7 @@ type SQLQueries interface {
 	ListNodeIDsAndPubKeysByVersion(ctx context.Context, version int16) ([]sqlc.ListNodeIDsAndPubKeysByVersionRow, error)
 	HighestSCID(ctx context.Context, version int16) ([]byte, error)
 	GetV1NodesByLastUpdateRange(ctx context.Context, arg sqlc.GetV1NodesByLastUpdateRangeParams) ([]sqlc.Node, error)
+	GetNodeIDByPubKeyAndVersion(ctx context.Context, arg sqlc.GetNodeIDByPubKeyAndVersionParams) (int64, error)
 
 	UpsertNodeExtraType(ctx context.Context, arg sqlc.UpsertNodeExtraTypeParams) error
 	GetExtraNodeTypes(ctx context.Context, nodeID int64) ([]sqlc.NodeExtraType, error)
@@ -1115,6 +1116,42 @@ func (s *SQLStore) FilterChannelRange(startHeight, endHeight uint32,
 	}
 
 	return channelRanges, nil
+}
+
+// ForEachNodeChannel iterates through all channels of the given node,
+// executing the passed callback with an edge info structure and the policies
+// of each end of the channel. The first edge policy is the outgoing edge *to*
+// the connecting node, while the second is the incoming edge *from* the
+// connecting node. If the callback returns an error, then the iteration is
+// halted with the error propagated back up to the caller.
+//
+// Unknown policies are passed into the callback as nil values.
+//
+// NOTE: part of the V1Store interface.
+func (s *SQLStore) ForEachNodeChannel(nodePub route.Vertex,
+	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy) error) error {
+
+	var (
+		ctx    = context.TODO()
+		readTx = NewReadTx()
+	)
+
+	return s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+		id, err := db.GetNodeIDByPubKeyAndVersion(
+			ctx, sqlc.GetNodeIDByPubKeyAndVersionParams{
+				Version: int16(ProtocolV1),
+				PubKey:  nodePub[:],
+			},
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("unable to fetch node: %w", err)
+		}
+
+		return forEachNodeChannel(ctx, db, s.cfg.ChainHash, id, cb)
+	}, func() {})
 }
 
 // insertV1Node creates a new V1 node record.
