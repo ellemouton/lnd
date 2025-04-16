@@ -880,6 +880,42 @@ func (q *Queries) InsertNodeFeature(ctx context.Context, arg InsertNodeFeaturePa
 	return err
 }
 
+const listAllChannelsByVersion = `-- name: ListAllChannelsByVersion :many
+SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity FROM channels
+WHERE version = $1
+`
+
+func (q *Queries) ListAllChannelsByVersion(ctx context.Context, version int16) ([]Channel, error) {
+	rows, err := q.db.QueryContext(ctx, listAllChannelsByVersion, version)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Channel
+	for rows.Next() {
+		var i Channel
+		if err := rows.Scan(
+			&i.ID,
+			&i.Version,
+			&i.Scid,
+			&i.NodeID1,
+			&i.NodeID2,
+			&i.Outpoint,
+			&i.Capacity,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listChannelsByNodeIDAndVersion = `-- name: ListChannelsByNodeIDAndVersion :many
 SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity FROM channels
 WHERE version = $1
