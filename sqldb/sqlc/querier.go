@@ -64,6 +64,7 @@ type Querier interface {
 	GetV1ChannelPolicyByChannelAndNode(ctx context.Context, arg GetV1ChannelPolicyByChannelAndNodeParams) (GetV1ChannelPolicyByChannelAndNodeRow, error)
 	GetV1ChannelProof(ctx context.Context, channelID int64) (V1ChannelProof, error)
 	GetV1NodeData(ctx context.Context, nodeID int64) (NodesV1Datum, error)
+	HighestSCID(ctx context.Context, version int16) ([]byte, error)
 	InsertAMPSubInvoice(ctx context.Context, arg InsertAMPSubInvoiceParams) error
 	InsertAMPSubInvoiceHTLC(ctx context.Context, arg InsertAMPSubInvoiceHTLCParams) error
 	InsertChannelFeature(ctx context.Context, arg InsertChannelFeatureParams) error
