@@ -49,6 +49,30 @@ type ChannelFeature struct {
 	FeatureID int64
 }
 
+type ChannelPolicy struct {
+	ID          int64
+	ChannelID   int64
+	NodeID      int64
+	Timelock    int32
+	FeePpm      int64
+	BaseFeeMsat int64
+	MinHtlcMsat int64
+	Signature   []byte
+}
+
+type ChannelPolicyExtraType struct {
+	ChannelPolicyID int64
+	Type            int64
+	Value           []byte
+}
+
+type ChannelPolicyV1Datum struct {
+	ChannelPolicyID int64
+	LastUpdate      int64
+	Disabled        bool
+	MaxHtlcMsat     sql.NullInt64
+}
+
 type ChannelsV1Datum struct {
 	ChannelID   int64
 	BitcoinKey1 []byte

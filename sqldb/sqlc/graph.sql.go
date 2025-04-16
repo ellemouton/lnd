@@ -10,6 +10,27 @@ import (
 	"database/sql"
 )
 
+const addChannelPolicyExtraType = `-- name: AddChannelPolicyExtraType :exec
+INSERT INTO channel_policy_extra_types (
+    channel_policy_id, type, value
+) VALUES (
+   $1, $2, $3
+)
+ON CONFLICT (type, channel_policy_id)
+    DO UPDATE SET value = EXCLUDED.value
+`
+
+type AddChannelPolicyExtraTypeParams struct {
+	ChannelPolicyID int64
+	Type            int64
+	Value           []byte
+}
+
+func (q *Queries) AddChannelPolicyExtraType(ctx context.Context, arg AddChannelPolicyExtraTypeParams) error {
+	_, err := q.db.ExecContext(ctx, addChannelPolicyExtraType, arg.ChannelPolicyID, arg.Type, arg.Value)
+	return err
+}
+
 const addSourceNode = `-- name: AddSourceNode :exec
 /* ─────────────────────────────────────────────
    source_nodes table queries
@@ -62,6 +83,75 @@ func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (i
 	var id int64
 	err := row.Scan(&id)
 	return id, err
+}
+
+const createChannelPolicy = `-- name: CreateChannelPolicy :one
+/* ─────────────────────────────────────────────
+   channel_policies table queries
+   ─────────────────────────────────────────────
+*/
+
+INSERT INTO channel_policies (
+    channel_id, node_id, timelock, fee_ppm, base_fee_msat, min_htlc_msat, signature
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7
+)
+RETURNING id
+`
+
+type CreateChannelPolicyParams struct {
+	ChannelID   int64
+	NodeID      int64
+	Timelock    int32
+	FeePpm      int64
+	BaseFeeMsat int64
+	MinHtlcMsat int64
+	Signature   []byte
+}
+
+func (q *Queries) CreateChannelPolicy(ctx context.Context, arg CreateChannelPolicyParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createChannelPolicy,
+		arg.ChannelID,
+		arg.NodeID,
+		arg.Timelock,
+		arg.FeePpm,
+		arg.BaseFeeMsat,
+		arg.MinHtlcMsat,
+		arg.Signature,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const createChannelPolicyV1Data = `-- name: CreateChannelPolicyV1Data :exec
+/* ─────────────────────────────────────────────
+   channel_policy_v1_data table queries
+   ─────────────────────────────────────────────
+*/
+
+INSERT INTO channel_policy_v1_data (
+    channel_policy_id, last_update, disabled, max_htlc_msat
+) VALUES (
+    $1, $2, $3, $4
+)
+`
+
+type CreateChannelPolicyV1DataParams struct {
+	ChannelPolicyID int64
+	LastUpdate      int64
+	Disabled        bool
+	MaxHtlcMsat     sql.NullInt64
+}
+
+func (q *Queries) CreateChannelPolicyV1Data(ctx context.Context, arg CreateChannelPolicyV1DataParams) error {
+	_, err := q.db.ExecContext(ctx, createChannelPolicyV1Data,
+		arg.ChannelPolicyID,
+		arg.LastUpdate,
+		arg.Disabled,
+		arg.MaxHtlcMsat,
+	)
+	return err
 }
 
 const createChannelsV1Data = `-- name: CreateChannelsV1Data :exec
@@ -172,6 +262,21 @@ func (q *Queries) CreateV1ChannelProof(ctx context.Context, arg CreateV1ChannelP
 	return err
 }
 
+const deleteChannelPolicyExtraType = `-- name: DeleteChannelPolicyExtraType :exec
+DELETE FROM channel_policy_extra_types
+WHERE channel_policy_id = $1 AND type = $2
+`
+
+type DeleteChannelPolicyExtraTypeParams struct {
+	ChannelPolicyID int64
+	Type            int64
+}
+
+func (q *Queries) DeleteChannelPolicyExtraType(ctx context.Context, arg DeleteChannelPolicyExtraTypeParams) error {
+	_, err := q.db.ExecContext(ctx, deleteChannelPolicyExtraType, arg.ChannelPolicyID, arg.Type)
+	return err
+}
+
 const deleteExtraChannelType = `-- name: DeleteExtraChannelType :exec
 DELETE FROM channel_extra_types
 WHERE channel_id = $1
@@ -261,6 +366,130 @@ func (q *Queries) GetChannelBySCIDAndVersion(ctx context.Context, arg GetChannel
 		&i.Outpoint,
 		&i.Capacity,
 	)
+	return i, err
+}
+
+const getChannelFeatures = `-- name: GetChannelFeatures :many
+SELECT
+    nf.channel_id,
+    nf.feature_id,
+    f.bit
+FROM channel_features nf
+         JOIN features f ON nf.feature_id = f.id
+WHERE nf.channel_id = $1
+`
+
+type GetChannelFeaturesRow struct {
+	ChannelID int64
+	FeatureID int64
+	Bit       int32
+}
+
+func (q *Queries) GetChannelFeatures(ctx context.Context, channelID int64) ([]GetChannelFeaturesRow, error) {
+	rows, err := q.db.QueryContext(ctx, getChannelFeatures, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetChannelFeaturesRow
+	for rows.Next() {
+		var i GetChannelFeaturesRow
+		if err := rows.Scan(&i.ChannelID, &i.FeatureID, &i.Bit); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getChannelPolicyByChannelAndNode = `-- name: GetChannelPolicyByChannelAndNode :one
+SELECT id, channel_id, node_id, timelock, fee_ppm, base_fee_msat, min_htlc_msat, signature FROM channel_policies
+WHERE channel_id = $1 AND node_id = $2
+`
+
+type GetChannelPolicyByChannelAndNodeParams struct {
+	ChannelID int64
+	NodeID    int64
+}
+
+func (q *Queries) GetChannelPolicyByChannelAndNode(ctx context.Context, arg GetChannelPolicyByChannelAndNodeParams) (ChannelPolicy, error) {
+	row := q.db.QueryRowContext(ctx, getChannelPolicyByChannelAndNode, arg.ChannelID, arg.NodeID)
+	var i ChannelPolicy
+	err := row.Scan(
+		&i.ID,
+		&i.ChannelID,
+		&i.NodeID,
+		&i.Timelock,
+		&i.FeePpm,
+		&i.BaseFeeMsat,
+		&i.MinHtlcMsat,
+		&i.Signature,
+	)
+	return i, err
+}
+
+const getChannelPolicyExtraTypes = `-- name: GetChannelPolicyExtraTypes :many
+/* ─────────────────────────────────────────────
+   channel_policy_extra_types table queries
+   ─────────────────────────────────────────────
+*/
+
+SELECT channel_policy_id, type, value FROM channel_policy_extra_types WHERE channel_policy_id = $1
+`
+
+func (q *Queries) GetChannelPolicyExtraTypes(ctx context.Context, channelPolicyID int64) ([]ChannelPolicyExtraType, error) {
+	rows, err := q.db.QueryContext(ctx, getChannelPolicyExtraTypes, channelPolicyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ChannelPolicyExtraType
+	for rows.Next() {
+		var i ChannelPolicyExtraType
+		if err := rows.Scan(&i.ChannelPolicyID, &i.Type, &i.Value); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getChannelPolicyV1Data = `-- name: GetChannelPolicyV1Data :one
+SELECT channel_policy_id, last_update, disabled, max_htlc_msat FROM channel_policy_v1_data WHERE channel_policy_id = $1
+`
+
+func (q *Queries) GetChannelPolicyV1Data(ctx context.Context, channelPolicyID int64) (ChannelPolicyV1Datum, error) {
+	row := q.db.QueryRowContext(ctx, getChannelPolicyV1Data, channelPolicyID)
+	var i ChannelPolicyV1Datum
+	err := row.Scan(
+		&i.ChannelPolicyID,
+		&i.LastUpdate,
+		&i.Disabled,
+		&i.MaxHtlcMsat,
+	)
+	return i, err
+}
+
+const getChannelsV1Data = `-- name: GetChannelsV1Data :one
+SELECT channel_id, bitcoin_key_1, bitcoin_key_2 FROM channels_v1_data WHERE channel_id = $1
+`
+
+func (q *Queries) GetChannelsV1Data(ctx context.Context, channelID int64) (ChannelsV1Datum, error) {
+	row := q.db.QueryRowContext(ctx, getChannelsV1Data, channelID)
+	var i ChannelsV1Datum
+	err := row.Scan(&i.ChannelID, &i.BitcoinKey1, &i.BitcoinKey2)
 	return i, err
 }
 
@@ -493,6 +722,72 @@ func (q *Queries) GetSourceNodesByVersion(ctx context.Context, version int16) ([
 	return items, nil
 }
 
+const getV1ChannelPolicyByChannelAndNode = `-- name: GetV1ChannelPolicyByChannelAndNode :one
+SELECT
+    cp.id, cp.channel_id, cp.node_id, cp.timelock, cp.fee_ppm, cp.base_fee_msat, cp.min_htlc_msat, cp.signature,
+    v1.channel_policy_id, v1.last_update, v1.disabled, v1.max_htlc_msat
+FROM channel_policies cp
+JOIN channel_policy_v1_data v1 ON cp.id = v1.channel_policy_id
+WHERE channel_id = $1 AND node_id = $2
+`
+
+type GetV1ChannelPolicyByChannelAndNodeParams struct {
+	ChannelID int64
+	NodeID    int64
+}
+
+type GetV1ChannelPolicyByChannelAndNodeRow struct {
+	ID              int64
+	ChannelID       int64
+	NodeID          int64
+	Timelock        int32
+	FeePpm          int64
+	BaseFeeMsat     int64
+	MinHtlcMsat     int64
+	Signature       []byte
+	ChannelPolicyID int64
+	LastUpdate      int64
+	Disabled        bool
+	MaxHtlcMsat     sql.NullInt64
+}
+
+func (q *Queries) GetV1ChannelPolicyByChannelAndNode(ctx context.Context, arg GetV1ChannelPolicyByChannelAndNodeParams) (GetV1ChannelPolicyByChannelAndNodeRow, error) {
+	row := q.db.QueryRowContext(ctx, getV1ChannelPolicyByChannelAndNode, arg.ChannelID, arg.NodeID)
+	var i GetV1ChannelPolicyByChannelAndNodeRow
+	err := row.Scan(
+		&i.ID,
+		&i.ChannelID,
+		&i.NodeID,
+		&i.Timelock,
+		&i.FeePpm,
+		&i.BaseFeeMsat,
+		&i.MinHtlcMsat,
+		&i.Signature,
+		&i.ChannelPolicyID,
+		&i.LastUpdate,
+		&i.Disabled,
+		&i.MaxHtlcMsat,
+	)
+	return i, err
+}
+
+const getV1ChannelProof = `-- name: GetV1ChannelProof :one
+SELECT channel_id, node_1_signature, node_2_signature, bitcoin_1_signature, bitcoin_2_signature FROM v1_channel_proofs WHERE channel_id = $1
+`
+
+func (q *Queries) GetV1ChannelProof(ctx context.Context, channelID int64) (V1ChannelProof, error) {
+	row := q.db.QueryRowContext(ctx, getV1ChannelProof, channelID)
+	var i V1ChannelProof
+	err := row.Scan(
+		&i.ChannelID,
+		&i.Node1Signature,
+		&i.Node2Signature,
+		&i.Bitcoin1Signature,
+		&i.Bitcoin2Signature,
+	)
+	return i, err
+}
+
 const getV1NodeData = `-- name: GetV1NodeData :one
 SELECT node_id, last_update, color
 FROM nodes_v1_data
@@ -582,6 +877,104 @@ type InsertNodeFeatureParams struct {
 
 func (q *Queries) InsertNodeFeature(ctx context.Context, arg InsertNodeFeatureParams) error {
 	_, err := q.db.ExecContext(ctx, insertNodeFeature, arg.NodeID, arg.FeatureID)
+	return err
+}
+
+const listChannelsByNodeIDAndVersion = `-- name: ListChannelsByNodeIDAndVersion :many
+SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity FROM channels
+WHERE version = $1
+  AND (node_id_1 = $2 OR node_id_2 = $2)
+`
+
+type ListChannelsByNodeIDAndVersionParams struct {
+	Version int16
+	NodeID1 int64
+}
+
+func (q *Queries) ListChannelsByNodeIDAndVersion(ctx context.Context, arg ListChannelsByNodeIDAndVersionParams) ([]Channel, error) {
+	rows, err := q.db.QueryContext(ctx, listChannelsByNodeIDAndVersion, arg.Version, arg.NodeID1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Channel
+	for rows.Next() {
+		var i Channel
+		if err := rows.Scan(
+			&i.ID,
+			&i.Version,
+			&i.Scid,
+			&i.NodeID1,
+			&i.NodeID2,
+			&i.Outpoint,
+			&i.Capacity,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateChannelPolicy = `-- name: UpdateChannelPolicy :exec
+UPDATE channel_policies
+SET timelock = $2,
+    fee_ppm = $3,
+    base_fee_msat = $4,
+    min_htlc_msat = $5,
+    signature = $6
+WHERE id = $1
+`
+
+type UpdateChannelPolicyParams struct {
+	ID          int64
+	Timelock    int32
+	FeePpm      int64
+	BaseFeeMsat int64
+	MinHtlcMsat int64
+	Signature   []byte
+}
+
+func (q *Queries) UpdateChannelPolicy(ctx context.Context, arg UpdateChannelPolicyParams) error {
+	_, err := q.db.ExecContext(ctx, updateChannelPolicy,
+		arg.ID,
+		arg.Timelock,
+		arg.FeePpm,
+		arg.BaseFeeMsat,
+		arg.MinHtlcMsat,
+		arg.Signature,
+	)
+	return err
+}
+
+const updateChannelPolicyV1Data = `-- name: UpdateChannelPolicyV1Data :exec
+UPDATE channel_policy_v1_data
+SET last_update = $2,
+    disabled = $3,
+    max_htlc_msat = $4
+WHERE channel_policy_id = $1
+`
+
+type UpdateChannelPolicyV1DataParams struct {
+	ChannelPolicyID int64
+	LastUpdate      int64
+	Disabled        bool
+	MaxHtlcMsat     sql.NullInt64
+}
+
+func (q *Queries) UpdateChannelPolicyV1Data(ctx context.Context, arg UpdateChannelPolicyV1DataParams) error {
+	_, err := q.db.ExecContext(ctx, updateChannelPolicyV1Data,
+		arg.ChannelPolicyID,
+		arg.LastUpdate,
+		arg.Disabled,
+		arg.MaxHtlcMsat,
+	)
 	return err
 }
 

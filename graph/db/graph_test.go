@@ -1102,7 +1102,7 @@ func TestAddEdgeProof(t *testing.T) {
 func TestForEachSourceNodeChannel(t *testing.T) {
 	t.Parallel()
 
-	graph := MakeTestGraph(t)
+	graph := MakeTestGraphNew(t)
 
 	// Create a source node (A) and set it as such in the DB.
 	nodeA := createTestVertex(t)
@@ -3953,7 +3953,7 @@ func TestBatchedAddChannelEdge(t *testing.T) {
 func TestBatchedUpdateEdgePolicy(t *testing.T) {
 	t.Parallel()
 
-	graph := MakeTestGraph(t)
+	graph := MakeTestGraphNew(t)
 
 	// We'd like to test the update of edges inserted into the database, so
 	// we create two vertexes to connect.

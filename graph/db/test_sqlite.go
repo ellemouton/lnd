@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/sqldb"
 	"github.com/stretchr/testify/require"
@@ -29,5 +30,8 @@ func NewTestDB(t testing.TB) *SQLStore {
 		},
 	)
 
-	return NewSQLStore(executor, graphStore)
+	return NewSQLStore(
+		&SQLStoreConfig{ChainHash: *chaincfg.MainNetParams.GenesisHash},
+		executor, graphStore,
+	)
 }
