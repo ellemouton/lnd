@@ -264,6 +264,12 @@ WHERE v1.disabled = true
 GROUP BY c.scid
 HAVING COUNT(*) > 1;
 
+-- name: GetChannelsBySCIDRange :many
+SELECT *
+FROM channels
+WHERE scid >= sqlc.arg(start_scid)
+  AND scid < sqlc.arg(end_scid);
+
 -- name: DeleteChannel :exec
 DELETE FROM channels WHERE id = $1;
 

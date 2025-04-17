@@ -46,6 +46,7 @@ type Querier interface {
 	GetChannelPolicyByChannelAndNode(ctx context.Context, arg GetChannelPolicyByChannelAndNodeParams) (ChannelPolicy, error)
 	GetChannelPolicyExtraTypes(ctx context.Context, channelPolicyID int64) ([]ChannelPolicyExtraType, error)
 	GetChannelPolicyV1Data(ctx context.Context, channelPolicyID int64) (ChannelPolicyV1Datum, error)
+	GetChannelsBySCIDRange(ctx context.Context, arg GetChannelsBySCIDRangeParams) ([]Channel, error)
 	GetChannelsV1Data(ctx context.Context, channelID int64) (ChannelsV1Datum, error)
 	GetDatabaseVersion(ctx context.Context) (int32, error)
 	GetExtraChannelTypes(ctx context.Context, channelID int64) ([]ChannelExtraType, error)

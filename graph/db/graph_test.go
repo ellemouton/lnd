@@ -457,7 +457,7 @@ func createEdge(height, txIndex uint32, txPosition uint16, outPointIndex uint32,
 func TestDisconnectBlockAtHeight(t *testing.T) {
 	t.Parallel()
 
-	graph, err := MakeTestGraph(t)
+	graph, err := MakeTestGraphNew(t)
 	require.NoError(t, err, "unable to make test database")
 
 	sourceNode := createTestVertex(t)
@@ -2297,7 +2297,7 @@ func TestFilterKnownChanIDs(t *testing.T) {
 func TestStressTestChannelGraphAPI(t *testing.T) {
 	t.Parallel()
 
-	graph, err := MakeTestGraph(t)
+	graph, err := MakeTestGraphNew(t)
 	require.NoError(t, err)
 
 	node1 := createTestVertex(t)
