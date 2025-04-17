@@ -1046,16 +1046,10 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		)
 	}
 
-	dbs.GraphDB, err = graphdb.NewChannelGraph(&graphdb.Config{
-		KVDB:        databaseBackends.GraphDB,
-		KVStoreOpts: graphDBOptions,
-	}, chanGraphOpts...)
+	kvGraphStore, err := graphdb.NewKVStore(
+		databaseBackends.GraphDB, graphDBOptions...,
+	)
 	if err != nil {
-		cleanUp()
-
-		err = fmt.Errorf("unable to open graph DB: %w", err)
-		d.logger.Error(err)
-
 		return nil, nil, err
 	}
 
@@ -1092,6 +1086,8 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		return nil, nil, err
 	}
 
+	var graphStore graphdb.V1Store
+
 	// Instantiate a native SQL store if the flag is set.
 	if d.cfg.DB.UseNativeSQL {
 		migrations := sqldb.GetMigrations()
@@ -1104,7 +1100,7 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		// migration's version (7), it will be skipped permanently,
 		// regardless of the flag.
 		if !d.cfg.DB.SkipNativeSQLMigration {
-			migrationFn := func(tx *sqlc.Queries) error {
+			invoiceMigFn := func(tx *sqlc.Queries) error {
 				err := invoices.MigrateInvoicesToSQL(
 					ctx, dbs.ChanStateDB.Backend,
 					dbs.ChanStateDB, tx,
@@ -1126,11 +1122,21 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 			// Make sure we attach the custom migration function to
 			// the correct migration version.
 			for i := 0; i < len(migrations); i++ {
-				if migrations[i].Version != invoiceMigration {
+				version := migrations[i].Version
+				if version == invoiceMigration {
+					migrations[i].MigrationFn = invoiceMigFn
+
 					continue
 				}
 
-				migrations[i].MigrationFn = migrationFn
+				migFn, ok := getSQLMigration(
+					ctx, version, kvGraphStore,
+				)
+				if !ok {
+					continue
+				}
+
+				migrations[i].MigrationFn = migFn
 			}
 		}
 
@@ -1150,17 +1156,19 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		// the base DB and transaction executor for the native SQL
 		// invoice store.
 		baseDB := dbs.NativeSQLStore.GetBaseDB()
-		executor := sqldb.NewTransactionExecutor(
+		invoiceExecutor := sqldb.NewTransactionExecutor(
 			baseDB, func(tx *sql.Tx) invoices.SQLInvoiceQueries {
 				return baseDB.WithTx(tx)
 			},
 		)
 
 		sqlInvoiceDB := invoices.NewSQLStore(
-			executor, clock.NewDefaultClock(),
+			invoiceExecutor, clock.NewDefaultClock(),
 		)
 
 		dbs.InvoiceDB = sqlInvoiceDB
+
+		graphStore = d.getGraphStore(baseDB, kvGraphStore)
 	} else {
 		// Check if the invoice bucket tombstone is set. If it is, we
 		// need to return and ask the user switch back to using the
@@ -1182,6 +1190,18 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		}
 
 		dbs.InvoiceDB = dbs.ChanStateDB
+
+		graphStore = kvGraphStore
+	}
+
+	dbs.GraphDB, err = graphdb.NewChannelGraph(graphStore, chanGraphOpts...)
+	if err != nil {
+		cleanUp()
+
+		err = fmt.Errorf("unable to open channel graph: %w", err)
+		d.logger.Error(err)
+
+		return nil, nil, err
 	}
 
 	// Wrap the watchtower client DB and make sure we clean up.

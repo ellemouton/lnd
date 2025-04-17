@@ -11,7 +11,6 @@ import (
 	"net"
 	"sort"
 	"sync"
-	"testing"
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -26,7 +25,6 @@ import (
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
-	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -195,6 +193,10 @@ type KVStore struct {
 	chanScheduler batch.Scheduler
 	nodeScheduler batch.Scheduler
 }
+
+// A compile-time assertion to ensure that the KVStore struct implements the
+// V1Store interface.
+var _ V1Store = (*KVStore)(nil)
 
 // NewKVStore allocates a new KVStore backed by a DB instance. The
 // returned instance has its own unique reject cache and channel cache.
@@ -848,16 +850,17 @@ func (c *KVStore) SetSourceNode(node *models.LightningNode) error {
 //
 // TODO(roasbeef): also need sig of announcement.
 func (c *KVStore) AddLightningNode(node *models.LightningNode,
-	op ...batch.SchedulerOption) error {
+	options ...batch.SchedulerOption) error {
+
+	opts := batch.NewDefaultSchedulerOpts()
+	for _, o := range options {
+		o(opts)
+	}
 
 	r := &batch.Request{
 		Update: func(tx kvdb.RwTx) error {
 			return addLightningNode(tx, node)
 		},
-	}
-
-	for _, f := range op {
-		f(r)
 	}
 
 	return c.nodeScheduler.Execute(r)
@@ -986,10 +989,16 @@ func (c *KVStore) deleteLightningNode(nodes kvdb.RwBucket,
 // supports. The chanPoint and chanID are used to uniquely identify the edge
 // globally within the database.
 func (c *KVStore) AddChannelEdge(edge *models.ChannelEdgeInfo,
-	op ...batch.SchedulerOption) error {
+	options ...batch.SchedulerOption) error {
+
+	opts := batch.NewDefaultSchedulerOpts()
+	for _, o := range options {
+		o(opts)
+	}
 
 	var alreadyExists bool
 	r := &batch.Request{
+		Opts: opts,
 		Reset: func() {
 			alreadyExists = false
 		},
@@ -1017,14 +1026,6 @@ func (c *KVStore) AddChannelEdge(edge *models.ChannelEdgeInfo,
 				return nil
 			}
 		},
-	}
-
-	for _, f := range op {
-		if f == nil {
-			return fmt.Errorf("nil scheduler option was used")
-		}
-
-		f(r)
 	}
 
 	return c.chanScheduler.Execute(r)
@@ -2696,7 +2697,7 @@ func makeZombiePubkeys(info *models.ChannelEdgeInfo,
 // determined by the lexicographical ordering of the identity public keys of the
 // nodes on either side of the channel.
 func (c *KVStore) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
-	op ...batch.SchedulerOption) (route.Vertex, route.Vertex, error) {
+	options ...batch.SchedulerOption) (route.Vertex, route.Vertex, error) {
 
 	var (
 		isUpdate1    bool
@@ -2704,7 +2705,13 @@ func (c *KVStore) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 		from, to     route.Vertex
 	)
 
+	opts := batch.NewDefaultSchedulerOpts()
+	for _, o := range options {
+		o(opts)
+	}
+
 	r := &batch.Request{
+		Opts: opts,
 		Reset: func() {
 			isUpdate1 = false
 			edgeNotFound = false
@@ -2736,10 +2743,6 @@ func (c *KVStore) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 				return nil
 			}
 		},
-	}
-
-	for _, f := range op {
-		f(r)
 	}
 
 	err := c.chanScheduler.Execute(r)
@@ -4716,40 +4719,67 @@ func (c *chanGraphNodeTx) ForEachChannel(f func(*models.ChannelEdgeInfo,
 	)
 }
 
-// MakeTestGraph creates a new instance of the KVStore for testing
-// purposes.
-func MakeTestGraph(t testing.TB, modifiers ...KVStoreOptionModifier) (
-	*ChannelGraph, error) {
+func (c *KVStore) forEachPruneLogEntry(cb func(height uint32,
+	hash *chainhash.Hash) error) error {
 
-	opts := DefaultOptions()
-	for _, modifier := range modifiers {
-		modifier(opts)
-	}
+	return kvdb.View(c.db, func(tx kvdb.RTx) error {
+		metaBucket := tx.ReadBucket(graphMetaBucket)
+		if metaBucket == nil {
+			return ErrGraphNotFound
+		}
 
-	// Next, create KVStore for the first time.
-	backend, backendCleanup, err := kvdb.GetTestBackend(t.TempDir(), "cgr")
-	if err != nil {
-		backendCleanup()
+		pruneBucket := metaBucket.NestedReadBucket(pruneLogBucket)
+		if pruneBucket == nil {
+			// Graph never been pruned. No entries to iterate over.
+			return nil
+		}
 
-		return nil, err
-	}
+		return pruneBucket.ForEach(func(k, v []byte) error {
+			blockHeight := byteOrder.Uint32(k)
+			var blockHash chainhash.Hash
+			copy(blockHash[:], v)
 
-	graph, err := NewChannelGraph(&Config{
-		KVDB:        backend,
-		KVStoreOpts: modifiers,
-	})
-	if err != nil {
-		backendCleanup()
+			return cb(blockHeight, &blockHash)
+		})
+	}, func() {})
+}
 
-		return nil, err
-	}
-	require.NoError(t, graph.Start())
+func (c *KVStore) forEachZombieEntry(cb func(chanID uint64, pubKey1,
+	pubKey2 [33]byte) error) error {
 
-	t.Cleanup(func() {
-		_ = backend.Close()
-		backendCleanup()
-		require.NoError(t, graph.Stop())
-	})
+	return kvdb.View(c.db, func(tx kvdb.RTx) error {
+		edges := tx.ReadBucket(edgeBucket)
+		if edges == nil {
+			return ErrGraphNoEdgesFound
+		}
+		zombieIndex := edges.NestedReadBucket(zombieBucket)
+		if zombieIndex == nil {
+			return nil
+		}
 
-	return graph, nil
+		return zombieIndex.ForEach(func(k, v []byte) error {
+			var pubKey1, pubKey2 [33]byte
+			copy(pubKey1[:], v[:33])
+			copy(pubKey2[:], v[33:])
+
+			return cb(byteOrder.Uint64(k), pubKey1, pubKey2)
+		})
+	}, func() {})
+}
+
+func (c *KVStore) forEachClosedSCID(
+	cb func(lnwire.ShortChannelID) error) error {
+
+	return kvdb.View(c.db, func(tx kvdb.RTx) error {
+		closedScids := tx.ReadBucket(closedScidBucket)
+		if closedScids == nil {
+			return nil
+		}
+
+		return closedScids.ForEach(func(k, _ []byte) error {
+			return cb(lnwire.NewShortChanIDFromInt(
+				byteOrder.Uint64(k),
+			))
+		})
+	}, func() {})
 }
