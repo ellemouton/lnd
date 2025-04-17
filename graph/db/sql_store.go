@@ -179,10 +179,6 @@ type SQLStore struct {
 	cfg *SQLStoreConfig
 
 	db BatchedSQLQueries
-
-	// Temporary fall-back to the KVStore so that we can implement the
-	// interface incrementally.
-	*KVStore
 }
 
 // A compile-time assertion to ensure that SQLStore implements the V1Store
@@ -191,13 +187,10 @@ var _ V1Store = (*SQLStore)(nil)
 
 // NewSQLStore creates a new SQLStore instance given an open BatchedSQLQueries
 // storage backend.
-func NewSQLStore(cfg *SQLStoreConfig, db BatchedSQLQueries,
-	kvStore *KVStore) *SQLStore {
-
+func NewSQLStore(cfg *SQLStoreConfig, db BatchedSQLQueries) *SQLStore {
 	return &SQLStore{
-		cfg:     cfg,
-		db:      db,
-		KVStore: kvStore,
+		cfg: cfg,
+		db:  db,
 	}
 }
 
@@ -248,6 +241,44 @@ func (s *SQLStore) AddLightningNode(node *models.LightningNode,
 	return nil
 }
 
+func (s *SQLStore) FetchNodeFeatures(nodePub route.Vertex) (
+	*lnwire.FeatureVector, error) {
+
+	ctx := context.TODO()
+
+	var (
+		readTx   = NewReadTx()
+		features *lnwire.FeatureVector
+	)
+
+	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+		id, err := db.GetNodeIDByPubKeyAndVersion(
+			ctx, sqlc.GetNodeIDByPubKeyAndVersionParams{
+				PubKey:  nodePub[:],
+				Version: int16(ProtocolV1),
+			},
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrGraphNodeNotFound
+		} else if err != nil {
+			return fmt.Errorf("unable to fetch node: %w", err)
+		}
+
+		features, err = getNodeFeatures(ctx, db, id)
+		if err != nil {
+			return fmt.Errorf("unable to fetch node features: %w",
+				err)
+		}
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch node: %w", err)
+	}
+
+	return features, nil
+}
+
 // FetchLightningNode attempts to look up a target node by its identity public
 // key. If the node isn't found in the database, then ErrGraphNodeNotFound is
 // returned.
@@ -273,6 +304,119 @@ func (s *SQLStore) FetchLightningNode(pubKey route.Vertex) (
 	}
 
 	return node, nil
+}
+
+// AddEdgeProof sets the proof of an existing edge in the graph database.
+//
+// NOTE: part of the V1Store interface.
+func (s *SQLStore) AddEdgeProof(scid lnwire.ShortChannelID,
+	proof *models.ChannelAuthProof) error {
+
+	var (
+		ctx       = context.TODO()
+		writeTx   TxOptions
+		scidBytes [8]byte
+	)
+	byteOrder.PutUint64(scidBytes[:], scid.ToUint64())
+
+	err := s.db.ExecTx(ctx, &writeTx, func(db SQLQueries) error {
+		dbChan, err := db.GetChannelBySCIDAndVersion(
+			ctx, sqlc.GetChannelBySCIDAndVersionParams{
+				Scid:    scidBytes[:],
+				Version: int16(ProtocolV1),
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("unable to fetch channel: %w", err)
+		}
+
+		return db.CreateV1ChannelProof(
+			ctx, sqlc.CreateV1ChannelProofParams{
+				ChannelID:         dbChan.ID,
+				Node1Signature:    proof.NodeSig1Bytes,
+				Node2Signature:    proof.NodeSig2Bytes,
+				Bitcoin1Signature: proof.BitcoinSig1Bytes,
+				Bitcoin2Signature: proof.BitcoinSig2Bytes,
+			},
+		)
+	}, func() {})
+	if err != nil {
+		return fmt.Errorf("unable to add edge proof: %w", err)
+	}
+
+	return nil
+}
+
+// GraphSession will provide the call-back with access to a NodeTraverser
+// instance which can be used to perform queries against the channel graph.
+//
+// NOTE: part of the V1Store interface.
+func (s *SQLStore) GraphSession(cb func(graph NodeTraverser) error) error {
+	var (
+		ctx    = context.TODO()
+		readTx = NewReadTx()
+	)
+
+	return s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+		return cb(newSQLNodeTraverser(db, s.cfg.ChainHash))
+	}, func() {})
+}
+
+// sqlNodeTraverser implements the NodeTraverser interface but with a backing
+// read only transaction for a consistent view of the graph.
+type sqlNodeTraverser struct {
+	db    SQLQueries
+	chain chainhash.Hash
+}
+
+// A compile-time assertion to ensure that sqlNodeTraverser implements the
+// NodeTraverser interface.
+var _ NodeTraverser = (*sqlNodeTraverser)(nil)
+
+// newSQLNodeTraverser creates a new instance of the sqlNodeTraverser.
+func newSQLNodeTraverser(db SQLQueries,
+	chain chainhash.Hash) *sqlNodeTraverser {
+
+	return &sqlNodeTraverser{
+		db:    db,
+		chain: chain,
+	}
+}
+
+// ForEachNodeDirectedChannel calls the callback for every channel of the given
+// node.
+//
+// NOTE: Part of the NodeTraverser interface.
+func (s *sqlNodeTraverser) ForEachNodeDirectedChannel(nodePub route.Vertex,
+	cb func(channel *DirectedChannel) error) error {
+
+	ctx := context.TODO()
+
+	return forEachNodeDirectedChannel(ctx, s.db, s.chain, nodePub, cb)
+}
+
+// FetchNodeFeatures returns the features of the given node. If the node is
+// unknown, assume no additional features are supported.
+//
+// NOTE: Part of the NodeTraverser interface.
+func (s *sqlNodeTraverser) FetchNodeFeatures(nodePub route.Vertex) (
+	*lnwire.FeatureVector, error) {
+
+	ctx := context.TODO()
+
+	id, err := s.db.GetNodeIDByPubKeyAndVersion(
+		ctx, sqlc.GetNodeIDByPubKeyAndVersionParams{
+			PubKey:  nodePub[:],
+			Version: int16(ProtocolV1),
+		},
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return lnwire.EmptyFeatureVector(), nil
+	} else if err != nil {
+		return nil, fmt.Errorf("unable to fetch node: %w", err)
+	}
+
+	return getNodeFeatures(ctx, s.db, id)
 }
 
 // HasLightningNode determines if the graph has a vertex identified by the
@@ -434,9 +578,6 @@ func (s *SQLStore) AddChannelEdge(edge *models.ChannelEdgeInfo,
 	if err != nil {
 		return err
 	}
-
-	s.rejectCache.remove(edge.ChannelID)
-	s.chanCache.remove(edge.ChannelID)
 
 	return nil
 }
