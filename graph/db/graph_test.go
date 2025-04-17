@@ -1528,7 +1528,7 @@ func assertChanViewEqualChanPoints(t *testing.T, a []EdgePoint,
 func TestGraphPruning(t *testing.T) {
 	t.Parallel()
 
-	graph, err := MakeTestGraph(t)
+	graph, err := MakeTestGraphNew(t)
 	require.NoError(t, err, "unable to make test database")
 
 	sourceNode := createTestVertex(t)
@@ -3870,7 +3870,7 @@ func TestComputeFee(t *testing.T) {
 func TestBatchedAddChannelEdge(t *testing.T) {
 	t.Parallel()
 
-	graph, err := MakeTestGraph(t)
+	graph, err := MakeTestGraphNew(t)
 	require.Nil(t, err)
 
 	sourceNode := createTestVertex(t)
