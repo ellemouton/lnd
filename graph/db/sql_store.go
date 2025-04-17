@@ -146,6 +146,12 @@ type SQLQueries interface {
 	UpsertPruneLogEntry(ctx context.Context, arg sqlc.UpsertPruneLogEntryParams) error
 	DeletePruneLogEntriesInRange(ctx context.Context, arg sqlc.DeletePruneLogEntriesInRangeParams) error
 	DeletePruneLogEntry(ctx context.Context, blockHeight int64) error
+
+	/*
+		Closed SCID queries.
+	*/
+	InsertClosedChannel(ctx context.Context, scid []byte) error
+	IsClosedChannel(ctx context.Context, scid []byte) (bool, error)
 }
 
 // BatchedSQLQueries is a version of SQLQueries that's capable of batched
@@ -2150,6 +2156,44 @@ func (s *SQLStore) DisabledChannelIDs() ([]uint64, error) {
 	}
 
 	return chanIDs, nil
+}
+
+func (s *SQLStore) PutClosedScid(scid lnwire.ShortChannelID) error {
+	ctx := context.TODO()
+
+	var writeTx TxOptions
+	return s.db.ExecTx(ctx, &writeTx, func(db SQLQueries) error {
+		var chanIDB [8]byte
+		byteOrder.PutUint64(chanIDB[:], scid.ToUint64())
+
+		return db.InsertClosedChannel(ctx, chanIDB[:])
+	}, func() {})
+}
+
+func (s *SQLStore) IsClosedScid(scid lnwire.ShortChannelID) (bool, error) {
+	var (
+		ctx      = context.TODO()
+		readTx   = NewReadTx()
+		isClosed bool
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+		var chanIDB [8]byte
+		byteOrder.PutUint64(chanIDB[:], scid.ToUint64())
+		var err error
+		isClosed, err = db.IsClosedChannel(ctx, chanIDB[:])
+		if err != nil {
+			return fmt.Errorf("unable to fetch closed channel: %w",
+				err)
+		}
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return false, fmt.Errorf("unable to fetch closed channel: %w",
+			err)
+	}
+
+	return isClosed, nil
 }
 
 // getSourceNodes returns a map of all source nodes in the database.
