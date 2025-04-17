@@ -591,6 +591,49 @@ func (q *Queries) GetChannelPolicyV1Data(ctx context.Context, channelPolicyID in
 	return i, err
 }
 
+const getChannelsBySCIDRange = `-- name: GetChannelsBySCIDRange :many
+SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity
+FROM channels
+WHERE scid >= $1
+  AND scid < $2
+`
+
+type GetChannelsBySCIDRangeParams struct {
+	StartScid []byte
+	EndScid   []byte
+}
+
+func (q *Queries) GetChannelsBySCIDRange(ctx context.Context, arg GetChannelsBySCIDRangeParams) ([]Channel, error) {
+	rows, err := q.db.QueryContext(ctx, getChannelsBySCIDRange, arg.StartScid, arg.EndScid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Channel
+	for rows.Next() {
+		var i Channel
+		if err := rows.Scan(
+			&i.ID,
+			&i.Version,
+			&i.Scid,
+			&i.NodeID1,
+			&i.NodeID2,
+			&i.Outpoint,
+			&i.Capacity,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getChannelsV1Data = `-- name: GetChannelsV1Data :one
 SELECT channel_id, bitcoin_key_1, bitcoin_key_2 FROM channels_v1_data WHERE channel_id = $1
 `
