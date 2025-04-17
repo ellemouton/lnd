@@ -242,6 +242,10 @@ WHERE version = $1
 ORDER BY scid DESC
 LIMIT 1;
 
+-- name: GetChannelByOutpoint :one
+SELECT * FROM channels
+WHERE outpoint = $1;
+
 -- name: GetPublicV1ChannelsBySCID :many
 SELECT c.*
 FROM channels c

@@ -408,6 +408,26 @@ func (q *Queries) DeleteZombieChannel(ctx context.Context, arg DeleteZombieChann
 	return err
 }
 
+const getChannelByOutpoint = `-- name: GetChannelByOutpoint :one
+SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity FROM channels
+WHERE outpoint = $1
+`
+
+func (q *Queries) GetChannelByOutpoint(ctx context.Context, outpoint string) (Channel, error) {
+	row := q.db.QueryRowContext(ctx, getChannelByOutpoint, outpoint)
+	var i Channel
+	err := row.Scan(
+		&i.ID,
+		&i.Version,
+		&i.Scid,
+		&i.NodeID1,
+		&i.NodeID2,
+		&i.Outpoint,
+		&i.Capacity,
+	)
+	return i, err
+}
+
 const getChannelByOutpointAndVersion = `-- name: GetChannelByOutpointAndVersion :one
 SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity FROM channels
 WHERE outpoint = $1 AND version = $2
