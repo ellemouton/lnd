@@ -4173,7 +4173,7 @@ func TestGraphLoading(t *testing.T) {
 func TestClosedScid(t *testing.T) {
 	t.Parallel()
 
-	graph := MakeTestGraph(t)
+	graph := MakeTestGraphNew(t)
 
 	scid := lnwire.ShortChannelID{}
 

@@ -79,6 +79,10 @@ type ChannelsV1Datum struct {
 	BitcoinKey2 []byte
 }
 
+type ClosedScid struct {
+	Scid []byte
+}
+
 type Feature struct {
 	ID  int64
 	Bit int32
