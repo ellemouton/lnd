@@ -6192,6 +6192,9 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 	}
 
 	if blind && blindCfg != nil {
+		blindingRestrictions.IncomingChanList =
+			blindCfg.IncomingChannelList
+
 		if blindCfg.MinNumRealHops != nil {
 			blindingRestrictions.MinDistanceFromIntroNode =
 				uint8(*blindCfg.MinNumRealHops)
