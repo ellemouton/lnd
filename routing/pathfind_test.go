@@ -538,6 +538,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 
 	aliasMap := make(map[string]route.Vertex)
 	privKeyMap := make(map[string]*btcec.PrivateKey)
+	channelIDs := make(map[route.Vertex]map[route.Vertex]uint64)
 
 	nodeIndex := byte(0)
 	addNodeWithAlias := func(alias string, features *lnwire.FeatureVector) (
@@ -652,6 +653,16 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 			node1Vertex, node2Vertex = node2Vertex, node1Vertex
 		}
 
+		if _, ok := channelIDs[node1Vertex]; !ok {
+			channelIDs[node1Vertex] = map[route.Vertex]uint64{}
+		}
+		channelIDs[node1Vertex][node2Vertex] = channelID
+
+		if _, ok := channelIDs[node2Vertex]; !ok {
+			channelIDs[node2Vertex] = map[route.Vertex]uint64{}
+		}
+		channelIDs[node2Vertex][node1Vertex] = channelID
+
 		// We first insert the existence of the edge between the two
 		// nodes.
 		edgeInfo := models.ChannelEdgeInfo{
@@ -751,6 +762,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 		graphBackend: graphBackend,
 		aliasMap:     aliasMap,
 		privKeyMap:   privKeyMap,
+		channelIDs:   channelIDs,
 		links:        links,
 	}, nil
 }
@@ -3752,10 +3764,7 @@ func TestFindBlindedPaths(t *testing.T) {
 	// assertPaths checks that the set of selected paths contains all the
 	// expected paths.
 	assertPaths := func(paths [][]blindedHop, expectedPaths []string) {
-		require.Len(t, paths, len(expectedPaths))
-
 		actualPaths := make(map[string]bool)
-
 		for _, path := range paths {
 			var label string
 			for _, hop := range path {
@@ -3764,10 +3773,23 @@ func TestFindBlindedPaths(t *testing.T) {
 
 			actualPaths[strings.TrimRight(label, ",")] = true
 		}
+		require.Len(t, paths, len(expectedPaths), "expected %v got %v",
+			expectedPaths, actualPaths)
 
 		for _, path := range expectedPaths {
-			require.True(t, actualPaths[path])
+			require.True(t, actualPaths[path], "expected %s in %v",
+				path, actualPaths)
 		}
+	}
+
+	nodePairChannel := func(alias1, alias2 string) uint64 {
+		node1 := ctx.keyFromAlias(alias1)
+		node2 := ctx.keyFromAlias(alias2)
+
+		channel, ok := ctx.testGraphInstance.channelIDs[node1][node2]
+		require.True(t, ok)
+
+		return channel
 	}
 
 	// 1) Restrict the min & max path length such that we only include paths
@@ -3849,7 +3871,7 @@ func TestFindBlindedPaths(t *testing.T) {
 		"eve,bob,dave",
 	})
 
-	// 5) Finally, we will test the special case where the destination node
+	// 5) We will also test the special case where the destination node
 	// is also the recipient.
 	paths, err = ctx.findBlindedPaths(&blindedPathRestrictions{
 		minNumHops: 0,
@@ -3859,5 +3881,104 @@ func TestFindBlindedPaths(t *testing.T) {
 
 	assertPaths(paths, []string{
 		"dave",
+	})
+
+	// 6) Now, we will test some cases where the user manually specifies
+	// the first few incoming channels of a route.
+	//
+	// 6.1) Let the user specify the B-D channel as the last hop with a
+	// max of 1 hops.
+	paths, err = ctx.findBlindedPaths(&blindedPathRestrictions{
+		minNumHops: 1,
+		maxNumHops: 1,
+		incomingChanSet: []uint64{
+			nodePairChannel("dave", "bob"),
+		},
+	})
+	require.NoError(t, err)
+
+	// If the max number of hops is 1, then only the B->D path is chosen
+	assertPaths(paths, []string{
+		"bob,dave",
+	})
+
+	// 6.2) Let the user specify the B-D channel as the last hop with a
+	// max of 2 hops.
+	paths, err = ctx.findBlindedPaths(&blindedPathRestrictions{
+		minNumHops: 1,
+		maxNumHops: 2,
+		incomingChanSet: []uint64{
+			nodePairChannel("dave", "bob"),
+		},
+	})
+	require.NoError(t, err)
+
+	// If the max number of hops is 2, then the following is expected:
+	// 	- B, D
+	//	- F, B, D
+	// 	- E, B, D
+	assertPaths(paths, []string{
+		"bob,dave",
+		"frank,bob,dave",
+		"eve,bob,dave",
+	})
+
+	// 6.3) Users may specify channels to nodes that do not signal route
+	// blinding (like A). So if we specify the A-D channel, we should get
+	// valid paths.
+	paths, err = ctx.findBlindedPaths(&blindedPathRestrictions{
+		minNumHops: 1,
+		maxNumHops: 4,
+		incomingChanSet: []uint64{
+			nodePairChannel("dave", "alice"),
+		},
+	})
+	require.NoError(t, err)
+
+	// We expect the following paths:
+	// 	- A, D
+	// 	- F, A, D
+	// 	- B, F, A, D
+	// 	- E, B, F, A, D
+	assertPaths(paths, []string{
+		"alice,dave",
+		"frank,alice,dave",
+		"bob,frank,alice,dave",
+		"eve,bob,frank,alice,dave",
+	})
+
+	// 6.4) Assert that an error is returned if a user accidentally tries
+	// to force a circular path.
+	_, err = ctx.findBlindedPaths(&blindedPathRestrictions{
+		minNumHops: 1,
+		maxNumHops: 10,
+		incomingChanSet: []uint64{
+			nodePairChannel("dave", "alice"),
+			nodePairChannel("alice", "frank"),
+			nodePairChannel("frank", "bob"),
+			nodePairChannel("bob", "dave"),
+		},
+	})
+	require.ErrorContains(t, err, "circular route")
+
+	// 6.5) Test specifying a chain of incoming channels.
+	paths, err = ctx.findBlindedPaths(&blindedPathRestrictions{
+		minNumHops: 1,
+		maxNumHops: 4,
+		incomingChanSet: []uint64{
+			nodePairChannel("dave", "alice"),
+			nodePairChannel("alice", "frank"),
+		},
+	})
+	require.NoError(t, err)
+
+	// We expect the following paths:
+	// 	- F, A, D
+	// 	- B, F, A, D
+	// 	- E, B, F, A, D
+	assertPaths(paths, []string{
+		"frank,alice,dave",
+		"bob,frank,alice,dave",
+		"eve,bob,frank,alice,dave",
 	})
 }
