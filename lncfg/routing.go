@@ -34,6 +34,11 @@ func (r *Routing) Validate() error {
 			"number of hops expected to be included in each path")
 	}
 
+	if r.BlindedPaths.MaxNumPaths == 0 {
+		return fmt.Errorf("the maximum number of blinded paths must " +
+			"be greater than 0")
+	}
+
 	if r.BlindedPaths.PolicyIncreaseMultiplier < 1 {
 		return fmt.Errorf("the blinded route policy increase " +
 			"multiplier must be greater than or equal to 1")
