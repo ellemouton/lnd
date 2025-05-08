@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"context"
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -23,53 +24,53 @@ type ChannelGraphSource interface {
 	// AddNode is used to add information about a node to the router
 	// database. If the node with this pubkey is not present in an existing
 	// channel, it will be ignored.
-	AddNode(node *models.LightningNode,
+	AddNode(ctx context.Context, node *models.LightningNode,
 		op ...batch.SchedulerOption) error
 
 	// AddEdge is used to add edge/channel to the topology of the router,
 	// after all information about channel will be gathered this
 	// edge/channel might be used in construction of payment path.
-	AddEdge(edge *models.ChannelEdgeInfo,
+	AddEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 		op ...batch.SchedulerOption) error
 
 	// AddProof updates the channel edge info with proof which is needed to
 	// properly announce the edge to the rest of the network.
-	AddProof(chanID lnwire.ShortChannelID,
+	AddProof(ctx context.Context, chanID lnwire.ShortChannelID,
 		proof *models.ChannelAuthProof) error
 
 	// UpdateEdge is used to update edge information, without this message
 	// edge considered as not fully constructed.
-	UpdateEdge(policy *models.ChannelEdgePolicy,
+	UpdateEdge(ctx context.Context, policy *models.ChannelEdgePolicy,
 		op ...batch.SchedulerOption) error
 
 	// IsStaleNode returns true if the graph source has a node announcement
 	// for the target node with a more recent timestamp. This method will
 	// also return true if we don't have an active channel announcement for
 	// the target node.
-	IsStaleNode(node route.Vertex, timestamp time.Time) bool
+	IsStaleNode(ctx context.Context, node route.Vertex, timestamp time.Time) bool
 
 	// IsPublicNode determines whether the given vertex is seen as a public
 	// node in the graph from the graph's source node's point of view.
-	IsPublicNode(node route.Vertex) (bool, error)
+	IsPublicNode(ctx context.Context, node route.Vertex) (bool, error)
 
 	// IsKnownEdge returns true if the graph source already knows of the
 	// passed channel ID either as a live or zombie edge.
-	IsKnownEdge(chanID lnwire.ShortChannelID) bool
+	IsKnownEdge(ctx context.Context, chanID lnwire.ShortChannelID) bool
 
 	// IsStaleEdgePolicy returns true if the graph source has a channel
 	// edge for the passed channel ID (and flags) that have a more recent
 	// timestamp.
-	IsStaleEdgePolicy(chanID lnwire.ShortChannelID, timestamp time.Time,
+	IsStaleEdgePolicy(ctx context.Context, chanID lnwire.ShortChannelID, timestamp time.Time,
 		flags lnwire.ChanUpdateChanFlags) bool
 
 	// MarkEdgeLive clears an edge from our zombie index, deeming it as
 	// live.
-	MarkEdgeLive(chanID lnwire.ShortChannelID) error
+	MarkEdgeLive(ctx context.Context, chanID lnwire.ShortChannelID) error
 
 	// ForAllOutgoingChannels is used to iterate over all channels
 	// emanating from the "source" node which is the center of the
 	// star-graph.
-	ForAllOutgoingChannels(cb func(c *models.ChannelEdgeInfo,
+	ForAllOutgoingChannels(ctx context.Context, cb func(c *models.ChannelEdgeInfo,
 		e *models.ChannelEdgePolicy) error) error
 
 	// CurrentBlockHeight returns the block height from POV of the router
@@ -77,21 +78,21 @@ type ChannelGraphSource interface {
 	CurrentBlockHeight() (uint32, error)
 
 	// GetChannelByID return the channel by the channel id.
-	GetChannelByID(chanID lnwire.ShortChannelID) (
+	GetChannelByID(ctx context.Context, chanID lnwire.ShortChannelID) (
 		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy, error)
 
 	// FetchLightningNode attempts to look up a target node by its identity
 	// public key. channeldb.ErrGraphNodeNotFound is returned if the node
 	// doesn't exist within the graph.
-	FetchLightningNode(route.Vertex) (*models.LightningNode, error)
+	FetchLightningNode(context.Context, route.Vertex) (*models.LightningNode, error)
 
 	// MarkZombieEdge marks the channel with the given ID as a zombie edge.
-	MarkZombieEdge(chanID uint64) error
+	MarkZombieEdge(ctx context.Context, chanID uint64) error
 
 	// IsZombieEdge returns true if the edge with the given channel ID is
 	// currently marked as a zombie edge.
-	IsZombieEdge(chanID lnwire.ShortChannelID) (bool, error)
+	IsZombieEdge(ctx context.Context, chanID lnwire.ShortChannelID) (bool, error)
 }
 
 // DB is an interface describing a persisted Lightning Network graph.
@@ -102,7 +103,7 @@ type DB interface {
 	// has been used to prune channels in the graph. Knowing the "prune tip"
 	// allows callers to tell if the graph is currently in sync with the
 	// current best known UTXO state.
-	PruneTip() (*chainhash.Hash, uint32, error)
+	PruneTip(ctx context.Context) (*chainhash.Hash, uint32, error)
 
 	// PruneGraph prunes newly closed channels from the channel graph in
 	// response to a new block being solved on the network. Any transactions
@@ -112,32 +113,33 @@ type DB interface {
 	// ensure the graph is fully in sync with the current UTXO state. A
 	// slice of channels that have been closed by the target block are
 	// returned if the function succeeds without error.
-	PruneGraph(spentOutputs []*wire.OutPoint, blockHash *chainhash.Hash,
+	PruneGraph(ctx context.Context, spentOutputs []*wire.OutPoint,
+		blockHash *chainhash.Hash,
 		blockHeight uint32) ([]*models.ChannelEdgeInfo, error)
 
 	// ChannelView returns the verifiable edge information for each active
 	// channel within the known channel graph. The set of UTXO's (along with
 	// their scripts) returned are the ones that need to be watched on
 	// chain to detect channel closes on the resident blockchain.
-	ChannelView() ([]graphdb.EdgePoint, error)
+	ChannelView(ctx context.Context) ([]graphdb.EdgePoint, error)
 
 	// PruneGraphNodes is a garbage collection method which attempts to
 	// prune out any nodes from the channel graph that are currently
 	// unconnected. This ensure that we only maintain a graph of reachable
 	// nodes. In the event that a pruned node gains more channels, it will
 	// be re-added back to the graph.
-	PruneGraphNodes() error
+	PruneGraphNodes(ctx context.Context) error
 
 	// SourceNode returns the source node of the graph. The source node is
 	// treated as the center node within a star-graph. This method may be
 	// used to kick off a path finding algorithm in order to explore the
 	// reachability of another node based off the source node.
-	SourceNode() (*models.LightningNode, error)
+	SourceNode(ctx context.Context) (*models.LightningNode, error)
 
 	// DisabledChannelIDs returns the channel ids of disabled channels.
 	// A channel is disabled when two of the associated ChanelEdgePolicies
 	// have their disabled bit on.
-	DisabledChannelIDs() ([]uint64, error)
+	DisabledChannelIDs(ctx context.Context) ([]uint64, error)
 
 	// FetchChanInfos returns the set of channel edges that correspond to
 	// the passed channel ID's. If an edge is the query is unknown to the
@@ -145,12 +147,12 @@ type DB interface {
 	// edges that exist at the time of the query. This can be used to
 	// respond to peer queries that are seeking to fill in gaps in their
 	// view of the channel graph.
-	FetchChanInfos(chanIDs []uint64) ([]graphdb.ChannelEdge, error)
+	FetchChanInfos(ctx context.Context, chanIDs []uint64) ([]graphdb.ChannelEdge, error)
 
 	// ChanUpdatesInHorizon returns all the known channel edges which have
 	// at least one edge that has an update timestamp within the specified
 	// horizon.
-	ChanUpdatesInHorizon(startTime, endTime time.Time) (
+	ChanUpdatesInHorizon(ctx context.Context, startTime, endTime time.Time) (
 		[]graphdb.ChannelEdge, error)
 
 	// DeleteChannelEdges removes edges with the given channel IDs from the
@@ -162,7 +164,7 @@ type DB interface {
 	// failed to send the fresh update to be the one that resurrects the
 	// channel from its zombie state. The markZombie bool denotes whether
 	// to mark the channel as a zombie.
-	DeleteChannelEdges(strictZombiePruning, markZombie bool,
+	DeleteChannelEdges(ctx context.Context, strictZombiePruning, markZombie bool,
 		chanIDs ...uint64) error
 
 	// DisconnectBlockAtHeight is used to indicate that the block specified
@@ -172,8 +174,8 @@ type DB interface {
 	// set to the last prune height valid for the remaining chain.
 	// Channels that were removed from the graph resulting from the
 	// disconnected block are returned.
-	DisconnectBlockAtHeight(height uint32) ([]*models.ChannelEdgeInfo,
-		error)
+	DisconnectBlockAtHeight(ctx context.Context,
+		height uint32) ([]*models.ChannelEdgeInfo, error)
 
 	// HasChannelEdge returns true if the database knows of a channel edge
 	// with the passed channel ID, and false otherwise. If an edge with that
@@ -181,7 +183,8 @@ type DB interface {
 	// last time the edge was updated for both directed edges are returned
 	// along with the boolean. If it is not found, then the zombie index is
 	// checked and its result is returned as the second boolean.
-	HasChannelEdge(chanID uint64) (time.Time, time.Time, bool, bool, error)
+	HasChannelEdge(ctx context.Context, chanID uint64) (time.Time,
+		time.Time, bool, bool, error)
 
 	// FetchChannelEdgesByID attempts to lookup the two directed edges for
 	// the channel identified by the channel ID. If the channel can't be
@@ -194,7 +197,8 @@ type DB interface {
 	// zombie within the database. In this case, the ChannelEdgePolicy's
 	// will be nil, and the ChannelEdgeInfo will only include the public
 	// keys of each node.
-	FetchChannelEdgesByID(chanID uint64) (*models.ChannelEdgeInfo,
+	FetchChannelEdgesByID(ctx context.Context,
+		chanID uint64) (*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error)
 
 	// AddLightningNode adds a vertex/node to the graph database. If the
@@ -203,7 +207,7 @@ type DB interface {
 	// update that node's information. Note that this method is expected to
 	// only be called to update an already present node from a node
 	// announcement, or to insert a node found in a channel update.
-	AddLightningNode(node *models.LightningNode,
+	AddLightningNode(ctx context.Context, node *models.LightningNode,
 		op ...batch.SchedulerOption) error
 
 	// AddChannelEdge adds a new (undirected, blank) edge to the graph
@@ -213,13 +217,13 @@ type DB interface {
 	// and the set of features that the channel supports. The chanPoint and
 	// chanID are used to uniquely identify the edge globally within the
 	// database.
-	AddChannelEdge(edge *models.ChannelEdgeInfo,
+	AddChannelEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 		op ...batch.SchedulerOption) error
 
 	// MarkEdgeZombie attempts to mark a channel identified by its channel
 	// ID as a zombie. This method is used on an ad-hoc basis, when channels
 	// need to be marked as zombies outside the normal pruning cycle.
-	MarkEdgeZombie(chanID uint64, pubKey1, pubKey2 [33]byte) error
+	MarkEdgeZombie(ctx context.Context, chanID uint64, pubKey1, pubKey2 [33]byte) error
 
 	// UpdateEdgePolicy updates the edge routing policy for a single
 	// directed edge within the database for the referenced channel. The
@@ -229,7 +233,7 @@ type DB interface {
 	// node's information. The node ordering is determined by the
 	// lexicographical ordering of the identity public keys of the nodes on
 	// either side of the channel.
-	UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
+	UpdateEdgePolicy(ctx context.Context, edge *models.ChannelEdgePolicy,
 		op ...batch.SchedulerOption) error
 
 	// HasLightningNode determines if the graph has a vertex identified by
@@ -237,13 +241,13 @@ type DB interface {
 	// database, a timestamp of when the data for the node was lasted
 	// updated is returned along with a true boolean. Otherwise, an empty
 	// time.Time is returned with a false boolean.
-	HasLightningNode(nodePub [33]byte) (time.Time, bool, error)
+	HasLightningNode(ctx context.Context, nodePub [33]byte) (time.Time, bool, error)
 
 	// FetchLightningNode attempts to look up a target node by its identity
 	// public key. If the node isn't found in the database, then
 	// ErrGraphNodeNotFound is returned.
-	FetchLightningNode(nodePub route.Vertex) (*models.LightningNode,
-		error)
+	FetchLightningNode(ctx context.Context,
+		nodePub route.Vertex) (*models.LightningNode, error)
 
 	// ForEachNodeChannel iterates through all channels of the given node,
 	// executing the passed callback with an edge info structure and the
@@ -254,22 +258,22 @@ type DB interface {
 	// to the caller.
 	//
 	// Unknown policies are passed into the callback as nil values.
-	ForEachNodeChannel(nodePub route.Vertex, cb func(kvdb.RTx,
-		*models.ChannelEdgeInfo,
-		*models.ChannelEdgePolicy,
-		*models.ChannelEdgePolicy) error) error
+	ForEachNodeChannel(ctx context.Context, nodePub route.Vertex,
+		cb func(kvdb.RTx, *models.ChannelEdgeInfo,
+			*models.ChannelEdgePolicy,
+			*models.ChannelEdgePolicy) error) error
 
 	// AddEdgeProof sets the proof of an existing edge in the graph
 	// database.
-	AddEdgeProof(chanID lnwire.ShortChannelID,
+	AddEdgeProof(ctx context.Context, chanID lnwire.ShortChannelID,
 		proof *models.ChannelAuthProof) error
 
 	// IsPublicNode is a helper method that determines whether the node with
 	// the given public key is seen as a public node in the graph from the
 	// graph's source node's point of view.
-	IsPublicNode(pubKey [33]byte) (bool, error)
+	IsPublicNode(ctx context.Context, pubKey [33]byte) (bool, error)
 
 	// MarkEdgeLive clears an edge from our zombie index, deeming it as
 	// live.
-	MarkEdgeLive(chanID uint64) error
+	MarkEdgeLive(ctx context.Context, chanID uint64) error
 }

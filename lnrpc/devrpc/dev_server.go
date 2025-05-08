@@ -260,7 +260,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 			return nil, err
 		}
 
-		if err := graphDB.AddLightningNode(node); err != nil {
+		if err := graphDB.AddLightningNode(ctx, node); err != nil {
 			return nil, fmt.Errorf("unable to add node %v: %w",
 				rpcNode.PubKey, err)
 		}
@@ -293,7 +293,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 		}
 		edge.ChannelPoint = *channelPoint
 
-		if err := graphDB.AddChannelEdge(edge); err != nil {
+		if err := graphDB.AddChannelEdge(ctx, edge); err != nil {
 			return nil, fmt.Errorf("unable to add edge %v: %w",
 				rpcEdge.ChanPoint, err)
 		}
@@ -331,7 +331,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 		if rpcEdge.Node1Policy != nil {
 			policy := makePolicy(rpcEdge.Node1Policy)
 			policy.ChannelFlags = 0
-			if err := graphDB.UpdateEdgePolicy(policy); err != nil {
+			if err := graphDB.UpdateEdgePolicy(ctx, policy); err != nil {
 				return nil, fmt.Errorf(
 					"unable to update policy: %v", err)
 			}
@@ -340,7 +340,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 		if rpcEdge.Node2Policy != nil {
 			policy := makePolicy(rpcEdge.Node2Policy)
 			policy.ChannelFlags = 1
-			if err := graphDB.UpdateEdgePolicy(policy); err != nil {
+			if err := graphDB.UpdateEdgePolicy(ctx, policy); err != nil {
 				return nil, fmt.Errorf(
 					"unable to update policy: %v", err)
 			}
