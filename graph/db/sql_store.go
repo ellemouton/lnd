@@ -275,6 +275,47 @@ func (s *SQLStore) FetchLightningNode(pubKey route.Vertex) (
 	return node, nil
 }
 
+// AddEdgeProof sets the proof of an existing edge in the graph database.
+//
+// NOTE: part of the V1Store interface.
+func (s *SQLStore) AddEdgeProof(scid lnwire.ShortChannelID,
+	proof *models.ChannelAuthProof) error {
+
+	var (
+		ctx       = context.TODO()
+		writeTx   TxOptions
+		scidBytes [8]byte
+	)
+	byteOrder.PutUint64(scidBytes[:], scid.ToUint64())
+
+	err := s.db.ExecTx(ctx, &writeTx, func(db SQLQueries) error {
+		dbChan, err := db.GetChannelBySCIDAndVersion(
+			ctx, sqlc.GetChannelBySCIDAndVersionParams{
+				Scid:    scidBytes[:],
+				Version: int16(ProtocolV1),
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("unable to fetch channel: %w", err)
+		}
+
+		return db.CreateV1ChannelProof(
+			ctx, sqlc.CreateV1ChannelProofParams{
+				ChannelID:         dbChan.ID,
+				Node1Signature:    proof.NodeSig1Bytes,
+				Node2Signature:    proof.NodeSig2Bytes,
+				Bitcoin1Signature: proof.BitcoinSig1Bytes,
+				Bitcoin2Signature: proof.BitcoinSig2Bytes,
+			},
+		)
+	}, func() {})
+	if err != nil {
+		return fmt.Errorf("unable to add edge proof: %w", err)
+	}
+
+	return nil
+}
+
 // HasLightningNode determines if the graph has a vertex identified by the
 // target node identity public key. If the node exists in the database, a
 // timestamp of when the data for the node was lasted updated is returned along
