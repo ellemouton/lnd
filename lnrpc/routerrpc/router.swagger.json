@@ -703,6 +703,84 @@
         }
       }
     },
+    "lnrpcBlindedHop": {
+      "type": "object",
+      "properties": {
+        "blinded_node": {
+          "type": "string",
+          "format": "byte",
+          "description": "The blinded public key of the node."
+        },
+        "encrypted_data": {
+          "type": "string",
+          "format": "byte",
+          "description": "An encrypted blob of data provided to the blinded node."
+        }
+      }
+    },
+    "lnrpcBlindedPath": {
+      "type": "object",
+      "properties": {
+        "introduction_node": {
+          "type": "string",
+          "format": "byte",
+          "description": "The unblinded pubkey of the introduction node for the route."
+        },
+        "blinding_point": {
+          "type": "string",
+          "format": "byte",
+          "description": "The ephemeral pubkey used by nodes in the blinded route."
+        },
+        "blinded_hops": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/lnrpcBlindedHop"
+          },
+          "description": "A set of blinded node keys and data blobs for the blinded portion of the\nroute. Note that the first hop is expected to be the introduction node,\nso the route is always expected to have at least one hop."
+        }
+      }
+    },
+    "lnrpcBlindedPaymentPath": {
+      "type": "object",
+      "properties": {
+        "blinded_path": {
+          "$ref": "#/definitions/lnrpcBlindedPath",
+          "description": "The blinded path to send the payment to."
+        },
+        "base_fee_msat": {
+          "type": "string",
+          "format": "uint64",
+          "description": "The base fee for the blinded path provided, expressed in msat."
+        },
+        "proportional_fee_rate": {
+          "type": "integer",
+          "format": "int64",
+          "description": "The proportional fee for the blinded path provided, expressed in parts\nper million."
+        },
+        "total_cltv_delta": {
+          "type": "integer",
+          "format": "int64",
+          "description": "The total CLTV delta for the blinded path provided, including the\nfinal CLTV delta for the receiving node."
+        },
+        "htlc_min_msat": {
+          "type": "string",
+          "format": "uint64",
+          "description": "The minimum hltc size that may be sent over the blinded path, expressed\nin msat."
+        },
+        "htlc_max_msat": {
+          "type": "string",
+          "format": "uint64",
+          "description": "The maximum htlc size that may be sent over the blinded path, expressed\nin msat."
+        },
+        "features": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/lnrpcFeatureBit"
+          },
+          "description": "The feature bits for the route."
+        }
+      }
+    },
     "lnrpcChannelPoint": {
       "type": "object",
       "properties": {
@@ -2006,6 +2084,13 @@
             "format": "byte"
           },
           "description": "An optional field that can be used to pass an arbitrary set of TLV records\nto the first hop peer of this payment. This can be used to pass application\nspecific data during the payment attempt. Record types are required to be in\nthe custom range \u003e= 65536. When using REST, the values must be encoded as\nbase64."
+        },
+        "blinded_paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/lnrpcBlindedPaymentPath"
+          },
+          "description": "Optional blinded path(s) to reach the destination. Note that the\nintroduction node must be provided as the first hop in the route."
         }
       }
     },
