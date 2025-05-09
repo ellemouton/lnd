@@ -179,10 +179,6 @@ type SQLStore struct {
 	cfg *SQLStoreConfig
 
 	db BatchedSQLQueries
-
-	// Temporary fall-back to the KVStore so that we can implement the
-	// interface incrementally.
-	*KVStore
 }
 
 // A compile-time assertion to ensure that SQLStore implements the V1Store
@@ -191,13 +187,10 @@ var _ V1Store = (*SQLStore)(nil)
 
 // NewSQLStore creates a new SQLStore instance given an open BatchedSQLQueries
 // storage backend.
-func NewSQLStore(cfg *SQLStoreConfig, db BatchedSQLQueries,
-	kvStore *KVStore) *SQLStore {
-
+func NewSQLStore(cfg *SQLStoreConfig, db BatchedSQLQueries) *SQLStore {
 	return &SQLStore{
-		cfg:     cfg,
-		db:      db,
-		KVStore: kvStore,
+		cfg: cfg,
+		db:  db,
 	}
 }
 
