@@ -4031,14 +4031,15 @@ func deserializeLightningNodeCacheable(r io.Reader) (route.Vertex,
 
 func deserializeLightningNode(r io.Reader) (models.LightningNode, error) {
 	var (
-		node    models.LightningNode
+		node = models.LightningNode{
+			ExtraOpaqueData: make([]byte, 0),
+			// Always populate a feature vector, even if we don't
+			// have a node announcement and short circuit below.
+			Features: lnwire.EmptyFeatureVector(),
+		}
 		scratch [8]byte
 		err     error
 	)
-
-	// Always populate a feature vector, even if we don't have a node
-	// announcement and short circuit below.
-	node.Features = lnwire.EmptyFeatureVector()
 
 	if _, err := r.Read(scratch[:]); err != nil {
 		return models.LightningNode{}, err

@@ -2189,7 +2189,25 @@ func (s *sqlNodeTraverser) FetchNodeFeatures(nodePub route.Vertex) (
 
 	ctx := context.TODO()
 
-	id, err := s.db.GetNodeIDByPubKeyAndVersion(
+	return fetchNodeFeatures(ctx, s.db, nodePub)
+}
+
+// FetchNodeFeatures returns the features of the given node. If no features are
+// known for the node, an empty feature vector is returned.
+//
+// NOTE: this is part of the graphdb.NodeTraverser interface.
+func (s *SQLStore) FetchNodeFeatures(nodePub route.Vertex) (
+	*lnwire.FeatureVector, error) {
+
+	ctx := context.TODO()
+
+	return fetchNodeFeatures(ctx, s.db, nodePub)
+}
+
+func fetchNodeFeatures(ctx context.Context, queries SQLQueries,
+	nodePub route.Vertex) (*lnwire.FeatureVector, error) {
+
+	id, err := queries.GetNodeIDByPubKeyAndVersion(
 		ctx, sqlc.GetNodeIDByPubKeyAndVersionParams{
 			PubKey:  nodePub[:],
 			Version: int16(ProtocolV1),
@@ -2201,7 +2219,7 @@ func (s *sqlNodeTraverser) FetchNodeFeatures(nodePub route.Vertex) (
 		return nil, fmt.Errorf("unable to fetch node: %w", err)
 	}
 
-	return getNodeFeatures(ctx, s.db, id)
+	return getNodeFeatures(ctx, queries, id)
 }
 
 // pruneGraphNodes deletes any node in the DB that doesn't have a channel

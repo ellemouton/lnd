@@ -210,6 +210,7 @@ func TestPartialNode(t *testing.T) {
 		LastUpdate:           time.Unix(0, 0),
 		PubKeyBytes:          pubKey1,
 		Features:             lnwire.EmptyFeatureVector(),
+		ExtraOpaqueData:      make([]byte, 0),
 	}
 	compareNodes(t, expectedNode1, dbNode1)
 
@@ -224,6 +225,7 @@ func TestPartialNode(t *testing.T) {
 		LastUpdate:           time.Unix(0, 0),
 		PubKeyBytes:          pubKey2,
 		Features:             lnwire.EmptyFeatureVector(),
+		ExtraOpaqueData:      make([]byte, 0),
 	}
 	compareNodes(t, expectedNode2, dbNode2)
 
@@ -4114,6 +4116,11 @@ func TestGraphCacheForEachNodeChannel(t *testing.T) {
 		BaseFee: 10,
 		FeeRate: 20,
 	})
+
+	_, ok := graph.V1Store.(*KVStore)
+	if !ok {
+		t.Skipf("skipping test that is aimed at a bbolt graph DB")
+	}
 
 	// Set an invalid inbound fee and check that the edge is no longer
 	// returned.
