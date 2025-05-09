@@ -1032,6 +1032,13 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		graphdb.WithBatchCommitInterval(cfg.DB.BatchCommitInterval),
 	}
 
+	graphSQLDBOptions := []graphdb.SQLStoreOptionModifier{
+		graphdb.WithSQLStoreRejectCacheSize(cfg.Caches.RejectCacheSize),
+		graphdb.WithSQLStoreChannelCacheSize(
+			cfg.Caches.ChannelCacheSize,
+		),
+	}
+
 	chanGraphOpts := []graphdb.ChanGraphOption{
 		graphdb.WithUseGraphCache(!cfg.DB.NoGraphCache),
 	}
@@ -1168,7 +1175,9 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 
 		dbs.InvoiceDB = sqlInvoiceDB
 
-		graphStore = d.getGraphStore(baseDB, kvGraphStore)
+		graphStore = d.getGraphStore(
+			baseDB, kvGraphStore, graphSQLDBOptions...,
+		)
 	} else {
 		// Check if the invoice bucket tombstone is set. If it is, we
 		// need to return and ask the user switch back to using the

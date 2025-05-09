@@ -17,7 +17,8 @@ func getSQLMigration(ctx context.Context, version int,
 }
 
 func (d *DefaultDatabaseBuilder) getGraphStore(_ *sqldb.BaseDB,
-	kvGraphStore *graphdb.KVStore) graphdb.V1Store {
+	kvGraphStore *graphdb.KVStore,
+	opts ...graphdb.SQLStoreOptionModifier) graphdb.V1Store {
 
 	return kvGraphStore
 }
