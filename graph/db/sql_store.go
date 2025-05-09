@@ -57,7 +57,6 @@ type SQLQueries interface {
 	ListNodeIDsAndPubKeysByVersion(ctx context.Context, version int16) ([]sqlc.ListNodeIDsAndPubKeysByVersionRow, error)
 	HighestSCID(ctx context.Context, version int16) ([]byte, error)
 	GetV1NodesByLastUpdateRange(ctx context.Context, arg sqlc.GetV1NodesByLastUpdateRangeParams) ([]sqlc.Node, error)
-	GetNodeIDByPubKeyAndVersion(ctx context.Context, arg sqlc.GetNodeIDByPubKeyAndVersionParams) (int64, error)
 	ListNodesByVersion(ctx context.Context, version int16) ([]sqlc.ListNodesByVersionRow, error)
 	IsPublicV1Node(ctx context.Context, pubKey []byte) (bool, error)
 	GetUnconnectedNodes(ctx context.Context) ([]sqlc.GetUnconnectedNodesRow, error)
@@ -2220,19 +2219,7 @@ func (s *sqlNodeTraverser) FetchNodeFeatures(nodePub route.Vertex) (
 
 	ctx := context.TODO()
 
-	id, err := s.db.GetNodeIDByPubKeyAndVersion(
-		ctx, sqlc.GetNodeIDByPubKeyAndVersionParams{
-			PubKey:  nodePub[:],
-			Version: int16(ProtocolV1),
-		},
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return lnwire.EmptyFeatureVector(), nil
-	} else if err != nil {
-		return nil, fmt.Errorf("unable to fetch node: %w", err)
-	}
-
-	return getNodeFeatures(ctx, s.db, id)
+	return fetchNodeFeatures(ctx, s.db, nodePub)
 }
 
 // pruneGraphNodes deletes any node in the DB that doesn't have a channel

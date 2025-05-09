@@ -4117,6 +4117,11 @@ func TestGraphCacheForEachNodeChannel(t *testing.T) {
 		FeeRate: 20,
 	})
 
+	_, ok := graph.V1Store.(*KVStore)
+	if !ok {
+		t.Skipf("skipping test that is aimed at a bbolt graph DB")
+	}
+
 	// Set an invalid inbound fee and check that the edge is no longer
 	// returned.
 	edge1.ExtraOpaqueData = []byte{
