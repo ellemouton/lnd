@@ -1322,6 +1322,14 @@ func TestGraphTraversalCacheable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, nodeMap, 0)
 
+	// Duplicate the map before we start deleting from it so that we can
+	// check that both the cached and db version of
+	// ForEachNodeDirectedChannel works as expected here.
+	chanIndex2 := make(map[uint64]struct{})
+	for k, v := range chanIndex {
+		chanIndex2[k] = v
+	}
+
 	for _, node := range nodes {
 		err = graph.ForEachNodeDirectedChannel(
 			node, func(d *DirectedChannel) error {
@@ -1330,8 +1338,17 @@ func TestGraphTraversalCacheable(t *testing.T) {
 			},
 		)
 		require.NoError(t, err)
+
+		err = graph.V1Store.ForEachNodeDirectedChannel(
+			node, func(d *DirectedChannel) error {
+				delete(chanIndex2, d.ChannelID)
+				return nil
+			},
+		)
+		require.NoError(t, err)
 	}
 	require.Len(t, chanIndex, 0)
+	require.Len(t, chanIndex2, 0)
 }
 
 func TestGraphCacheTraversal(t *testing.T) {
