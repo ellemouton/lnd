@@ -11,7 +11,6 @@ import (
 	"net"
 	"sort"
 	"sync"
-	"testing"
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -26,7 +25,6 @@ import (
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
-	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -4033,14 +4031,15 @@ func deserializeLightningNodeCacheable(r io.Reader) (route.Vertex,
 
 func deserializeLightningNode(r io.Reader) (models.LightningNode, error) {
 	var (
-		node    models.LightningNode
+		node = models.LightningNode{
+			ExtraOpaqueData: make([]byte, 0),
+			// Always populate a feature vector, even if we don't
+			// have a node announcement and short circuit below.
+			Features: lnwire.EmptyFeatureVector(),
+		}
 		scratch [8]byte
 		err     error
 	)
-
-	// Always populate a feature vector, even if we don't have a node
-	// announcement and short circuit below.
-	node.Features = lnwire.EmptyFeatureVector()
 
 	if _, err := r.Read(scratch[:]); err != nil {
 		return models.LightningNode{}, err
@@ -4707,33 +4706,67 @@ func (c *chanGraphNodeTx) ForEachChannel(f func(*models.ChannelEdgeInfo,
 	)
 }
 
-// MakeTestGraph creates a new instance of the KVStore for testing
-// purposes.
-func MakeTestGraph(t testing.TB,
-	modifiers ...KVStoreOptionModifier) *ChannelGraph {
+func (c *KVStore) forEachPruneLogEntry(cb func(height uint32,
+	hash *chainhash.Hash) error) error {
 
-	opts := DefaultOptions()
-	for _, modifier := range modifiers {
-		modifier(opts)
-	}
+	return kvdb.View(c.db, func(tx kvdb.RTx) error {
+		metaBucket := tx.ReadBucket(graphMetaBucket)
+		if metaBucket == nil {
+			return ErrGraphNotFound
+		}
 
-	// Next, create KVStore for the first time.
-	backend, backendCleanup, err := kvdb.GetTestBackend(t.TempDir(), "cgr")
-	t.Cleanup(backendCleanup)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, backend.Close())
-	})
+		pruneBucket := metaBucket.NestedReadBucket(pruneLogBucket)
+		if pruneBucket == nil {
+			// Graph never been pruned. No entries to iterate over.
+			return nil
+		}
 
-	graphStore, err := NewKVStore(backend, modifiers...)
-	require.NoError(t, err)
+		return pruneBucket.ForEach(func(k, v []byte) error {
+			blockHeight := byteOrder.Uint32(k)
+			var blockHash chainhash.Hash
+			copy(blockHash[:], v)
 
-	graph, err := NewChannelGraph(graphStore)
-	require.NoError(t, err)
-	require.NoError(t, graph.Start())
-	t.Cleanup(func() {
-		require.NoError(t, graph.Stop())
-	})
+			return cb(blockHeight, &blockHash)
+		})
+	}, func() {})
+}
 
-	return graph
+func (c *KVStore) forEachZombieEntry(cb func(chanID uint64, pubKey1,
+	pubKey2 [33]byte) error) error {
+
+	return kvdb.View(c.db, func(tx kvdb.RTx) error {
+		edges := tx.ReadBucket(edgeBucket)
+		if edges == nil {
+			return ErrGraphNoEdgesFound
+		}
+		zombieIndex := edges.NestedReadBucket(zombieBucket)
+		if zombieIndex == nil {
+			return nil
+		}
+
+		return zombieIndex.ForEach(func(k, v []byte) error {
+			var pubKey1, pubKey2 [33]byte
+			copy(pubKey1[:], v[:33])
+			copy(pubKey2[:], v[33:])
+
+			return cb(byteOrder.Uint64(k), pubKey1, pubKey2)
+		})
+	}, func() {})
+}
+
+func (c *KVStore) forEachClosedSCID(
+	cb func(lnwire.ShortChannelID) error) error {
+
+	return kvdb.View(c.db, func(tx kvdb.RTx) error {
+		closedScids := tx.ReadBucket(closedScidBucket)
+		if closedScids == nil {
+			return nil
+		}
+
+		return closedScids.ForEach(func(k, _ []byte) error {
+			return cb(lnwire.NewShortChanIDFromInt(
+				byteOrder.Uint64(k),
+			))
+		})
+	}, func() {})
 }

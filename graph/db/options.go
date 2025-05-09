@@ -61,6 +61,37 @@ func WithPreAllocCacheNumNodes(n int) ChanGraphOption {
 	}
 }
 
+type SQLStoreOptions struct {
+	// RejectCacheSize is the maximum number of rejectCacheEntries to hold
+	// in the rejection cache.
+	RejectCacheSize int
+
+	// ChannelCacheSize is the maximum number of ChannelEdges to hold in the
+	// channel cache.
+	ChannelCacheSize int
+}
+
+func DefaultSQLOptions() *SQLStoreOptions {
+	return &SQLStoreOptions{
+		RejectCacheSize:  DefaultRejectCacheSize,
+		ChannelCacheSize: DefaultChannelCacheSize,
+	}
+}
+
+type SQLStoreOptionModifier func(*SQLStoreOptions)
+
+func WithSQLStoreRejectCacheSize(n int) SQLStoreOptionModifier {
+	return func(o *SQLStoreOptions) {
+		o.RejectCacheSize = n
+	}
+}
+
+func WithSQLStoreChannelCacheSize(n int) SQLStoreOptionModifier {
+	return func(o *SQLStoreOptions) {
+		o.ChannelCacheSize = n
+	}
+}
+
 // KVStoreOptions holds parameters for tuning and customizing a graph.DB.
 type KVStoreOptions struct {
 	// RejectCacheSize is the maximum number of rejectCacheEntries to hold

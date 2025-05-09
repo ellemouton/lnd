@@ -210,6 +210,7 @@ func TestPartialNode(t *testing.T) {
 		LastUpdate:           time.Unix(0, 0),
 		PubKeyBytes:          pubKey1,
 		Features:             lnwire.EmptyFeatureVector(),
+		ExtraOpaqueData:      make([]byte, 0),
 	}
 	compareNodes(t, expectedNode1, dbNode1)
 
@@ -224,6 +225,7 @@ func TestPartialNode(t *testing.T) {
 		LastUpdate:           time.Unix(0, 0),
 		PubKeyBytes:          pubKey2,
 		Features:             lnwire.EmptyFeatureVector(),
+		ExtraOpaqueData:      make([]byte, 0),
 	}
 	compareNodes(t, expectedNode2, dbNode2)
 
@@ -1320,6 +1322,14 @@ func TestGraphTraversalCacheable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, nodeMap, 0)
 
+	// Duplicate the map before we start deleting from it so that we can
+	// check that both the cached and db version of
+	// ForEachNodeDirectedChannel works as expected here.
+	chanIndex2 := make(map[uint64]struct{})
+	for k, v := range chanIndex {
+		chanIndex2[k] = v
+	}
+
 	for _, node := range nodes {
 		err = graph.ForEachNodeDirectedChannel(
 			node, func(d *DirectedChannel) error {
@@ -1328,8 +1338,17 @@ func TestGraphTraversalCacheable(t *testing.T) {
 			},
 		)
 		require.NoError(t, err)
+
+		err = graph.V1Store.ForEachNodeDirectedChannel(
+			node, func(d *DirectedChannel) error {
+				delete(chanIndex2, d.ChannelID)
+				return nil
+			},
+		)
+		require.NoError(t, err)
 	}
 	require.Len(t, chanIndex, 0)
+	require.Len(t, chanIndex2, 0)
 }
 
 func TestGraphCacheTraversal(t *testing.T) {
@@ -4115,6 +4134,11 @@ func TestGraphCacheForEachNodeChannel(t *testing.T) {
 		FeeRate: 20,
 	})
 
+	_, ok := graph.V1Store.(*KVStore)
+	if !ok {
+		t.Skipf("skipping test that is aimed at a bbolt graph DB")
+	}
+
 	// Set an invalid inbound fee and check that the edge is no longer
 	// returned.
 	edge1.ExtraOpaqueData = []byte{
@@ -4128,18 +4152,10 @@ func TestGraphCacheForEachNodeChannel(t *testing.T) {
 // TestGraphLoading asserts that the cache is properly reconstructed after a
 // restart.
 func TestGraphLoading(t *testing.T) {
-	// First, create a temporary directory to be used for the duration of
-	// this test.
-	tempDirName := t.TempDir()
+	t.Parallel()
 
 	// Next, create the graph for the first time.
-	backend, backendCleanup, err := kvdb.GetTestBackend(tempDirName, "cgr")
-	require.NoError(t, err)
-	defer backend.Close()
-	defer backendCleanup()
-
-	graphStore, err := NewKVStore(backend)
-	require.NoError(t, err)
+	graphStore := NewTestDB(t)
 
 	graph, err := NewChannelGraph(graphStore)
 	require.NoError(t, err)
