@@ -35,7 +35,8 @@ func getSQLMigration(ctx context.Context, version int,
 }
 
 func (d *DefaultDatabaseBuilder) getGraphStore(baseDB *sqldb.BaseDB,
-	_ *graphdb.KVStore) graphdb.V1Store {
+	_ *graphdb.KVStore,
+	opts ...graphdb.SQLStoreOptionModifier) graphdb.V1Store {
 
 	graphExecutor := sqldb.NewTransactionExecutor(
 		baseDB, func(tx *sql.Tx) graphdb.SQLQueries {
@@ -47,6 +48,6 @@ func (d *DefaultDatabaseBuilder) getGraphStore(baseDB *sqldb.BaseDB,
 		&graphdb.SQLStoreConfig{
 			ChainHash: *d.cfg.ActiveNetParams.GenesisHash,
 		},
-		graphExecutor,
+		graphExecutor, opts...,
 	)
 }
