@@ -4002,6 +4002,8 @@ message BlindedPathConfig {
     blinded paths.
     */
     repeated bytes node_omission_list = 4;
+
+    repeated uint64 incoming_channel_list = 5;
 }
 
 enum InvoiceHTLCState {
