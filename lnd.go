@@ -694,55 +694,55 @@ func Main(cfg *Config, lisCfg ListenerCfg, implCfg *ImplementationCfg,
 	ltndLog.InfoS(ctx, "Waiting for chain backend to finish sync",
 		slog.Int64("start_height", int64(bestHeight)))
 
-	type syncResult struct {
-		synced        bool
-		bestBlockTime int64
-		err           error
-	}
+	//type syncResult struct {
+	//	synced        bool
+	//	bestBlockTime int64
+	//	err           error
+	//}
 
-	var syncedResChan = make(chan syncResult, 1)
+	//var syncedResChan = make(chan syncResult, 1)
 
-	for {
-		// We check if the wallet is synced in a separate goroutine as
-		// the call is blocking, and we want to be able to interrupt it
-		// if the daemon is shutting down.
-		go func() {
-			synced, bestBlockTime, err := activeChainControl.Wallet.
-				IsSynced()
-			syncedResChan <- syncResult{synced, bestBlockTime, err}
-		}()
-
-		select {
-		case <-interceptor.ShutdownChannel():
-			return nil
-
-		case res := <-syncedResChan:
-			if res.err != nil {
-				return mkErr("unable to determine if wallet "+
-					"is synced", res.err)
-			}
-
-			ltndLog.DebugS(ctx, "Syncing to block chain",
-				"best_block_time", time.Unix(res.bestBlockTime, 0),
-				"is_synced", res.synced)
-
-			if res.synced {
-				break
-			}
-
-			// If we're not yet synced, we'll wait for a second
-			// before checking again.
-			select {
-			case <-interceptor.ShutdownChannel():
-				return nil
-
-			case <-time.After(time.Second):
-				continue
-			}
-		}
-
-		break
-	}
+	//for {
+	//	// We check if the wallet is synced in a separate goroutine as
+	//	// the call is blocking, and we want to be able to interrupt it
+	//	// if the daemon is shutting down.
+	//	go func() {
+	//		synced, bestBlockTime, err := activeChainControl.Wallet.
+	//			IsSynced()
+	//		syncedResChan <- syncResult{synced, bestBlockTime, err}
+	//	}()
+	//
+	//	select {
+	//	case <-interceptor.ShutdownChannel():
+	//		return nil
+	//
+	//	case res := <-syncedResChan:
+	//		if res.err != nil {
+	//			return mkErr("unable to determine if wallet "+
+	//				"is synced", res.err)
+	//		}
+	//
+	//		ltndLog.DebugS(ctx, "Syncing to block chain",
+	//			"best_block_time", time.Unix(res.bestBlockTime, 0),
+	//			"is_synced", res.synced)
+	//
+	//		if res.synced {
+	//			break
+	//		}
+	//
+	//		// If we're not yet synced, we'll wait for a second
+	//		// before checking again.
+	//		select {
+	//		case <-interceptor.ShutdownChannel():
+	//			return nil
+	//
+	//		case <-time.After(time.Second):
+	//			continue
+	//		}
+	//	}
+	//
+	//	break
+	//}
 
 	_, bestHeight, err = activeChainControl.ChainIO.GetBestBlock()
 	if err != nil {

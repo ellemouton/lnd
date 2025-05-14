@@ -211,85 +211,85 @@ func (b *Builder) Start() error {
 		}
 	}
 
-	// If AssumeChannelValid is present, then we won't rely on pruning
-	// channels from the graph based on their spentness, but whether they
-	// are considered zombies or not. We will start zombie pruning after a
-	// small delay, to avoid slowing down startup of lnd.
-	if b.cfg.AssumeChannelValid { //nolint:nestif
-		time.AfterFunc(b.cfg.FirstTimePruneDelay, func() {
-			select {
-			case <-b.quit:
-				return
-			default:
-			}
-
-			log.Info("Initial zombie prune starting")
-			if err := b.pruneZombieChans(); err != nil {
-				log.Errorf("Unable to prune zombies: %v", err)
-			}
-		})
-	} else {
-		// Otherwise, we'll use our filtered chain view to prune
-		// channels as soon as they are detected as spent on-chain.
-		if err := b.cfg.ChainView.Start(); err != nil {
-			return err
-		}
-
-		// Once the instance is active, we'll fetch the channel we'll
-		// receive notifications over.
-		b.newBlocks = b.cfg.ChainView.FilteredBlocks()
-		b.staleBlocks = b.cfg.ChainView.DisconnectedBlocks()
-
-		// Before we perform our manual block pruning, we'll construct
-		// and apply a fresh chain filter to the active
-		// FilteredChainView instance.  We do this before, as otherwise
-		// we may miss on-chain events as the filter hasn't properly
-		// been applied.
-		channelView, err := b.cfg.Graph.ChannelView()
-		if err != nil && !errors.Is(
-			err, graphdb.ErrGraphNoEdgesFound,
-		) {
-
-			return err
-		}
-
-		log.Infof("Filtering chain using %v channels active",
-			len(channelView))
-
-		if len(channelView) != 0 {
-			err = b.cfg.ChainView.UpdateFilter(
-				channelView, uint32(bestHeight),
-			)
-			if err != nil {
-				return err
-			}
-		}
-
-		// The graph pruning might have taken a while and there could be
-		// new blocks available.
-		_, bestHeight, err = b.cfg.Chain.GetBestBlock()
-		if err != nil {
-			return err
-		}
-		b.bestHeight.Store(uint32(bestHeight))
-
-		// Before we begin normal operation of the router, we first need
-		// to synchronize the channel graph to the latest state of the
-		// UTXO set.
-		if err := b.syncGraphWithChain(); err != nil {
-			return err
-		}
-
-		// Finally, before we proceed, we'll prune any unconnected nodes
-		// from the graph in order to ensure we maintain a tight graph
-		// of "useful" nodes.
-		err = b.cfg.Graph.PruneGraphNodes()
-		if err != nil &&
-			!errors.Is(err, graphdb.ErrGraphNodesNotFound) {
-
-			return err
-		}
-	}
+	//// If AssumeChannelValid is present, then we won't rely on pruning
+	//// channels from the graph based on their spentness, but whether they
+	//// are considered zombies or not. We will start zombie pruning after a
+	//// small delay, to avoid slowing down startup of lnd.
+	//if b.cfg.AssumeChannelValid { //nolint:nestif
+	//	time.AfterFunc(b.cfg.FirstTimePruneDelay, func() {
+	//		select {
+	//		case <-b.quit:
+	//			return
+	//		default:
+	//		}
+	//
+	//		log.Info("Initial zombie prune starting")
+	//		if err := b.pruneZombieChans(); err != nil {
+	//			log.Errorf("Unable to prune zombies: %v", err)
+	//		}
+	//	})
+	//} else {
+	//	// Otherwise, we'll use our filtered chain view to prune
+	//	// channels as soon as they are detected as spent on-chain.
+	//	if err := b.cfg.ChainView.Start(); err != nil {
+	//		return err
+	//	}
+	//
+	//	// Once the instance is active, we'll fetch the channel we'll
+	//	// receive notifications over.
+	//	b.newBlocks = b.cfg.ChainView.FilteredBlocks()
+	//	b.staleBlocks = b.cfg.ChainView.DisconnectedBlocks()
+	//
+	//	// Before we perform our manual block pruning, we'll construct
+	//	// and apply a fresh chain filter to the active
+	//	// FilteredChainView instance.  We do this before, as otherwise
+	//	// we may miss on-chain events as the filter hasn't properly
+	//	// been applied.
+	//	channelView, err := b.cfg.Graph.ChannelView()
+	//	if err != nil && !errors.Is(
+	//		err, graphdb.ErrGraphNoEdgesFound,
+	//	) {
+	//
+	//		return err
+	//	}
+	//
+	//	log.Infof("Filtering chain using %v channels active",
+	//		len(channelView))
+	//
+	//	if len(channelView) != 0 {
+	//		err = b.cfg.ChainView.UpdateFilter(
+	//			channelView, uint32(bestHeight),
+	//		)
+	//		if err != nil {
+	//			return err
+	//		}
+	//	}
+	//
+	//	// The graph pruning might have taken a while and there could be
+	//	// new blocks available.
+	//	_, bestHeight, err = b.cfg.Chain.GetBestBlock()
+	//	if err != nil {
+	//		return err
+	//	}
+	//	b.bestHeight.Store(uint32(bestHeight))
+	//
+	//	// Before we begin normal operation of the router, we first need
+	//	// to synchronize the channel graph to the latest state of the
+	//	// UTXO set.
+	//	if err := b.syncGraphWithChain(); err != nil {
+	//		return err
+	//	}
+	//
+	//	// Finally, before we proceed, we'll prune any unconnected nodes
+	//	// from the graph in order to ensure we maintain a tight graph
+	//	// of "useful" nodes.
+	//	err = b.cfg.Graph.PruneGraphNodes()
+	//	if err != nil &&
+	//		!errors.Is(err, graphdb.ErrGraphNodesNotFound) {
+	//
+	//		return err
+	//	}
+	//}
 
 	b.wg.Add(1)
 	go b.networkHandler()
@@ -808,13 +808,13 @@ func (b *Builder) networkHandler() {
 				exit:     make(chan struct{}),
 			})
 
-		// The graph prune ticker has ticked, so we'll examine the
-		// state of the known graph to filter out any zombie channels
-		// for pruning.
-		case <-graphPruneTicker.C:
-			if err := b.pruneZombieChans(); err != nil {
-				log.Errorf("Unable to prune zombies: %v", err)
-			}
+		//// The graph prune ticker has ticked, so we'll examine the
+		//// state of the known graph to filter out any zombie channels
+		//// for pruning.
+		//case <-graphPruneTicker.C:
+		//	if err := b.pruneZombieChans(); err != nil {
+		//		log.Errorf("Unable to prune zombies: %v", err)
+		//	}
 
 		// Log any stats if we've processed a non-empty number of
 		// channels, updates, or nodes. We'll only pause the ticker if
