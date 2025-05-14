@@ -4216,6 +4216,85 @@ func (s *server) OutboundPeerConnected(connReq *connmgr.ConnReq, conn net.Conn) 
 	}
 }
 
+func (s *server) sendPeerAllGossip(peer *peer.Brontide) {
+	if !s.cfg.SendAllGossip {
+		return
+	}
+
+	totalChans := 0
+	err := s.graphDB.ForEachNode(func(tx graphdb.NodeRTx) error {
+		node1 := tx.Node()
+
+		return tx.ForEachChannel(func(info *models.ChannelEdgeInfo,
+			policy *models.ChannelEdgePolicy,
+			policy2 *models.ChannelEdgePolicy) error {
+
+			chanAnn, upd1, upd2, err := netann.CreateChanAnnouncement(
+				info.AuthProof, info, policy, policy2,
+			)
+			if err != nil {
+				return fmt.Errorf("unable to create channel announcement: %v", err)
+			}
+
+			node2 := info.NodeKey1Bytes
+			if node1.PubKeyBytes == info.NodeKey1Bytes {
+				node2 = info.NodeKey2Bytes
+			}
+
+			n2, err := tx.FetchNode(node2)
+			if err != nil {
+				return fmt.Errorf("unable to fetch node: %v", err)
+			}
+
+			msgs := []lnwire.Message{
+				chanAnn,
+			}
+
+			if upd1 != nil {
+				msgs = append(msgs, upd1)
+			}
+
+			if upd2 != nil {
+				msgs = append(msgs, upd2)
+			}
+
+			if node1.HaveNodeAnnouncement {
+				nodeAnn1, err := node1.NodeAnnouncement(true)
+				if err != nil {
+					return fmt.Errorf("unable to get node announcement: %v", err)
+				}
+
+				msgs = append(msgs, nodeAnn1)
+			}
+
+			if n2.Node().HaveNodeAnnouncement {
+				nodeAnn2, err := n2.Node().NodeAnnouncement(true)
+				if err != nil {
+					return fmt.Errorf("unable to get node announcement: %v", err)
+				}
+				msgs = append(msgs, nodeAnn2)
+			}
+
+			err = peer.SendMessage(
+				true, msgs...,
+			)
+			if err != nil {
+				return err
+			}
+
+			totalChans++
+			srvrLog.Infof("ELLE: handled %d channels", totalChans)
+
+			return nil
+		})
+	})
+	if err != nil {
+		srvrLog.Criticalf("Unable to send all gossip to peer %x: %v",
+			peer.PubKey(), err)
+	}
+	srvrLog.Info("ELLE: sent all gossip!")
+}
+
 // UnassignedConnID is the default connection ID that a request can have before
 // it actually is submitted to the connmgr.
 // TODO(conner): move into connmgr package, or better, add connmgr method for
@@ -4398,6 +4477,7 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 	// htlcs, an extra block is added to prevent the channel from being
 	// closed when the htlc is outstanding and a new block comes in.
 	pCfg := peer.Config{
+		SendMsgs:                s.sendPeerAllGossip,
 		Conn:                    brontideConn,
 		ConnReq:                 connReq,
 		Addr:                    peerAddr,

@@ -297,7 +297,8 @@ var (
 //
 //nolint:ll
 type Config struct {
-	ShowVersion bool `short:"V" long:"version" description:"Display version information and exit"`
+	SendAllGossip bool `long:"send-all-gossip" description:""`
+	ShowVersion   bool `short:"V" long:"version" description:"Display version information and exit"`
 
 	LndDir       string `long:"lnddir" description:"The base directory that contains lnd's data, logs, configuration file, etc. This option overwrites all other directory options."`
 	ConfigFile   string `short:"C" long:"configfile" description:"Path to configuration file"`

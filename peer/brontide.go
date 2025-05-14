@@ -190,6 +190,8 @@ type TimestampedError struct {
 // Config defines configuration fields that are necessary for a peer object
 // to function.
 type Config struct {
+	SendMsgs func(*Brontide)
+
 	// Conn is the underlying network connection for this peer.
 	Conn MessageConn
 
@@ -916,6 +918,8 @@ func (p *Brontide) Start() error {
 	p.cg.WgAdd(2)
 	go p.maybeSendNodeAnn(activeChans)
 	go p.maybeSendChannelUpdates()
+
+	go p.cfg.SendMsgs(p)
 
 	return nil
 }
