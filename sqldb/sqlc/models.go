@@ -28,6 +28,11 @@ type AmpSubInvoiceHtlc struct {
 	Preimage   []byte
 }
 
+type Feature struct {
+	ID  int64
+	Bit int32
+}
+
 type Invoice struct {
 	ID                 int64
 	Hash               []byte
@@ -101,4 +106,32 @@ type InvoiceSequence struct {
 type MigrationTracker struct {
 	Version       int32
 	MigrationTime time.Time
+}
+
+type Node struct {
+	ID         int64
+	Version    int16
+	PubKey     []byte
+	Alias      sql.NullString
+	LastUpdate sql.NullInt64
+	Color      sql.NullString
+	Signature  []byte
+}
+
+type NodeAddress struct {
+	NodeID   int64
+	Type     int16
+	Position int32
+	Address  string
+}
+
+type NodeExtraType struct {
+	NodeID int64
+	Type   int64
+	Value  []byte
+}
+
+type NodeFeature struct {
+	NodeID    int64
+	FeatureID int64
 }
