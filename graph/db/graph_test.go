@@ -210,6 +210,7 @@ func TestPartialNode(t *testing.T) {
 		LastUpdate:           time.Unix(0, 0),
 		PubKeyBytes:          pubKey1,
 		Features:             lnwire.EmptyFeatureVector(),
+		ExtraOpaqueData:      make([]byte, 0),
 	}
 	compareNodes(t, expectedNode1, dbNode1)
 
@@ -224,6 +225,7 @@ func TestPartialNode(t *testing.T) {
 		LastUpdate:           time.Unix(0, 0),
 		PubKeyBytes:          pubKey2,
 		Features:             lnwire.EmptyFeatureVector(),
+		ExtraOpaqueData:      make([]byte, 0),
 	}
 	compareNodes(t, expectedNode2, dbNode2)
 
