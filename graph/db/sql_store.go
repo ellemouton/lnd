@@ -108,17 +108,12 @@ type SQLQueries interface {
 	*/
 	CreateChannelPolicy(ctx context.Context, arg sqlc.CreateChannelPolicyParams) (int64, error)
 	UpdateChannelPolicy(ctx context.Context, arg sqlc.UpdateChannelPolicyParams) error
-
-	CreateChannelPolicyV1Data(ctx context.Context, arg sqlc.CreateChannelPolicyV1DataParams) error
-	UpdateChannelPolicyV1Data(ctx context.Context, arg sqlc.UpdateChannelPolicyV1DataParams) error
-	GetChannelPolicyV1Data(ctx context.Context, channelPolicyID int64) (sqlc.ChannelPolicyV1Datum, error)
-	GetV1ChannelPolicyByChannelAndNode(ctx context.Context, arg sqlc.GetV1ChannelPolicyByChannelAndNodeParams) (sqlc.GetV1ChannelPolicyByChannelAndNodeRow, error)
+	GetChannelsByPolicyLastUpdateRange(ctx context.Context, arg sqlc.GetChannelsByPolicyLastUpdateRangeParams) ([]sqlc.Channel, error)
 
 	AddChannelPolicyExtraType(ctx context.Context, arg sqlc.AddChannelPolicyExtraTypeParams) error
 	DeleteChannelPolicyExtraType(ctx context.Context, arg sqlc.DeleteChannelPolicyExtraTypeParams) error
 	GetChannelPolicyByChannelAndNode(ctx context.Context, arg sqlc.GetChannelPolicyByChannelAndNodeParams) (sqlc.ChannelPolicy, error)
 	GetChannelPolicyExtraTypes(ctx context.Context, channelPolicyID int64) ([]sqlc.ChannelPolicyExtraType, error)
-	GetV1ChannelsByPolicyLastUpdateRange(ctx context.Context, arg sqlc.GetV1ChannelsByPolicyLastUpdateRangeParams) ([]sqlc.Channel, error)
 
 	/*
 		Source node queries.
@@ -668,6 +663,7 @@ func (s *SQLStore) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 		// the existing one.
 		dbPolicy, err := db.GetChannelPolicyByChannelAndNode(
 			ctx, sqlc.GetChannelPolicyByChannelAndNodeParams{
+				Version:   int16(ProtocolV1),
 				ChannelID: dbChan.ID,
 				NodeID:    nodeID,
 			},
@@ -1282,8 +1278,9 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 
 		exists = true
 
-		policy1, err := db.GetV1ChannelPolicyByChannelAndNode(
-			ctx, sqlc.GetV1ChannelPolicyByChannelAndNodeParams{
+		policy1, err := db.GetChannelPolicyByChannelAndNode(
+			ctx, sqlc.GetChannelPolicyByChannelAndNodeParams{
+				Version:   int16(ProtocolV1),
 				ChannelID: channel.ID,
 				NodeID:    channel.NodeID1,
 			},
@@ -1292,11 +1289,12 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 			return fmt.Errorf("unable to fetch channel policy: %w",
 				err)
 		} else if err == nil {
-			node1LastUpdate = time.Unix(policy1.LastUpdate, 0)
+			node1LastUpdate = time.Unix(policy1.LastUpdate.Int64, 0)
 		}
 
-		policy2, err := db.GetV1ChannelPolicyByChannelAndNode(
-			ctx, sqlc.GetV1ChannelPolicyByChannelAndNodeParams{
+		policy2, err := db.GetChannelPolicyByChannelAndNode(
+			ctx, sqlc.GetChannelPolicyByChannelAndNodeParams{
+				Version:   int16(ProtocolV1),
 				ChannelID: channel.ID,
 				NodeID:    channel.NodeID2,
 			},
@@ -1305,7 +1303,7 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 			return fmt.Errorf("unable to fetch channel policy: %w",
 				err)
 		} else if err == nil {
-			node2LastUpdate = time.Unix(policy2.LastUpdate, 0)
+			node2LastUpdate = time.Unix(policy2.LastUpdate.Int64, 0)
 		}
 
 		return nil
@@ -1382,10 +1380,17 @@ func (s *SQLStore) ChanUpdatesInHorizon(startTime,
 		hits         int
 	)
 	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
-		dbChans, err := db.GetV1ChannelsByPolicyLastUpdateRange(
-			ctx, sqlc.GetV1ChannelsByPolicyLastUpdateRangeParams{
-				StartTime: startTime.Unix(),
-				EndTime:   endTime.Unix(),
+		dbChans, err := db.GetChannelsByPolicyLastUpdateRange(
+			ctx, sqlc.GetChannelsByPolicyLastUpdateRangeParams{
+				Version: int16(ProtocolV1),
+				StartTime: sql.NullInt64{
+					Valid: true,
+					Int64: startTime.Unix(),
+				},
+				EndTime: sql.NullInt64{
+					Valid: true,
+					Int64: endTime.Unix(),
+				},
 			},
 		)
 		if err != nil {
@@ -1528,8 +1533,9 @@ func (s *SQLStore) FilterChannelRange(startHeight, endHeight uint32,
 			}
 
 			//nolint:ll
-			node1Policy, err := db.GetV1ChannelPolicyByChannelAndNode(
-				ctx, sqlc.GetV1ChannelPolicyByChannelAndNodeParams{
+			node1Policy, err := db.GetChannelPolicyByChannelAndNode(
+				ctx, sqlc.GetChannelPolicyByChannelAndNodeParams{
+					Version:   int16(ProtocolV1),
 					ChannelID: dbChan.ID,
 					NodeID:    dbChan.NodeID1,
 				},
@@ -1539,13 +1545,14 @@ func (s *SQLStore) FilterChannelRange(startHeight, endHeight uint32,
 					"policy: %w", err)
 			} else if err == nil {
 				chanInfo.Node1UpdateTimestamp = time.Unix(
-					node1Policy.LastUpdate, 0,
+					node1Policy.LastUpdate.Int64, 0,
 				)
 			}
 
 			//nolint:ll
-			node2Policy, err := db.GetV1ChannelPolicyByChannelAndNode(
-				ctx, sqlc.GetV1ChannelPolicyByChannelAndNodeParams{
+			node2Policy, err := db.GetChannelPolicyByChannelAndNode(
+				ctx, sqlc.GetChannelPolicyByChannelAndNodeParams{
+					Version:   int16(ProtocolV1),
 					ChannelID: dbChan.ID,
 					NodeID:    dbChan.NodeID2,
 				},
@@ -1555,7 +1562,7 @@ func (s *SQLStore) FilterChannelRange(startHeight, endHeight uint32,
 					"policy: %w", err)
 			} else if err == nil {
 				chanInfo.Node2UpdateTimestamp = time.Unix(
-					node2Policy.LastUpdate, 0,
+					node2Policy.LastUpdate.Int64, 0,
 				)
 			}
 
@@ -3422,34 +3429,31 @@ func getSourceNode(ctx context.Context, db SQLQueries,
 func insertChanPolicy(ctx context.Context, db SQLQueries, chanID, nodeID int64,
 	policy *models.ChannelEdgePolicy) error {
 
-	/*
-		1) insert general chan policy [x]
-		2) insert v1 data [x]
-		3) insert extra data
-	*/
-
 	id, err := db.CreateChannelPolicy(ctx, sqlc.CreateChannelPolicyParams{
+		Version:     int16(ProtocolV1),
 		ChannelID:   chanID,
 		NodeID:      nodeID,
 		Timelock:    int32(policy.TimeLockDelta),
 		FeePpm:      int64(policy.FeeProportionalMillionths),
 		BaseFeeMsat: int64(policy.FeeBaseMSat),
 		MinHtlcMsat: int64(policy.MinHTLC),
-		Signature:   policy.SigBytes,
-	})
-	if err != nil {
-		return fmt.Errorf("unable to insert channel policy: %w", err)
-	}
-
-	err = db.CreateChannelPolicyV1Data(ctx, sqlc.CreateChannelPolicyV1DataParams{
-		ChannelPolicyID: id,
-		LastUpdate:      policy.LastUpdate.Unix(),
-		Disabled:        policy.IsDisabled(),
+		LastUpdate: sql.NullInt64{
+			Int64: policy.LastUpdate.Unix(),
+			Valid: true,
+		},
+		Disabled: sql.NullBool{
+			Valid: true,
+			Bool:  policy.IsDisabled(),
+		},
 		MaxHtlcMsat: sql.NullInt64{
 			Valid: policy.MessageFlags.HasMaxHtlc(),
 			Int64: int64(policy.MaxHTLC),
 		},
+		Signature: policy.SigBytes,
 	})
+	if err != nil {
+		return fmt.Errorf("unable to insert channel policy: %w", err)
+	}
 
 	extra, err := marshalExtraOpaqueData(policy.ExtraOpaqueData)
 	if err != nil {
@@ -3525,26 +3529,22 @@ func updateChanPolicy(ctx context.Context, db SQLQueries,
 		FeePpm:      int64(policy.FeeProportionalMillionths),
 		BaseFeeMsat: int64(policy.FeeBaseMSat),
 		MinHtlcMsat: int64(policy.MinHTLC),
-		Signature:   policy.SigBytes,
+		LastUpdate: sql.NullInt64{
+			Valid: true,
+			Int64: policy.LastUpdate.Unix(),
+		},
+		Disabled: sql.NullBool{
+			Valid: true,
+			Bool:  policy.IsDisabled(),
+		},
+		MaxHtlcMsat: sql.NullInt64{
+			Valid: policy.MessageFlags.HasMaxHtlc(),
+			Int64: int64(policy.MaxHTLC),
+		},
+		Signature: policy.SigBytes,
 	})
 	if err != nil {
 		return fmt.Errorf("unable to update channel policy: %w", err)
-	}
-
-	err = db.UpdateChannelPolicyV1Data(
-		ctx, sqlc.UpdateChannelPolicyV1DataParams{
-			ChannelPolicyID: dbID,
-			LastUpdate:      policy.LastUpdate.Unix(),
-			Disabled:        policy.IsDisabled(),
-			MaxHtlcMsat: sql.NullInt64{
-				Valid: policy.MessageFlags.HasMaxHtlc(),
-				Int64: int64(policy.MaxHTLC),
-			},
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("unable to update channel policy v1 data: %w",
-			err)
 	}
 
 	extra, err := marshalExtraOpaqueData(policy.ExtraOpaqueData)
@@ -3791,6 +3791,7 @@ func getChanPolicy(ctx context.Context, db SQLQueries, channelID uint64,
 
 	policy, err := db.GetChannelPolicyByChannelAndNode(
 		ctx, sqlc.GetChannelPolicyByChannelAndNodeParams{
+			Version:   int16(ProtocolV1),
 			ChannelID: dbChanID,
 			NodeID:    dbNodeID,
 		},
@@ -3800,12 +3801,6 @@ func getChanPolicy(ctx context.Context, db SQLQueries, channelID uint64,
 			err)
 	} else if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
-	}
-
-	v1Data, err := db.GetChannelPolicyV1Data(ctx, policy.ID)
-	if err != nil {
-		return nil, fmt.Errorf("unable to fetch v1 channel policy "+
-			"data: %w", err)
 	}
 
 	extra, err := getChanPolicyExtraSignedFields(ctx, db, policy.ID)
@@ -3820,7 +3815,7 @@ func getChanPolicy(ctx context.Context, db SQLQueries, channelID uint64,
 	}
 
 	var msgFlags lnwire.ChanUpdateMsgFlags
-	if v1Data.MaxHtlcMsat.Valid {
+	if policy.MaxHtlcMsat.Valid {
 		msgFlags |= lnwire.ChanUpdateRequiredMaxHtlc
 	}
 
@@ -3828,19 +3823,19 @@ func getChanPolicy(ctx context.Context, db SQLQueries, channelID uint64,
 	if !isNode1 {
 		chanFlags |= lnwire.ChanUpdateDirection
 	}
-	if v1Data.Disabled {
+	if policy.Disabled.Bool {
 		chanFlags |= lnwire.ChanUpdateDisabled
 	}
 
 	return &models.ChannelEdgePolicy{
 		SigBytes:                  policy.Signature,
 		ChannelID:                 channelID,
-		LastUpdate:                time.Unix(v1Data.LastUpdate, 0),
+		LastUpdate:                time.Unix(policy.LastUpdate.Int64, 0),
 		MessageFlags:              msgFlags,
 		ChannelFlags:              chanFlags,
 		TimeLockDelta:             uint16(policy.Timelock),
 		MinHTLC:                   lnwire.MilliSatoshi(policy.MinHtlcMsat),
-		MaxHTLC:                   lnwire.MilliSatoshi(v1Data.MaxHtlcMsat.Int64),
+		MaxHTLC:                   lnwire.MilliSatoshi(policy.MaxHtlcMsat.Int64),
 		FeeBaseMSat:               lnwire.MilliSatoshi(policy.BaseFeeMsat),
 		FeeProportionalMillionths: lnwire.MilliSatoshi(policy.FeePpm),
 		ToNode:                    toNode,

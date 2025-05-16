@@ -261,8 +261,7 @@ WHERE outpoint = $1 AND version = $2;
 SELECT c.scid
 FROM channels c
          JOIN channel_policies cp ON cp.channel_id = c.id
-         JOIN channel_policy_v1_data v1 ON v1.channel_policy_id = cp.id
-WHERE v1.disabled = true
+WHERE cp.disabled = true
 GROUP BY c.scid
 HAVING COUNT(*) > 1;
 
@@ -326,15 +325,13 @@ WHERE channel_id = $1
 
 -- name: CreateChannelPolicy :one
 INSERT INTO channel_policies (
-    channel_id, node_id, timelock, fee_ppm, base_fee_msat, min_htlc_msat, signature
+    version, channel_id, node_id, timelock, fee_ppm,
+    base_fee_msat, min_htlc_msat, last_update, disabled,
+    max_htlc_msat, signature
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 )
 RETURNING id;
-
--- name: GetChannelPolicyByChannelAndNode :one
-SELECT * FROM channel_policies
-WHERE channel_id = $1 AND node_id = $2;
 
 -- name: UpdateChannelPolicy :exec
 UPDATE channel_policies
@@ -342,60 +339,41 @@ SET timelock = $2,
     fee_ppm = $3,
     base_fee_msat = $4,
     min_htlc_msat = $5,
-    signature = $6
+    last_update = $6,
+    disabled = $7,
+    max_htlc_msat = $8,
+    signature = $9
 WHERE id = $1;
 
--- name: GetV1ChannelsByPolicyLastUpdateRange :many
+-- name: GetChannelPolicyByChannelAndNode :one
+SELECT *
+FROM channel_policies
+WHERE channel_id = $1
+    AND node_id = $2
+    AND version = $3;
+
+-- name: GetChannelsByPolicyLastUpdateRange :many
 SELECT DISTINCT c.*
 FROM channels c
-         JOIN channel_policies cp ON cp.channel_id = c.id
-         JOIN channel_policy_v1_data v1 ON v1.channel_policy_id = cp.id
-WHERE v1.last_update >= sqlc.arg(start_time)
-  AND v1.last_update < sqlc.arg(end_time);
+    JOIN channel_policies cp ON cp.channel_id = c.id
+WHERE c.version=sqlc.arg(version)
+    AND cp.last_update >= sqlc.arg(start_time)
+    AND cp.last_update < sqlc.arg(end_time);
 
-/* ─────────────────────────────────────────────
-   channel_policy_v1_data table queries
-   ─────────────────────────────────────────────
-*/
-
--- name: CreateChannelPolicyV1Data :exec
-INSERT INTO channel_policy_v1_data (
-    channel_policy_id, last_update, disabled, max_htlc_msat
-) VALUES (
-    $1, $2, $3, $4
-);
-
--- name: GetV1ChannelPolicyByChannelAndNode :one
-SELECT
-    cp.*,
-    v1.*
-FROM channel_policies cp
-JOIN channel_policy_v1_data v1 ON cp.id = v1.channel_policy_id
-WHERE channel_id = $1 AND node_id = $2;
-
--- name: GetChannelPolicyV1Data :one
-SELECT * FROM channel_policy_v1_data WHERE channel_policy_id = $1;
-
--- name: UpdateChannelPolicyV1Data :exec
-UPDATE channel_policy_v1_data
-SET last_update = $2,
-    disabled = $3,
-    max_htlc_msat = $4
-WHERE channel_policy_id = $1;
-
--- name: AddChannelPolicyExtraType :exec
-INSERT INTO channel_policy_extra_types (
-    channel_policy_id, type, value
-) VALUES (
-   $1, $2, $3
-)
-ON CONFLICT (type, channel_policy_id)
-    DO UPDATE SET value = EXCLUDED.value;
 
 /* ─────────────────────────────────────────────
    channel_policy_extra_types table queries
    ─────────────────────────────────────────────
 */
+
+-- name: AddChannelPolicyExtraType :exec
+INSERT INTO channel_policy_extra_types (
+    channel_policy_id, type, value
+) VALUES (
+    $1, $2, $3
+)
+ON CONFLICT (type, channel_policy_id)
+    DO UPDATE SET value = EXCLUDED.value;
 
 -- name: GetChannelPolicyExtraTypes :many
 SELECT * FROM channel_policy_extra_types WHERE channel_policy_id = $1;

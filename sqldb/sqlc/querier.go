@@ -18,7 +18,6 @@ type Querier interface {
 	CountZombieChannels(ctx context.Context, version int16) (int64, error)
 	CreateChannel(ctx context.Context, arg CreateChannelParams) (int64, error)
 	CreateChannelPolicy(ctx context.Context, arg CreateChannelPolicyParams) (int64, error)
-	CreateChannelPolicyV1Data(ctx context.Context, arg CreateChannelPolicyV1DataParams) error
 	CreateFeature(ctx context.Context, bit int32) (int64, error)
 	CreateNode(ctx context.Context, arg CreateNodeParams) (int64, error)
 	DeleteCanceledInvoices(ctx context.Context) (sql.Result, error)
@@ -44,7 +43,14 @@ type Querier interface {
 	GetChannelFeatures(ctx context.Context, channelID int64) ([]GetChannelFeaturesRow, error)
 	GetChannelPolicyByChannelAndNode(ctx context.Context, arg GetChannelPolicyByChannelAndNodeParams) (ChannelPolicy, error)
 	GetChannelPolicyExtraTypes(ctx context.Context, channelPolicyID int64) ([]ChannelPolicyExtraType, error)
-	GetChannelPolicyV1Data(ctx context.Context, channelPolicyID int64) (ChannelPolicyV1Datum, error)
+	// -- name: GetV1ChannelsByPolicyLastUpdateRange :many
+	// SELECT DISTINCT c.*
+	// FROM channels c
+	//          JOIN channel_policies cp ON cp.channel_id = c.id
+	//          JOIN channel_policy_v1_data v1 ON v1.channel_policy_id = cp.id
+	// WHERE v1.last_update >= sqlc.arg(start_time)
+	//   AND v1.last_update < sqlc.arg(end_time);
+	GetChannelsByPolicyLastUpdateRange(ctx context.Context, arg GetChannelsByPolicyLastUpdateRangeParams) ([]Channel, error)
 	GetChannelsBySCIDRange(ctx context.Context, arg GetChannelsBySCIDRangeParams) ([]Channel, error)
 	GetDatabaseVersion(ctx context.Context) (int32, error)
 	GetExtraChannelTypes(ctx context.Context, channelID int64) ([]ChannelExtraType, error)
@@ -73,8 +79,6 @@ type Querier interface {
 	GetSourceNodes(ctx context.Context) ([]GetSourceNodesRow, error)
 	GetSourceNodesByVersion(ctx context.Context, version int16) ([]GetSourceNodesByVersionRow, error)
 	GetUnconnectedNodes(ctx context.Context) ([]GetUnconnectedNodesRow, error)
-	GetV1ChannelPolicyByChannelAndNode(ctx context.Context, arg GetV1ChannelPolicyByChannelAndNodeParams) (GetV1ChannelPolicyByChannelAndNodeRow, error)
-	GetV1ChannelsByPolicyLastUpdateRange(ctx context.Context, arg GetV1ChannelsByPolicyLastUpdateRangeParams) ([]Channel, error)
 	GetV1DisabledSCIDs(ctx context.Context) ([][]byte, error)
 	GetV1NodesByLastUpdateRange(ctx context.Context, arg GetV1NodesByLastUpdateRangeParams) ([]Node, error)
 	GetZombieChannel(ctx context.Context, arg GetZombieChannelParams) (ZombieChannel, error)
@@ -110,7 +114,6 @@ type Querier interface {
 	UpdateAMPSubInvoiceHTLCPreimage(ctx context.Context, arg UpdateAMPSubInvoiceHTLCPreimageParams) (sql.Result, error)
 	UpdateAMPSubInvoiceState(ctx context.Context, arg UpdateAMPSubInvoiceStateParams) error
 	UpdateChannelPolicy(ctx context.Context, arg UpdateChannelPolicyParams) error
-	UpdateChannelPolicyV1Data(ctx context.Context, arg UpdateChannelPolicyV1DataParams) error
 	UpdateInvoiceAmountPaid(ctx context.Context, arg UpdateInvoiceAmountPaidParams) (sql.Result, error)
 	UpdateInvoiceHTLC(ctx context.Context, arg UpdateInvoiceHTLCParams) error
 	UpdateInvoiceHTLCs(ctx context.Context, arg UpdateInvoiceHTLCsParams) error
