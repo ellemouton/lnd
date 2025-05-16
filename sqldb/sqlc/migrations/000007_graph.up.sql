@@ -18,6 +18,14 @@ CREATE TABLE IF NOT EXISTS nodes (
     -- The alias of the node.
     alias VARCHAR,
 
+    -- The unix timestamp of the last time the node was updated.
+    -- This is nullable since it is only set if the node_announcement
+    -- message has been received on the v1 protocol version.
+    last_update BIGINT,
+
+    -- The color of the node.
+    color VARCHAR,
+
     -- The signature of the node announcement. If this is null, then
     -- the node announcement has not been received yet and this record
     -- is a shell node. This can be the case if we receive a channel
@@ -33,20 +41,6 @@ CREATE INDEX IF NOT EXISTS nodes_version_idx ON nodes(version);
 CREATE UNIQUE INDEX IF NOT EXISTS nodes_unique ON nodes (
     pub_key, version
 );
-
--- Any info about the node that is specific to the V1 gossip protocol.
-CREATE TABLE IF NOT EXISTS nodes_v1_data (
-    -- The node id this V1 data belongs to.
-    node_id BIGINT PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
-
-    -- The unix timestamp of the last time the node was updated.
-    last_update BIGINT NOT NULL,
-
-    -- The color of the node.
-    color VARCHAR NOT NULL
-);
-CREATE INDEX IF NOT EXISTS nodes_v1_data_node_id_last_update_idx
-    ON nodes_v1_data(node_id, last_update);
 
 -- node_extra_types stores any extra TLV fields covered by a node announcement that
 -- we do not have an explicit column for in the nodes table.

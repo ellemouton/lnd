@@ -5,15 +5,18 @@
 
 -- name: CreateNode :one
 INSERT INTO nodes (
-    version, pub_key, alias, signature
+    version, pub_key, alias,
+    last_update, color, signature
 )
-VALUES ($1, $2, $3, $4)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id;
 
 -- name: UpdateNode :exec
 UPDATE nodes
 SET alias = $2,
-    signature = $3
+    signature = $3,
+    last_update = $4,
+    color = $5
 WHERE id = $1;
 
 -- name: GetNodeByID :one
@@ -28,12 +31,11 @@ WHERE pub_key = $1
   AND version = $2;
 
 -- name: GetV1NodesByLastUpdateRange :many
-SELECT n.*
-FROM nodes n
-         JOIN nodes_v1_data v1 ON n.id = v1.node_id
-WHERE n.version = 1
-  AND v1.last_update >= sqlc.arg(start_time)
-  AND v1.last_update < sqlc.arg(end_time);
+SELECT *
+FROM nodes
+WHERE version = 1
+  AND last_update >= sqlc.arg(start_time)
+  AND last_update < sqlc.arg(end_time);
 
 -- name: DeleteNode :exec
 DELETE FROM nodes WHERE id = $1;
@@ -77,25 +79,6 @@ WHERE NOT EXISTS (
     FROM channels c
     WHERE c.node_id_1 = n.id OR c.node_id_2 = n.id
 );
-
-/* ─────────────────────────────────────────────
-   nodes_v1_data table queries
-   ─────────────────────────────────────────────
-*/
-
--- name: UpsertV1NodeData :exec
-INSERT INTO nodes_v1_data (
-    node_id, last_update, color
-)
-VALUES ($1, $2, $3)
-ON CONFLICT (node_id) DO UPDATE
-    SET last_update = EXCLUDED.last_update,
-        color = EXCLUDED.color;
-
--- name: GetV1NodeData :one
-SELECT *
-FROM nodes_v1_data
-WHERE node_id = $1;
 
 /* ─────────────────────────────────────────────
    node_features table queries

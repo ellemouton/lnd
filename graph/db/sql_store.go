@@ -75,8 +75,6 @@ type SQLQueries interface {
 	GetNodeAddresses(ctx context.Context, nodeID int64) ([]sqlc.GetNodeAddressesRow, error)
 	DeleteNodeAddresses(ctx context.Context, nodeID int64) error
 
-	UpsertV1NodeData(ctx context.Context, arg sqlc.UpsertV1NodeDataParams) error
-	GetV1NodeData(ctx context.Context, nodeID int64) (sqlc.NodesV1Datum, error)
 	GetNodeIDByPubKeyAndVersion(ctx context.Context, arg sqlc.GetNodeIDByPubKeyAndVersionParams) (int64, error)
 
 	/*
@@ -356,15 +354,9 @@ func (s *SQLStore) HasLightningNode(pubKey [33]byte) (time.Time, bool,
 
 		exists = true
 
-		v1Node, err := db.GetV1NodeData(ctx, dbNode.ID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		} else if err != nil {
-			return fmt.Errorf("unable to fetch v1 node data: %w",
-				err)
+		if dbNode.LastUpdate.Valid {
+			lastUpdate = time.Unix(dbNode.LastUpdate.Int64, 0)
 		}
-
-		lastUpdate = time.Unix(v1Node.LastUpdate, 0)
 
 		return nil
 	}, func() {})
@@ -996,8 +988,14 @@ func (s *SQLStore) NodeUpdatesInHorizon(startTime,
 	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
 		dbNodes, err := db.GetV1NodesByLastUpdateRange(
 			ctx, sqlc.GetV1NodesByLastUpdateRangeParams{
-				StartTime: startTime.Unix(),
-				EndTime:   endTime.Unix(),
+				StartTime: sql.NullInt64{
+					Int64: startTime.Unix(),
+					Valid: true,
+				},
+				EndTime: sql.NullInt64{
+					Int64: endTime.Unix(),
+					Valid: true,
+				},
 			},
 		)
 		if err != nil {
@@ -2663,18 +2661,32 @@ func forEachNodeDirectedChannel(ctx context.Context, db SQLQueries,
 func insertV1Node(ctx context.Context, db SQLQueries,
 	node *models.LightningNode) (int64, error) {
 
-	nodeID, err := db.CreateNode(ctx, sqlc.CreateNodeParams{
+	createNodeParams := sqlc.CreateNodeParams{
 		Version: int16(ProtocolV1),
 		PubKey:  node.PubKeyBytes[:],
-		Alias: sql.NullString{
+	}
+
+	if node.HaveNodeAnnouncement {
+		createNodeParams.LastUpdate = sql.NullInt64{
+			Valid: true,
+			Int64: node.LastUpdate.Unix(),
+		}
+		createNodeParams.Color = sql.NullString{
+			Valid:  true,
+			String: EncodeHexColor(node.Color),
+		}
+		createNodeParams.Alias = sql.NullString{
 			Valid:  node.Alias != "",
 			String: node.Alias,
-		},
-		Signature: node.AuthSigBytes,
-	})
+		}
+
+		createNodeParams.Signature = node.AuthSigBytes
+	}
+
+	nodeID, err := db.CreateNode(ctx, createNodeParams)
 	if err != nil {
-		return 0, fmt.Errorf("creating record for "+
-			"node(%x): %w", node.PubKeyBytes, err)
+		return 0, fmt.Errorf("creating record for node(%x): %w",
+			node.PubKeyBytes, err)
 	}
 
 	err = upsertV1NodeData(ctx, db, nodeID, node)
@@ -2690,14 +2702,28 @@ func insertV1Node(ctx context.Context, db SQLQueries,
 func updateV1Node(ctx context.Context, db SQLQueries, id int64,
 	node *models.LightningNode) error {
 
-	err := db.UpdateNode(ctx, sqlc.UpdateNodeParams{
+	updateNodeParams := sqlc.UpdateNodeParams{
 		ID: id,
-		Alias: sql.NullString{
+	}
+
+	if node.HaveNodeAnnouncement {
+		updateNodeParams.LastUpdate = sql.NullInt64{
+			Valid: true,
+			Int64: node.LastUpdate.Unix(),
+		}
+		updateNodeParams.Color = sql.NullString{
+			Valid:  true,
+			String: EncodeHexColor(node.Color),
+		}
+		updateNodeParams.Alias = sql.NullString{
 			Valid:  node.Alias != "",
 			String: node.Alias,
-		},
-		Signature: node.AuthSigBytes,
-	})
+		}
+
+		updateNodeParams.Signature = node.AuthSigBytes
+	}
+
+	err := db.UpdateNode(ctx, updateNodeParams)
 	if err != nil {
 		return fmt.Errorf("updating node(%x): %w", node.PubKeyBytes,
 			err)
@@ -2712,9 +2738,7 @@ func updateV1Node(ctx context.Context, db SQLQueries, id int64,
 	return nil
 }
 
-// upsertV1NodeData updates the V1 node data for the given node ID. This
-// includes updating v1 specific fields, the node's features, addresses and
-// extra TLV types.
+// upsertV1NodeData updates the node's features, addresses and extra TLV types.
 func upsertV1NodeData(ctx context.Context, db SQLQueries, id int64,
 	node *models.LightningNode) error {
 
@@ -2723,18 +2747,8 @@ func upsertV1NodeData(ctx context.Context, db SQLQueries, id int64,
 		return nil
 	}
 
-	// Otherwise, we insert the v1 data.
-	err := db.UpsertV1NodeData(ctx, sqlc.UpsertV1NodeDataParams{
-		NodeID:     id,
-		LastUpdate: node.LastUpdate.Unix(),
-		Color:      EncodeHexColor(node.Color),
-	})
-	if err != nil {
-		return fmt.Errorf("inserting node: %w", err)
-	}
-
 	// Update the node's features.
-	err = upsertNodeFeatures(ctx, db, id, node.Features)
+	err := upsertNodeFeatures(ctx, db, id, node.Features)
 	if err != nil {
 		return fmt.Errorf("inserting node features: %w", err)
 	}
@@ -3050,27 +3064,23 @@ func buildNode(ctx context.Context, db SQLQueries, dbNode *sqlc.Node) (
 	copy(pub[:], dbNode.PubKey)
 
 	node := &models.LightningNode{
-		PubKeyBytes:          pub,
-		Alias:                dbNode.Alias.String,
-		HaveNodeAnnouncement: len(dbNode.Signature) > 0,
-		AuthSigBytes:         dbNode.Signature,
-		Features:             lnwire.EmptyFeatureVector(),
-		LastUpdate:           time.Unix(0, 0),
-		ExtraOpaqueData:      make([]byte, 0),
+		PubKeyBytes:     pub,
+		Features:        lnwire.EmptyFeatureVector(),
+		LastUpdate:      time.Unix(0, 0),
+		ExtraOpaqueData: make([]byte, 0),
 	}
 
-	if !node.HaveNodeAnnouncement {
+	if len(dbNode.Signature) == 0 {
 		return node, nil
 	}
 
-	v1Node, err := db.GetV1NodeData(ctx, dbNode.ID)
-	if err != nil {
-		return nil, fmt.Errorf("unable to fetch node(%d) v1 data: %w",
-			dbNode.ID, err)
-	}
+	node.HaveNodeAnnouncement = true
+	node.AuthSigBytes = dbNode.Signature
+	node.Alias = dbNode.Alias.String
+	node.LastUpdate = time.Unix(dbNode.LastUpdate.Int64, 0)
 
-	node.LastUpdate = time.Unix(v1Node.LastUpdate, 0)
-	node.Color, err = DecodeHexColor(v1Node.Color)
+	var err error
+	node.Color, err = DecodeHexColor(dbNode.Color.String)
 	if err != nil {
 		return nil, fmt.Errorf("unable to decode color: %w", err)
 	}

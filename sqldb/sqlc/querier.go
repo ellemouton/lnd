@@ -78,7 +78,6 @@ type Querier interface {
 	GetV1ChannelPolicyByChannelAndNode(ctx context.Context, arg GetV1ChannelPolicyByChannelAndNodeParams) (GetV1ChannelPolicyByChannelAndNodeRow, error)
 	GetV1ChannelsByPolicyLastUpdateRange(ctx context.Context, arg GetV1ChannelsByPolicyLastUpdateRangeParams) ([]Channel, error)
 	GetV1DisabledSCIDs(ctx context.Context) ([][]byte, error)
-	GetV1NodeData(ctx context.Context, nodeID int64) (NodesV1Datum, error)
 	GetV1NodesByLastUpdateRange(ctx context.Context, arg GetV1NodesByLastUpdateRangeParams) ([]Node, error)
 	GetZombieChannel(ctx context.Context, arg GetZombieChannelParams) (ZombieChannel, error)
 	HighestSCID(ctx context.Context, version int16) ([]byte, error)
@@ -123,7 +122,6 @@ type Querier interface {
 	UpsertChannelExtraType(ctx context.Context, arg UpsertChannelExtraTypeParams) error
 	UpsertNodeExtraType(ctx context.Context, arg UpsertNodeExtraTypeParams) error
 	UpsertPruneLogEntry(ctx context.Context, arg UpsertPruneLogEntryParams) error
-	UpsertV1NodeData(ctx context.Context, arg UpsertV1NodeDataParams) error
 	UpsertZombieChannel(ctx context.Context, arg UpsertZombieChannelParams) error
 }
 

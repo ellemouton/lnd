@@ -259,17 +259,20 @@ const createNode = `-- name: CreateNode :one
 */
 
 INSERT INTO nodes (
-    version, pub_key, alias, signature
+    version, pub_key, alias,
+    last_update, color, signature
 )
-VALUES ($1, $2, $3, $4)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id
 `
 
 type CreateNodeParams struct {
-	Version   int16
-	PubKey    []byte
-	Alias     sql.NullString
-	Signature []byte
+	Version    int16
+	PubKey     []byte
+	Alias      sql.NullString
+	LastUpdate sql.NullInt64
+	Color      sql.NullString
+	Signature  []byte
 }
 
 func (q *Queries) CreateNode(ctx context.Context, arg CreateNodeParams) (int64, error) {
@@ -277,6 +280,8 @@ func (q *Queries) CreateNode(ctx context.Context, arg CreateNodeParams) (int64, 
 		arg.Version,
 		arg.PubKey,
 		arg.Alias,
+		arg.LastUpdate,
+		arg.Color,
 		arg.Signature,
 	)
 	var id int64
@@ -774,7 +779,7 @@ func (q *Queries) GetNodeAliasByPubKeyAndVersion(ctx context.Context, arg GetNod
 }
 
 const getNodeByID = `-- name: GetNodeByID :one
-SELECT id, version, pub_key, alias, signature
+SELECT id, version, pub_key, alias, last_update, color, signature
 FROM nodes
 WHERE id = $1
 `
@@ -787,13 +792,15 @@ func (q *Queries) GetNodeByID(ctx context.Context, id int64) (Node, error) {
 		&i.Version,
 		&i.PubKey,
 		&i.Alias,
+		&i.LastUpdate,
+		&i.Color,
 		&i.Signature,
 	)
 	return i, err
 }
 
 const getNodeByPubKeyAndVersion = `-- name: GetNodeByPubKeyAndVersion :one
-SELECT id, version, pub_key, alias, signature
+SELECT id, version, pub_key, alias, last_update, color, signature
 FROM nodes
 WHERE pub_key = $1
   AND version = $2
@@ -812,6 +819,8 @@ func (q *Queries) GetNodeByPubKeyAndVersion(ctx context.Context, arg GetNodeByPu
 		&i.Version,
 		&i.PubKey,
 		&i.Alias,
+		&i.LastUpdate,
+		&i.Color,
 		&i.Signature,
 	)
 	return i, err
@@ -1223,31 +1232,17 @@ func (q *Queries) GetV1DisabledSCIDs(ctx context.Context) ([][]byte, error) {
 	return items, nil
 }
 
-const getV1NodeData = `-- name: GetV1NodeData :one
-SELECT node_id, last_update, color
-FROM nodes_v1_data
-WHERE node_id = $1
-`
-
-func (q *Queries) GetV1NodeData(ctx context.Context, nodeID int64) (NodesV1Datum, error) {
-	row := q.db.QueryRowContext(ctx, getV1NodeData, nodeID)
-	var i NodesV1Datum
-	err := row.Scan(&i.NodeID, &i.LastUpdate, &i.Color)
-	return i, err
-}
-
 const getV1NodesByLastUpdateRange = `-- name: GetV1NodesByLastUpdateRange :many
-SELECT n.id, n.version, n.pub_key, n.alias, n.signature
-FROM nodes n
-         JOIN nodes_v1_data v1 ON n.id = v1.node_id
-WHERE n.version = 1
-  AND v1.last_update >= $1
-  AND v1.last_update < $2
+SELECT id, version, pub_key, alias, last_update, color, signature
+FROM nodes
+WHERE version = 1
+  AND last_update >= $1
+  AND last_update < $2
 `
 
 type GetV1NodesByLastUpdateRangeParams struct {
-	StartTime int64
-	EndTime   int64
+	StartTime sql.NullInt64
+	EndTime   sql.NullInt64
 }
 
 func (q *Queries) GetV1NodesByLastUpdateRange(ctx context.Context, arg GetV1NodesByLastUpdateRangeParams) ([]Node, error) {
@@ -1264,6 +1259,8 @@ func (q *Queries) GetV1NodesByLastUpdateRange(ctx context.Context, arg GetV1Node
 			&i.Version,
 			&i.PubKey,
 			&i.Alias,
+			&i.LastUpdate,
+			&i.Color,
 			&i.Signature,
 		); err != nil {
 			return nil, err
@@ -1672,18 +1669,28 @@ func (q *Queries) UpdateChannelPolicyV1Data(ctx context.Context, arg UpdateChann
 const updateNode = `-- name: UpdateNode :exec
 UPDATE nodes
 SET alias = $2,
-    signature = $3
+    signature = $3,
+    last_update = $4,
+    color = $5
 WHERE id = $1
 `
 
 type UpdateNodeParams struct {
-	ID        int64
-	Alias     sql.NullString
-	Signature []byte
+	ID         int64
+	Alias      sql.NullString
+	Signature  []byte
+	LastUpdate sql.NullInt64
+	Color      sql.NullString
 }
 
 func (q *Queries) UpdateNode(ctx context.Context, arg UpdateNodeParams) error {
-	_, err := q.db.ExecContext(ctx, updateNode, arg.ID, arg.Alias, arg.Signature)
+	_, err := q.db.ExecContext(ctx, updateNode,
+		arg.ID,
+		arg.Alias,
+		arg.Signature,
+		arg.LastUpdate,
+		arg.Color,
+	)
 	return err
 }
 
@@ -1759,32 +1766,6 @@ type UpsertPruneLogEntryParams struct {
 
 func (q *Queries) UpsertPruneLogEntry(ctx context.Context, arg UpsertPruneLogEntryParams) error {
 	_, err := q.db.ExecContext(ctx, upsertPruneLogEntry, arg.BlockHeight, arg.BlockHash)
-	return err
-}
-
-const upsertV1NodeData = `-- name: UpsertV1NodeData :exec
-/* ─────────────────────────────────────────────
-   nodes_v1_data table queries
-   ─────────────────────────────────────────────
-*/
-
-INSERT INTO nodes_v1_data (
-    node_id, last_update, color
-)
-VALUES ($1, $2, $3)
-ON CONFLICT (node_id) DO UPDATE
-    SET last_update = EXCLUDED.last_update,
-        color = EXCLUDED.color
-`
-
-type UpsertV1NodeDataParams struct {
-	NodeID     int64
-	LastUpdate int64
-	Color      string
-}
-
-func (q *Queries) UpsertV1NodeData(ctx context.Context, arg UpsertV1NodeDataParams) error {
-	_, err := q.db.ExecContext(ctx, upsertV1NodeData, arg.NodeID, arg.LastUpdate, arg.Color)
 	return err
 }
 

@@ -168,11 +168,13 @@ type MigrationTracker struct {
 }
 
 type Node struct {
-	ID        int64
-	Version   int16
-	PubKey    []byte
-	Alias     sql.NullString
-	Signature []byte
+	ID         int64
+	Version    int16
+	PubKey     []byte
+	Alias      sql.NullString
+	LastUpdate sql.NullInt64
+	Color      sql.NullString
+	Signature  []byte
 }
 
 type NodeAddress struct {
@@ -191,12 +193,6 @@ type NodeExtraType struct {
 type NodeFeature struct {
 	NodeID    int64
 	FeatureID int64
-}
-
-type NodesV1Datum struct {
-	NodeID     int64
-	LastUpdate int64
-	Color      string
 }
 
 type PruneLog struct {
