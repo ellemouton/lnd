@@ -146,16 +146,12 @@ CREATE TABLE IF NOT EXISTS channels_v1_data (
     channel_id BIGINT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,
 
     bitcoin_key_1 BLOB NOT NULL,
+    bitcoin_key_2 BLOB NOT NULL,
 
-    bitcoin_key_2 BLOB NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS v1_channel_proofs (
-    channel_id BIGINT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,
-    node_1_signature BLOB NOT NULL,
-    node_2_signature BLOB NOT NULL,
-    bitcoin_1_signature BLOB NOT NULL,
-    bitcoin_2_signature BLOB NOT NULL
+    node_1_signature BLOB,
+    node_2_signature BLOB,
+    bitcoin_1_signature BLOB,
+    bitcoin_2_signature BLOB
 );
 
 -- channel_features contains the feature bits of a channel.

@@ -13,6 +13,7 @@ import (
 type Querier interface {
 	AddChannelPolicyExtraType(ctx context.Context, arg AddChannelPolicyExtraTypeParams) error
 	AddSourceNode(ctx context.Context, nodeID int64) error
+	AddV1ChannelProof(ctx context.Context, arg AddV1ChannelProofParams) error
 	ClearKVInvoiceHashIndex(ctx context.Context) error
 	CountZombieChannels(ctx context.Context, version int16) (int64, error)
 	CreateChannel(ctx context.Context, arg CreateChannelParams) (int64, error)
@@ -21,7 +22,6 @@ type Querier interface {
 	CreateChannelsV1Data(ctx context.Context, arg CreateChannelsV1DataParams) error
 	CreateFeature(ctx context.Context, bit int32) (int64, error)
 	CreateNode(ctx context.Context, arg CreateNodeParams) (int64, error)
-	CreateV1ChannelProof(ctx context.Context, arg CreateV1ChannelProofParams) error
 	DeleteCanceledInvoices(ctx context.Context) (sql.Result, error)
 	DeleteChannel(ctx context.Context, id int64) error
 	DeleteChannelPolicyExtraType(ctx context.Context, arg DeleteChannelPolicyExtraTypeParams) error
@@ -76,7 +76,6 @@ type Querier interface {
 	GetSourceNodesByVersion(ctx context.Context, version int16) ([]GetSourceNodesByVersionRow, error)
 	GetUnconnectedNodes(ctx context.Context) ([]GetUnconnectedNodesRow, error)
 	GetV1ChannelPolicyByChannelAndNode(ctx context.Context, arg GetV1ChannelPolicyByChannelAndNodeParams) (GetV1ChannelPolicyByChannelAndNodeRow, error)
-	GetV1ChannelProof(ctx context.Context, channelID int64) (V1ChannelProof, error)
 	GetV1ChannelsByPolicyLastUpdateRange(ctx context.Context, arg GetV1ChannelsByPolicyLastUpdateRangeParams) ([]Channel, error)
 	GetV1DisabledSCIDs(ctx context.Context) ([][]byte, error)
 	GetV1NodeData(ctx context.Context, nodeID int64) (NodesV1Datum, error)

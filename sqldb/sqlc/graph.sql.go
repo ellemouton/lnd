@@ -47,6 +47,34 @@ func (q *Queries) AddSourceNode(ctx context.Context, nodeID int64) error {
 	return err
 }
 
+const addV1ChannelProof = `-- name: AddV1ChannelProof :exec
+UPDATE channels_v1_data
+SET node_1_signature = $2,
+    node_2_signature = $3,
+    bitcoin_1_signature = $4,
+    bitcoin_2_signature = $5
+WHERE channel_id = $1
+`
+
+type AddV1ChannelProofParams struct {
+	ChannelID         int64
+	Node1Signature    []byte
+	Node2Signature    []byte
+	Bitcoin1Signature []byte
+	Bitcoin2Signature []byte
+}
+
+func (q *Queries) AddV1ChannelProof(ctx context.Context, arg AddV1ChannelProofParams) error {
+	_, err := q.db.ExecContext(ctx, addV1ChannelProof,
+		arg.ChannelID,
+		arg.Node1Signature,
+		arg.Node2Signature,
+		arg.Bitcoin1Signature,
+		arg.Bitcoin2Signature,
+	)
+	return err
+}
+
 const countZombieChannels = `-- name: CountZombieChannels :one
 SELECT COUNT(*)
 FROM zombie_channels
@@ -174,20 +202,34 @@ const createChannelsV1Data = `-- name: CreateChannelsV1Data :exec
 */
 
 INSERT INTO channels_v1_data (
-    channel_id, bitcoin_key_1, bitcoin_key_2
+    channel_id, bitcoin_key_1, bitcoin_key_2,
+    node_1_signature, node_2_signature, bitcoin_1_signature,
+    bitcoin_2_signature
 ) VALUES (
-    $1, $2, $3
+    $1, $2, $3, $4, $5, $6, $7
 )
 `
 
 type CreateChannelsV1DataParams struct {
-	ChannelID   int64
-	BitcoinKey1 []byte
-	BitcoinKey2 []byte
+	ChannelID         int64
+	BitcoinKey1       []byte
+	BitcoinKey2       []byte
+	Node1Signature    []byte
+	Node2Signature    []byte
+	Bitcoin1Signature []byte
+	Bitcoin2Signature []byte
 }
 
 func (q *Queries) CreateChannelsV1Data(ctx context.Context, arg CreateChannelsV1DataParams) error {
-	_, err := q.db.ExecContext(ctx, createChannelsV1Data, arg.ChannelID, arg.BitcoinKey1, arg.BitcoinKey2)
+	_, err := q.db.ExecContext(ctx, createChannelsV1Data,
+		arg.ChannelID,
+		arg.BitcoinKey1,
+		arg.BitcoinKey2,
+		arg.Node1Signature,
+		arg.Node2Signature,
+		arg.Bitcoin1Signature,
+		arg.Bitcoin2Signature,
+	)
 	return err
 }
 
@@ -240,39 +282,6 @@ func (q *Queries) CreateNode(ctx context.Context, arg CreateNodeParams) (int64, 
 	var id int64
 	err := row.Scan(&id)
 	return id, err
-}
-
-const createV1ChannelProof = `-- name: CreateV1ChannelProof :exec
-/* ─────────────────────────────────────────────
-   channels_v1_channel_proofs table queries
-   ─────────────────────────────────────────────
-*/
-
-INSERT INTO v1_channel_proofs (
-    channel_id, node_1_signature, node_2_signature,
-    bitcoin_1_signature, bitcoin_2_signature
-) VALUES (
-     $1, $2, $3, $4, $5
-)
-`
-
-type CreateV1ChannelProofParams struct {
-	ChannelID         int64
-	Node1Signature    []byte
-	Node2Signature    []byte
-	Bitcoin1Signature []byte
-	Bitcoin2Signature []byte
-}
-
-func (q *Queries) CreateV1ChannelProof(ctx context.Context, arg CreateV1ChannelProofParams) error {
-	_, err := q.db.ExecContext(ctx, createV1ChannelProof,
-		arg.ChannelID,
-		arg.Node1Signature,
-		arg.Node2Signature,
-		arg.Bitcoin1Signature,
-		arg.Bitcoin2Signature,
-	)
-	return err
 }
 
 const deleteChannel = `-- name: DeleteChannel :exec
@@ -635,13 +644,21 @@ func (q *Queries) GetChannelsBySCIDRange(ctx context.Context, arg GetChannelsByS
 }
 
 const getChannelsV1Data = `-- name: GetChannelsV1Data :one
-SELECT channel_id, bitcoin_key_1, bitcoin_key_2 FROM channels_v1_data WHERE channel_id = $1
+SELECT channel_id, bitcoin_key_1, bitcoin_key_2, node_1_signature, node_2_signature, bitcoin_1_signature, bitcoin_2_signature FROM channels_v1_data WHERE channel_id = $1
 `
 
 func (q *Queries) GetChannelsV1Data(ctx context.Context, channelID int64) (ChannelsV1Datum, error) {
 	row := q.db.QueryRowContext(ctx, getChannelsV1Data, channelID)
 	var i ChannelsV1Datum
-	err := row.Scan(&i.ChannelID, &i.BitcoinKey1, &i.BitcoinKey2)
+	err := row.Scan(
+		&i.ChannelID,
+		&i.BitcoinKey1,
+		&i.BitcoinKey2,
+		&i.Node1Signature,
+		&i.Node2Signature,
+		&i.Bitcoin1Signature,
+		&i.Bitcoin2Signature,
+	)
 	return i, err
 }
 
@@ -912,8 +929,9 @@ func (q *Queries) GetPruneTip(ctx context.Context) (PruneLog, error) {
 const getPublicV1ChannelsBySCID = `-- name: GetPublicV1ChannelsBySCID :many
 SELECT c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity
 FROM channels c
-         JOIN v1_channel_proofs p ON p.channel_id = c.id
-WHERE c.scid >= $1
+    JOIN channels_v1_data d ON d.channel_id = c.id
+WHERE d.node_1_signature IS NOT NULL
+  AND c.scid >= $1
   AND c.scid < $2
 `
 
@@ -1123,23 +1141,6 @@ func (q *Queries) GetV1ChannelPolicyByChannelAndNode(ctx context.Context, arg Ge
 		&i.LastUpdate,
 		&i.Disabled,
 		&i.MaxHtlcMsat,
-	)
-	return i, err
-}
-
-const getV1ChannelProof = `-- name: GetV1ChannelProof :one
-SELECT channel_id, node_1_signature, node_2_signature, bitcoin_1_signature, bitcoin_2_signature FROM v1_channel_proofs WHERE channel_id = $1
-`
-
-func (q *Queries) GetV1ChannelProof(ctx context.Context, channelID int64) (V1ChannelProof, error) {
-	row := q.db.QueryRowContext(ctx, getV1ChannelProof, channelID)
-	var i V1ChannelProof
-	err := row.Scan(
-		&i.ChannelID,
-		&i.Node1Signature,
-		&i.Node2Signature,
-		&i.Bitcoin1Signature,
-		&i.Bitcoin2Signature,
 	)
 	return i, err
 }
@@ -1431,9 +1432,10 @@ const isPublicV1Node = `-- name: IsPublicV1Node :one
 SELECT EXISTS (
     SELECT 1
     FROM channels c
-             JOIN v1_channel_proofs v1p ON c.id = v1p.channel_id
+             JOIN channels_v1_data d ON c.id = d.channel_id
              JOIN nodes n ON n.id = c.node_id_1 OR n.id = c.node_id_2
     WHERE n.pub_key = $1
+      AND d.node_1_signature IS NOT NULL
 )
 `
 

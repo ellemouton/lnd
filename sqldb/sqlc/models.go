@@ -74,9 +74,13 @@ type ChannelPolicyV1Datum struct {
 }
 
 type ChannelsV1Datum struct {
-	ChannelID   int64
-	BitcoinKey1 []byte
-	BitcoinKey2 []byte
+	ChannelID         int64
+	BitcoinKey1       []byte
+	BitcoinKey2       []byte
+	Node1Signature    []byte
+	Node2Signature    []byte
+	Bitcoin1Signature []byte
+	Bitcoin2Signature []byte
 }
 
 type ClosedScid struct {
@@ -202,14 +206,6 @@ type PruneLog struct {
 
 type SourceNode struct {
 	NodeID int64
-}
-
-type V1ChannelProof struct {
-	ChannelID         int64
-	Node1Signature    []byte
-	Node2Signature    []byte
-	Bitcoin1Signature []byte
-	Bitcoin2Signature []byte
 }
 
 type ZombieChannel struct {

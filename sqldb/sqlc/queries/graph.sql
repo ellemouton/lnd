@@ -63,9 +63,10 @@ WHERE version = $1;
 SELECT EXISTS (
     SELECT 1
     FROM channels c
-             JOIN v1_channel_proofs v1p ON c.id = v1p.channel_id
+             JOIN channels_v1_data d ON c.id = d.channel_id
              JOIN nodes n ON n.id = c.node_id_1 OR n.id = c.node_id_2
     WHERE n.pub_key = $1
+      AND d.node_1_signature IS NOT NULL
 );
 
 -- name: GetUnconnectedNodes :many
@@ -251,8 +252,9 @@ WHERE outpoint = $1;
 -- name: GetPublicV1ChannelsBySCID :many
 SELECT c.*
 FROM channels c
-         JOIN v1_channel_proofs p ON p.channel_id = c.id
-WHERE c.scid >= sqlc.arg(start_scid)
+    JOIN channels_v1_data d ON d.channel_id = c.id
+WHERE d.node_1_signature IS NOT NULL
+  AND c.scid >= sqlc.arg(start_scid)
   AND c.scid < sqlc.arg(end_scid);
 
 -- name: GetSCIDByOutpointAndVersion :one
@@ -288,29 +290,23 @@ DELETE FROM channels WHERE id = $1;
 
 -- name: CreateChannelsV1Data :exec
 INSERT INTO channels_v1_data (
-    channel_id, bitcoin_key_1, bitcoin_key_2
+    channel_id, bitcoin_key_1, bitcoin_key_2,
+    node_1_signature, node_2_signature, bitcoin_1_signature,
+    bitcoin_2_signature
 ) VALUES (
-    $1, $2, $3
+    $1, $2, $3, $4, $5, $6, $7
 );
+
+-- name: AddV1ChannelProof :exec
+UPDATE channels_v1_data
+SET node_1_signature = $2,
+    node_2_signature = $3,
+    bitcoin_1_signature = $4,
+    bitcoin_2_signature = $5
+WHERE channel_id = $1;
 
 -- name: GetChannelsV1Data :one
 SELECT * FROM channels_v1_data WHERE channel_id = $1;
-
-/* ─────────────────────────────────────────────
-   channels_v1_channel_proofs table queries
-   ─────────────────────────────────────────────
-*/
-
--- name: CreateV1ChannelProof :exec
-INSERT INTO v1_channel_proofs (
-    channel_id, node_1_signature, node_2_signature,
-    bitcoin_1_signature, bitcoin_2_signature
-) VALUES (
-     $1, $2, $3, $4, $5
-);
-
--- name: GetV1ChannelProof :one
-SELECT * FROM v1_channel_proofs WHERE channel_id = $1;
 
 /* ─────────────────────────────────────────────
    channel_features table queries

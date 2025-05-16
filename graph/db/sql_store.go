@@ -94,15 +94,14 @@ type SQLQueries interface {
 	GetChannelsBySCIDRange(ctx context.Context, arg sqlc.GetChannelsBySCIDRangeParams) ([]sqlc.Channel, error)
 	CreateChannelsV1Data(ctx context.Context, arg sqlc.CreateChannelsV1DataParams) error
 	GetChannelsV1Data(ctx context.Context, channelID int64) (sqlc.ChannelsV1Datum, error)
-	CreateV1ChannelProof(ctx context.Context, arg sqlc.CreateV1ChannelProofParams) error
-	GetV1ChannelProof(ctx context.Context, channelID int64) (sqlc.V1ChannelProof, error)
+	AddV1ChannelProof(ctx context.Context, arg sqlc.AddV1ChannelProofParams) error
+	GetPublicV1ChannelsBySCID(ctx context.Context, arg sqlc.GetPublicV1ChannelsBySCIDParams) ([]sqlc.Channel, error)
 	DeleteExtraChannelType(ctx context.Context, arg sqlc.DeleteExtraChannelTypeParams) error
 	GetExtraChannelTypes(ctx context.Context, channelID int64) ([]sqlc.ChannelExtraType, error)
 	UpsertChannelExtraType(ctx context.Context, arg sqlc.UpsertChannelExtraTypeParams) error
 	InsertChannelFeature(ctx context.Context, arg sqlc.InsertChannelFeatureParams) error
 	GetChannelFeatures(ctx context.Context, channelID int64) ([]sqlc.GetChannelFeaturesRow, error)
 	ListAllChannelsByVersion(ctx context.Context, version int16) ([]sqlc.Channel, error)
-	GetPublicV1ChannelsBySCID(ctx context.Context, arg sqlc.GetPublicV1ChannelsBySCIDParams) ([]sqlc.Channel, error)
 	GetChannelByOutpointAndVersion(ctx context.Context, arg sqlc.GetChannelByOutpointAndVersionParams) (sqlc.Channel, error)
 	GetSCIDByOutpointAndVersion(ctx context.Context, arg sqlc.GetSCIDByOutpointAndVersionParams) ([]byte, error)
 	GetV1DisabledSCIDs(ctx context.Context) ([][]byte, error)
@@ -308,8 +307,8 @@ func (s *SQLStore) AddEdgeProof(scid lnwire.ShortChannelID,
 			return fmt.Errorf("unable to fetch channel: %w", err)
 		}
 
-		return db.CreateV1ChannelProof(
-			ctx, sqlc.CreateV1ChannelProofParams{
+		return db.AddV1ChannelProof(
+			ctx, sqlc.AddV1ChannelProofParams{
 				ChannelID:         dbChan.ID,
 				Node1Signature:    proof.NodeSig1Bytes,
 				Node2Signature:    proof.NodeSig2Bytes,
@@ -3248,32 +3247,25 @@ func insertChannel(ctx context.Context, db SQLQueries,
 		return nil, fmt.Errorf("unable to insert channel: %w", err)
 	}
 
-	err = db.CreateChannelsV1Data(ctx, sqlc.CreateChannelsV1DataParams{
+	chanV1Data := sqlc.CreateChannelsV1DataParams{
 		ChannelID:   dbChanID,
 		BitcoinKey1: edge.BitcoinKey1Bytes[:],
 		BitcoinKey2: edge.BitcoinKey2Bytes[:],
-	})
-	if err != nil {
-		return nil, fmt.Errorf("unable to insert channel v1 data: %w",
-			err)
 	}
 
 	if edge.AuthProof != nil {
 		proof := edge.AuthProof
 
-		err = db.CreateV1ChannelProof(
-			ctx, sqlc.CreateV1ChannelProofParams{
-				ChannelID:         dbChanID,
-				Node1Signature:    proof.NodeSig1Bytes,
-				Node2Signature:    proof.NodeSig2Bytes,
-				Bitcoin1Signature: proof.BitcoinSig1Bytes,
-				Bitcoin2Signature: proof.BitcoinSig2Bytes,
-			},
-		)
-		if err != nil {
-			return nil, fmt.Errorf("unable to insert channel "+
-				"proof: %w", err)
-		}
+		chanV1Data.Node1Signature = proof.NodeSig1Bytes
+		chanV1Data.Node2Signature = proof.NodeSig2Bytes
+		chanV1Data.Bitcoin1Signature = proof.BitcoinSig1Bytes
+		chanV1Data.Bitcoin2Signature = proof.BitcoinSig2Bytes
+	}
+
+	err = db.CreateChannelsV1Data(ctx, chanV1Data)
+	if err != nil {
+		return nil, fmt.Errorf("unable to insert channel v1 data: %w",
+			err)
 	}
 
 	if len(edge.Features) != 0 {
@@ -3702,21 +3694,44 @@ func buildChannelInfo(ctx context.Context, db SQLQueries,
 		ExtraOpaqueData:  recs,
 	}
 
-	dbProof, err := db.GetV1ChannelProof(ctx, dbChan.ID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("unable to fetch channel proof: %w", err)
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		auth := models.ChannelAuthProof{
-			NodeSig1Bytes:    dbProof.Node1Signature,
-			NodeSig2Bytes:    dbProof.Node2Signature,
-			BitcoinSig1Bytes: dbProof.Bitcoin1Signature,
-			BitcoinSig2Bytes: dbProof.Bitcoin2Signature,
+	if v1Data.Bitcoin1Signature != nil {
+		channel.AuthProof = &models.ChannelAuthProof{
+			NodeSig1Bytes:    v1Data.Node1Signature,
+			NodeSig2Bytes:    v1Data.Node2Signature,
+			BitcoinSig1Bytes: v1Data.Bitcoin1Signature,
+			BitcoinSig2Bytes: v1Data.Bitcoin2Signature,
 		}
-
-		channel.AuthProof = &auth
 	}
 
 	return channel, nil
+}
+
+type NullableSQLField interface {
+	sql.NullInt32 | sql.NullInt64 | sql.NullString | sql.NullBool |
+		sql.NullTime | sql.NullInt16 | sql.NullFloat64 | sql.NullByte
+}
+
+func IsNullSQLColumn[T NullableSQLField](field T) bool {
+	switch f := any(field).(type) {
+	case sql.NullInt32:
+		return !f.Valid
+	case sql.NullInt64:
+		return !f.Valid
+	case sql.NullString:
+		return !f.Valid
+	case sql.NullBool:
+		return !f.Valid
+	case sql.NullTime:
+		return !f.Valid
+	case sql.NullInt16:
+		return !f.Valid
+	case sql.NullFloat64:
+		return !f.Valid
+	case sql.NullByte:
+		return !f.Valid
+	default:
+		panic(fmt.Sprintf("unhandled NullableSQLField type %T", f))
+	}
 }
 
 func getChannelNodes(ctx context.Context, db SQLQueries,
