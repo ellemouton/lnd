@@ -54,12 +54,6 @@ SELECT id, pub_key
 FROM nodes
 WHERE version = $1;
 
--- name: GetNodeIDByPubKeyAndVersion :one
-SELECT id
-FROM nodes
-WHERE pub_key = $1
-  AND version = $2;
-
 -- name: ListNodesByVersion :many
 SELECT id, pub_key
 FROM nodes
@@ -120,8 +114,16 @@ SELECT
     nf.feature_id,
     f.bit
 FROM node_features nf
-         JOIN features f ON nf.feature_id = f.id
+    JOIN features f ON nf.feature_id = f.id
 WHERE nf.node_id = $1;
+
+-- name: GetNodeFeaturesByPubKey :many
+SELECT f.bit
+FROM nodes n
+    JOIN node_features nf ON nf.node_id = n.id
+    JOIN features f ON nf.feature_id = f.id
+WHERE n.pub_key = $1
+  AND n.version = $2;
 
 -- name: DeleteNodeFeature :exec
 DELETE FROM node_features

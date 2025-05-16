@@ -806,7 +806,7 @@ SELECT
     nf.feature_id,
     f.bit
 FROM node_features nf
-         JOIN features f ON nf.feature_id = f.id
+    JOIN features f ON nf.feature_id = f.id
 WHERE nf.node_id = $1
 `
 
@@ -829,6 +829,43 @@ func (q *Queries) GetNodeFeatures(ctx context.Context, nodeID int64) ([]GetNodeF
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getNodeFeaturesByPubKey = `-- name: GetNodeFeaturesByPubKey :many
+SELECT f.bit
+FROM nodes n
+    JOIN node_features nf ON nf.node_id = n.id
+    JOIN features f ON nf.feature_id = f.id
+WHERE n.pub_key = $1
+  AND n.version = $2
+`
+
+type GetNodeFeaturesByPubKeyParams struct {
+	PubKey  []byte
+	Version int16
+}
+
+func (q *Queries) GetNodeFeaturesByPubKey(ctx context.Context, arg GetNodeFeaturesByPubKeyParams) ([]int32, error) {
+	rows, err := q.db.QueryContext(ctx, getNodeFeaturesByPubKey, arg.PubKey, arg.Version)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int32
+	for rows.Next() {
+		var bit int32
+		if err := rows.Scan(&bit); err != nil {
+			return nil, err
+		}
+		items = append(items, bit)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

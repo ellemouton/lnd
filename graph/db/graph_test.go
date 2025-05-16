@@ -342,10 +342,13 @@ func TestEdgeInsertionDeletion(t *testing.T) {
 	copy(edgeInfo.BitcoinKey1Bytes[:], node1Pub.SerializeCompressed())
 	copy(edgeInfo.BitcoinKey2Bytes[:], node2Pub.SerializeCompressed())
 
-	if err := graph.AddChannelEdge(&edgeInfo); err != nil {
-		t.Fatalf("unable to create channel edge: %v", err)
-	}
+	require.NoError(t, graph.AddChannelEdge(&edgeInfo))
 	assertEdgeWithNoPoliciesInCache(t, graph, &edgeInfo)
+
+	// Show that trying to insert the same channel again will return the
+	// expected error.
+	err = graph.AddChannelEdge(&edgeInfo)
+	require.ErrorIs(t, err, ErrEdgeAlreadyExist)
 
 	// Ensure that both policies are returned as unknown (nil).
 	_, e1, e2, err := graph.FetchChannelEdgesByID(chanID)

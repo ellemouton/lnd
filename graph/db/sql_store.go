@@ -68,6 +68,7 @@ type SQLQueries interface {
 
 	InsertNodeFeature(ctx context.Context, arg sqlc.InsertNodeFeatureParams) error
 	GetNodeFeatures(ctx context.Context, nodeID int64) ([]sqlc.GetNodeFeaturesRow, error)
+	GetNodeFeaturesByPubKey(ctx context.Context, arg sqlc.GetNodeFeaturesByPubKeyParams) ([]int32, error)
 	DeleteNodeFeature(ctx context.Context, arg sqlc.DeleteNodeFeatureParams) error
 
 	InsertNodeAddress(ctx context.Context, arg sqlc.InsertNodeAddressParams) error
@@ -235,9 +236,7 @@ func NewReadTx() TxOptions {
 // AddLightningNode adds a vertex/node to the graph database. If the node is not
 // in the database from before, this will add a new, unconnected one to the
 // graph. If it is present from before, this will update that node's
-// information. Note that this method is expected to only be called to update an
-// already present node from a node announcement, or to insert a node found in a
-// channel update.
+// information.
 //
 // NOTE: part of the V1Store interface.
 func (s *SQLStore) AddLightningNode(node *models.LightningNode,
@@ -466,24 +465,14 @@ func (s *SQLStore) FetchNodeFeatures(nodePub route.Vertex) (
 	return fetchNodeFeatures(ctx, s.db, nodePub)
 }
 
-func fetchNodeFeatures(ctx context.Context, queries SQLQueries,
-	nodePub route.Vertex) (*lnwire.FeatureVector, error) {
-
-	id, err := queries.GetNodeIDByPubKeyAndVersion(
-		ctx, sqlc.GetNodeIDByPubKeyAndVersionParams{
-			PubKey:  nodePub[:],
-			Version: int16(ProtocolV1),
-		},
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return lnwire.EmptyFeatureVector(), nil
-	} else if err != nil {
-		return nil, fmt.Errorf("unable to fetch node: %w", err)
-	}
-
-	return getNodeFeatures(ctx, queries, id)
-}
-
+// AddChannelEdge adds a new (undirected, blank) edge to the graph database. An
+// undirected edge from the two target nodes are created. The information stored
+// denotes the static attributes of the channel, such as the channelID, the keys
+// involved in creation of the channel, and the set of features that the channel
+// supports. The chanPoint and chanID are used to uniquely identify the edge
+// globally within the database.
+//
+// NOTE: part of the V1Store interface.
 func (s *SQLStore) AddChannelEdge(edge *models.ChannelEdgeInfo,
 	_ ...batch.SchedulerOption) error {
 
@@ -629,35 +618,6 @@ func (s *SQLStore) SetSourceNode(node *models.LightningNode) error {
 	}, func() {})
 }
 
-// upsertV1Node first checks if an entry for this V1 node already exists in
-// the database. If it does, it updates the existing record. If it doesn't,
-// it creates a new record. It returns the node ID of the node in the
-// database.
-func upsertV1Node(ctx context.Context, db SQLQueries,
-	node *models.LightningNode) (int64, error) {
-
-	// First, check if this node already exists.
-	dbNode, err := db.GetNodeByPubKeyAndVersion(
-		ctx, sqlc.GetNodeByPubKeyAndVersionParams{
-			PubKey:  node.PubKeyBytes[:],
-			Version: int16(ProtocolV1),
-		},
-	)
-	switch {
-	// The node does not yet exist in the DB, so we insert a fresh record.
-	case errors.Is(err, sql.ErrNoRows):
-		return insertV1Node(ctx, db, node)
-
-	// The node already exists, so we update the existing node info.
-	case err == nil:
-		return dbNode.ID, updateV1Node(ctx, db, dbNode.ID, node)
-
-	default:
-		return 0, fmt.Errorf("unable to fetch node(%x): %w",
-			node.PubKeyBytes, err)
-	}
-}
-
 // UpdateEdgePolicy updates the edge routing policy for a single directed edge
 // within the database for the referenced channel. The `flags` attribute within
 // the ChannelEdgePolicy determines which of the directed edges are being
@@ -666,7 +626,7 @@ func upsertV1Node(ctx context.Context, db SQLQueries,
 // determined by the lexicographical ordering of the identity public keys of the
 // nodes on either side of the channel.
 //
-// // NOTE: part of the V1Store interface.
+// NOTE: part of the V1Store interface.
 func (s *SQLStore) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 	_ ...batch.SchedulerOption) (route.Vertex, route.Vertex, error) {
 
@@ -756,36 +716,6 @@ func (s *SQLStore) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 	s.updateEdgeCache(edge, isNode1)
 
 	return node1Pub, node2Pub, nil
-}
-
-func (s *SQLStore) updateEdgeCache(e *models.ChannelEdgePolicy,
-	isUpdate1 bool) {
-
-	// If an entry for this channel is found in reject cache, we'll modify
-	// the entry with the updated timestamp for the direction that was just
-	// written. If the edge doesn't exist, we'll load the cache entry lazily
-	// during the next query for this edge.
-	if entry, ok := s.rejectCache.get(e.ChannelID); ok {
-		if isUpdate1 {
-			entry.upd1Time = e.LastUpdate.Unix()
-		} else {
-			entry.upd2Time = e.LastUpdate.Unix()
-		}
-		s.rejectCache.insert(e.ChannelID, entry)
-	}
-
-	// If an entry for this channel is found in channel cache, we'll modify
-	// the entry with the updated policy for the direction that was just
-	// written. If the edge doesn't exist, we'll defer loading the info and
-	// policies and lazily read from disk during the next query.
-	if channel, ok := s.chanCache.get(e.ChannelID); ok {
-		if isUpdate1 {
-			channel.Policy1 = e
-		} else {
-			channel.Policy2 = e
-		}
-		s.chanCache.insert(e.ChannelID, channel)
-	}
 }
 
 // ForEachSourceNodeChannel iterates through all channels of the source node,
@@ -879,6 +809,8 @@ func (s *SQLStore) ForEachNode(cb func(tx NodeRTx) error) error {
 	}, func() {})
 }
 
+// sqlGraphNodeTx is an implementation of the NodeRTx interface backed by the
+// SQLStore and a SQL transaction.
 type sqlGraphNodeTx struct {
 	db    SQLQueries
 	id    int64
@@ -886,6 +818,8 @@ type sqlGraphNodeTx struct {
 	chain chainhash.Hash
 }
 
+// A compile-time constraint to ensure sqlGraphNodeTx implements the NodeRTx
+// interface.
 var _ NodeRTx = (*sqlGraphNodeTx)(nil)
 
 func newSQLGraphNodeTx(db SQLQueries, chain chainhash.Hash,
@@ -899,10 +833,17 @@ func newSQLGraphNodeTx(db SQLQueries, chain chainhash.Hash,
 	}
 }
 
+// Node returns the raw information of the node.
+//
+// NOTE: This is a part of the NodeRTx interface.
 func (s *sqlGraphNodeTx) Node() *models.LightningNode {
 	return s.node
 }
 
+// ForEachChannel can be used to iterate over the node's channels under the same
+// transaction used to fetch the node.
+//
+// NOTE: This is a part of the NodeRTx interface.
 func (s *sqlGraphNodeTx) ForEachChannel(cb func(*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
 
@@ -911,6 +852,11 @@ func (s *sqlGraphNodeTx) ForEachChannel(cb func(*models.ChannelEdgeInfo,
 	return forEachNodeChannel(ctx, s.db, s.chain, s.id, cb)
 }
 
+// FetchNode fetches the node with the given pub key under the same transaction
+// used to fetch the current node. The returned node is also a NodeRTx and any
+// operations on that NodeRTx will also be done under the same transaction.
+//
+// NOTE: This is a part of the NodeRTx interface.
 func (s *sqlGraphNodeTx) FetchNode(nodePub route.Vertex) (NodeRTx, error) {
 	ctx := context.TODO()
 
@@ -923,6 +869,12 @@ func (s *sqlGraphNodeTx) FetchNode(nodePub route.Vertex) (NodeRTx, error) {
 	return newSQLGraphNodeTx(s.db, s.chain, id, node), nil
 }
 
+// ForEachNodeCacheable iterates through all the stored vertices/nodes in the
+// graph, executing the passed callback with each node encountered. If the
+// callback returns an error, then the transaction is aborted and the iteration
+// stops early.
+//
+// NOTE: This is a part of the V1Store interface.
 func (s *SQLStore) ForEachNodeCacheable(cb func(route.Vertex,
 	*lnwire.FeatureVector) error) error {
 
@@ -995,6 +947,11 @@ func (s *SQLStore) ForEachChannel(cb func(*models.ChannelEdgeInfo,
 	}, func() {})
 }
 
+// HighestChanID returns the "highest" known channel ID in the channel graph.
+// This represents the "newest" channel from the PoV of the chain. This method
+// can be used by peers to quickly determine if they're graphs are in sync.
+//
+// NOTE: This is part of the V1Store interface.
 func (s *SQLStore) HighestChanID() (uint64, error) {
 	ctx := context.TODO()
 
@@ -1022,6 +979,12 @@ func (s *SQLStore) HighestChanID() (uint64, error) {
 	return highestChanID, nil
 }
 
+// NodeUpdatesInHorizon returns all the known lightning node which have an
+// update timestamp within the passed range. This method can be used by two
+// nodes to quickly determine if they have the same set of up to date node
+// announcements.
+//
+// NOTE: This is part of the V1Store interface.
 func (s *SQLStore) NodeUpdatesInHorizon(startTime,
 	endTime time.Time) ([]models.LightningNode, error) {
 
@@ -1061,6 +1024,17 @@ func (s *SQLStore) NodeUpdatesInHorizon(startTime,
 	return nodes, nil
 }
 
+// FetchChannelEdgesByID attempts to lookup the two directed edges for the
+// channel identified by the channel ID. If the channel can't be found, then
+// ErrEdgeNotFound is returned. A struct which houses the general information
+// for the channel itself is returned as well as two structs that contain the
+// routing policies for the channel in either direction.
+//
+// ErrZombieEdge an be returned if the edge is currently marked as a zombie
+// within the database. In this case, the ChannelEdgePolicy's will be nil, and
+// the ChannelEdgeInfo will only include the public keys of each node.
+//
+// NOTE: part of the V1Store interface.
 func (s *SQLStore) FetchChannelEdgesByID(chanID uint64) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
@@ -1188,6 +1162,13 @@ func (s *SQLStore) DisconnectBlockAtHeight(height uint32) (
 	return removedChans, nil
 }
 
+// FetchChannelEdgesByOutpoint attempts to lookup the two directed edges for
+// the channel identified by the funding outpoint. If the channel can't be
+// found, then ErrEdgeNotFound is returned. A struct which houses the general
+// information for the channel itself is returned as well as two structs that
+// contain the routing policies for the channel in either direction.
+//
+// NOTE: part of the V1Store interface.
 func (s *SQLStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
@@ -1348,6 +1329,11 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 	return node1LastUpdate, node2LastUpdate, exists, isZombie, nil
 }
 
+// ChannelID attempt to lookup the 8-byte compact channel ID which maps to the
+// passed channel point (outpoint). If the passed channel doesn't exist within
+// the database, then ErrEdgeNotFound is returned.
+//
+// NOTE: part of the V1Store interface.
 func (s *SQLStore) ChannelID(chanPoint *wire.OutPoint) (uint64, error) {
 	var (
 		ctx       = context.TODO()
@@ -1379,6 +1365,10 @@ func (s *SQLStore) ChannelID(chanPoint *wire.OutPoint) (uint64, error) {
 	return channelID, nil
 }
 
+// ChanUpdatesInHorizon returns all the known channel edges which have at least
+// one edge that has an update timestamp within the specified horizon.
+//
+// NOTE: This is part of the V1Store interface.
 func (s *SQLStore) ChanUpdatesInHorizon(startTime,
 	endTime time.Time) ([]ChannelEdge, error) {
 
@@ -1477,6 +1467,15 @@ func (s *SQLStore) ChanUpdatesInHorizon(startTime,
 	return edges, nil
 }
 
+// FilterChannelRange returns the channel ID's of all known channels which were
+// mined in a block height within the passed range. The channel IDs are grouped
+// by their common block height. This method can be used to quickly share with a
+// peer the set of channels we know of within a particular range to catch them
+// up after a period of time offline. If withTimestamps is true then the
+// timestamp info of the latest received channel update messages of the channel
+// will be included in the response.
+//
+// NOTE: This is part of the V1Store interface.
 func (s *SQLStore) FilterChannelRange(startHeight, endHeight uint32,
 	withTimestamps bool) ([]BlockChannelRange, error) {
 
@@ -1754,6 +1753,14 @@ func (s *SQLStore) ForEachNodeChannel(nodePub route.Vertex,
 	}, func() {})
 }
 
+// ForEachNodeDirectedChannel iterates through all channels of a given node,
+// executing the passed callback on the directed edge representing the channel
+// and its incoming policy. If the callback returns an error, then the iteration
+// is halted with the error propagated back up to the caller.
+//
+// Unknown policies are passed into the callback as nil values.
+//
+// NOTE: this is part of the graphdb.NodeTraverser interface.
 func (s *SQLStore) ForEachNodeDirectedChannel(nodePub route.Vertex,
 	cb func(channel *DirectedChannel) error) error {
 
@@ -1769,6 +1776,11 @@ func (s *SQLStore) ForEachNodeDirectedChannel(nodePub route.Vertex,
 	}, func() {})
 }
 
+// MarkEdgeZombie attempts to mark a channel identified by its channel ID as a
+// zombie. This method is used on an ad-hoc basis, when channels need to be
+// marked as zombies outside the normal pruning cycle.
+//
+// NOTE: part of the V1Store interface.
 func (s *SQLStore) MarkEdgeZombie(chanID uint64,
 	pubKey1, pubKey2 [33]byte) error {
 
@@ -1798,6 +1810,9 @@ func (s *SQLStore) MarkEdgeZombie(chanID uint64,
 	return nil
 }
 
+// MarkEdgeLive clears an edge from our zombie index, deeming it as live.
+//
+// NOTE: part of the V1Store interface.
 func (s *SQLStore) MarkEdgeLive(chanID uint64) error {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
@@ -1837,6 +1852,11 @@ func (s *SQLStore) MarkEdgeLive(chanID uint64) error {
 	return err
 }
 
+// IsZombieEdge returns whether the edge is considered zombie. If it is a
+// zombie, then the two node public keys corresponding to this edge are also
+// returned.
+//
+// NOTE: part of the V1Store interface.
 func (s *SQLStore) IsZombieEdge(chanID uint64) (bool, [33]byte, [33]byte) {
 	var (
 		ctx              = context.TODO()
@@ -1872,6 +1892,9 @@ func (s *SQLStore) IsZombieEdge(chanID uint64) (bool, [33]byte, [33]byte) {
 	return isZombie, pubKey1, pubKey2
 }
 
+// NumZombies returns the current number of zombie channels in the graph.
+//
+// NOTE: part of the V1Store interface.
 func (s *SQLStore) NumZombies() (uint64, error) {
 	var (
 		ctx        = context.TODO()
@@ -1896,6 +1919,14 @@ func (s *SQLStore) NumZombies() (uint64, error) {
 	return numZombies, nil
 }
 
+// FilterKnownChanIDs takes a set of channel IDs and return the subset of chan
+// ID's that we don't know and are not known zombies of the passed set. In other
+// words, we perform a set difference of our set of chan ID's and the ones
+// passed in. This method can be used by callers to determine the set of
+// channels another peer knows of that we don't. The ChannelUpdateInfos for the
+// known zombies is also returned.
+//
+// NOTE: part of the V1Store interface.
 func (s *SQLStore) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo) ([]uint64,
 	[]ChannelUpdateInfo, error) {
 
@@ -1953,6 +1984,13 @@ func (s *SQLStore) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo) ([]uint64,
 	return newChanIDs, knownZombies, nil
 }
 
+// FetchChanInfos returns the set of channel edges that correspond to the passed
+// channel ID's. If an edge is the query is unknown to the database, it will
+// skipped and the result will contain only those edges that exist at the time
+// of the query. This can be used to respond to peer queries that are seeking to
+// fill in gaps in their view of the channel graph.
+//
+// NOTE: part of the V1Store interface.
 func (s *SQLStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 	var (
 		ctx    = context.TODO()
@@ -2249,6 +2287,12 @@ func (s *SQLStore) PruneGraph(spentOutputs []*wire.OutPoint,
 	return closedChans, prunedNodes, nil
 }
 
+// ChannelView returns the verifiable edge information for each active channel
+// within the known channel graph. The set of UTXO's (along with their scripts)
+// returned are the ones that need to be watched on chain to detect channel
+// closes on the resident blockchain.
+//
+// NOTE: part of the V1Store interface.
 func (s *SQLStore) ChannelView() ([]EdgePoint, error) {
 	// For each channel: get its channel point and btc1 & btc2 keys.
 
@@ -2428,6 +2472,11 @@ func pruneGraphNodes(ctx context.Context, db SQLQueries) ([]route.Vertex,
 	return prunedNodes, nil
 }
 
+// DisabledChannelIDs returns the channel ids of disabled channels.
+// A channel is disabled when two of the associated ChanelEdgePolicies
+// have their disabled bit on.
+//
+// NOTE: part of the V1Store interface.
 func (s *SQLStore) DisabledChannelIDs() ([]uint64, error) {
 	var (
 		ctx     = context.TODO()
@@ -2455,6 +2504,11 @@ func (s *SQLStore) DisabledChannelIDs() ([]uint64, error) {
 	return chanIDs, nil
 }
 
+// PutClosedScid stores a SCID for a closed channel in the database. This is so
+// that we can ignore channel announcements that we know to be closed without
+// having to validate them and fetch a block.
+//
+// NOTE: part of the V1Store interface.
 func (s *SQLStore) PutClosedScid(scid lnwire.ShortChannelID) error {
 	ctx := context.TODO()
 
@@ -2467,6 +2521,10 @@ func (s *SQLStore) PutClosedScid(scid lnwire.ShortChannelID) error {
 	}, func() {})
 }
 
+// IsClosedScid checks whether a channel identified by the passed in scid is
+// closed. This helps avoid having to perform expensive validation checks.
+//
+// NOTE: part of the V1Store interface.
 func (s *SQLStore) IsClosedScid(scid lnwire.ShortChannelID) (bool, error) {
 	var (
 		ctx      = context.TODO()
@@ -2769,6 +2827,9 @@ func upsertNodeFeatures(ctx context.Context, db SQLQueries, nodeID int64,
 	return nil
 }
 
+// dbAddressType is an enum type that represents the different address types
+// that we store in the node_addresses table. The address type determines how
+// the address is to be serialised/deserialize.
 type dbAddressType uint8
 
 const (
@@ -2779,6 +2840,12 @@ const (
 	addressTypeOpaque dbAddressType = math.MaxInt8
 )
 
+// upsertNodeAddresses updates the node's addresses in the database. This
+// includes deleting any existing addresses and inserting the new set of
+// addresses. The deletion is necessary since the ordering of the addresses may
+// change, and we need to ensure that the database reflects the latest set of
+// addresses so that at the time of reconstructing the node announcement, the
+// order is preserved and the signature over the message remains valid.
 func upsertNodeAddresses(ctx context.Context, db SQLQueries, nodeID int64,
 	addresses []net.Addr) error {
 
@@ -3812,4 +3879,85 @@ func forEachNode(ctx context.Context, db SQLQueries,
 	}
 
 	return nil
+}
+
+// upsertV1Node first checks if an entry for this V1 node already exists in
+// the database. If it does, it updates the existing record. If it doesn't,
+// it creates a new record. It returns the node ID of the node in the
+// database.
+func upsertV1Node(ctx context.Context, db SQLQueries,
+	node *models.LightningNode) (int64, error) {
+
+	// First, check if this node already exists.
+	dbNode, err := db.GetNodeByPubKeyAndVersion(
+		ctx, sqlc.GetNodeByPubKeyAndVersionParams{
+			PubKey:  node.PubKeyBytes[:],
+			Version: int16(ProtocolV1),
+		},
+	)
+	switch {
+	// The node does not yet exist in the DB, so we insert a fresh record.
+	case errors.Is(err, sql.ErrNoRows):
+		return insertV1Node(ctx, db, node)
+
+	// The node already exists, so we update the existing node info.
+	case err == nil:
+		return dbNode.ID, updateV1Node(ctx, db, dbNode.ID, node)
+
+	default:
+		return 0, fmt.Errorf("unable to fetch node(%x): %w",
+			node.PubKeyBytes, err)
+	}
+}
+
+func fetchNodeFeatures(ctx context.Context, queries SQLQueries,
+	nodePub route.Vertex) (*lnwire.FeatureVector, error) {
+
+	rows, err := queries.GetNodeFeaturesByPubKey(
+		ctx, sqlc.GetNodeFeaturesByPubKeyParams{
+			PubKey:  nodePub[:],
+			Version: int16(ProtocolV1),
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get node(%s) features: %w",
+			nodePub, err)
+	}
+
+	features := lnwire.EmptyFeatureVector()
+	for _, bit := range rows {
+		features.Set(lnwire.FeatureBit(bit))
+	}
+
+	return features, nil
+}
+
+func (s *SQLStore) updateEdgeCache(e *models.ChannelEdgePolicy,
+	isUpdate1 bool) {
+
+	// If an entry for this channel is found in reject cache, we'll modify
+	// the entry with the updated timestamp for the direction that was just
+	// written. If the edge doesn't exist, we'll load the cache entry lazily
+	// during the next query for this edge.
+	if entry, ok := s.rejectCache.get(e.ChannelID); ok {
+		if isUpdate1 {
+			entry.upd1Time = e.LastUpdate.Unix()
+		} else {
+			entry.upd2Time = e.LastUpdate.Unix()
+		}
+		s.rejectCache.insert(e.ChannelID, entry)
+	}
+
+	// If an entry for this channel is found in channel cache, we'll modify
+	// the entry with the updated policy for the direction that was just
+	// written. If the edge doesn't exist, we'll defer loading the info and
+	// policies and lazily read from disk during the next query.
+	if channel, ok := s.chanCache.get(e.ChannelID); ok {
+		if isUpdate1 {
+			channel.Policy1 = e
+		} else {
+			channel.Policy2 = e
+		}
+		s.chanCache.insert(e.ChannelID, channel)
+	}
 }
