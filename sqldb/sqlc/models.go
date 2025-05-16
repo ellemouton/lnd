@@ -29,13 +29,19 @@ type AmpSubInvoiceHtlc struct {
 }
 
 type Channel struct {
-	ID       int64
-	Version  int16
-	Scid     []byte
-	NodeID1  int64
-	NodeID2  int64
-	Outpoint string
-	Capacity int64
+	ID                int64
+	Version           int16
+	Scid              []byte
+	NodeID1           int64
+	NodeID2           int64
+	Outpoint          string
+	Capacity          int64
+	BitcoinKey1       []byte
+	BitcoinKey2       []byte
+	Node1Signature    []byte
+	Node2Signature    []byte
+	Bitcoin1Signature []byte
+	Bitcoin2Signature []byte
 }
 
 type ChannelExtraType struct {
@@ -71,16 +77,6 @@ type ChannelPolicyV1Datum struct {
 	LastUpdate      int64
 	Disabled        bool
 	MaxHtlcMsat     sql.NullInt64
-}
-
-type ChannelsV1Datum struct {
-	ChannelID         int64
-	BitcoinKey1       []byte
-	BitcoinKey2       []byte
-	Node1Signature    []byte
-	Node2Signature    []byte
-	Bitcoin1Signature []byte
-	Bitcoin2Signature []byte
 }
 
 type ClosedScid struct {

@@ -65,10 +65,10 @@ WHERE version = $1;
 SELECT EXISTS (
     SELECT 1
     FROM channels c
-             JOIN channels_v1_data d ON c.id = d.channel_id
-             JOIN nodes n ON n.id = c.node_id_1 OR n.id = c.node_id_2
-    WHERE n.pub_key = $1
-      AND d.node_1_signature IS NOT NULL
+         JOIN nodes n ON n.id = c.node_id_1 OR n.id = c.node_id_2
+    WHERE c.version = 1
+      AND c.bitcoin_1_signature IS NOT NULL
+      AND n.pub_key = $1
 );
 
 -- name: GetUnconnectedNodes :many
@@ -202,11 +202,21 @@ RETURNING id;
 -- name: CreateChannel :one
 INSERT INTO channels (
     version, scid, node_id_1, node_id_2,
-    outpoint, capacity
+    outpoint, capacity, bitcoin_key_1, bitcoin_key_2,
+    node_1_signature, node_2_signature, bitcoin_1_signature,
+    bitcoin_2_signature
 ) VALUES (
-    $1, $2, $3, $4, $5, $6
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
 )
 RETURNING id;
+
+-- name: AddV1ChannelProof :exec
+UPDATE channels
+SET node_1_signature = $2,
+    node_2_signature = $3,
+    bitcoin_1_signature = $4,
+    bitcoin_2_signature = $5
+WHERE id = $1;
 
 -- name: GetChannelBySCIDAndVersion :one
 SELECT * FROM channels
@@ -233,12 +243,11 @@ SELECT * FROM channels
 WHERE outpoint = $1;
 
 -- name: GetPublicV1ChannelsBySCID :many
-SELECT c.*
-FROM channels c
-    JOIN channels_v1_data d ON d.channel_id = c.id
-WHERE d.node_1_signature IS NOT NULL
-  AND c.scid >= sqlc.arg(start_scid)
-  AND c.scid < sqlc.arg(end_scid);
+SELECT *
+FROM channels
+WHERE node_1_signature IS NOT NULL
+  AND scid >= sqlc.arg(start_scid)
+  AND scid < sqlc.arg(end_scid);
 
 -- name: GetSCIDByOutpointAndVersion :one
 SELECT scid from channels
@@ -265,31 +274,6 @@ WHERE scid >= sqlc.arg(start_scid)
 
 -- name: DeleteChannel :exec
 DELETE FROM channels WHERE id = $1;
-
-/* ─────────────────────────────────────────────
-   channels_v1_data table queries
-   ─────────────────────────────────────────────
-*/
-
--- name: CreateChannelsV1Data :exec
-INSERT INTO channels_v1_data (
-    channel_id, bitcoin_key_1, bitcoin_key_2,
-    node_1_signature, node_2_signature, bitcoin_1_signature,
-    bitcoin_2_signature
-) VALUES (
-    $1, $2, $3, $4, $5, $6, $7
-);
-
--- name: AddV1ChannelProof :exec
-UPDATE channels_v1_data
-SET node_1_signature = $2,
-    node_2_signature = $3,
-    bitcoin_1_signature = $4,
-    bitcoin_2_signature = $5
-WHERE channel_id = $1;
-
--- name: GetChannelsV1Data :one
-SELECT * FROM channels_v1_data WHERE channel_id = $1;
 
 /* ─────────────────────────────────────────────
    channel_features table queries

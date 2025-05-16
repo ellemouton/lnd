@@ -90,8 +90,6 @@ type SQLQueries interface {
 	ListChannelsByNodeIDAndVersion(ctx context.Context, arg sqlc.ListChannelsByNodeIDAndVersionParams) ([]sqlc.Channel, error)
 	GetChannelBySCIDAndVersion(ctx context.Context, arg sqlc.GetChannelBySCIDAndVersionParams) (sqlc.Channel, error)
 	GetChannelsBySCIDRange(ctx context.Context, arg sqlc.GetChannelsBySCIDRangeParams) ([]sqlc.Channel, error)
-	CreateChannelsV1Data(ctx context.Context, arg sqlc.CreateChannelsV1DataParams) error
-	GetChannelsV1Data(ctx context.Context, channelID int64) (sqlc.ChannelsV1Datum, error)
 	AddV1ChannelProof(ctx context.Context, arg sqlc.AddV1ChannelProofParams) error
 	GetPublicV1ChannelsBySCID(ctx context.Context, arg sqlc.GetPublicV1ChannelsBySCIDParams) ([]sqlc.Channel, error)
 	DeleteExtraChannelType(ctx context.Context, arg sqlc.DeleteExtraChannelTypeParams) error
@@ -307,7 +305,7 @@ func (s *SQLStore) AddEdgeProof(scid lnwire.ShortChannelID,
 
 		return db.AddV1ChannelProof(
 			ctx, sqlc.AddV1ChannelProofParams{
-				ChannelID:         dbChan.ID,
+				ID:                dbChan.ID,
 				Node1Signature:    proof.NodeSig1Bytes,
 				Node2Signature:    proof.NodeSig2Bytes,
 				Bitcoin1Signature: proof.BitcoinSig1Bytes,
@@ -2305,15 +2303,12 @@ func (s *SQLStore) ChannelView() ([]EdgePoint, error) {
 		}
 
 		for _, dbChan := range dbChannel {
-			v1Data, err := db.GetChannelsV1Data(ctx, dbChan.ID)
-			if err != nil {
-				return fmt.Errorf("unable to fetch v1 data: %w",
-					err)
+			if dbChan.BitcoinKey1 == nil {
+				continue
 			}
 
 			pkScript, err := genMultiSigP2WSH(
-				v1Data.BitcoinKey1,
-				v1Data.BitcoinKey2,
+				dbChan.BitcoinKey1, dbChan.BitcoinKey2,
 			)
 			if err != nil {
 				return err
@@ -3243,22 +3238,13 @@ func insertChannel(ctx context.Context, db SQLQueries,
 	var chanIDB [8]byte
 	byteOrder.PutUint64(chanIDB[:], edge.ChannelID)
 
-	dbChanID, err := db.CreateChannel(
-		ctx, sqlc.CreateChannelParams{
-			Version:  int16(ProtocolV1),
-			Scid:     chanIDB[:],
-			NodeID1:  node1DBID,
-			NodeID2:  node2DBID,
-			Outpoint: edge.ChannelPoint.String(),
-			Capacity: int64(edge.Capacity),
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("unable to insert channel: %w", err)
-	}
-
-	chanV1Data := sqlc.CreateChannelsV1DataParams{
-		ChannelID:   dbChanID,
+	createParams := sqlc.CreateChannelParams{
+		Version:     int16(ProtocolV1),
+		Scid:        chanIDB[:],
+		NodeID1:     node1DBID,
+		NodeID2:     node2DBID,
+		Outpoint:    edge.ChannelPoint.String(),
+		Capacity:    int64(edge.Capacity),
 		BitcoinKey1: edge.BitcoinKey1Bytes[:],
 		BitcoinKey2: edge.BitcoinKey2Bytes[:],
 	}
@@ -3266,16 +3252,15 @@ func insertChannel(ctx context.Context, db SQLQueries,
 	if edge.AuthProof != nil {
 		proof := edge.AuthProof
 
-		chanV1Data.Node1Signature = proof.NodeSig1Bytes
-		chanV1Data.Node2Signature = proof.NodeSig2Bytes
-		chanV1Data.Bitcoin1Signature = proof.BitcoinSig1Bytes
-		chanV1Data.Bitcoin2Signature = proof.BitcoinSig2Bytes
+		createParams.Node1Signature = proof.NodeSig1Bytes
+		createParams.Node2Signature = proof.NodeSig2Bytes
+		createParams.Bitcoin1Signature = proof.BitcoinSig1Bytes
+		createParams.Bitcoin2Signature = proof.BitcoinSig2Bytes
 	}
 
-	err = db.CreateChannelsV1Data(ctx, chanV1Data)
+	dbChanID, err := db.CreateChannel(ctx, createParams)
 	if err != nil {
-		return nil, fmt.Errorf("unable to insert channel v1 data: %w",
-			err)
+		return nil, fmt.Errorf("unable to insert channel: %w", err)
 	}
 
 	if len(edge.Features) != 0 {
@@ -3681,15 +3666,9 @@ func buildChannelInfo(ctx context.Context, db SQLQueries,
 		recs = make([]byte, 0)
 	}
 
-	v1Data, err := db.GetChannelsV1Data(ctx, dbChan.ID)
-	if err != nil {
-		return nil, fmt.Errorf("unable to fetch v1 channel data: %w",
-			err)
-	}
-
 	var btcKey1, btcKey2 route.Vertex
-	copy(btcKey1[:], v1Data.BitcoinKey1)
-	copy(btcKey2[:], v1Data.BitcoinKey2)
+	copy(btcKey1[:], dbChan.BitcoinKey1)
+	copy(btcKey2[:], dbChan.BitcoinKey2)
 
 	channel := &models.ChannelEdgeInfo{
 		ChainHash:        chain,
@@ -3704,12 +3683,12 @@ func buildChannelInfo(ctx context.Context, db SQLQueries,
 		ExtraOpaqueData:  recs,
 	}
 
-	if v1Data.Bitcoin1Signature != nil {
+	if dbChan.Bitcoin1Signature != nil {
 		channel.AuthProof = &models.ChannelAuthProof{
-			NodeSig1Bytes:    v1Data.Node1Signature,
-			NodeSig2Bytes:    v1Data.Node2Signature,
-			BitcoinSig1Bytes: v1Data.Bitcoin1Signature,
-			BitcoinSig2Bytes: v1Data.Bitcoin2Signature,
+			NodeSig1Bytes:    dbChan.Node1Signature,
+			NodeSig2Bytes:    dbChan.Node2Signature,
+			BitcoinSig1Bytes: dbChan.Bitcoin1Signature,
+			BitcoinSig2Bytes: dbChan.Bitcoin2Signature,
 		}
 	}
 

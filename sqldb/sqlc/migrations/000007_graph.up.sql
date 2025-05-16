@@ -121,32 +121,24 @@ CREATE TABLE IF NOT EXISTS channels (
    scid BLOB NOT NULL,
 
    node_id_1 BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-
    node_id_2 BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
 
    -- The outpoint of the funding transaction.
    outpoint TEXT NOT NULL,
 
-   capacity BIGINT NOT NULL
+   capacity BIGINT NOT NULL,
+
+   bitcoin_key_1 BLOB,
+   bitcoin_key_2 BLOB,
+   node_1_signature BLOB,
+   node_2_signature BLOB,
+   bitcoin_1_signature BLOB,
+   bitcoin_2_signature BLOB
 );
 CREATE INDEX IF NOT EXISTS channels_node_id_1_idx ON channels(node_id_1);
 CREATE INDEX IF NOT EXISTS channels_node_id_2_idx ON channels(node_id_2);
 CREATE UNIQUE INDEX IF NOT EXISTS channels_unique ON channels(version, scid DESC);
 CREATE INDEX IF NOT EXISTS channels_version_outpoint_idx ON channels(version, outpoint);
-
--- Any info about the channel that is specific to the V1 gossip protocol.
-CREATE TABLE IF NOT EXISTS channels_v1_data (
-    -- The channel id this V1 data belongs to.
-    channel_id BIGINT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,
-
-    bitcoin_key_1 BLOB NOT NULL,
-    bitcoin_key_2 BLOB NOT NULL,
-
-    node_1_signature BLOB,
-    node_2_signature BLOB,
-    bitcoin_1_signature BLOB,
-    bitcoin_2_signature BLOB
-);
 
 -- channel_features contains the feature bits of a channel.
 CREATE TABLE IF NOT EXISTS channel_features (

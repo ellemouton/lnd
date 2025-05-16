@@ -19,7 +19,6 @@ type Querier interface {
 	CreateChannel(ctx context.Context, arg CreateChannelParams) (int64, error)
 	CreateChannelPolicy(ctx context.Context, arg CreateChannelPolicyParams) (int64, error)
 	CreateChannelPolicyV1Data(ctx context.Context, arg CreateChannelPolicyV1DataParams) error
-	CreateChannelsV1Data(ctx context.Context, arg CreateChannelsV1DataParams) error
 	CreateFeature(ctx context.Context, bit int32) (int64, error)
 	CreateNode(ctx context.Context, arg CreateNodeParams) (int64, error)
 	DeleteCanceledInvoices(ctx context.Context) (sql.Result, error)
@@ -47,7 +46,6 @@ type Querier interface {
 	GetChannelPolicyExtraTypes(ctx context.Context, channelPolicyID int64) ([]ChannelPolicyExtraType, error)
 	GetChannelPolicyV1Data(ctx context.Context, channelPolicyID int64) (ChannelPolicyV1Datum, error)
 	GetChannelsBySCIDRange(ctx context.Context, arg GetChannelsBySCIDRangeParams) ([]Channel, error)
-	GetChannelsV1Data(ctx context.Context, channelID int64) (ChannelsV1Datum, error)
 	GetDatabaseVersion(ctx context.Context) (int32, error)
 	GetExtraChannelTypes(ctx context.Context, channelID int64) ([]ChannelExtraType, error)
 	GetExtraNodeTypes(ctx context.Context, nodeID int64) ([]NodeExtraType, error)
