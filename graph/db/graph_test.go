@@ -210,6 +210,7 @@ func TestPartialNode(t *testing.T) {
 		LastUpdate:           time.Unix(0, 0),
 		PubKeyBytes:          pubKey1,
 		Features:             lnwire.EmptyFeatureVector(),
+		ExtraOpaqueData:      make([]byte, 0),
 	}
 	compareNodes(t, expectedNode1, dbNode1)
 
@@ -224,6 +225,7 @@ func TestPartialNode(t *testing.T) {
 		LastUpdate:           time.Unix(0, 0),
 		PubKeyBytes:          pubKey2,
 		Features:             lnwire.EmptyFeatureVector(),
+		ExtraOpaqueData:      make([]byte, 0),
 	}
 	compareNodes(t, expectedNode2, dbNode2)
 
@@ -340,10 +342,13 @@ func TestEdgeInsertionDeletion(t *testing.T) {
 	copy(edgeInfo.BitcoinKey1Bytes[:], node1Pub.SerializeCompressed())
 	copy(edgeInfo.BitcoinKey2Bytes[:], node2Pub.SerializeCompressed())
 
-	if err := graph.AddChannelEdge(&edgeInfo); err != nil {
-		t.Fatalf("unable to create channel edge: %v", err)
-	}
+	require.NoError(t, graph.AddChannelEdge(&edgeInfo))
 	assertEdgeWithNoPoliciesInCache(t, graph, &edgeInfo)
+
+	// Show that trying to insert the same channel again will return the
+	// expected error.
+	err = graph.AddChannelEdge(&edgeInfo)
+	require.ErrorIs(t, err, ErrEdgeAlreadyExist)
 
 	// Ensure that both policies are returned as unknown (nil).
 	_, e1, e2, err := graph.FetchChannelEdgesByID(chanID)
@@ -1320,6 +1325,14 @@ func TestGraphTraversalCacheable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, nodeMap, 0)
 
+	// Duplicate the map before we start deleting from it so that we can
+	// check that both the cached and db version of
+	// ForEachNodeDirectedChannel works as expected here.
+	chanIndex2 := make(map[uint64]struct{})
+	for k, v := range chanIndex {
+		chanIndex2[k] = v
+	}
+
 	for _, node := range nodes {
 		err = graph.ForEachNodeDirectedChannel(
 			node, func(d *DirectedChannel) error {
@@ -1328,8 +1341,17 @@ func TestGraphTraversalCacheable(t *testing.T) {
 			},
 		)
 		require.NoError(t, err)
+
+		err = graph.V1Store.ForEachNodeDirectedChannel(
+			node, func(d *DirectedChannel) error {
+				delete(chanIndex2, d.ChannelID)
+				return nil
+			},
+		)
+		require.NoError(t, err)
 	}
 	require.Len(t, chanIndex, 0)
+	require.Len(t, chanIndex2, 0)
 }
 
 func TestGraphCacheTraversal(t *testing.T) {
@@ -4114,6 +4136,11 @@ func TestGraphCacheForEachNodeChannel(t *testing.T) {
 		BaseFee: 10,
 		FeeRate: 20,
 	})
+
+	_, ok := graph.V1Store.(*KVStore)
+	if !ok {
+		t.Skipf("skipping test that is aimed at a bbolt graph DB")
+	}
 
 	// Set an invalid inbound fee and check that the edge is no longer
 	// returned.
