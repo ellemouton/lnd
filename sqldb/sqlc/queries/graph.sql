@@ -95,6 +95,12 @@ LEFT JOIN node_addresses a ON a.node_id = n.id
 WHERE n.pub_key = $1 AND n.version = $2
 ORDER BY a.type ASC, a.position ASC;
 
+-- name: GetNodesByLastUpdateRange :many
+SELECT *
+FROM nodes
+WHERE last_update >= sqlc.arg(start_time)
+  AND last_update < sqlc.arg(end_time);
+
 -- name: DeleteNodeAddresses :exec
 DELETE FROM node_addresses
 WHERE node_id = $1;
