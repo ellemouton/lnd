@@ -2,7 +2,9 @@ package graphdb
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -22,10 +24,13 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcwallet/walletdb"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
+	"github.com/lightningnetwork/lnd/sqldb"
+	sqlbatch "github.com/lightningnetwork/lnd/sqldb/batch"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
@@ -4331,4 +4336,437 @@ func TestLightningNodePersistence(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, nodeAnnBytes, b.Bytes())
+}
+
+func TestTemp(t *testing.T) {
+	backend, backendCleanup, err := kvdb.GetTestBackend(
+		t.TempDir(), "store 1",
+	)
+	require.NoError(t, err)
+	t.Cleanup(backendCleanup)
+
+	db, err := NewKVStore(
+		backend, WithBatchCommitInterval(500*time.Millisecond),
+	)
+	require.NoError(t, err)
+
+	// For each node, start a new write transaction to add it to
+	// the store.
+	var wg sync.WaitGroup
+	for i := 0; i < 1000; i++ {
+		t.Log(i)
+		node := genTestNode(t)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			err = db.AddLightningNode(node, sqlbatch.LazyAdd())
+			require.NoError(t, err)
+		}()
+	}
+	wg.Wait()
+}
+
+func BenchmarkAddLightningNode(b *testing.B) {
+	b.Run("KVStore - with batching", func(b *testing.B) {
+		backend, backendCleanup, err := kvdb.GetTestBackend(
+			b.TempDir(), "store 1",
+		)
+		require.NoError(b, err)
+		b.Cleanup(backendCleanup)
+
+		db, err := NewKVStore(
+			backend, WithBatchCommitInterval(500*time.Millisecond),
+		)
+		require.NoError(b, err)
+
+		b.ResetTimer()
+
+		var wg sync.WaitGroup
+		for i := 0; i < 1000; i++ {
+			node := genTestNode(b)
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+
+				err = db.AddLightningNode(node, sqlbatch.LazyAdd())
+				require.NoError(b, err)
+			}()
+		}
+		wg.Wait()
+	})
+
+	b.Run("KVStore - no batching", func(b *testing.B) {
+		backend, backendCleanup, err := kvdb.GetTestBackend(
+			b.TempDir(), "store 1",
+		)
+		require.NoError(b, err)
+		b.Cleanup(backendCleanup)
+
+		db, err := NewKVStore(
+			backend,
+		)
+		require.NoError(b, err)
+
+		b.ResetTimer()
+
+		var wg sync.WaitGroup
+		for i := 0; i < 1000; i++ {
+			node := genTestNode(b)
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+
+				err = db.AddLightningNode(node, sqlbatch.LazyAdd())
+				require.NoError(b, err)
+			}()
+		}
+		wg.Wait()
+	})
+
+	b.Run("SQLStore - no batching", func(b *testing.B) {
+		sqlDB := sqldb.NewTestSqliteDB(b).BaseDB
+		executor := sqldb.NewTransactionExecutor(
+			sqlDB, func(tx *sql.Tx) SQLQueries {
+				return sqlDB.WithTx(tx)
+			},
+		)
+
+		db := NewSQLStore(executor, nil)
+
+		b.ResetTimer()
+
+		var wg sync.WaitGroup
+		for i := 0; i < 1000; i++ {
+			node := genTestNode(b)
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+
+				err := db.AddLightningNode(node, sqlbatch.LazyAdd())
+				require.NoError(b, err)
+			}()
+		}
+		wg.Wait()
+	})
+}
+
+func BenchmarkKVStore(b *testing.B) {
+	b.Run("N txs for N nodes (no mutex)", func(b *testing.B) {
+		backend, backendCleanup, err := kvdb.GetTestBackend(
+			b.TempDir(), "store 1",
+		)
+		require.NoError(b, err)
+		b.Cleanup(backendCleanup)
+
+		b.ResetTimer()
+
+		// For each node, start a new write transaction to add it to
+		// the store.
+		for i := 0; i < b.N; i++ {
+			node := genTestNode(b)
+			err = backend.Update(
+				func(tx walletdb.ReadWriteTx) error {
+					return addLightningNode(tx, node)
+				}, func() {},
+			)
+			require.NoError(b, err)
+		}
+	})
+
+	b.Run("1 tx for N nodes (no mutex)", func(b *testing.B) {
+		// Don't time while we are just doing initialisation for the
+		// test.
+		b.StopTimer()
+
+		backend, backendCleanup, err := kvdb.GetTestBackend(
+			b.TempDir(), "cgr",
+		)
+		require.NoError(b, err)
+		b.Cleanup(backendCleanup)
+
+		// Restart the timer when we are ready to start the test.
+		b.StartTimer()
+
+		err = backend.Update(
+			func(tx walletdb.ReadWriteTx) error {
+				for i := 0; i < b.N; i++ {
+					node := genTestNode(b)
+					err = addLightningNode(tx, node)
+					if err != nil {
+						return err
+					}
+				}
+
+				return nil
+			}, func() {},
+		)
+		require.NoError(b, err)
+	})
+
+	b.Run("N tx for N nodes (with mutex)", func(b *testing.B) {
+		// Don't time while we are just doing initialisation for the
+		// test.
+		b.StopTimer()
+		backend, backendCleanup, err := kvdb.GetTestBackend(
+			b.TempDir(), "store 1",
+		)
+		require.NoError(b, err)
+		b.Cleanup(backendCleanup)
+
+		var mu sync.Mutex
+
+		// Restart the timer when we are ready to start the test.
+		b.StartTimer()
+
+		// For each node, start a new write transaction to add it to
+		// the store.
+		for i := 0; i < b.N; i++ {
+			node := genTestNode(b)
+
+			mu.Lock()
+			err = backend.Update(
+				func(tx walletdb.ReadWriteTx) error {
+					return addLightningNode(tx, node)
+				}, func() {},
+			)
+			require.NoError(b, err)
+			mu.Unlock()
+		}
+	})
+
+	b.Run("1 tx for N nodes (with mutex)", func(b *testing.B) {
+		// Don't time while we are just doing initialisation for the
+		// test.
+		b.StopTimer()
+
+		backend, backendCleanup, err := kvdb.GetTestBackend(
+			b.TempDir(), "cgr",
+		)
+		require.NoError(b, err)
+		b.Cleanup(backendCleanup)
+
+		var mu sync.Mutex
+
+		// Restart the timer when we are ready to start the test.
+		b.StartTimer()
+
+		mu.Lock()
+		err = backend.Update(
+			func(tx walletdb.ReadWriteTx) error {
+				for i := 0; i < b.N; i++ {
+					node := genTestNode(b)
+					err = addLightningNode(tx, node)
+					if err != nil {
+						return err
+					}
+				}
+
+				return nil
+			}, func() {},
+		)
+		mu.Unlock()
+		require.NoError(b, err)
+	})
+}
+
+func BenchmarkSQLStore(b *testing.B) {
+	ctx := context.Background()
+
+	b.Run("N txs for N nodes. serial. no mutex", func(b *testing.B) {
+		db := sqldb.NewTestSqliteDB(b).BaseDB
+		executor := sqldb.NewTransactionExecutor(
+			db, func(tx *sql.Tx) SQLQueries {
+				return db.WithTx(tx)
+			},
+		)
+
+		var writeTxOpts TxOptions
+		b.ResetTimer()
+
+		// For each node, start a new write transaction to add it to
+		// the store.
+		for i := 0; i < b.N; i++ {
+			node := genTestNode(b)
+
+			err := executor.ExecTx(
+				ctx, &writeTxOpts, func(db SQLQueries) error {
+					_, err := upsertNode(ctx, db, node)
+					return err
+				}, func() {},
+			)
+			require.NoError(b, err)
+		}
+	})
+
+	b.Run("1 tx for N nodes. serial. no mutex", func(b *testing.B) {
+		db := sqldb.NewTestSqliteDB(b).BaseDB
+		executor := sqldb.NewTransactionExecutor(
+			db, func(tx *sql.Tx) SQLQueries {
+				return db.WithTx(tx)
+			},
+		)
+
+		var writeTxOpts TxOptions
+
+		// Restart the timer when we are ready to start the test.
+		b.ResetTimer()
+
+		err := executor.ExecTx(
+			ctx, &writeTxOpts, func(db SQLQueries) error {
+				for i := 0; i < b.N; i++ {
+					node := genTestNode(b)
+					_, err := upsertNode(ctx, db, node)
+					if err != nil {
+						return err
+					}
+				}
+
+				return nil
+			}, func() {},
+		)
+		require.NoError(b, err)
+	})
+
+	b.Run("N txs for N nodes. parallel. no mutex", func(b *testing.B) {
+		db := sqldb.NewTestSqliteDB(b).BaseDB
+		executor := sqldb.NewTransactionExecutor(
+			db, func(tx *sql.Tx) SQLQueries {
+				return db.WithTx(tx)
+			},
+		)
+
+		var writeTxOpts TxOptions
+		b.ResetTimer()
+
+		b.RunParallel(func(pb *testing.PB) {
+			for pb.Next() {
+				node := genTestNode(b)
+
+				err := executor.ExecTx(
+					ctx, &writeTxOpts, func(db SQLQueries) error {
+						_, err := upsertNode(ctx, db, node)
+						return err
+					}, func() {},
+				)
+				require.NoError(b, err)
+			}
+		})
+	})
+
+	b.Run("N txs for N nodes. serial. with mutex", func(b *testing.B) {
+		db := sqldb.NewTestSqliteDB(b).BaseDB
+		executor := sqldb.NewTransactionExecutor(
+			db, func(tx *sql.Tx) SQLQueries {
+				return db.WithTx(tx)
+			},
+		)
+
+		var mu sync.Mutex
+		var writeTxOpts TxOptions
+
+		// Restart the timer when we are ready to start the test.
+		b.ResetTimer()
+
+		// For each node, start a new write transaction to add it to
+		// the store.
+		for i := 0; i < b.N; i++ {
+			node := genTestNode(b)
+
+			mu.Lock()
+			err := executor.ExecTx(
+				ctx, &writeTxOpts, func(db SQLQueries) error {
+					_, err := upsertNode(ctx, db, node)
+					return err
+				}, func() {},
+			)
+			require.NoError(b, err)
+			mu.Unlock()
+		}
+	})
+
+	b.Run("1 tx for N nodes. serial. with mutex", func(b *testing.B) {
+		db := sqldb.NewTestSqliteDB(b).BaseDB
+		executor := sqldb.NewTransactionExecutor(
+			db, func(tx *sql.Tx) SQLQueries {
+				return db.WithTx(tx)
+			},
+		)
+
+		var mu sync.Mutex
+		var writeTxOpts TxOptions
+
+		// Restart the timer when we are ready to start the test.
+		b.ResetTimer()
+
+		mu.Lock()
+		err := executor.ExecTx(
+			ctx, &writeTxOpts, func(db SQLQueries) error {
+				for i := 0; i < b.N; i++ {
+					node := genTestNode(b)
+					_, err := upsertNode(ctx, db, node)
+					if err != nil {
+						return err
+					}
+				}
+
+				return nil
+			}, func() {},
+		)
+		mu.Unlock()
+		require.NoError(b, err)
+	})
+
+	b.Run("N txs for N nodes. parallel. with mutex", func(b *testing.B) {
+		db := sqldb.NewTestSqliteDB(b).BaseDB
+		executor := sqldb.NewTransactionExecutor(
+			db, func(tx *sql.Tx) SQLQueries {
+				return db.WithTx(tx)
+			},
+		)
+
+		var writeTxOpts TxOptions
+		var mu sync.Mutex
+		b.ResetTimer()
+
+		b.RunParallel(func(pb *testing.PB) {
+			for pb.Next() {
+				node := genTestNode(b)
+				mu.Lock()
+				err := executor.ExecTx(
+					ctx, &writeTxOpts, func(db SQLQueries) error {
+						_, err := upsertNode(ctx, db, node)
+						return err
+					}, func() {},
+				)
+				require.NoError(b, err)
+				mu.Unlock()
+			}
+		})
+	})
+}
+
+func genTestNode(t testing.TB) *models.LightningNode {
+	t.Helper()
+
+	priv, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	pub := priv.PubKey().SerializeCompressed()
+	n := &models.LightningNode{
+		HaveNodeAnnouncement: true,
+		AuthSigBytes:         testSig.Serialize(),
+		LastUpdate:           time.Now(),
+		Color:                color.RGBA{1, 2, 3, 0},
+		Alias:                "kek" + hex.EncodeToString(pub),
+		Features:             testFeatures,
+		Addresses:            testAddrs,
+	}
+	copy(n.PubKeyBytes[:], pub)
+
+	return n
 }

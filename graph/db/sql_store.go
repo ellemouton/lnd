@@ -13,11 +13,11 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/lightningnetwork/lnd/batch"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/sqldb"
+	"github.com/lightningnetwork/lnd/sqldb/batch"
 	"github.com/lightningnetwork/lnd/sqldb/sqlc"
 	"github.com/lightningnetwork/lnd/tlv"
 	"github.com/lightningnetwork/lnd/tor"
@@ -92,6 +92,8 @@ type SQLStore struct {
 	// Temporary fall-back to the KVStore so that we can implement the
 	// interface incrementally.
 	*KVStore
+
+	nodeScheduler *batch.TimeScheduler[SQLQueries]
 }
 
 // A compile-time assertion to ensure that SQLStore implements the V1Store
@@ -101,9 +103,13 @@ var _ V1Store = (*SQLStore)(nil)
 // NewSQLStore creates a new SQLStore instance given an open BatchedSQLQueries
 // storage backend.
 func NewSQLStore(db BatchedSQLQueries, kvStore *KVStore) *SQLStore {
+	// TODO(elle): add options!
 	return &SQLStore{
 		db:      db,
 		KVStore: kvStore,
+		nodeScheduler: batch.NewTimeScheduler[SQLQueries](
+			db, nil, 500*time.Millisecond,
+		),
 	}
 }
 
@@ -135,21 +141,19 @@ func NewReadTx() TxOptions {
 //
 // NOTE: part of the V1Store interface.
 func (s *SQLStore) AddLightningNode(node *models.LightningNode,
-	_ ...batch.SchedulerOption) error {
+	opts ...batch.SchedulerOption) error {
 
 	ctx := context.TODO()
 
-	var writeTxOpts TxOptions
-	err := s.db.ExecTx(ctx, &writeTxOpts, func(db SQLQueries) error {
-		_, err := upsertNode(ctx, db, node)
-		return err
-	}, func() {})
-	if err != nil {
-		return fmt.Errorf("unable to add node(%x): %w",
-			node.PubKeyBytes, err)
+	r := &batch.Request[SQLQueries]{
+		Opts: batch.NewSchedulerOptions(opts...),
+		Update: func(queries SQLQueries) error {
+			_, err := upsertNode(ctx, queries, node)
+			return err
+		},
 	}
 
-	return nil
+	return s.nodeScheduler.Execute(ctx, r)
 }
 
 // FetchLightningNode attempts to look up a target node by its identity public

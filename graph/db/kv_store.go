@@ -2,6 +2,7 @@ package graphdb
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -20,12 +21,12 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcwallet/walletdb"
 	"github.com/lightningnetwork/lnd/aliasmgr"
-	"github.com/lightningnetwork/lnd/batch"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
+	sqlbatch "github.com/lightningnetwork/lnd/sqldb/batch"
 	"github.com/stretchr/testify/require"
 )
 
@@ -192,8 +193,8 @@ type KVStore struct {
 	rejectCache *rejectCache
 	chanCache   *channelCache
 
-	chanScheduler batch.Scheduler
-	nodeScheduler batch.Scheduler
+	chanScheduler sqlbatch.Scheduler[kvdb.RwTx]
+	nodeScheduler sqlbatch.Scheduler[kvdb.RwTx]
 }
 
 // A compile-time assertion to ensure that the KVStore struct implements the
@@ -221,11 +222,13 @@ func NewKVStore(db kvdb.Backend, options ...KVStoreOptionModifier) (*KVStore,
 		rejectCache: newRejectCache(opts.RejectCacheSize),
 		chanCache:   newChannelCache(opts.ChannelCacheSize),
 	}
-	g.chanScheduler = batch.NewTimeScheduler(
-		db, &g.cacheMu, opts.BatchCommitInterval,
+	g.chanScheduler = sqlbatch.NewTimeScheduler[kvdb.RwTx](
+		&sqlbatch.BoltBackend[kvdb.RwTx]{DB: db}, &g.cacheMu,
+		opts.BatchCommitInterval,
 	)
-	g.nodeScheduler = batch.NewTimeScheduler(
-		db, nil, opts.BatchCommitInterval,
+	g.nodeScheduler = sqlbatch.NewTimeScheduler[kvdb.RwTx](
+		&sqlbatch.BoltBackend[kvdb.RwTx]{DB: db}, nil,
+		opts.BatchCommitInterval,
 	)
 
 	return g, nil
@@ -852,16 +855,16 @@ func (c *KVStore) SetSourceNode(node *models.LightningNode) error {
 //
 // TODO(roasbeef): also need sig of announcement.
 func (c *KVStore) AddLightningNode(node *models.LightningNode,
-	opts ...batch.SchedulerOption) error {
+	opts ...sqlbatch.SchedulerOption) error {
 
-	r := &batch.Request{
-		Opts: batch.NewSchedulerOptions(opts...),
+	r := &sqlbatch.Request[kvdb.RwTx]{
+		Opts: sqlbatch.NewSchedulerOptions(opts...),
 		Update: func(tx kvdb.RwTx) error {
 			return addLightningNode(tx, node)
 		},
 	}
 
-	return c.nodeScheduler.Execute(r)
+	return c.nodeScheduler.Execute(context.TODO(), r)
 }
 
 func addLightningNode(tx kvdb.RwTx, node *models.LightningNode) error {
@@ -987,11 +990,13 @@ func (c *KVStore) deleteLightningNode(nodes kvdb.RwBucket,
 // supports. The chanPoint and chanID are used to uniquely identify the edge
 // globally within the database.
 func (c *KVStore) AddChannelEdge(edge *models.ChannelEdgeInfo,
-	opts ...batch.SchedulerOption) error {
+	opts ...sqlbatch.SchedulerOption) error {
+
+	ctx := context.TODO()
 
 	var alreadyExists bool
-	r := &batch.Request{
-		Opts: batch.NewSchedulerOptions(opts...),
+	r := &sqlbatch.Request[kvdb.RwTx]{
+		Opts: sqlbatch.NewSchedulerOptions(opts...),
 		Reset: func() {
 			alreadyExists = false
 		},
@@ -1021,7 +1026,7 @@ func (c *KVStore) AddChannelEdge(edge *models.ChannelEdgeInfo,
 		},
 	}
 
-	return c.chanScheduler.Execute(r)
+	return c.chanScheduler.Execute(ctx, r)
 }
 
 // addChannelEdge is the private form of AddChannelEdge that allows callers to
@@ -2690,7 +2695,7 @@ func makeZombiePubkeys(info *models.ChannelEdgeInfo,
 // determined by the lexicographical ordering of the identity public keys of the
 // nodes on either side of the channel.
 func (c *KVStore) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
-	opts ...batch.SchedulerOption) (route.Vertex, route.Vertex, error) {
+	opts ...sqlbatch.SchedulerOption) (route.Vertex, route.Vertex, error) {
 
 	var (
 		isUpdate1    bool
@@ -2698,8 +2703,8 @@ func (c *KVStore) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 		from, to     route.Vertex
 	)
 
-	r := &batch.Request{
-		Opts: batch.NewSchedulerOptions(opts...),
+	r := &sqlbatch.Request[kvdb.RwTx]{
+		Opts: sqlbatch.NewSchedulerOptions(opts...),
 		Reset: func() {
 			isUpdate1 = false
 			edgeNotFound = false
@@ -2733,7 +2738,7 @@ func (c *KVStore) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 		},
 	}
 
-	err := c.chanScheduler.Execute(r)
+	err := c.chanScheduler.Execute(context.TODO(), r)
 
 	return from, to, err
 }
