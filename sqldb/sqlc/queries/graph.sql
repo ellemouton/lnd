@@ -57,6 +57,18 @@ SELECT EXISTS (
       AND n.pub_key = $1
 );
 
+-- name: GetUnconnectedNodes :many
+SELECT n.id, n.pub_key
+FROM nodes n
+WHERE NOT EXISTS (SELECT 1
+    FROM channels c
+    WHERE c.node_id_1 = n.id
+    OR c.node_id_2 = n.id
+);
+
+-- name: DeleteNode :exec
+DELETE FROM nodes WHERE id = $1;
+
 /* ─────────────────────────────────────────────
    node_features table queries
    ─────────────────────────────────────────────
@@ -158,6 +170,11 @@ SELECT sn.node_id, n.pub_key
 FROM source_nodes sn
     JOIN nodes n ON sn.node_id = n.id
 WHERE n.version = $1;
+
+-- name: GetSourceNodes :many
+SELECT sn.node_id, n.pub_key, n.version
+FROM source_nodes sn
+         JOIN nodes n ON sn.node_id = n.id;
 
 /* ─────────────────────────────────────────────
    channels table queries
