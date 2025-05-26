@@ -231,6 +231,12 @@ WHERE node_1_signature IS NOT NULL
 SELECT scid from channels
 WHERE outpoint = $1 AND version = $2;
 
+-- name: GetChannelsBySCIDRange :many
+SELECT *
+FROM channels
+WHERE scid >= sqlc.arg(start_scid)
+  AND scid < sqlc.arg(end_scid);
+
 -- name: HighestSCID :one
 SELECT scid
 FROM channels
@@ -406,3 +412,8 @@ SELECT block_height, block_hash
 FROM prune_log
 ORDER BY block_height DESC
 LIMIT 1;
+
+-- name: DeletePruneLogEntriesInRange :exec
+DELETE FROM prune_log
+WHERE block_height >= sqlc.arg(start_height)
+  AND block_height <= sqlc.arg(end_height);

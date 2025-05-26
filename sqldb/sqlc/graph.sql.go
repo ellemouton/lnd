@@ -205,6 +205,22 @@ func (q *Queries) DeleteNodeFeature(ctx context.Context, arg DeleteNodeFeaturePa
 	return err
 }
 
+const deletePruneLogEntriesInRange = `-- name: DeletePruneLogEntriesInRange :exec
+DELETE FROM prune_log
+WHERE block_height >= $1
+  AND block_height <= $2
+`
+
+type DeletePruneLogEntriesInRangeParams struct {
+	StartHeight int64
+	EndHeight   int64
+}
+
+func (q *Queries) DeletePruneLogEntriesInRange(ctx context.Context, arg DeletePruneLogEntriesInRangeParams) error {
+	_, err := q.db.ExecContext(ctx, deletePruneLogEntriesInRange, arg.StartHeight, arg.EndHeight)
+	return err
+}
+
 const deleteZombieChannel = `-- name: DeleteZombieChannel :exec
 DELETE FROM zombie_channels
 WHERE scid = $1
@@ -450,6 +466,55 @@ type GetChannelsByPolicyLastUpdateRangeParams struct {
 
 func (q *Queries) GetChannelsByPolicyLastUpdateRange(ctx context.Context, arg GetChannelsByPolicyLastUpdateRangeParams) ([]Channel, error) {
 	rows, err := q.db.QueryContext(ctx, getChannelsByPolicyLastUpdateRange, arg.Version, arg.StartTime, arg.EndTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Channel
+	for rows.Next() {
+		var i Channel
+		if err := rows.Scan(
+			&i.ID,
+			&i.Version,
+			&i.Scid,
+			&i.NodeID1,
+			&i.NodeID2,
+			&i.Outpoint,
+			&i.Capacity,
+			&i.BitcoinKey1,
+			&i.BitcoinKey2,
+			&i.Node1Signature,
+			&i.Node2Signature,
+			&i.Bitcoin1Signature,
+			&i.Bitcoin2Signature,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getChannelsBySCIDRange = `-- name: GetChannelsBySCIDRange :many
+SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity, bitcoin_key_1, bitcoin_key_2, node_1_signature, node_2_signature, bitcoin_1_signature, bitcoin_2_signature
+FROM channels
+WHERE scid >= $1
+  AND scid < $2
+`
+
+type GetChannelsBySCIDRangeParams struct {
+	StartScid []byte
+	EndScid   []byte
+}
+
+func (q *Queries) GetChannelsBySCIDRange(ctx context.Context, arg GetChannelsBySCIDRangeParams) ([]Channel, error) {
+	rows, err := q.db.QueryContext(ctx, getChannelsBySCIDRange, arg.StartScid, arg.EndScid)
 	if err != nil {
 		return nil, err
 	}

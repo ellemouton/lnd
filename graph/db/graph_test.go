@@ -506,7 +506,7 @@ func createEdge(height, txIndex uint32, txPosition uint16, outPointIndex uint32,
 func TestDisconnectBlockAtHeight(t *testing.T) {
 	t.Parallel()
 
-	graph := MakeTestGraph(t)
+	graph := MakeTestGraphNew(t)
 
 	sourceNode := createTestVertex(t)
 	if err := graph.SetSourceNode(sourceNode); err != nil {
@@ -2423,7 +2423,7 @@ func TestFilterKnownChanIDs(t *testing.T) {
 func TestStressTestChannelGraphAPI(t *testing.T) {
 	t.Parallel()
 
-	graph := MakeTestGraph(t)
+	graph := MakeTestGraphNew(t)
 
 	node1 := createTestVertex(t)
 	require.NoError(t, graph.AddLightningNode(node1))

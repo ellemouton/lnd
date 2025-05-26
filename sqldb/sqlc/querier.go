@@ -25,6 +25,7 @@ type Querier interface {
 	DeleteNodeAddresses(ctx context.Context, nodeID int64) error
 	DeleteNodeByPubKey(ctx context.Context, arg DeleteNodeByPubKeyParams) (sql.Result, error)
 	DeleteNodeFeature(ctx context.Context, arg DeleteNodeFeatureParams) error
+	DeletePruneLogEntriesInRange(ctx context.Context, arg DeletePruneLogEntriesInRangeParams) error
 	DeleteZombieChannel(ctx context.Context, arg DeleteZombieChannelParams) error
 	FetchAMPSubInvoiceHTLCs(ctx context.Context, arg FetchAMPSubInvoiceHTLCsParams) ([]FetchAMPSubInvoiceHTLCsRow, error)
 	FetchAMPSubInvoices(ctx context.Context, arg FetchAMPSubInvoicesParams) ([]AmpSubInvoice, error)
@@ -38,6 +39,7 @@ type Querier interface {
 	GetChannelPolicyByChannelAndNode(ctx context.Context, arg GetChannelPolicyByChannelAndNodeParams) (ChannelPolicy, error)
 	GetChannelPolicyExtraTypes(ctx context.Context, channelPolicyID int64) ([]ChannelPolicyExtraType, error)
 	GetChannelsByPolicyLastUpdateRange(ctx context.Context, arg GetChannelsByPolicyLastUpdateRangeParams) ([]Channel, error)
+	GetChannelsBySCIDRange(ctx context.Context, arg GetChannelsBySCIDRangeParams) ([]Channel, error)
 	GetDatabaseVersion(ctx context.Context) (int32, error)
 	GetExtraChannelTypes(ctx context.Context, channelID int64) ([]ChannelExtraType, error)
 	GetExtraNodeTypes(ctx context.Context, nodeID int64) ([]NodeExtraType, error)
