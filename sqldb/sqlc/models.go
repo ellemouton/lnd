@@ -179,6 +179,11 @@ type NodeFeature struct {
 	FeatureBit int32
 }
 
+type PruneLog struct {
+	BlockHeight int64
+	BlockHash   []byte
+}
+
 type SourceNode struct {
 	NodeID int64
 }
