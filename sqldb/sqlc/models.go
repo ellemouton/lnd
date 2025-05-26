@@ -182,3 +182,10 @@ type NodeFeature struct {
 type SourceNode struct {
 	NodeID int64
 }
+
+type ZombieChannel struct {
+	Scid     int64
+	Version  int16
+	NodeKey1 []byte
+	NodeKey2 []byte
+}

@@ -12,7 +12,7 @@ DROP INDEX IF EXISTS channel_features_unique;
 DROP INDEX IF EXISTS channel_extra_types_unique;
 DROP INDEX IF EXISTS channel_policies_unique;
 DROP INDEX IF EXISTS channel_policy_extra_types_unique;
-
+DROP INDEX IF EXISTS zombie_channels_channel_id_version_idx;
 
 -- Drop tables in order of reverse dependencies.
 DROP TABLE IF EXISTS source_nodes;
@@ -25,3 +25,4 @@ DROP TABLE IF EXISTS channel_features;
 DROP TABLE IF EXISTS channel_extra_types;
 DROP TABLE IF EXISTS channel_policies;
 DROP TABLE IF EXISTS channel_policy_extra_types;
+DROP TABLE IF EXISTS zombie_channels;
