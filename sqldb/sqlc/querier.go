@@ -28,8 +28,11 @@ type Querier interface {
 	FilterInvoices(ctx context.Context, arg FilterInvoicesParams) ([]Invoice, error)
 	GetAMPInvoiceID(ctx context.Context, setID []byte) (int64, error)
 	GetChannelBySCID(ctx context.Context, arg GetChannelBySCIDParams) (GetChannelBySCIDRow, error)
+	GetChannelFeatures(ctx context.Context, channelID int64) ([]ChannelFeature, error)
+	GetChannelPolicyByChannelAndNode(ctx context.Context, arg GetChannelPolicyByChannelAndNodeParams) (ChannelPolicy, error)
 	GetChannelPolicyExtraTypes(ctx context.Context, channelPolicyID int64) ([]ChannelPolicyExtraType, error)
 	GetDatabaseVersion(ctx context.Context) (int32, error)
+	GetExtraChannelTypes(ctx context.Context, channelID int64) ([]ChannelExtraType, error)
 	GetExtraNodeTypes(ctx context.Context, nodeID int64) ([]NodeExtraType, error)
 	// This method may return more than one invoice if filter using multiple fields
 	// from different invoices. It is the caller's responsibility to ensure that
@@ -42,6 +45,7 @@ type Querier interface {
 	GetInvoiceHTLCs(ctx context.Context, invoiceID int64) ([]InvoiceHtlc, error)
 	GetKVInvoicePaymentHashByAddIndex(ctx context.Context, addIndex int64) ([]byte, error)
 	GetMigration(ctx context.Context, version int32) (time.Time, error)
+	GetNode(ctx context.Context, id int64) (Node, error)
 	GetNodeAddressesByPubKey(ctx context.Context, arg GetNodeAddressesByPubKeyParams) ([]GetNodeAddressesByPubKeyRow, error)
 	GetNodeByPubKey(ctx context.Context, arg GetNodeByPubKeyParams) (Node, error)
 	GetNodeFeatures(ctx context.Context, nodeID int64) ([]NodeFeature, error)
@@ -60,6 +64,7 @@ type Querier interface {
 	InsertMigratedInvoice(ctx context.Context, arg InsertMigratedInvoiceParams) (int64, error)
 	InsertNodeAddress(ctx context.Context, arg InsertNodeAddressParams) error
 	InsertNodeFeature(ctx context.Context, arg InsertNodeFeatureParams) error
+	ListChannelsByNodeID(ctx context.Context, arg ListChannelsByNodeIDParams) ([]Channel, error)
 	NextInvoiceSettleIndex(ctx context.Context) (int64, error)
 	OnAMPSubInvoiceCanceled(ctx context.Context, arg OnAMPSubInvoiceCanceledParams) error
 	OnAMPSubInvoiceCreated(ctx context.Context, arg OnAMPSubInvoiceCreatedParams) error

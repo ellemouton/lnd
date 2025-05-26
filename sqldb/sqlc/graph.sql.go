@@ -232,6 +232,69 @@ func (q *Queries) GetChannelBySCID(ctx context.Context, arg GetChannelBySCIDPara
 	return i, err
 }
 
+const getChannelFeatures = `-- name: GetChannelFeatures :many
+SELECT channel_id, feature_bit
+FROM channel_features
+WHERE channel_id = $1
+`
+
+func (q *Queries) GetChannelFeatures(ctx context.Context, channelID int64) ([]ChannelFeature, error) {
+	rows, err := q.db.QueryContext(ctx, getChannelFeatures, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ChannelFeature
+	for rows.Next() {
+		var i ChannelFeature
+		if err := rows.Scan(&i.ChannelID, &i.FeatureBit); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getChannelPolicyByChannelAndNode = `-- name: GetChannelPolicyByChannelAndNode :one
+SELECT id, version, channel_id, node_id, timelock, fee_ppm, base_fee_msat, min_htlc_msat, last_update, disabled, max_htlc_msat, signature
+FROM channel_policies
+WHERE channel_id = $1
+  AND node_id = $2
+  AND version = $3
+`
+
+type GetChannelPolicyByChannelAndNodeParams struct {
+	ChannelID int64
+	NodeID    int64
+	Version   int16
+}
+
+func (q *Queries) GetChannelPolicyByChannelAndNode(ctx context.Context, arg GetChannelPolicyByChannelAndNodeParams) (ChannelPolicy, error) {
+	row := q.db.QueryRowContext(ctx, getChannelPolicyByChannelAndNode, arg.ChannelID, arg.NodeID, arg.Version)
+	var i ChannelPolicy
+	err := row.Scan(
+		&i.ID,
+		&i.Version,
+		&i.ChannelID,
+		&i.NodeID,
+		&i.Timelock,
+		&i.FeePpm,
+		&i.BaseFeeMsat,
+		&i.MinHtlcMsat,
+		&i.LastUpdate,
+		&i.Disabled,
+		&i.MaxHtlcMsat,
+		&i.Signature,
+	)
+	return i, err
+}
+
 const getChannelPolicyExtraTypes = `-- name: GetChannelPolicyExtraTypes :many
 SELECT channel_policy_id, type, value
 FROM channel_policy_extra_types
@@ -248,6 +311,35 @@ func (q *Queries) GetChannelPolicyExtraTypes(ctx context.Context, channelPolicyI
 	for rows.Next() {
 		var i ChannelPolicyExtraType
 		if err := rows.Scan(&i.ChannelPolicyID, &i.Type, &i.Value); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getExtraChannelTypes = `-- name: GetExtraChannelTypes :many
+SELECT channel_id, type, value
+FROM channel_extra_types
+WHERE channel_id = $1
+`
+
+func (q *Queries) GetExtraChannelTypes(ctx context.Context, channelID int64) ([]ChannelExtraType, error) {
+	rows, err := q.db.QueryContext(ctx, getExtraChannelTypes, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ChannelExtraType
+	for rows.Next() {
+		var i ChannelExtraType
+		if err := rows.Scan(&i.ChannelID, &i.Type, &i.Value); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -288,6 +380,27 @@ func (q *Queries) GetExtraNodeTypes(ctx context.Context, nodeID int64) ([]NodeEx
 		return nil, err
 	}
 	return items, nil
+}
+
+const getNode = `-- name: GetNode :one
+SELECT id, version, pub_key, alias, last_update, color, signature
+FROM nodes
+WHERE id = $1
+`
+
+func (q *Queries) GetNode(ctx context.Context, id int64) (Node, error) {
+	row := q.db.QueryRowContext(ctx, getNode, id)
+	var i Node
+	err := row.Scan(
+		&i.ID,
+		&i.Version,
+		&i.PubKey,
+		&i.Alias,
+		&i.LastUpdate,
+		&i.Color,
+		&i.Signature,
+	)
+	return i, err
 }
 
 const getNodeAddressesByPubKey = `-- name: GetNodeAddressesByPubKey :many
@@ -593,6 +706,54 @@ type InsertNodeFeatureParams struct {
 func (q *Queries) InsertNodeFeature(ctx context.Context, arg InsertNodeFeatureParams) error {
 	_, err := q.db.ExecContext(ctx, insertNodeFeature, arg.NodeID, arg.FeatureBit)
 	return err
+}
+
+const listChannelsByNodeID = `-- name: ListChannelsByNodeID :many
+SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity, bitcoin_key_1, bitcoin_key_2, node_1_signature, node_2_signature, bitcoin_1_signature, bitcoin_2_signature FROM channels
+WHERE version = $1
+  AND (node_id_1 = $2 OR node_id_2 = $2)
+`
+
+type ListChannelsByNodeIDParams struct {
+	Version int16
+	NodeID1 int64
+}
+
+func (q *Queries) ListChannelsByNodeID(ctx context.Context, arg ListChannelsByNodeIDParams) ([]Channel, error) {
+	rows, err := q.db.QueryContext(ctx, listChannelsByNodeID, arg.Version, arg.NodeID1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Channel
+	for rows.Next() {
+		var i Channel
+		if err := rows.Scan(
+			&i.ID,
+			&i.Version,
+			&i.Scid,
+			&i.NodeID1,
+			&i.NodeID2,
+			&i.Outpoint,
+			&i.Capacity,
+			&i.BitcoinKey1,
+			&i.BitcoinKey2,
+			&i.Node1Signature,
+			&i.Node2Signature,
+			&i.Bitcoin1Signature,
+			&i.Bitcoin2Signature,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const upsertChanPolicyExtraType = `-- name: UpsertChanPolicyExtraType :exec

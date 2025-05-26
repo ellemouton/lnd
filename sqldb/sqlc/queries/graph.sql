@@ -21,6 +21,11 @@ WHERE nodes.last_update IS NULL
     OR EXCLUDED.last_update > nodes.last_update
 RETURNING id;
 
+-- name: GetNode :one
+SELECT *
+FROM nodes
+WHERE id = $1;
+
 -- name: GetNodeByPubKey :one
 SELECT *
 FROM nodes
@@ -161,6 +166,11 @@ FROM channels c
 WHERE c.scid = $1
   AND c.version = $2;
 
+-- name: ListChannelsByNodeID :many
+SELECT * FROM channels
+WHERE version = $1
+  AND (node_id_1 = $2 OR node_id_2 = $2);
+
 -- name: HighestSCID :one
 SELECT scid
 FROM channels
@@ -180,6 +190,11 @@ INSERT INTO channel_features (
     $1, $2
 );
 
+-- name: GetChannelFeatures :many
+SELECT *
+FROM channel_features
+WHERE channel_id = $1;
+
 /* ─────────────────────────────────────────────
    channel_extra_types table queries
    ─────────────────────────────────────────────
@@ -190,6 +205,11 @@ INSERT INTO channel_extra_types (
     channel_id, type, value
 )
 VALUES ($1, $2, $3);
+
+-- name: GetExtraChannelTypes :many
+SELECT *
+FROM channel_extra_types
+WHERE channel_id = $1;
 
 /* ─────────────────────────────────────────────
    channel_policies table queries
@@ -218,6 +238,13 @@ ON CONFLICT (channel_id, node_id, version)
         signature = EXCLUDED.signature
 WHERE EXCLUDED.last_update > channel_policies.last_update
 RETURNING id;
+
+-- name: GetChannelPolicyByChannelAndNode :one
+SELECT *
+FROM channel_policies
+WHERE channel_id = $1
+  AND node_id = $2
+  AND version = $3;
 
 /* ─────────────────────────────────────────────
    channel_policy_extra_types table queries
