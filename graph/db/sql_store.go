@@ -166,10 +166,6 @@ type SQLStore struct {
 	srcNodeID  int64
 	srcNodePub route.Vertex
 	srcNodeMu  sync.Mutex
-
-	// Temporary fall-back to the KVStore so that we can implement the
-	// interface incrementally.
-	*KVStore
 }
 
 // A compile-time assertion to ensure that SQLStore implements the V1Store
@@ -185,7 +181,7 @@ type SQLStoreConfig struct {
 
 // NewSQLStore creates a new SQLStore instance given an open BatchedSQLQueries
 // storage backend.
-func NewSQLStore(cfg *SQLStoreConfig, db BatchedSQLQueries, kvStore *KVStore,
+func NewSQLStore(cfg *SQLStoreConfig, db BatchedSQLQueries,
 	options ...StoreOptionModifier) (*SQLStore, error) {
 
 	opts := DefaultOptions()
@@ -201,7 +197,6 @@ func NewSQLStore(cfg *SQLStoreConfig, db BatchedSQLQueries, kvStore *KVStore,
 	s := &SQLStore{
 		cfg:         cfg,
 		db:          db,
-		KVStore:     kvStore,
 		rejectCache: newRejectCache(opts.RejectCacheSize),
 		chanCache:   newChannelCache(opts.ChannelCacheSize),
 	}
@@ -1879,7 +1874,7 @@ func (s *SQLStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 		readTx = NewReadTx()
 		edges  []ChannelEdge
 	)
-	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+	err := s.db.ExecTx(ctx, readTx, func(db SQLQueries) error {
 		for _, chanID := range chanIDs {
 			var chanIDB [8]byte
 			byteOrder.PutUint64(chanIDB[:], chanID)
@@ -1947,7 +1942,7 @@ func (s *SQLStore) IsPublicNode(pubKey [33]byte) (bool, error) {
 		readTx   = NewReadTx()
 		isPublic bool
 	)
-	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+	err := s.db.ExecTx(ctx, readTx, func(db SQLQueries) error {
 		var err error
 		isPublic, err = db.IsPublicV1Node(ctx, pubKey[:])
 
@@ -1972,7 +1967,7 @@ func (s *SQLStore) DisabledChannelIDs() ([]uint64, error) {
 		readTx  = NewReadTx()
 		chanIDs []uint64
 	)
-	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+	err := s.db.ExecTx(ctx, readTx, func(db SQLQueries) error {
 		dbChanIDs, err := db.GetV1DisabledSCIDs(ctx)
 		if err != nil {
 			return fmt.Errorf("unable to fetch disabled "+
@@ -2120,7 +2115,7 @@ func (s *SQLStore) ChannelView() ([]EdgePoint, error) {
 		readTx     = NewReadTx()
 		edgePoints []EdgePoint
 	)
-	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+	err := s.db.ExecTx(ctx, readTx, func(db SQLQueries) error {
 		dbChannel, err := db.ListAllChannels(ctx, int16(ProtocolV1))
 		if err != nil {
 			return fmt.Errorf("unable to fetch channels: %w", err)
@@ -2171,7 +2166,7 @@ func (s *SQLStore) PruneTip() (*chainhash.Hash, uint32, error) {
 		tipHash   chainhash.Hash
 		tipHeight uint32
 	)
-	err := s.db.ExecTx(ctx, &writeTx, func(db SQLQueries) error {
+	err := s.db.ExecTx(ctx, writeTx, func(db SQLQueries) error {
 		pruneTip, err := db.GetPruneTip(ctx)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrGraphNeverPruned
@@ -2343,7 +2338,7 @@ func (s *SQLStore) IsClosedScid(scid lnwire.ShortChannelID) (bool, error) {
 		readTx   = NewReadTx()
 		isClosed bool
 	)
-	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+	err := s.db.ExecTx(ctx, readTx, func(db SQLQueries) error {
 		var chanIDB [8]byte
 		byteOrder.PutUint64(chanIDB[:], scid.ToUint64())
 		var err error
@@ -2373,7 +2368,7 @@ func (s *SQLStore) GraphSession(cb func(graph NodeTraverser) error) error {
 		readTx = NewReadTx()
 	)
 
-	return s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+	return s.db.ExecTx(ctx, readTx, func(db SQLQueries) error {
 		return cb(newSQLNodeTraverser(db, s.cfg.ChainHash))
 	}, func() {})
 }
