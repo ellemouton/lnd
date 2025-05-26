@@ -83,6 +83,7 @@ type SQLQueries interface {
 	CreateChannel(ctx context.Context, arg sqlc.CreateChannelParams) (int64, error)
 	GetChannelAndNodesBySCID(ctx context.Context, arg sqlc.GetChannelAndNodesBySCIDParams) (sqlc.GetChannelAndNodesBySCIDRow, error)
 	GetChannelBySCID(ctx context.Context, arg sqlc.GetChannelBySCIDParams) (sqlc.Channel, error)
+	GetChannelByOutpoint(ctx context.Context, arg sqlc.GetChannelByOutpointParams) (sqlc.Channel, error)
 	ListChannelsByNodeID(ctx context.Context, arg sqlc.ListChannelsByNodeIDParams) ([]sqlc.Channel, error)
 	ListAllChannels(ctx context.Context, version int16) ([]sqlc.Channel, error)
 	HighestSCID(ctx context.Context, version int16) ([]byte, error)
@@ -108,6 +109,7 @@ type SQLQueries interface {
 	UpsertZombieChannel(ctx context.Context, arg sqlc.UpsertZombieChannelParams) error
 	GetZombieChannel(ctx context.Context, arg sqlc.GetZombieChannelParams) (sqlc.ZombieChannel, error)
 	CountZombieChannels(ctx context.Context, version int16) (int64, error)
+	IsZombieChannel(ctx context.Context, arg sqlc.IsZombieChannelParams) (bool, error)
 	DeleteZombieChannel(ctx context.Context, arg sqlc.DeleteZombieChannelParams) error
 }
 
@@ -1506,6 +1508,120 @@ func (s *SQLStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 	}
 
 	return deleted, nil
+}
+
+// FetchChannelEdgesByID attempts to lookup the two directed edges for the
+// channel identified by the channel ID. If the channel can't be found, then
+// ErrEdgeNotFound is returned. A struct which houses the general information
+// for the channel itself is returned as well as two structs that contain the
+// routing policies for the channel in either direction.
+//
+// ErrZombieEdge an be returned if the edge is currently marked as a zombie
+// within the database. In this case, the ChannelEdgePolicy's will be nil, and
+// the ChannelEdgeInfo will only include the public keys of each node.
+//
+// NOTE: part of the V1Store interface.
+func (s *SQLStore) FetchChannelEdgesByID(chanID uint64) (
+	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy, error) {
+
+	var (
+		ctx              = context.TODO()
+		edge             *models.ChannelEdgeInfo
+		policy1, policy2 *models.ChannelEdgePolicy
+	)
+	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+		var chanIDB [8]byte
+		byteOrder.PutUint64(chanIDB[:], chanID)
+
+		dbChan, err := db.GetChannelBySCID(
+			ctx, sqlc.GetChannelBySCIDParams{
+				Scid:    chanIDB[:],
+				Version: int16(ProtocolV1),
+			},
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			// First check if this edge is perhaps in the zombie
+			// index.
+			isZombie, err := db.IsZombieChannel(
+				ctx, sqlc.IsZombieChannelParams{
+					Scid:    int64(chanID),
+					Version: int16(ProtocolV1),
+				},
+			)
+			if err != nil {
+				return fmt.Errorf("unable to check if "+
+					"channel is zombie: %w", err)
+			} else if isZombie {
+				return ErrZombieEdge
+			}
+
+			return ErrEdgeNotFound
+		} else if err != nil {
+			return fmt.Errorf("unable to fetch channel: %w", err)
+		}
+
+		edge, policy1, policy2, err = buildChannel(
+			ctx, db, s.cfg.ChainHash, dbChan,
+		)
+		if err != nil {
+			return fmt.Errorf("unable to build channel edge: %w", err)
+		}
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("could not fetch channel: %w",
+			err)
+	}
+
+	return edge, policy1, policy2, nil
+}
+
+// FetchChannelEdgesByOutpoint attempts to lookup the two directed edges for
+// the channel identified by the funding outpoint. If the channel can't be
+// found, then ErrEdgeNotFound is returned. A struct which houses the general
+// information for the channel itself is returned as well as two structs that
+// contain the routing policies for the channel in either direction.
+//
+// NOTE: part of the V1Store interface.
+func (s *SQLStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
+	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy, error) {
+
+	var (
+		ctx              = context.TODO()
+		edge             *models.ChannelEdgeInfo
+		policy1, policy2 *models.ChannelEdgePolicy
+	)
+	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+		dbChan, err := db.GetChannelByOutpoint(
+			ctx, sqlc.GetChannelByOutpointParams{
+				Outpoint: op.String(),
+				Version:  int16(ProtocolV1),
+			},
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrEdgeNotFound
+		} else if err != nil {
+			return fmt.Errorf("unable to fetch channel: %w", err)
+		}
+
+		edge, policy1, policy2, err = buildChannel(
+			ctx, db, s.cfg.ChainHash, dbChan,
+		)
+		if err != nil {
+			return fmt.Errorf("unable to build channel edge: %w", err)
+		}
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("could not fetch channel: %w",
+			err)
+	}
+
+	return edge, policy1, policy2, nil
 }
 
 func forEachNodeDirectedChannel(ctx context.Context, db SQLQueries,

@@ -31,6 +31,7 @@ type Querier interface {
 	FilterInvoices(ctx context.Context, arg FilterInvoicesParams) ([]Invoice, error)
 	GetAMPInvoiceID(ctx context.Context, setID []byte) (int64, error)
 	GetChannelAndNodesBySCID(ctx context.Context, arg GetChannelAndNodesBySCIDParams) (GetChannelAndNodesBySCIDRow, error)
+	GetChannelByOutpoint(ctx context.Context, arg GetChannelByOutpointParams) (Channel, error)
 	GetChannelBySCID(ctx context.Context, arg GetChannelBySCIDParams) (Channel, error)
 	GetChannelFeatures(ctx context.Context, channelID int64) ([]ChannelFeature, error)
 	GetChannelPolicyByChannelAndNode(ctx context.Context, arg GetChannelPolicyByChannelAndNodeParams) (ChannelPolicy, error)
@@ -71,6 +72,7 @@ type Querier interface {
 	InsertMigratedInvoice(ctx context.Context, arg InsertMigratedInvoiceParams) (int64, error)
 	InsertNodeAddress(ctx context.Context, arg InsertNodeAddressParams) error
 	InsertNodeFeature(ctx context.Context, arg InsertNodeFeatureParams) error
+	IsZombieChannel(ctx context.Context, arg IsZombieChannelParams) (bool, error)
 	ListAllChannels(ctx context.Context, version int16) ([]Channel, error)
 	ListChannelsByNodeID(ctx context.Context, arg ListChannelsByNodeIDParams) ([]Channel, error)
 	ListNodeIDsAndPubKeys(ctx context.Context, version int16) ([]ListNodeIDsAndPubKeysRow, error)

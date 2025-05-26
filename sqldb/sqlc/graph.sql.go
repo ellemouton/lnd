@@ -270,6 +270,37 @@ func (q *Queries) GetChannelAndNodesBySCID(ctx context.Context, arg GetChannelAn
 	return i, err
 }
 
+const getChannelByOutpoint = `-- name: GetChannelByOutpoint :one
+SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity, bitcoin_key_1, bitcoin_key_2, node_1_signature, node_2_signature, bitcoin_1_signature, bitcoin_2_signature FROM channels
+WHERE outpoint = $1 AND version = $2
+`
+
+type GetChannelByOutpointParams struct {
+	Outpoint string
+	Version  int16
+}
+
+func (q *Queries) GetChannelByOutpoint(ctx context.Context, arg GetChannelByOutpointParams) (Channel, error) {
+	row := q.db.QueryRowContext(ctx, getChannelByOutpoint, arg.Outpoint, arg.Version)
+	var i Channel
+	err := row.Scan(
+		&i.ID,
+		&i.Version,
+		&i.Scid,
+		&i.NodeID1,
+		&i.NodeID2,
+		&i.Outpoint,
+		&i.Capacity,
+		&i.BitcoinKey1,
+		&i.BitcoinKey2,
+		&i.Node1Signature,
+		&i.Node2Signature,
+		&i.Bitcoin1Signature,
+		&i.Bitcoin2Signature,
+	)
+	return i, err
+}
+
 const getChannelBySCID = `-- name: GetChannelBySCID :one
 SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity, bitcoin_key_1, bitcoin_key_2, node_1_signature, node_2_signature, bitcoin_1_signature, bitcoin_2_signature FROM channels
 WHERE scid = $1 AND version = $2
@@ -901,6 +932,27 @@ type InsertNodeFeatureParams struct {
 func (q *Queries) InsertNodeFeature(ctx context.Context, arg InsertNodeFeatureParams) error {
 	_, err := q.db.ExecContext(ctx, insertNodeFeature, arg.NodeID, arg.FeatureBit)
 	return err
+}
+
+const isZombieChannel = `-- name: IsZombieChannel :one
+SELECT EXISTS (
+    SELECT 1
+    FROM zombie_channels
+    WHERE scid = $1
+    AND version = $2
+) AS is_zombie
+`
+
+type IsZombieChannelParams struct {
+	Scid    int64
+	Version int16
+}
+
+func (q *Queries) IsZombieChannel(ctx context.Context, arg IsZombieChannelParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, isZombieChannel, arg.Scid, arg.Version)
+	var is_zombie bool
+	err := row.Scan(&is_zombie)
+	return is_zombie, err
 }
 
 const listAllChannels = `-- name: ListAllChannels :many

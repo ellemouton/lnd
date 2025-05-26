@@ -189,6 +189,10 @@ WHERE version = $1
 SELECT * FROM channels
 WHERE version = $1;
 
+-- name: GetChannelByOutpoint :one
+SELECT * FROM channels
+WHERE outpoint = $1 AND version = $2;
+
 -- name: GetPublicV1ChannelsBySCID :many
 SELECT *
 FROM channels
@@ -335,3 +339,11 @@ SELECT *
 FROM zombie_channels
 WHERE scid = $1
   AND version = $2;
+
+-- name: IsZombieChannel :one
+SELECT EXISTS (
+    SELECT 1
+    FROM zombie_channels
+    WHERE scid = $1
+    AND version = $2
+) AS is_zombie;
