@@ -631,6 +631,56 @@ func (q *Queries) GetNodesByLastUpdateRange(ctx context.Context, arg GetNodesByL
 	return items, nil
 }
 
+const getPublicV1ChannelsBySCID = `-- name: GetPublicV1ChannelsBySCID :many
+SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity, bitcoin_key_1, bitcoin_key_2, node_1_signature, node_2_signature, bitcoin_1_signature, bitcoin_2_signature
+FROM channels
+WHERE node_1_signature IS NOT NULL
+  AND scid >= $1
+  AND scid < $2
+`
+
+type GetPublicV1ChannelsBySCIDParams struct {
+	StartScid []byte
+	EndScid   []byte
+}
+
+func (q *Queries) GetPublicV1ChannelsBySCID(ctx context.Context, arg GetPublicV1ChannelsBySCIDParams) ([]Channel, error) {
+	rows, err := q.db.QueryContext(ctx, getPublicV1ChannelsBySCID, arg.StartScid, arg.EndScid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Channel
+	for rows.Next() {
+		var i Channel
+		if err := rows.Scan(
+			&i.ID,
+			&i.Version,
+			&i.Scid,
+			&i.NodeID1,
+			&i.NodeID2,
+			&i.Outpoint,
+			&i.Capacity,
+			&i.BitcoinKey1,
+			&i.BitcoinKey2,
+			&i.Node1Signature,
+			&i.Node2Signature,
+			&i.Bitcoin1Signature,
+			&i.Bitcoin2Signature,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getSourceNodesByVersion = `-- name: GetSourceNodesByVersion :many
 SELECT sn.node_id, n.pub_key
 FROM source_nodes sn

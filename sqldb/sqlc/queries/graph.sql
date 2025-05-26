@@ -180,6 +180,13 @@ WHERE version = $1
 SELECT * FROM channels
 WHERE version = $1;
 
+-- name: GetPublicV1ChannelsBySCID :many
+SELECT *
+FROM channels
+WHERE node_1_signature IS NOT NULL
+  AND scid >= sqlc.arg(start_scid)
+  AND scid < sqlc.arg(end_scid);
+
 -- name: HighestSCID :one
 SELECT scid
 FROM channels
