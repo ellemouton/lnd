@@ -176,6 +176,10 @@ SELECT * FROM channels
 WHERE version = $1
   AND (node_id_1 = $2 OR node_id_2 = $2);
 
+-- name: ListAllChannels :many
+SELECT * FROM channels
+WHERE version = $1;
+
 -- name: HighestSCID :one
 SELECT scid
 FROM channels

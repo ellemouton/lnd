@@ -81,6 +81,7 @@ type SQLQueries interface {
 	CreateChannel(ctx context.Context, arg sqlc.CreateChannelParams) (int64, error)
 	GetChannelBySCID(ctx context.Context, arg sqlc.GetChannelBySCIDParams) (sqlc.GetChannelBySCIDRow, error)
 	ListChannelsByNodeID(ctx context.Context, arg sqlc.ListChannelsByNodeIDParams) ([]sqlc.Channel, error)
+	ListAllChannels(ctx context.Context, version int16) ([]sqlc.Channel, error)
 	HighestSCID(ctx context.Context, version int16) ([]byte, error)
 
 	CreateChannelExtraType(ctx context.Context, arg sqlc.CreateChannelExtraTypeParams) error
@@ -779,6 +780,78 @@ func (s *sqlGraphNodeTx) FetchNode(nodePub route.Vertex) (NodeRTx, error) {
 	}
 
 	return newSQLGraphNodeTx(s.db, s.chain, id, node), nil
+}
+
+// ForEachNodeCacheable iterates through all the stored vertices/nodes in the
+// graph, executing the passed callback with each node encountered. If the
+// callback returns an error, then the transaction is aborted and the iteration
+// stops early.
+//
+// NOTE: This is a part of the V1Store interface.
+func (s *SQLStore) ForEachNodeCacheable(cb func(route.Vertex,
+	*lnwire.FeatureVector) error) error {
+
+	ctx := context.TODO()
+
+	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+		return forEachNode(ctx, db, func(nodeID int64,
+			nodePub route.Vertex) error {
+
+			features, err := getNodeFeatures(ctx, db, nodeID)
+			if err != nil {
+				return fmt.Errorf("unable to fetch node "+
+					"features: %w", err)
+			}
+
+			return cb(nodePub, features)
+		})
+	}, func() {})
+	if err != nil {
+		return fmt.Errorf("unable to fetch nodes: %w", err)
+	}
+
+	return nil
+}
+
+// ForEachChannel iterates through all the channel edges stored within the
+// graph and invokes the passed callback for each edge. The callback takes two
+// edges as since this is a directed graph, both the in/out edges are visited.
+// If the callback returns an error, then the transaction is aborted and the
+// iteration stops early.
+//
+// NOTE: If an edge can't be found, or wasn't advertised, then a nil pointer
+// for that particular channel edge routing policy will be passed into the
+// callback.
+//
+// NOTE: part of the V1Store interface.
+func (s *SQLStore) ForEachChannel(cb func(*models.ChannelEdgeInfo,
+	*models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy) error) error {
+
+	var ctx = context.TODO()
+
+	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+		dbChannels, err := db.ListAllChannels(ctx, int16(ProtocolV1))
+		if err != nil {
+			return fmt.Errorf("unable to fetch channels: %w", err)
+		}
+
+		for _, dbChannel := range dbChannels {
+			e, p1, p2, err := buildChannel(
+				ctx, db, s.cfg.ChainHash, dbChannel,
+			)
+			if err != nil {
+				return fmt.Errorf("unable to build channel: %w",
+					err)
+			}
+
+			if err := cb(e, p1, p2); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}, func() {})
 }
 
 // forEachNodeChannel iterates through all channels of a node, executing
