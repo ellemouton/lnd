@@ -1135,6 +1135,118 @@ func (s *SQLStore) ForEachNodeChannel(nodePub route.Vertex,
 	}, func() {})
 }
 
+// ForEachNodeDirectedChannel iterates through all channels of a given node,
+// executing the passed callback on the directed edge representing the channel
+// and its incoming policy. If the callback returns an error, then the iteration
+// is halted with the error propagated back up to the caller.
+//
+// Unknown policies are passed into the callback as nil values.
+//
+// NOTE: this is part of the graphdb.NodeTraverser interface.
+func (s *SQLStore) ForEachNodeDirectedChannel(nodePub route.Vertex,
+	cb func(channel *DirectedChannel) error) error {
+
+	var ctx = context.TODO()
+
+	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+		return forEachNodeDirectedChannel(
+			ctx, db, s.cfg.ChainHash, nodePub, cb,
+		)
+	}, func() {})
+}
+
+func forEachNodeDirectedChannel(ctx context.Context, db SQLQueries,
+	chain chainhash.Hash, nodePub route.Vertex,
+	cb func(channel *DirectedChannel) error) error {
+
+	// Fallback that uses the database.
+	toNodeCallback := func() route.Vertex {
+		return nodePub
+	}
+
+	dbNode, err := db.GetNodeByPubKey(
+		ctx, sqlc.GetNodeByPubKeyParams{
+			Version: int16(ProtocolV1),
+			PubKey:  nodePub[:],
+		},
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("unable to fetch node: %w", err)
+	}
+
+	features, err := getNodeFeatures(ctx, db, dbNode.ID)
+	if err != nil {
+		return fmt.Errorf("unable to fetch node features: %w", err)
+	}
+
+	dbChannels, err := db.ListChannelsByNodeID(
+		ctx, sqlc.ListChannelsByNodeIDParams{
+			Version: int16(ProtocolV1),
+			NodeID1: dbNode.ID,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("unable to fetch channels: %w", err)
+	}
+
+	for _, dbChannel := range dbChannels {
+		e, p1, p2, err := buildChannel(ctx, db, chain, dbChannel)
+		if err != nil {
+			return fmt.Errorf("unable to build channel: %w",
+				err)
+		}
+
+		// Determine the outgoing and incoming policy for this
+		// channel and node combo.
+		outPolicy, inPolicy := p1, p2
+		if p1 != nil && p1.ToNode == nodePub {
+			outPolicy, inPolicy = p2, p1
+		} else if p2 != nil && p2.ToNode != nodePub {
+			outPolicy, inPolicy = p2, p1
+		}
+
+		var cachedInPolicy *models.CachedEdgePolicy
+		if inPolicy != nil {
+			cachedInPolicy = models.NewCachedPolicy(inPolicy)
+			cachedInPolicy.ToNodePubKey = toNodeCallback
+			cachedInPolicy.ToNodeFeatures = features
+		}
+
+		var inboundFee lnwire.Fee
+		if outPolicy != nil {
+			// Extract inbound fee. If there is a decoding
+			// error, skip this edge.
+			_, err := outPolicy.ExtraOpaqueData.
+				ExtractRecords(&inboundFee)
+			if err != nil {
+				return nil
+			}
+		}
+
+		directedChannel := &DirectedChannel{
+			ChannelID:    e.ChannelID,
+			IsNode1:      nodePub == e.NodeKey1Bytes,
+			OtherNode:    e.NodeKey2Bytes,
+			Capacity:     e.Capacity,
+			OutPolicySet: outPolicy != nil,
+			InPolicy:     cachedInPolicy,
+			InboundFee:   inboundFee,
+		}
+
+		if nodePub == e.NodeKey2Bytes {
+			directedChannel.OtherNode = e.NodeKey1Bytes
+		}
+
+		if err := cb(directedChannel); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // forEachNodeChannel iterates through all channels of a node, executing
 // the passed callback on each. The call-back is provided with the channel's
 // edge information, the outgoing policy and the incoming policy for the

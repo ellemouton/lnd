@@ -1360,7 +1360,7 @@ func TestGraphTraversal(t *testing.T) {
 func TestGraphTraversalCacheable(t *testing.T) {
 	t.Parallel()
 
-	graph := MakeTestGraph(t)
+	graph := MakeTestGraphNew(t)
 
 	// We'd like to test some of the graph traversal capabilities within
 	// the DB, so we'll create a series of fake nodes to insert into the
@@ -4140,7 +4140,7 @@ func BenchmarkForEachChannel(b *testing.B) {
 func TestGraphCacheForEachNodeChannel(t *testing.T) {
 	t.Parallel()
 
-	graph := MakeTestGraph(t)
+	graph := MakeTestGraphNew(t)
 
 	// Unset the channel graph cache to simulate the user running with the
 	// option turned off.
@@ -4199,6 +4199,11 @@ func TestGraphCacheForEachNodeChannel(t *testing.T) {
 		BaseFee: 10,
 		FeeRate: 20,
 	})
+
+	_, ok := graph.V1Store.(*KVStore)
+	if !ok {
+		t.Skipf("skipping test that is aimed at a bbolt graph DB")
+	}
 
 	// Set an invalid inbound fee and check that the edge is no longer
 	// returned.
