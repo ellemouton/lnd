@@ -83,6 +83,7 @@ type SQLQueries interface {
 	ListChannelsByNodeID(ctx context.Context, arg sqlc.ListChannelsByNodeIDParams) ([]sqlc.Channel, error)
 	ListAllChannels(ctx context.Context, version int16) ([]sqlc.Channel, error)
 	HighestSCID(ctx context.Context, version int16) ([]byte, error)
+	GetChannelsByPolicyLastUpdateRange(ctx context.Context, arg sqlc.GetChannelsByPolicyLastUpdateRangeParams) ([]sqlc.Channel, error)
 
 	CreateChannelExtraType(ctx context.Context, arg sqlc.CreateChannelExtraTypeParams) error
 	GetExtraChannelTypes(ctx context.Context, channelID int64) ([]sqlc.ChannelExtraType, error)
@@ -852,6 +853,114 @@ func (s *SQLStore) ForEachChannel(cb func(*models.ChannelEdgeInfo,
 
 		return nil
 	}, func() {})
+}
+
+// ChanUpdatesInHorizon returns all the known channel edges which have at least
+// one edge that has an update timestamp within the specified horizon.
+//
+// NOTE: This is part of the V1Store interface.
+func (s *SQLStore) ChanUpdatesInHorizon(startTime,
+	endTime time.Time) ([]ChannelEdge, error) {
+
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+
+	var (
+		ctx = context.TODO()
+		// To ensure we don't return duplicate ChannelEdges, we'll use an
+		// additional map to keep track of the edges already seen to prevent
+		// re-adding it.
+		edgesSeen    = make(map[uint64]struct{})
+		edgesToCache = make(map[uint64]ChannelEdge)
+		edges        []ChannelEdge
+		hits         int
+	)
+	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+		dbChans, err := db.GetChannelsByPolicyLastUpdateRange(
+			ctx, sqlc.GetChannelsByPolicyLastUpdateRangeParams{
+				Version: int16(ProtocolV1),
+				StartTime: sql.NullInt64{
+					Valid: true,
+					Int64: startTime.Unix(),
+				},
+				EndTime: sql.NullInt64{
+					Valid: true,
+					Int64: endTime.Unix(),
+				},
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("unable to fetch channels: %w", err)
+		}
+
+		for _, dbChan := range dbChans {
+			// If we've already retrieved the info and policies for
+			// this edge, then we can skip it as we don't need to do
+			// so again.
+			chanIDInt := byteOrder.Uint64(dbChan.Scid)
+			if _, ok := edgesSeen[chanIDInt]; ok {
+				continue
+			}
+
+			if channel, ok := s.chanCache.get(chanIDInt); ok {
+				hits++
+				edgesSeen[chanIDInt] = struct{}{}
+				edges = append(edges, channel)
+
+				continue
+			}
+
+			channel, p1, p2, err := buildChannel(
+				ctx, db, s.cfg.ChainHash, dbChan,
+			)
+			if err != nil {
+				return fmt.Errorf("unable to build channel: %w",
+					err)
+			}
+
+			node1, err := getNodeByDBID(ctx, db, dbChan.NodeID1)
+			if err != nil {
+				return fmt.Errorf("unable to fetch node(%d): "+
+					"%w", dbChan.NodeID1, err)
+			}
+
+			node2, err := getNodeByDBID(ctx, db, dbChan.NodeID2)
+			if err != nil {
+				return fmt.Errorf("unable to fetch node(%d): "+
+					"%w", dbChan.NodeID2, err)
+			}
+
+			edgesSeen[chanIDInt] = struct{}{}
+			chanEdge := ChannelEdge{
+				Info:    channel,
+				Policy1: p1,
+				Policy2: p2,
+				Node1:   node1,
+				Node2:   node2,
+			}
+			edges = append(edges, chanEdge)
+			edgesToCache[chanIDInt] = chanEdge
+		}
+
+		return nil
+	}, func() {
+		edgesSeen = make(map[uint64]struct{})
+		edgesToCache = make(map[uint64]ChannelEdge)
+		edges = nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch channels: %w", err)
+	}
+
+	// Insert any edges loaded from disk into the cache.
+	for chanid, channel := range edgesToCache {
+		s.chanCache.insert(chanid, channel)
+	}
+
+	log.Debugf("ChanUpdatesInHorizon hit percentage: %f (%d/%d)",
+		float64(hits)/float64(len(edges)), hits, len(edges))
+
+	return edges, nil
 }
 
 // forEachNodeChannel iterates through all channels of a node, executing

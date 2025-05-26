@@ -255,6 +255,14 @@ WHERE channel_id = $1
   AND node_id = $2
   AND version = $3;
 
+-- name: GetChannelsByPolicyLastUpdateRange :many
+SELECT DISTINCT c.*
+FROM channels c
+    JOIN channel_policies cp ON cp.channel_id = c.id
+WHERE c.version=sqlc.arg(version)
+    AND cp.last_update >= sqlc.arg(start_time)
+    AND cp.last_update < sqlc.arg(end_time);
+
 /* ─────────────────────────────────────────────
    channel_policy_extra_types table queries
    ─────────────────────────────────────────────

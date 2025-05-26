@@ -324,6 +324,58 @@ func (q *Queries) GetChannelPolicyExtraTypes(ctx context.Context, channelPolicyI
 	return items, nil
 }
 
+const getChannelsByPolicyLastUpdateRange = `-- name: GetChannelsByPolicyLastUpdateRange :many
+SELECT DISTINCT c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature
+FROM channels c
+    JOIN channel_policies cp ON cp.channel_id = c.id
+WHERE c.version=$1
+    AND cp.last_update >= $2
+    AND cp.last_update < $3
+`
+
+type GetChannelsByPolicyLastUpdateRangeParams struct {
+	Version   int16
+	StartTime sql.NullInt64
+	EndTime   sql.NullInt64
+}
+
+func (q *Queries) GetChannelsByPolicyLastUpdateRange(ctx context.Context, arg GetChannelsByPolicyLastUpdateRangeParams) ([]Channel, error) {
+	rows, err := q.db.QueryContext(ctx, getChannelsByPolicyLastUpdateRange, arg.Version, arg.StartTime, arg.EndTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Channel
+	for rows.Next() {
+		var i Channel
+		if err := rows.Scan(
+			&i.ID,
+			&i.Version,
+			&i.Scid,
+			&i.NodeID1,
+			&i.NodeID2,
+			&i.Outpoint,
+			&i.Capacity,
+			&i.BitcoinKey1,
+			&i.BitcoinKey2,
+			&i.Node1Signature,
+			&i.Node2Signature,
+			&i.Bitcoin1Signature,
+			&i.Bitcoin2Signature,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getExtraChannelTypes = `-- name: GetExtraChannelTypes :many
 SELECT channel_id, type, value
 FROM channel_extra_types
