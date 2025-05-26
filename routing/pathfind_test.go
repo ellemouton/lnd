@@ -159,7 +159,9 @@ func makeTestGraph(t *testing.T, useCache bool) (*graphdb.ChannelGraph,
 	kvdb.Backend, error) {
 
 	// Create channelgraph for the first time.
-	graph := graphdb.MakeTestGraph(t, graphdb.WithUseGraphCache(useCache))
+	graph := graphdb.MakeTestGraphNew(
+		t, graphdb.WithUseGraphCache(useCache),
+	)
 	require.NoError(t, graph.Start())
 	t.Cleanup(func() {
 		require.NoError(t, graph.Stop())
