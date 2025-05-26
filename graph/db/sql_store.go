@@ -127,6 +127,12 @@ type SQLQueries interface {
 	UpsertPruneLogEntry(ctx context.Context, arg sqlc.UpsertPruneLogEntryParams) error
 	GetPruneTip(ctx context.Context) (sqlc.PruneLog, error)
 	DeletePruneLogEntriesInRange(ctx context.Context, arg sqlc.DeletePruneLogEntriesInRangeParams) error
+
+	/*
+		Closed SCID table queries.
+	*/
+	InsertClosedChannel(ctx context.Context, scid []byte) error
+	IsClosedChannel(ctx context.Context, scid []byte) (bool, error)
 }
 
 // BatchedSQLQueries is a version of SQLQueries that's capable of batched
@@ -2308,6 +2314,53 @@ func (s *SQLStore) AddEdgeProof(scid lnwire.ShortChannelID,
 	}
 
 	return nil
+}
+
+// PutClosedScid stores a SCID for a closed channel in the database. This is so
+// that we can ignore channel announcements that we know to be closed without
+// having to validate them and fetch a block.
+//
+// NOTE: part of the V1Store interface.
+func (s *SQLStore) PutClosedScid(scid lnwire.ShortChannelID) error {
+	ctx := context.TODO()
+
+	var writeTx TxOptions
+	return s.db.ExecTx(ctx, &writeTx, func(db SQLQueries) error {
+		var chanIDB [8]byte
+		byteOrder.PutUint64(chanIDB[:], scid.ToUint64())
+
+		return db.InsertClosedChannel(ctx, chanIDB[:])
+	}, func() {})
+}
+
+// IsClosedScid checks whether a channel identified by the passed in scid is
+// closed. This helps avoid having to perform expensive validation checks.
+//
+// NOTE: part of the V1Store interface.
+func (s *SQLStore) IsClosedScid(scid lnwire.ShortChannelID) (bool, error) {
+	var (
+		ctx      = context.TODO()
+		readTx   = NewReadTx()
+		isClosed bool
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+		var chanIDB [8]byte
+		byteOrder.PutUint64(chanIDB[:], scid.ToUint64())
+		var err error
+		isClosed, err = db.IsClosedChannel(ctx, chanIDB[:])
+		if err != nil {
+			return fmt.Errorf("unable to fetch closed channel: %w",
+				err)
+		}
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return false, fmt.Errorf("unable to fetch closed channel: %w",
+			err)
+	}
+
+	return isClosed, nil
 }
 
 // pruneGraphNodes deletes any node in the DB that doesn't have a channel
