@@ -300,6 +300,14 @@ WHERE c.version=sqlc.arg(version)
     AND cp.last_update >= sqlc.arg(start_time)
     AND cp.last_update < sqlc.arg(end_time);
 
+-- name: GetV1DisabledSCIDs :many
+SELECT c.scid
+FROM channels c
+   JOIN channel_policies cp ON cp.channel_id = c.id
+WHERE cp.disabled = true
+GROUP BY c.scid
+HAVING COUNT(*) > 1;
+
 /* ─────────────────────────────────────────────
    channel_policy_extra_types table queries
    ─────────────────────────────────────────────

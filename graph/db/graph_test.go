@@ -3552,7 +3552,7 @@ func TestNodeIsPublic(t *testing.T) {
 func TestDisabledChannelIDs(t *testing.T) {
 	t.Parallel()
 
-	graph := MakeTestGraph(t)
+	graph := MakeTestGraphNew(t)
 
 	// Create first node and add it to the graph.
 	node1 := createTestVertex(t)
