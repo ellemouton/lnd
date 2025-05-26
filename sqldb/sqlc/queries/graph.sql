@@ -200,6 +200,10 @@ WHERE node_1_signature IS NOT NULL
   AND scid >= sqlc.arg(start_scid)
   AND scid < sqlc.arg(end_scid);
 
+-- name: GetSCIDByOutpoint :one
+SELECT scid from channels
+WHERE outpoint = $1 AND version = $2;
+
 -- name: HighestSCID :one
 SELECT scid
 FROM channels
