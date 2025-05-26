@@ -47,6 +47,16 @@ DELETE FROM nodes
 WHERE pub_key = $1
   AND version = $2;
 
+-- name: IsPublicV1Node :one
+SELECT EXISTS (
+    SELECT 1
+    FROM channels c
+    JOIN nodes n ON n.id = c.node_id_1 OR n.id = c.node_id_2
+    WHERE c.version = 1
+      AND c.bitcoin_1_signature IS NOT NULL
+      AND n.pub_key = $1
+);
+
 /* ─────────────────────────────────────────────
    node_features table queries
    ─────────────────────────────────────────────

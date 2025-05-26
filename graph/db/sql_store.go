@@ -56,6 +56,7 @@ type SQLQueries interface {
 	GetNodesByLastUpdateRange(ctx context.Context, arg sqlc.GetNodesByLastUpdateRangeParams) ([]sqlc.Node, error)
 	ListNodeIDsAndPubKeys(ctx context.Context, version int16) ([]sqlc.ListNodeIDsAndPubKeysRow, error)
 	ListNodes(ctx context.Context, version int16) ([]sqlc.ListNodesRow, error)
+	IsPublicV1Node(ctx context.Context, pubKey []byte) (bool, error)
 	DeleteNodeByPubKey(ctx context.Context, arg sqlc.DeleteNodeByPubKeyParams) (sql.Result, error)
 
 	GetExtraNodeTypes(ctx context.Context, nodeID int64) ([]sqlc.NodeExtraType, error)
@@ -1912,6 +1913,32 @@ func (s *SQLStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 	}
 
 	return edges, nil
+}
+
+// IsPublicNode is a helper method that determines whether the node with the
+// given public key is seen as a public node in the graph from the graph's
+// source node's point of view.
+//
+// NOTE: part of the V1Store interface.
+func (s *SQLStore) IsPublicNode(pubKey [33]byte) (bool, error) {
+	ctx := context.TODO()
+
+	var (
+		readTx   = NewReadTx()
+		isPublic bool
+	)
+	err := s.db.ExecTx(ctx, &readTx, func(db SQLQueries) error {
+		var err error
+		isPublic, err = db.IsPublicV1Node(ctx, pubKey[:])
+
+		return err
+	}, func() {})
+	if err != nil {
+		return false, fmt.Errorf("unable to check if node is "+
+			"public: %w", err)
+	}
+
+	return isPublic, nil
 }
 
 func forEachNodeDirectedChannel(ctx context.Context, db SQLQueries,

@@ -73,6 +73,7 @@ type Querier interface {
 	InsertMigratedInvoice(ctx context.Context, arg InsertMigratedInvoiceParams) (int64, error)
 	InsertNodeAddress(ctx context.Context, arg InsertNodeAddressParams) error
 	InsertNodeFeature(ctx context.Context, arg InsertNodeFeatureParams) error
+	IsPublicV1Node(ctx context.Context, pubKey []byte) (bool, error)
 	IsZombieChannel(ctx context.Context, arg IsZombieChannelParams) (bool, error)
 	ListAllChannels(ctx context.Context, version int16) ([]Channel, error)
 	ListChannelsByNodeID(ctx context.Context, arg ListChannelsByNodeIDParams) ([]Channel, error)

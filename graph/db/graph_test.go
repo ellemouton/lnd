@@ -3425,19 +3425,19 @@ func TestNodeIsPublic(t *testing.T) {
 	// We'll need to create a separate database and channel graph for each
 	// participant to replicate real-world scenarios (private edges being in
 	// some graphs but not others, etc.).
-	aliceGraph := MakeTestGraph(t)
+	aliceGraph := MakeTestGraphNew(t)
 	aliceNode := createTestVertex(t)
 	if err := aliceGraph.SetSourceNode(aliceNode); err != nil {
 		t.Fatalf("unable to set source node: %v", err)
 	}
 
-	bobGraph := MakeTestGraph(t)
+	bobGraph := MakeTestGraphNew(t)
 	bobNode := createTestVertex(t)
 	if err := bobGraph.SetSourceNode(bobNode); err != nil {
 		t.Fatalf("unable to set source node: %v", err)
 	}
 
-	carolGraph := MakeTestGraph(t)
+	carolGraph := MakeTestGraphNew(t)
 	carolNode := createTestVertex(t)
 	if err := carolGraph.SetSourceNode(carolNode); err != nil {
 		t.Fatalf("unable to set source node: %v", err)
