@@ -583,7 +583,7 @@ func (c *ChannelGraph) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 	return nil
 }
 
-// MakeTestGraphNew creates a new instance of the ChannelGraph for testing
+// MakeTestGraph creates a new instance of the ChannelGraph for testing
 // purposes. The backing V1Store implementation depends on the version of
 // NewTestDB included in the current build.
 //
@@ -592,7 +592,7 @@ func (c *ChannelGraph) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 // implemented, unit tests will be switched to use this function instead of
 // the existing MakeTestGraph helper. Once only this function is used, the
 // existing MakeTestGraph function will be removed and this one will be renamed.
-func MakeTestGraphNew(t testing.TB,
+func MakeTestGraph(t testing.TB,
 	opts ...ChanGraphOption) *ChannelGraph {
 
 	t.Helper()
