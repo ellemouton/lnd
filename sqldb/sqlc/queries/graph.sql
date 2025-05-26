@@ -192,6 +192,14 @@ INSERT INTO channels (
 )
 RETURNING id;
 
+-- name: AddV1ChannelProof :exec
+UPDATE channels
+SET node_1_signature = $2,
+    node_2_signature = $3,
+    bitcoin_1_signature = $4,
+    bitcoin_2_signature = $5
+WHERE id = $1;
+
 -- name: GetChannelAndNodesBySCID :one
 SELECT
     c.*,

@@ -86,6 +86,7 @@ type SQLQueries interface {
 		Channel queries.
 	*/
 	CreateChannel(ctx context.Context, arg sqlc.CreateChannelParams) (int64, error)
+	AddV1ChannelProof(ctx context.Context, arg sqlc.AddV1ChannelProofParams) error
 	GetChannelAndNodesBySCID(ctx context.Context, arg sqlc.GetChannelAndNodesBySCIDParams) (sqlc.GetChannelAndNodesBySCIDRow, error)
 	GetChannelBySCID(ctx context.Context, arg sqlc.GetChannelBySCIDParams) (sqlc.Channel, error)
 	GetChannelByOutpoint(ctx context.Context, arg sqlc.GetChannelByOutpointParams) (sqlc.Channel, error)
@@ -2266,6 +2267,47 @@ func (s *SQLStore) DisconnectBlockAtHeight(height uint32) (
 	}
 
 	return removedChans, nil
+}
+
+// AddEdgeProof sets the proof of an existing edge in the graph database.
+//
+// NOTE: part of the V1Store interface.
+func (s *SQLStore) AddEdgeProof(scid lnwire.ShortChannelID,
+	proof *models.ChannelAuthProof) error {
+
+	var (
+		ctx       = context.TODO()
+		writeTx   TxOptions
+		scidBytes [8]byte
+	)
+	byteOrder.PutUint64(scidBytes[:], scid.ToUint64())
+
+	err := s.db.ExecTx(ctx, &writeTx, func(db SQLQueries) error {
+		dbChan, err := db.GetChannelBySCID(
+			ctx, sqlc.GetChannelBySCIDParams{
+				Scid:    scidBytes[:],
+				Version: int16(ProtocolV1),
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("unable to fetch channel: %w", err)
+		}
+
+		return db.AddV1ChannelProof(
+			ctx, sqlc.AddV1ChannelProofParams{
+				ID:                dbChan.ID,
+				Node1Signature:    proof.NodeSig1Bytes,
+				Node2Signature:    proof.NodeSig2Bytes,
+				Bitcoin1Signature: proof.BitcoinSig1Bytes,
+				Bitcoin2Signature: proof.BitcoinSig2Bytes,
+			},
+		)
+	}, func() {})
+	if err != nil {
+		return fmt.Errorf("unable to add edge proof: %w", err)
+	}
+
+	return nil
 }
 
 // pruneGraphNodes deletes any node in the DB that doesn't have a channel
