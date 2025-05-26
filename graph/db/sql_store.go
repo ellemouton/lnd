@@ -53,6 +53,7 @@ type SQLQueries interface {
 	GetNode(ctx context.Context, id int64) (sqlc.Node, error)
 	GetNodeByPubKey(ctx context.Context, arg sqlc.GetNodeByPubKeyParams) (sqlc.Node, error)
 	GetNodesByLastUpdateRange(ctx context.Context, arg sqlc.GetNodesByLastUpdateRangeParams) ([]sqlc.Node, error)
+	ListNodeIDsAndPubKeys(ctx context.Context, version int16) ([]sqlc.ListNodeIDsAndPubKeysRow, error)
 	DeleteNodeByPubKey(ctx context.Context, arg sqlc.DeleteNodeByPubKeyParams) (sql.Result, error)
 
 	GetExtraNodeTypes(ctx context.Context, nodeID int64) ([]sqlc.NodeExtraType, error)
@@ -692,6 +693,94 @@ func (s *SQLStore) ForEachSourceNodeChannel(cb func(chanPoint wire.OutPoint,
 	}, func() {})
 }
 
+// ForEachNode iterates through all the stored vertices/nodes in the graph,
+// executing the passed callback with each node encountered. If the callback
+// returns an error, then the transaction is aborted and the iteration stops
+// early. Any operations performed on the NodeTx passed to the call-back are
+// executed under the same read transaction and so, methods on the NodeTx object
+// _MUST_ only be called from within the call-back.
+//
+// NOTE: part of the V1Store interface.
+func (s *SQLStore) ForEachNode(cb func(tx NodeRTx) error) error {
+	var ctx = context.TODO()
+
+	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+		return forEachNode(ctx, db,
+			func(nodeID int64, nodePub route.Vertex) error {
+				node, err := getNodeByDBID(ctx, db, nodeID)
+				if err != nil {
+					return fmt.Errorf("unable to get "+
+						"node(id=%d): %w", nodeID, err)
+				}
+
+				return cb(newSQLGraphNodeTx(
+					db, s.cfg.ChainHash, nodeID, node,
+				))
+			},
+		)
+	}, func() {})
+}
+
+// sqlGraphNodeTx is an implementation of the NodeRTx interface backed by the
+// SQLStore and a SQL transaction.
+type sqlGraphNodeTx struct {
+	db    SQLQueries
+	id    int64
+	node  *models.LightningNode
+	chain chainhash.Hash
+}
+
+// A compile-time constraint to ensure sqlGraphNodeTx implements the NodeRTx
+// interface.
+var _ NodeRTx = (*sqlGraphNodeTx)(nil)
+
+func newSQLGraphNodeTx(db SQLQueries, chain chainhash.Hash,
+	id int64, node *models.LightningNode) *sqlGraphNodeTx {
+
+	return &sqlGraphNodeTx{
+		db:    db,
+		chain: chain,
+		id:    id,
+		node:  node,
+	}
+}
+
+// Node returns the raw information of the node.
+//
+// NOTE: This is a part of the NodeRTx interface.
+func (s *sqlGraphNodeTx) Node() *models.LightningNode {
+	return s.node
+}
+
+// ForEachChannel can be used to iterate over the node's channels under the same
+// transaction used to fetch the node.
+//
+// NOTE: This is a part of the NodeRTx interface.
+func (s *sqlGraphNodeTx) ForEachChannel(cb func(*models.ChannelEdgeInfo,
+	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
+
+	ctx := context.TODO()
+
+	return forEachNodeChannel(ctx, s.db, s.chain, s.id, cb)
+}
+
+// FetchNode fetches the node with the given pub key under the same transaction
+// used to fetch the current node. The returned node is also a NodeRTx and any
+// operations on that NodeRTx will also be done under the same transaction.
+//
+// NOTE: This is a part of the NodeRTx interface.
+func (s *sqlGraphNodeTx) FetchNode(nodePub route.Vertex) (NodeRTx, error) {
+	ctx := context.TODO()
+
+	id, node, err := getNodeByPubKey(ctx, s.db, nodePub)
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch V1 node(%x): %w",
+			nodePub, err)
+	}
+
+	return newSQLGraphNodeTx(s.db, s.chain, id, node), nil
+}
+
 // forEachNodeChannel iterates through all channels of a node, executing
 // the passed callback on each. The call-back is provided with the channel's
 // edge information, the outgoing policy and the incoming policy for the
@@ -738,7 +827,26 @@ func forEachNodeChannel(ctx context.Context, db SQLQueries,
 	return nil
 }
 
-// buildChannel
+func forEachNode(ctx context.Context, db SQLQueries,
+	cb func(nodeID int64, nodePub route.Vertex) error) error {
+
+	nodes, err := db.ListNodeIDsAndPubKeys(ctx, int16(ProtocolV1))
+	if err != nil {
+		return fmt.Errorf("unable to fetch nodes: %w", err)
+	}
+
+	for _, node := range nodes {
+		var pub route.Vertex
+		copy(pub[:], node.PubKey)
+
+		if err := cb(node.ID, pub); err != nil {
+			return fmt.Errorf("callback failed: %w", err)
+		}
+	}
+
+	return nil
+}
+
 func buildChannel(ctx context.Context, db SQLQueries,
 	chain chainhash.Hash, dbChan sqlc.Channel) (*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error) {
@@ -1113,6 +1221,17 @@ func getNodeByPubKey(ctx context.Context, db SQLQueries,
 	}
 
 	return dbNode.ID, node, nil
+}
+
+func getNodeByDBID(ctx context.Context, db SQLQueries,
+	id int64) (*models.LightningNode, error) {
+
+	dbNode, err := db.GetNode(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get node(id=%d): %w", id, err)
+	}
+
+	return buildNode(ctx, db, &dbNode)
 }
 
 // buildNode constructs a LightningNode instance from the given database node
