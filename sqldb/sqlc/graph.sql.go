@@ -26,6 +26,19 @@ func (q *Queries) AddSourceNode(ctx context.Context, nodeID int64) error {
 	return err
 }
 
+const countZombieChannels = `-- name: CountZombieChannels :one
+SELECT COUNT(*)
+FROM zombie_channels
+WHERE version = $1
+`
+
+func (q *Queries) CountZombieChannels(ctx context.Context, version int16) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countZombieChannels, version)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createChannel = `-- name: CreateChannel :one
 /* ─────────────────────────────────────────────
    channels table queries
@@ -98,6 +111,15 @@ type CreateChannelExtraTypeParams struct {
 
 func (q *Queries) CreateChannelExtraType(ctx context.Context, arg CreateChannelExtraTypeParams) error {
 	_, err := q.db.ExecContext(ctx, createChannelExtraType, arg.ChannelID, arg.Type, arg.Value)
+	return err
+}
+
+const deleteChannel = `-- name: DeleteChannel :exec
+DELETE FROM channels WHERE id = $1
+`
+
+func (q *Queries) DeleteChannel(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteChannel, id)
 	return err
 }
 
@@ -174,7 +196,23 @@ func (q *Queries) DeleteNodeFeature(ctx context.Context, arg DeleteNodeFeaturePa
 	return err
 }
 
-const getChannelBySCID = `-- name: GetChannelBySCID :one
+const deleteZombieChannel = `-- name: DeleteZombieChannel :exec
+DELETE FROM zombie_channels
+WHERE scid = $1
+  AND version = $2
+`
+
+type DeleteZombieChannelParams struct {
+	Scid    int64
+	Version int16
+}
+
+func (q *Queries) DeleteZombieChannel(ctx context.Context, arg DeleteZombieChannelParams) error {
+	_, err := q.db.ExecContext(ctx, deleteZombieChannel, arg.Scid, arg.Version)
+	return err
+}
+
+const getChannelAndNodesBySCID = `-- name: GetChannelAndNodesBySCID :one
 SELECT
     c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature,
     n1.pub_key AS node1_pub_key,
@@ -186,12 +224,12 @@ WHERE c.scid = $1
   AND c.version = $2
 `
 
-type GetChannelBySCIDParams struct {
+type GetChannelAndNodesBySCIDParams struct {
 	Scid    []byte
 	Version int16
 }
 
-type GetChannelBySCIDRow struct {
+type GetChannelAndNodesBySCIDRow struct {
 	ID                int64
 	Version           int16
 	Scid              []byte
@@ -209,9 +247,9 @@ type GetChannelBySCIDRow struct {
 	Node2PubKey       []byte
 }
 
-func (q *Queries) GetChannelBySCID(ctx context.Context, arg GetChannelBySCIDParams) (GetChannelBySCIDRow, error) {
-	row := q.db.QueryRowContext(ctx, getChannelBySCID, arg.Scid, arg.Version)
-	var i GetChannelBySCIDRow
+func (q *Queries) GetChannelAndNodesBySCID(ctx context.Context, arg GetChannelAndNodesBySCIDParams) (GetChannelAndNodesBySCIDRow, error) {
+	row := q.db.QueryRowContext(ctx, getChannelAndNodesBySCID, arg.Scid, arg.Version)
+	var i GetChannelAndNodesBySCIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.Version,
@@ -228,6 +266,37 @@ func (q *Queries) GetChannelBySCID(ctx context.Context, arg GetChannelBySCIDPara
 		&i.Bitcoin2Signature,
 		&i.Node1PubKey,
 		&i.Node2PubKey,
+	)
+	return i, err
+}
+
+const getChannelBySCID = `-- name: GetChannelBySCID :one
+SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity, bitcoin_key_1, bitcoin_key_2, node_1_signature, node_2_signature, bitcoin_1_signature, bitcoin_2_signature FROM channels
+WHERE scid = $1 AND version = $2
+`
+
+type GetChannelBySCIDParams struct {
+	Scid    []byte
+	Version int16
+}
+
+func (q *Queries) GetChannelBySCID(ctx context.Context, arg GetChannelBySCIDParams) (Channel, error) {
+	row := q.db.QueryRowContext(ctx, getChannelBySCID, arg.Scid, arg.Version)
+	var i Channel
+	err := row.Scan(
+		&i.ID,
+		&i.Version,
+		&i.Scid,
+		&i.NodeID1,
+		&i.NodeID2,
+		&i.Outpoint,
+		&i.Capacity,
+		&i.BitcoinKey1,
+		&i.BitcoinKey2,
+		&i.Node1Signature,
+		&i.Node2Signature,
+		&i.Bitcoin1Signature,
+		&i.Bitcoin2Signature,
 	)
 	return i, err
 }
@@ -716,6 +785,30 @@ func (q *Queries) GetSourceNodesByVersion(ctx context.Context, version int16) ([
 	return items, nil
 }
 
+const getZombieChannel = `-- name: GetZombieChannel :one
+SELECT scid, version, node_key_1, node_key_2
+FROM zombie_channels
+WHERE scid = $1
+  AND version = $2
+`
+
+type GetZombieChannelParams struct {
+	Scid    int64
+	Version int16
+}
+
+func (q *Queries) GetZombieChannel(ctx context.Context, arg GetZombieChannelParams) (ZombieChannel, error) {
+	row := q.db.QueryRowContext(ctx, getZombieChannel, arg.Scid, arg.Version)
+	var i ZombieChannel
+	err := row.Scan(
+		&i.Scid,
+		&i.Version,
+		&i.NodeKey1,
+		&i.NodeKey2,
+	)
+	return i, err
+}
+
 const highestSCID = `-- name: HighestSCID :one
 SELECT scid
 FROM channels
@@ -1128,5 +1221,36 @@ type UpsertNodeExtraTypeParams struct {
 
 func (q *Queries) UpsertNodeExtraType(ctx context.Context, arg UpsertNodeExtraTypeParams) error {
 	_, err := q.db.ExecContext(ctx, upsertNodeExtraType, arg.NodeID, arg.Type, arg.Value)
+	return err
+}
+
+const upsertZombieChannel = `-- name: UpsertZombieChannel :exec
+/* ─────────────────────────────────────────────
+   zombie_channels table queries
+   ─────────────────────────────────────────────
+*/
+
+INSERT INTO zombie_channels (scid, version, node_key_1, node_key_2)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (scid, version)
+    DO UPDATE SET
+        node_key_1 = COALESCE(EXCLUDED.node_key_1, zombie_channels.node_key_1),
+        node_key_2 = COALESCE(EXCLUDED.node_key_2, zombie_channels.node_key_2)
+`
+
+type UpsertZombieChannelParams struct {
+	Scid     int64
+	Version  int16
+	NodeKey1 []byte
+	NodeKey2 []byte
+}
+
+func (q *Queries) UpsertZombieChannel(ctx context.Context, arg UpsertZombieChannelParams) error {
+	_, err := q.db.ExecContext(ctx, upsertZombieChannel,
+		arg.Scid,
+		arg.Version,
+		arg.NodeKey1,
+		arg.NodeKey2,
+	)
 	return err
 }
