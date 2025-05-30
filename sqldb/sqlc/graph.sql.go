@@ -415,7 +415,7 @@ func (q *Queries) GetChannelFeatures(ctx context.Context, channelID int64) ([]Ch
 }
 
 const getChannelPolicyByChannelAndNode = `-- name: GetChannelPolicyByChannelAndNode :one
-SELECT id, version, channel_id, node_id, timelock, fee_ppm, base_fee_msat, min_htlc_msat, last_update, disabled, max_htlc_msat, signature
+SELECT id, version, channel_id, node_id, timelock, fee_ppm, base_fee_msat, min_htlc_msat, max_htlc_msat, last_update, disabled, signature
 FROM channel_policies
 WHERE channel_id = $1
   AND node_id = $2
@@ -440,9 +440,9 @@ func (q *Queries) GetChannelPolicyByChannelAndNode(ctx context.Context, arg GetC
 		&i.FeePpm,
 		&i.BaseFeeMsat,
 		&i.MinHtlcMsat,
+		&i.MaxHtlcMsat,
 		&i.LastUpdate,
 		&i.Disabled,
-		&i.MaxHtlcMsat,
 		&i.Signature,
 	)
 	return i, err

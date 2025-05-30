@@ -70,14 +70,25 @@ var (
 	}
 )
 
-func createLightningNode(priv *btcec.PrivateKey) *models.LightningNode {
-	updateTime := prand.Int63()
+var (
+	updateTime   = prand.Int63()
+	updateTimeMu sync.Mutex
+)
 
+func nextUpdateTime() int64 {
+	updateTimeMu.Lock()
+	defer updateTimeMu.Unlock()
+
+	updateTime++
+	return updateTime
+}
+
+func createLightningNode(priv *btcec.PrivateKey) *models.LightningNode {
 	pub := priv.PubKey().SerializeCompressed()
 	n := &models.LightningNode{
 		HaveNodeAnnouncement: true,
 		AuthSigBytes:         testSig.Serialize(),
-		LastUpdate:           time.Unix(updateTime, 0),
+		LastUpdate:           time.Unix(nextUpdateTime(), 0),
 		Color:                color.RGBA{1, 2, 3, 0},
 		Alias:                "kek" + hex.EncodeToString(pub),
 		Features:             testFeatures,
@@ -2431,6 +2442,10 @@ func TestStressTestChannelGraphAPI(t *testing.T) {
 	node2 := createTestVertex(t)
 	require.NoError(t, graph.AddLightningNode(node2))
 
+	// We need to update the node's timestamp since this call to
+	// SetSourceNode will trigger an upsert which will only be allowed if
+	// the newest LastUpdate time is greater than the current one.
+	node1.LastUpdate = node1.LastUpdate.Add(time.Second)
 	require.NoError(t, graph.SetSourceNode(node1))
 
 	type chanInfo struct {
@@ -3453,14 +3468,13 @@ func TestNodeIsPublic(t *testing.T) {
 	graphs := []*ChannelGraph{aliceGraph, bobGraph, carolGraph}
 	for _, graph := range graphs {
 		for _, node := range nodes {
-			if err := graph.AddLightningNode(node); err != nil {
-				t.Fatalf("unable to add node: %v", err)
-			}
+			node.LastUpdate = time.Unix(nextUpdateTime(), 0)
+			err := graph.AddLightningNode(node)
+			require.NoError(t, err)
 		}
 		for _, edge := range edges {
-			if err := graph.AddChannelEdge(edge); err != nil {
-				t.Fatalf("unable to add edge: %v", err)
-			}
+			err := graph.AddChannelEdge(edge)
+			require.NoError(t, err)
 		}
 	}
 
@@ -3568,6 +3582,7 @@ func TestDisabledChannelIDs(t *testing.T) {
 
 	// Adding a new channel edge to the graph.
 	edgeInfo, edge1, edge2 := createChannelEdge(node1, node2)
+	node2.LastUpdate = time.Unix(nextUpdateTime(), 0)
 	if err := graph.AddLightningNode(node2); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
