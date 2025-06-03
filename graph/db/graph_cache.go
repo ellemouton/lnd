@@ -110,19 +110,35 @@ func (c *GraphCache) AddNodeFeatures(node route.Vertex,
 	c.nodeFeatures[node] = features
 }
 
+type CachedEdgeInfo struct {
+	ChannelID     uint64
+	NodeKey1Bytes route.Vertex
+	NodeKey2Bytes route.Vertex
+	Capacity      btcutil.Amount
+}
+
+func NewCachedEdgeInfo(info *models.ChannelEdgeInfo) *CachedEdgeInfo {
+	return &CachedEdgeInfo{
+		ChannelID:     info.ChannelID,
+		NodeKey1Bytes: info.NodeKey1Bytes,
+		NodeKey2Bytes: info.NodeKey2Bytes,
+		Capacity:      info.Capacity,
+	}
+}
+
 // AddChannel adds a non-directed channel, meaning that the order of policy 1
 // and policy 2 does not matter, the directionality is extracted from the info
 // and policy flags automatically. The policy will be set as the outgoing policy
 // on one node and the incoming policy on the peer's side.
-func (c *GraphCache) AddChannel(info *models.ChannelEdgeInfo,
-	policy1 *models.ChannelEdgePolicy, policy2 *models.ChannelEdgePolicy) {
+func (c *GraphCache) AddChannel(info *CachedEdgeInfo,
+	policy1 *models.CachedEdgePolicy, policy2 *models.CachedEdgePolicy) {
 
 	if info == nil {
 		return
 	}
 
-	if policy1 != nil && policy1.IsDisabled() &&
-		policy2 != nil && policy2.IsDisabled() {
+	if policy1 != nil && policy1.Disabled &&
+		policy2 != nil && policy2.Disabled {
 
 		return
 	}
@@ -147,19 +163,17 @@ func (c *GraphCache) AddChannel(info *models.ChannelEdgeInfo,
 	// of node 2 then we have the policy 1 as seen from node 1.
 	if policy1 != nil {
 		fromNode, toNode := info.NodeKey1Bytes, info.NodeKey2Bytes
-		if policy1.ToNode != info.NodeKey2Bytes {
+		if policy1.ToNodePubKey() != info.NodeKey2Bytes {
 			fromNode, toNode = toNode, fromNode
 		}
-		isEdge1 := policy1.ChannelFlags&lnwire.ChanUpdateDirection == 0
-		c.UpdatePolicy(policy1, fromNode, toNode, isEdge1)
+		c.UpdatePolicy(policy1, fromNode, toNode, policy1.IsEdge1)
 	}
 	if policy2 != nil {
 		fromNode, toNode := info.NodeKey2Bytes, info.NodeKey1Bytes
-		if policy2.ToNode != info.NodeKey1Bytes {
+		if policy2.ToNodePubKey() != info.NodeKey1Bytes {
 			fromNode, toNode = toNode, fromNode
 		}
-		isEdge1 := policy2.ChannelFlags&lnwire.ChanUpdateDirection == 0
-		c.UpdatePolicy(policy2, fromNode, toNode, isEdge1)
+		c.UpdatePolicy(policy2, fromNode, toNode, policy2.IsEdge1)
 	}
 }
 
@@ -177,19 +191,8 @@ func (c *GraphCache) updateOrAddEdge(node route.Vertex, edge *DirectedChannel) {
 // of the from and to node is not strictly important. But we assume that a
 // channel edge was added beforehand so that the directed channel struct already
 // exists in the cache.
-func (c *GraphCache) UpdatePolicy(policy *models.ChannelEdgePolicy, fromNode,
+func (c *GraphCache) UpdatePolicy(policy *models.CachedEdgePolicy, fromNode,
 	toNode route.Vertex, edge1 bool) {
-
-	// Extract inbound fee if possible and available. If there is a decoding
-	// error, ignore this policy.
-	var inboundFee lnwire.Fee
-	_, err := policy.ExtraOpaqueData.ExtractRecords(&inboundFee)
-	if err != nil {
-		log.Errorf("Failed to extract records from edge policy %v: %v",
-			policy.ChannelID, err)
-
-		return
-	}
 
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
@@ -216,18 +219,18 @@ func (c *GraphCache) UpdatePolicy(policy *models.ChannelEdgePolicy, fromNode,
 		// policy for node 1.
 		case channel.IsNode1 && edge1:
 			channel.OutPolicySet = true
-			channel.InboundFee = inboundFee
+			channel.InboundFee = policy.InboundFee
 
 		// This is node 2, and it is edge 2, so this is the outgoing
 		// policy for node 2.
 		case !channel.IsNode1 && !edge1:
 			channel.OutPolicySet = true
-			channel.InboundFee = inboundFee
+			channel.InboundFee = policy.InboundFee
 
 		// The other two cases left mean it's the inbound policy for the
 		// node.
 		default:
-			channel.InPolicy = models.NewCachedPolicy(policy)
+			channel.InPolicy = policy
 		}
 	}
 

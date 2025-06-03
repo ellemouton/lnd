@@ -23,9 +23,8 @@ type CachedEdgePolicy struct {
 	// fields (like max_htlc) in the policy.
 	MessageFlags lnwire.ChanUpdateMsgFlags
 
-	// ChannelFlags is a bitfield which signals the capabilities of the
-	// channel as well as the directed edge this update applies to.
-	ChannelFlags lnwire.ChanUpdateChanFlags
+	Disabled bool
+	IsEdge1  bool
 
 	// TimeLockDelta is the number of blocks this node will subtract from
 	// the expiry of an incoming HTLC. This value expresses the time buffer
@@ -47,6 +46,8 @@ type CachedEdgePolicy struct {
 	// FeeProportionalMillionths is the rate that the node will charge for
 	// HTLCs for each millionth of a satoshi forwarded.
 	FeeProportionalMillionths lnwire.MilliSatoshi
+
+	InboundFee lnwire.Fee
 
 	// ToNodePubKey is a function that returns the to node of a policy.
 	// Since we only ever store the inbound policy, this is always the node
@@ -73,14 +74,24 @@ func (c *CachedEdgePolicy) ComputeFee(
 
 // NewCachedPolicy turns a full policy into a minimal one that can be cached.
 func NewCachedPolicy(policy *ChannelEdgePolicy) *CachedEdgePolicy {
+	isEdge1 := policy.ChannelFlags&lnwire.ChanUpdateDirection == 0
+	disabled := policy.ChannelFlags&lnwire.ChanUpdateDisabled != 0
+
+	var inboundFee lnwire.Fee
+	policy.InboundFee.WhenSome(func(fee lnwire.Fee) {
+		inboundFee = fee
+	})
+
 	return &CachedEdgePolicy{
 		ChannelID:                 policy.ChannelID,
 		MessageFlags:              policy.MessageFlags,
-		ChannelFlags:              policy.ChannelFlags,
 		TimeLockDelta:             policy.TimeLockDelta,
 		MinHTLC:                   policy.MinHTLC,
 		MaxHTLC:                   policy.MaxHTLC,
 		FeeBaseMSat:               policy.FeeBaseMSat,
 		FeeProportionalMillionths: policy.FeeProportionalMillionths,
+		InboundFee:                inboundFee,
+		IsEdge1:                   isEdge1,
+		Disabled:                  disabled,
 	}
 }

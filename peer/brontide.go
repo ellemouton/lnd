@@ -1203,17 +1203,10 @@ func (p *Brontide) loadActiveChannels(chans []*channeldb.OpenChannel) (
 		// routing policy into a forwarding policy.
 		var forwardingPolicy *models.ForwardingPolicy
 		if selfPolicy != nil {
-			var inboundWireFee lnwire.Fee
-			_, err := selfPolicy.ExtraOpaqueData.ExtractRecords(
-				&inboundWireFee,
-			)
-			if err != nil {
-				return nil, err
-			}
-
-			inboundFee := models.NewInboundFeeFromWire(
-				inboundWireFee,
-			)
+			var inboundFee models.InboundFee
+			selfPolicy.InboundFee.WhenSome(func(fee lnwire.Fee) {
+				inboundFee = models.NewInboundFeeFromWire(fee)
+			})
 
 			forwardingPolicy = &models.ForwardingPolicy{
 				MinHTLCOut:    selfPolicy.MinHTLC,

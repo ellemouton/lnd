@@ -6737,23 +6737,6 @@ func marshalExtraOpaqueData(data []byte) map[uint64][]byte {
 	return records
 }
 
-// extractInboundFeeSafe tries to extract the inbound fee from the given extra
-// opaque data tlv block. If parsing fails, a zero inbound fee is returned. This
-// function is typically used on unvalidated data coming stored in the database.
-// There is not much we can do other than ignoring errors here.
-func extractInboundFeeSafe(data lnwire.ExtraOpaqueData) lnwire.Fee {
-	var inboundFee lnwire.Fee
-
-	_, err := data.ExtractRecords(&inboundFee)
-	if err != nil {
-		// Return zero fee. Do not return the inboundFee variable
-		// because it may be undefined.
-		return lnwire.Fee{}
-	}
-
-	return inboundFee
-}
-
 func marshalDBEdge(edgeInfo *models.ChannelEdgeInfo,
 	c1, c2 *models.ChannelEdgePolicy) *lnrpc.ChannelEdge {
 
@@ -6803,7 +6786,15 @@ func marshalDBRoutingPolicy(
 	disabled := policy.ChannelFlags&lnwire.ChanUpdateDisabled != 0
 
 	customRecords := marshalExtraOpaqueData(policy.ExtraOpaqueData)
-	inboundFee := extractInboundFeeSafe(policy.ExtraOpaqueData)
+
+	var (
+		inboundFeeBaseMsat      int32
+		inboundFeeRateMilliMsat int32
+	)
+	policy.InboundFee.WhenSome(func(fee lnwire.Fee) {
+		inboundFeeBaseMsat = fee.BaseFee
+		inboundFeeRateMilliMsat = fee.FeeRate
+	})
 
 	return &lnrpc.RoutingPolicy{
 		TimeLockDelta:    uint32(policy.TimeLockDelta),
@@ -6815,8 +6806,8 @@ func marshalDBRoutingPolicy(
 		LastUpdate:       uint32(policy.LastUpdate.Unix()),
 		CustomRecords:    customRecords,
 
-		InboundFeeBaseMsat:      inboundFee.BaseFee,
-		InboundFeeRateMilliMsat: inboundFee.FeeRate,
+		InboundFeeBaseMsat:      inboundFeeBaseMsat,
+		InboundFeeRateMilliMsat: inboundFeeRateMilliMsat,
 	}
 }
 
@@ -7310,9 +7301,15 @@ func marshallTopologyChange(
 		customRecords := marshalExtraOpaqueData(
 			channelUpdate.ExtraOpaqueData,
 		)
-		inboundFee := extractInboundFeeSafe(
-			channelUpdate.ExtraOpaqueData,
+
+		var (
+			inboundFeeBaseMsat      int32
+			inboundFeeRateMilliMsat int32
 		)
+		channelUpdate.InboundFee.WhenSome(func(fee lnwire.Fee) {
+			inboundFeeBaseMsat = fee.BaseFee
+			inboundFeeRateMilliMsat = fee.FeeRate
+		})
 
 		channelUpdates[i] = &lnrpc.ChannelEdgeUpdate{
 			ChanId: channelUpdate.ChanID,
@@ -7340,8 +7337,8 @@ func marshallTopologyChange(
 					channelUpdate.FeeRate,
 				),
 				Disabled:                channelUpdate.Disabled,
-				InboundFeeBaseMsat:      inboundFee.BaseFee,
-				InboundFeeRateMilliMsat: inboundFee.FeeRate,
+				InboundFeeBaseMsat:      inboundFeeBaseMsat,
+				InboundFeeRateMilliMsat: inboundFeeRateMilliMsat,
 				CustomRecords:           customRecords,
 			},
 			AdvertisingNode: encodeKey(channelUpdate.AdvertisingNode),
@@ -7650,6 +7647,15 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 					"channel %v ", chanInfo.ChannelID)
 			}
 
+			var (
+				inboundFeeBaseMsat      int32
+				inboundFeeRateMilliMsat int32
+			)
+			edgePolicy.InboundFee.WhenSome(func(fee lnwire.Fee) {
+				inboundFeeBaseMsat = fee.BaseFee
+				inboundFeeRateMilliMsat = fee.FeeRate
+			})
+
 			// We'll compute the effective fee rate by converting
 			// from a fixed point fee rate to a floating point fee
 			// rate. The fee rate field in the database the amount
@@ -7658,15 +7664,6 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 			feeRateFixedPoint :=
 				edgePolicy.FeeProportionalMillionths
 			feeRate := float64(feeRateFixedPoint) / feeBase
-
-			// Decode inbound fee from extra data.
-			var inboundFee lnwire.Fee
-			_, err := edgePolicy.ExtraOpaqueData.ExtractRecords(
-				&inboundFee,
-			)
-			if err != nil {
-				return err
-			}
 
 			// TODO(roasbeef): also add stats for revenue for each
 			// channel
@@ -7677,8 +7674,8 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 				FeePerMil:    int64(feeRateFixedPoint),
 				FeeRate:      feeRate,
 
-				InboundBaseFeeMsat: inboundFee.BaseFee,
-				InboundFeePerMil:   inboundFee.FeeRate,
+				InboundBaseFeeMsat: inboundFeeBaseMsat,
+				InboundFeePerMil:   inboundFeeRateMilliMsat,
 			})
 
 			return nil

@@ -2073,13 +2073,11 @@ func TestChanUpdatesInHorizon(t *testing.T) {
 			err := compareEdgePolicies(
 				chanExp.Policy1, chanRet.Policy1,
 			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			compareEdgePolicies(chanExp.Policy2, chanRet.Policy2)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
+			err = compareEdgePolicies(
+				chanExp.Policy2, chanRet.Policy2,
+			)
+			require.NoError(t, err)
 		}
 	}
 }
@@ -4205,6 +4203,13 @@ func TestGraphCacheForEachNodeChannel(t *testing.T) {
 	edge1.ExtraOpaqueData = []byte{
 		253, 217, 3, 8, 0, 0, 0, 10, 0, 0, 0, 20,
 	}
+	_, ok := graph.V1Store.(*KVStore)
+	if ok {
+		edge1.InboundFee = lnwire.Fee{
+			BaseFee: 10,
+			FeeRate: 20,
+		}
+	}
 	require.NoError(t, graph.UpdateEdgePolicy(edge1))
 	edge1 = copyEdgePolicy(edge1) // Avoid read/write race conditions.
 
@@ -4215,7 +4220,7 @@ func TestGraphCacheForEachNodeChannel(t *testing.T) {
 		FeeRate: 20,
 	})
 
-	_, ok := graph.V1Store.(*KVStore)
+	_, ok = graph.V1Store.(*KVStore)
 	if !ok {
 		t.Skipf("skipping test that is aimed at a bbolt graph DB")
 	}

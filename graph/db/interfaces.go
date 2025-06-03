@@ -159,6 +159,10 @@ type V1Store interface { //nolint:interfacebloat
 		*models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error
 
+	ForEachCacheableChannel(cb func(*CachedEdgeInfo,
+		*models.CachedEdgePolicy,
+		*models.CachedEdgePolicy) error) error
+
 	// DisabledChannelIDs returns the channel ids of disabled channels.
 	// A channel is disabled when two of the associated ChanelEdgePolicies
 	// have their disabled bit on.

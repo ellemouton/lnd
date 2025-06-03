@@ -257,6 +257,10 @@ CREATE TABLE IF NOT EXISTS channel_policies (
     -- up into more fine-grained flags.
     disabled bool,
 
+    inbound_base_fee_msat BIGINT,
+
+    inbound_fee_rate_milli_msat BIGINT,
+
     -- The signature of the channel update announcement.
     signature BLOB
 );
