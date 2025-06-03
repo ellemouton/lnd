@@ -2073,13 +2073,11 @@ func TestChanUpdatesInHorizon(t *testing.T) {
 			err := compareEdgePolicies(
 				chanExp.Policy1, chanRet.Policy1,
 			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			compareEdgePolicies(chanExp.Policy2, chanRet.Policy2)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
+			err = compareEdgePolicies(
+				chanExp.Policy2, chanRet.Policy2,
+			)
+			require.NoError(t, err)
 		}
 	}
 }
