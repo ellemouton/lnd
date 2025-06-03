@@ -1870,11 +1870,10 @@ func (s *SQLStore) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo) ([]uint64,
 // NOTE: part of the V1Store interface.
 func (s *SQLStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 	var (
-		ctx    = context.TODO()
-		readTx = NewReadTx()
-		edges  []ChannelEdge
+		ctx   = context.TODO()
+		edges []ChannelEdge
 	)
-	err := s.db.ExecTx(ctx, readTx, func(db SQLQueries) error {
+	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		for _, chanID := range chanIDs {
 			var chanIDB [8]byte
 			byteOrder.PutUint64(chanIDB[:], chanID)
@@ -1938,11 +1937,8 @@ func (s *SQLStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 func (s *SQLStore) IsPublicNode(pubKey [33]byte) (bool, error) {
 	ctx := context.TODO()
 
-	var (
-		readTx   = NewReadTx()
-		isPublic bool
-	)
-	err := s.db.ExecTx(ctx, readTx, func(db SQLQueries) error {
+	var isPublic bool
+	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		var err error
 		isPublic, err = db.IsPublicV1Node(ctx, pubKey[:])
 
@@ -1964,10 +1960,9 @@ func (s *SQLStore) IsPublicNode(pubKey [33]byte) (bool, error) {
 func (s *SQLStore) DisabledChannelIDs() ([]uint64, error) {
 	var (
 		ctx     = context.TODO()
-		readTx  = NewReadTx()
 		chanIDs []uint64
 	)
-	err := s.db.ExecTx(ctx, readTx, func(db SQLQueries) error {
+	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		dbChanIDs, err := db.GetV1DisabledSCIDs(ctx)
 		if err != nil {
 			return fmt.Errorf("unable to fetch disabled "+
@@ -1995,13 +1990,10 @@ func (s *SQLStore) DisabledChannelIDs() ([]uint64, error) {
 //
 // NOTE: part of the V1Store interface.
 func (s *SQLStore) PruneGraphNodes() ([]route.Vertex, error) {
-	var (
-		ctx     = context.TODO()
-		writeTx TxOptions
-	)
+	var ctx = context.TODO()
 
 	var prunedNodes []route.Vertex
-	err := s.db.ExecTx(ctx, &writeTx, func(db SQLQueries) error {
+	err := s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
 		var err error
 		prunedNodes, err = pruneGraphNodes(ctx, db)
 
@@ -2034,11 +2026,10 @@ func (s *SQLStore) PruneGraph(spentOutputs []*wire.OutPoint,
 	defer s.cacheMu.Unlock()
 
 	var (
-		writeTx     TxOptions
 		closedChans []*models.ChannelEdgeInfo
 		prunedNodes []route.Vertex
 	)
-	err := s.db.ExecTx(ctx, &writeTx, func(db SQLQueries) error {
+	err := s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
 		for _, outpoint := range spentOutputs {
 			dbChannel, err := db.GetChannelByOutpoint(
 				ctx, sqlc.GetChannelByOutpointParams{
@@ -2112,10 +2103,9 @@ func (s *SQLStore) PruneGraph(spentOutputs []*wire.OutPoint,
 func (s *SQLStore) ChannelView() ([]EdgePoint, error) {
 	var (
 		ctx        = context.TODO()
-		readTx     = NewReadTx()
 		edgePoints []EdgePoint
 	)
-	err := s.db.ExecTx(ctx, readTx, func(db SQLQueries) error {
+	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		dbChannel, err := db.ListAllChannels(ctx, int16(ProtocolV1))
 		if err != nil {
 			return fmt.Errorf("unable to fetch channels: %w", err)
@@ -2162,11 +2152,10 @@ func (s *SQLStore) ChannelView() ([]EdgePoint, error) {
 func (s *SQLStore) PruneTip() (*chainhash.Hash, uint32, error) {
 	var (
 		ctx       = context.TODO()
-		writeTx   = NewReadTx()
 		tipHash   chainhash.Hash
 		tipHeight uint32
 	)
-	err := s.db.ExecTx(ctx, writeTx, func(db SQLQueries) error {
+	err := s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
 		pruneTip, err := db.GetPruneTip(ctx)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrGraphNeverPruned
@@ -2201,8 +2190,6 @@ func (s *SQLStore) DisconnectBlockAtHeight(height uint32) (
 	ctx := context.TODO()
 
 	var (
-		writeTx = TxOptions{}
-
 		// Every channel having a ShortChannelID starting at 'height'
 		// will no longer be confirmed.
 		startShortChanID = lnwire.ShortChannelID{
@@ -2221,7 +2208,7 @@ func (s *SQLStore) DisconnectBlockAtHeight(height uint32) (
 	var chanIDEnd [8]byte
 	byteOrder.PutUint64(chanIDEnd[:], endShortChanID.ToUint64())
 
-	err := s.db.ExecTx(ctx, &writeTx, func(db SQLQueries) error {
+	err := s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
 		dbChans, err := db.GetChannelsBySCIDRange(
 			ctx, sqlc.GetChannelsBySCIDRangeParams{
 				StartScid: chanIDStart[:],
@@ -2278,12 +2265,11 @@ func (s *SQLStore) AddEdgeProof(scid lnwire.ShortChannelID,
 
 	var (
 		ctx       = context.TODO()
-		writeTx   TxOptions
 		scidBytes [8]byte
 	)
 	byteOrder.PutUint64(scidBytes[:], scid.ToUint64())
 
-	err := s.db.ExecTx(ctx, &writeTx, func(db SQLQueries) error {
+	err := s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
 		dbChan, err := db.GetChannelBySCID(
 			ctx, sqlc.GetChannelBySCIDParams{
 				Scid:    scidBytes[:],
@@ -2319,8 +2305,7 @@ func (s *SQLStore) AddEdgeProof(scid lnwire.ShortChannelID,
 func (s *SQLStore) PutClosedScid(scid lnwire.ShortChannelID) error {
 	ctx := context.TODO()
 
-	var writeTx TxOptions
-	return s.db.ExecTx(ctx, &writeTx, func(db SQLQueries) error {
+	return s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
 		var chanIDB [8]byte
 		byteOrder.PutUint64(chanIDB[:], scid.ToUint64())
 
@@ -2335,10 +2320,9 @@ func (s *SQLStore) PutClosedScid(scid lnwire.ShortChannelID) error {
 func (s *SQLStore) IsClosedScid(scid lnwire.ShortChannelID) (bool, error) {
 	var (
 		ctx      = context.TODO()
-		readTx   = NewReadTx()
 		isClosed bool
 	)
-	err := s.db.ExecTx(ctx, readTx, func(db SQLQueries) error {
+	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		var chanIDB [8]byte
 		byteOrder.PutUint64(chanIDB[:], scid.ToUint64())
 		var err error
@@ -2363,12 +2347,9 @@ func (s *SQLStore) IsClosedScid(scid lnwire.ShortChannelID) (bool, error) {
 //
 // NOTE: part of the V1Store interface.
 func (s *SQLStore) GraphSession(cb func(graph NodeTraverser) error) error {
-	var (
-		ctx    = context.TODO()
-		readTx = NewReadTx()
-	)
+	var ctx = context.TODO()
 
-	return s.db.ExecTx(ctx, readTx, func(db SQLQueries) error {
+	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		return cb(newSQLNodeTraverser(db, s.cfg.ChainHash))
 	}, func() {})
 }
