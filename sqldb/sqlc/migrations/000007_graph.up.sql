@@ -282,3 +282,34 @@ CREATE TABLE IF NOT EXISTS channel_policy_extra_types (
 CREATE UNIQUE INDEX IF NOT EXISTS channel_policy_extra_types_unique ON channel_policy_extra_types (
     type, channel_policy_id
 );
+
+/* ─────────────────────────────────────────────
+   Other graph related tables
+   ─────────────────────────────────────────────
+*/
+
+CREATE TABLE IF NOT EXISTS zombie_channels (
+    -- The channel id (short channel id) of the channel.
+    scid BIGINT NOT NULL,
+
+    -- The protocol version that this node was gossiped on.
+    version SMALLINT NOT NULL,
+
+    node_key_1 BYTEA,
+    node_key_2 BYTEA
+);
+CREATE UNIQUE INDEX IF NOT EXISTS zombie_channels_channel_id_version_idx
+    ON zombie_channels(scid, version);
+
+CREATE TABLE IF NOT EXISTS prune_log (
+    -- The block height that the prune was performed at.
+    block_height BIGINT PRIMARY KEY,
+
+    -- The block hash that the prune was performed at.
+    block_hash BLOB NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS closed_scids (
+    -- The short channel id of the channel.
+     scid BLOB PRIMARY KEY
+);
