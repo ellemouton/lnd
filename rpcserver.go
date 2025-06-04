@@ -6803,20 +6803,26 @@ func marshalDBRoutingPolicy(
 	disabled := policy.ChannelFlags&lnwire.ChanUpdateDisabled != 0
 
 	customRecords := marshalExtraOpaqueData(policy.ExtraOpaqueData)
-	inboundFee := extractInboundFeeSafe(policy.ExtraOpaqueData)
+	var (
+		inboundFeeBase int32
+		inboundFeeRate int32
+	)
+	policy.InboundFee.WhenSome(func(fee lnwire.Fee) {
+		inboundFeeBase = fee.BaseFee
+		inboundFeeRate = fee.FeeRate
+	})
 
 	return &lnrpc.RoutingPolicy{
-		TimeLockDelta:    uint32(policy.TimeLockDelta),
-		MinHtlc:          int64(policy.MinHTLC),
-		MaxHtlcMsat:      uint64(policy.MaxHTLC),
-		FeeBaseMsat:      int64(policy.FeeBaseMSat),
-		FeeRateMilliMsat: int64(policy.FeeProportionalMillionths),
-		Disabled:         disabled,
-		LastUpdate:       uint32(policy.LastUpdate.Unix()),
-		CustomRecords:    customRecords,
-
-		InboundFeeBaseMsat:      inboundFee.BaseFee,
-		InboundFeeRateMilliMsat: inboundFee.FeeRate,
+		TimeLockDelta:           uint32(policy.TimeLockDelta),
+		MinHtlc:                 int64(policy.MinHTLC),
+		MaxHtlcMsat:             uint64(policy.MaxHTLC),
+		FeeBaseMsat:             int64(policy.FeeBaseMSat),
+		FeeRateMilliMsat:        int64(policy.FeeProportionalMillionths),
+		Disabled:                disabled,
+		LastUpdate:              uint32(policy.LastUpdate.Unix()),
+		CustomRecords:           customRecords,
+		InboundFeeBaseMsat:      inboundFeeBase,
+		InboundFeeRateMilliMsat: inboundFeeRate,
 	}
 }
 
@@ -7659,14 +7665,10 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 				edgePolicy.FeeProportionalMillionths
 			feeRate := float64(feeRateFixedPoint) / feeBase
 
-			// Decode inbound fee from extra data.
 			var inboundFee lnwire.Fee
-			_, err := edgePolicy.ExtraOpaqueData.ExtractRecords(
-				&inboundFee,
-			)
-			if err != nil {
-				return err
-			}
+			edgePolicy.InboundFee.WhenSome(func(fee lnwire.Fee) {
+				inboundFee = fee
+			})
 
 			// TODO(roasbeef): also add stats for revenue for each
 			// channel
