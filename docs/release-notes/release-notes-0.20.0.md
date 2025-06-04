@@ -77,6 +77,10 @@
 # Technical and Architectural Updates
 ## BOLT Spec Updates
 
+* Explicitly define the [inbound fee TLV record]() on the ChannelUpdate message
+  and handle it explicitly throughout the code base instead of extracting it 
+  from the TLV stream at various call-sites.
+
 ## Testing
 
 ## Database
