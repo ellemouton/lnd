@@ -954,6 +954,7 @@ func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 		MaxHTLC:                   msg.HtlcMaximumMsat,
 		FeeBaseMSat:               lnwire.MilliSatoshi(msg.BaseFee),
 		FeeProportionalMillionths: lnwire.MilliSatoshi(msg.FeeRate),
+		InboundFee:                msg.InboundFee.ValOpt(),
 		ExtraOpaqueData:           msg.ExtraOpaqueData,
 	})
 	if err != nil && !IsError(err, ErrIgnored, ErrOutdated) {

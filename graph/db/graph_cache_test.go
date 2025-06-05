@@ -37,23 +37,34 @@ func TestGraphCacheAddNode(t *testing.T) {
 			channelFlagA, channelFlagB = 1, 0
 		}
 
-		outPolicy1 := &models.ChannelEdgePolicy{
+		outPolicy1 := models.NewCachedPolicy(&models.ChannelEdgePolicy{
 			ChannelID:    1000,
 			ChannelFlags: lnwire.ChanUpdateChanFlags(channelFlagA),
 			ToNode:       nodeB,
 			// Define an inbound fee.
+			InboundFee: lnwire.Fee{
+				BaseFee: 10,
+				FeeRate: 20,
+			},
 			ExtraOpaqueData: []byte{
 				253, 217, 3, 8, 0, 0, 0, 10, 0, 0, 0, 20,
 			},
+		})
+		outPolicy1.ToNodePubKey = func() route.Vertex {
+			return nodeB
 		}
-		inPolicy1 := &models.ChannelEdgePolicy{
+
+		inPolicy1 := models.NewCachedPolicy(&models.ChannelEdgePolicy{
 			ChannelID:    1000,
 			ChannelFlags: lnwire.ChanUpdateChanFlags(channelFlagB),
 			ToNode:       nodeA,
+		})
+		inPolicy1.ToNodePubKey = func() route.Vertex {
+			return nodeA
 		}
 		cache := NewGraphCache(10)
 		cache.AddNodeFeatures(nodeA, lnwire.EmptyFeatureVector())
-		cache.AddChannel(&models.ChannelEdgeInfo{
+		cache.AddChannel(&CachedEdgeInfo{
 			ChannelID: 1000,
 			// Those are direction independent!
 			NodeKey1Bytes: pubKey1,
@@ -113,12 +124,12 @@ func TestGraphCacheAddNode(t *testing.T) {
 	runTest(pubKey2, pubKey1)
 }
 
-func assertCachedPolicyEqual(t *testing.T, original *models.ChannelEdgePolicy,
+func assertCachedPolicyEqual(t *testing.T, original *models.CachedEdgePolicy,
 	cached *models.CachedEdgePolicy) {
 
 	require.Equal(t, original.ChannelID, cached.ChannelID)
 	require.Equal(t, original.MessageFlags, cached.MessageFlags)
-	require.Equal(t, original.ChannelFlags, cached.ChannelFlags)
+	require.Equal(t, original.Disabled, cached.Disabled)
 	require.Equal(t, original.TimeLockDelta, cached.TimeLockDelta)
 	require.Equal(t, original.MinHTLC, cached.MinHTLC)
 	require.Equal(t, original.MaxHTLC, cached.MaxHTLC)
@@ -128,6 +139,6 @@ func assertCachedPolicyEqual(t *testing.T, original *models.ChannelEdgePolicy,
 		cached.FeeProportionalMillionths,
 	)
 	require.Equal(
-		t, route.Vertex(original.ToNode), cached.ToNodePubKey(),
+		t, original.ToNodePubKey(), cached.ToNodePubKey(),
 	)
 }

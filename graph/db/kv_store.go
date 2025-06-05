@@ -12,7 +12,6 @@ import (
 	"net"
 	"sort"
 	"sync"
-	"testing"
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -22,12 +21,12 @@ import (
 	"github.com/btcsuite/btcwallet/walletdb"
 	"github.com/lightningnetwork/lnd/aliasmgr"
 	"github.com/lightningnetwork/lnd/batch"
+	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
-	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -384,6 +383,59 @@ func (c *KVStore) AddrsForNode(nodePub *btcec.PublicKey) (bool, []net.Addr,
 	return true, node.Addresses, nil
 }
 
+func (c *KVStore) ForEachCacheableChannel(cb func(*CachedEdgeInfo,
+	*models.CachedEdgePolicy,
+	*models.CachedEdgePolicy) error) error {
+
+	return c.db.View(func(tx kvdb.RTx) error {
+		edges := tx.ReadBucket(edgeBucket)
+		if edges == nil {
+			return ErrGraphNoEdgesFound
+		}
+
+		// First, load all edges in memory indexed by node and channel
+		// id.
+		channelMap, err := c.getChannelMap(edges)
+		if err != nil {
+			return err
+		}
+
+		edgeIndex := edges.NestedReadBucket(edgeIndexBucket)
+		if edgeIndex == nil {
+			return ErrGraphNoEdgesFound
+		}
+
+		// Load edge index, recombine each channel with the policies
+		// loaded above and invoke the callback.
+		return kvdb.ForAll(
+			edgeIndex, func(k, edgeInfoBytes []byte) error {
+				var chanID [8]byte
+				copy(chanID[:], k)
+
+				edgeInfoReader := bytes.NewReader(edgeInfoBytes)
+				info, err := deserializeChanEdgeInfo(
+					edgeInfoReader,
+				)
+				if err != nil {
+					return err
+				}
+
+				policy1 := channelMap[channelMapKey{
+					nodeKey: info.NodeKey1Bytes,
+					chanID:  chanID,
+				}]
+
+				policy2 := channelMap[channelMapKey{
+					nodeKey: info.NodeKey2Bytes,
+					chanID:  chanID,
+				}]
+
+				return cb(NewCachedEdgeInfo(&info), models.NewCachedPolicy(policy1), models.NewCachedPolicy(policy2))
+			},
+		)
+	}, func() {})
+}
+
 // ForEachChannel iterates through all the channel edges stored within the
 // graph and invokes the passed callback for each edge. The callback takes two
 // edges as since this is a directed graph, both the in/out edges are visited.
@@ -476,12 +528,9 @@ func (c *KVStore) forEachNodeDirectedChannel(tx kvdb.RTx,
 
 		var inboundFee lnwire.Fee
 		if p1 != nil {
-			// Extract inbound fee. If there is a decoding error,
-			// skip this edge.
-			_, err := p1.ExtraOpaqueData.ExtractRecords(&inboundFee)
-			if err != nil {
-				return nil
-			}
+			p1.InboundFee.WhenSome(func(fee lnwire.Fee) {
+				inboundFee = fee
+			})
 		}
 
 		directedChannel := &DirectedChannel{
@@ -2641,7 +2690,17 @@ func (c *KVStore) delChannelEdgeUnsafe(edges, edgeIndex, chanIndex,
 
 	nodeKey1, nodeKey2 := edgeInfo.NodeKey1Bytes, edgeInfo.NodeKey2Bytes
 	if strictZombie {
-		nodeKey1, nodeKey2 = makeZombiePubkeys(&edgeInfo, edge1, edge2)
+		var e1UpdateTime, e2UpdateTime *time.Time
+		if edge1 != nil {
+			e1UpdateTime = &edge1.LastUpdate
+		}
+		if edge2 != nil {
+			e2UpdateTime = &edge2.LastUpdate
+		}
+
+		nodeKey1, nodeKey2 = makeZombiePubkeys(
+			&edgeInfo, e1UpdateTime, e2UpdateTime,
+		)
 	}
 
 	return &edgeInfo, markEdgeZombie(
@@ -2666,7 +2725,7 @@ func (c *KVStore) delChannelEdgeUnsafe(edges, edgeIndex, chanIndex,
 // marked with the correct lagging channel since we received an update from only
 // one side.
 func makeZombiePubkeys(info *models.ChannelEdgeInfo,
-	e1, e2 *models.ChannelEdgePolicy) ([33]byte, [33]byte) {
+	e1, e2 *time.Time) ([33]byte, [33]byte) {
 
 	switch {
 	// If we don't have either edge policy, we'll return both pubkeys so
@@ -2678,7 +2737,7 @@ func makeZombiePubkeys(info *models.ChannelEdgeInfo,
 	// older, we'll return edge1's pubkey and a blank pubkey for edge2. This
 	// means that only an update from edge1 will be able to resurrect the
 	// channel.
-	case e1 == nil || (e2 != nil && e1.LastUpdate.Before(e2.LastUpdate)):
+	case e1 == nil || (e2 != nil && e1.Before(*e2)):
 		return info.NodeKey1Bytes, [33]byte{}
 
 	// Otherwise, we're missing edge2 or edge2 is the older side, so we
@@ -4657,6 +4716,17 @@ func deserializeChanEdgePolicyRaw(r io.Reader) (*models.ChannelEdgePolicy,
 		edge.ExtraOpaqueData = opq[8:]
 	}
 
+	var inboundFee lnwire.Fee
+	typeMap, err := edge.ExtraOpaqueData.ExtractRecords(&inboundFee)
+	if err != nil {
+		return nil, err
+	}
+
+	val, ok := typeMap[lnwire.FeeRecordType]
+	if ok && val != nil {
+		edge.InboundFee = fn.Some(inboundFee)
+	}
+
 	return edge, nil
 }
 
@@ -4719,31 +4789,67 @@ func (c *chanGraphNodeTx) ForEachChannel(f func(*models.ChannelEdgeInfo,
 	)
 }
 
-// MakeTestGraph creates a new instance of the ChannelGraph for testing
-// purposes.
-//
-// NOTE: this helper currently creates a ChannelGraph that is only ever backed
-// by the `KVStore` of the `V1Store` interface.
-func MakeTestGraph(t testing.TB, opts ...ChanGraphOption) *ChannelGraph {
-	t.Helper()
+func (c *KVStore) forEachPruneLogEntry(cb func(height uint32,
+	hash *chainhash.Hash) error) error {
 
-	// Next, create KVStore for the first time.
-	backend, backendCleanup, err := kvdb.GetTestBackend(t.TempDir(), "cgr")
-	t.Cleanup(backendCleanup)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, backend.Close())
-	})
+	return kvdb.View(c.db, func(tx kvdb.RTx) error {
+		metaBucket := tx.ReadBucket(graphMetaBucket)
+		if metaBucket == nil {
+			return ErrGraphNotFound
+		}
 
-	graphStore, err := NewKVStore(backend)
-	require.NoError(t, err)
+		pruneBucket := metaBucket.NestedReadBucket(pruneLogBucket)
+		if pruneBucket == nil {
+			// Graph never been pruned. No entries to iterate over.
+			return nil
+		}
 
-	graph, err := NewChannelGraph(graphStore, opts...)
-	require.NoError(t, err)
-	require.NoError(t, graph.Start())
-	t.Cleanup(func() {
-		require.NoError(t, graph.Stop())
-	})
+		return pruneBucket.ForEach(func(k, v []byte) error {
+			blockHeight := byteOrder.Uint32(k)
+			var blockHash chainhash.Hash
+			copy(blockHash[:], v)
 
-	return graph
+			return cb(blockHeight, &blockHash)
+		})
+	}, func() {})
+}
+
+func (c *KVStore) forEachZombieEntry(cb func(chanID uint64, pubKey1,
+	pubKey2 [33]byte) error) error {
+
+	return kvdb.View(c.db, func(tx kvdb.RTx) error {
+		edges := tx.ReadBucket(edgeBucket)
+		if edges == nil {
+			return ErrGraphNoEdgesFound
+		}
+		zombieIndex := edges.NestedReadBucket(zombieBucket)
+		if zombieIndex == nil {
+			return nil
+		}
+
+		return zombieIndex.ForEach(func(k, v []byte) error {
+			var pubKey1, pubKey2 [33]byte
+			copy(pubKey1[:], v[:33])
+			copy(pubKey2[:], v[33:])
+
+			return cb(byteOrder.Uint64(k), pubKey1, pubKey2)
+		})
+	}, func() {})
+}
+
+func (c *KVStore) forEachClosedSCID(
+	cb func(lnwire.ShortChannelID) error) error {
+
+	return kvdb.View(c.db, func(tx kvdb.RTx) error {
+		closedScids := tx.ReadBucket(closedScidBucket)
+		if closedScids == nil {
+			return nil
+		}
+
+		return closedScids.ForEach(func(k, _ []byte) error {
+			return cb(lnwire.NewShortChanIDFromInt(
+				byteOrder.Uint64(k),
+			))
+		})
+	}, func() {})
 }

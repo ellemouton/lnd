@@ -174,8 +174,8 @@ func (c *ChannelGraph) populateCache() error {
 		return err
 	}
 
-	err = c.V1Store.ForEachChannel(func(info *models.ChannelEdgeInfo,
-		policy1, policy2 *models.ChannelEdgePolicy) error {
+	err = c.V1Store.ForEachCacheableChannel(func(info *CachedEdgeInfo,
+		policy1, policy2 *models.CachedEdgePolicy) error {
 
 		c.graphCache.AddChannel(info, policy1, policy2)
 
@@ -312,7 +312,7 @@ func (c *ChannelGraph) AddChannelEdge(edge *models.ChannelEdgeInfo,
 	}
 
 	if c.graphCache != nil {
-		c.graphCache.AddChannel(edge, nil, nil)
+		c.graphCache.AddChannel(NewCachedEdgeInfo(edge), nil, nil)
 	}
 
 	select {
@@ -347,7 +347,11 @@ func (c *ChannelGraph) MarkEdgeLive(chanID uint64) error {
 
 		info := infos[0]
 
-		c.graphCache.AddChannel(info.Info, info.Policy1, info.Policy2)
+		c.graphCache.AddChannel(
+			NewCachedEdgeInfo(info.Info),
+			models.NewCachedPolicy(info.Policy1),
+			models.NewCachedPolicy(info.Policy2),
+		)
 	}
 
 	return nil
@@ -571,7 +575,9 @@ func (c *ChannelGraph) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 			isUpdate1 = true
 		}
 
-		c.graphCache.UpdatePolicy(edge, from, to, isUpdate1)
+		c.graphCache.UpdatePolicy(
+			models.NewCachedPolicy(edge), from, to, isUpdate1,
+		)
 	}
 
 	select {
@@ -583,7 +589,7 @@ func (c *ChannelGraph) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 	return nil
 }
 
-// MakeTestGraphNew creates a new instance of the ChannelGraph for testing
+// MakeTestGraph creates a new instance of the ChannelGraph for testing
 // purposes. The backing V1Store implementation depends on the version of
 // NewTestDB included in the current build.
 //
@@ -592,7 +598,7 @@ func (c *ChannelGraph) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 // implemented, unit tests will be switched to use this function instead of
 // the existing MakeTestGraph helper. Once only this function is used, the
 // existing MakeTestGraph function will be removed and this one will be renamed.
-func MakeTestGraphNew(t testing.TB,
+func MakeTestGraph(t testing.TB,
 	opts ...ChanGraphOption) *ChannelGraph {
 
 	t.Helper()

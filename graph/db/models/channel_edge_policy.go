@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
 
@@ -64,6 +65,12 @@ type ChannelEdgePolicy struct {
 	// ToNode is the public key of the node that this directed edge leads
 	// to. Using this pub key, the channel graph can further be traversed.
 	ToNode [33]byte
+
+	// InboundFee is the fee that must be paid for incoming HTLCs.
+	// NOTE: for our kvdb implementation of the graph, inbound fees are
+	// still only persisted as part of extra opaque data. For SQL store,
+	// the InboundFee is persisted as explicit columns.
+	InboundFee fn.Option[lnwire.Fee]
 
 	// ExtraOpaqueData is the set of data that was appended to this
 	// message, some of which we may not actually know how to iterate or

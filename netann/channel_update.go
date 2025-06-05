@@ -3,6 +3,7 @@ package netann
 import (
 	"bytes"
 	"fmt"
+	"github.com/lightningnetwork/lnd/tlv"
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -138,7 +139,7 @@ func ExtractChannelUpdate(ownerPubKey []byte,
 func UnsignedChannelUpdateFromEdge(info *models.ChannelEdgeInfo,
 	policy *models.ChannelEdgePolicy) *lnwire.ChannelUpdate1 {
 
-	return &lnwire.ChannelUpdate1{
+	u := &lnwire.ChannelUpdate1{
 		ChainHash:       info.ChainHash,
 		ShortChannelID:  lnwire.NewShortChanIDFromInt(policy.ChannelID),
 		Timestamp:       uint32(policy.LastUpdate.Unix()),
@@ -151,6 +152,12 @@ func UnsignedChannelUpdateFromEdge(info *models.ChannelEdgeInfo,
 		FeeRate:         uint32(policy.FeeProportionalMillionths),
 		ExtraOpaqueData: policy.ExtraOpaqueData,
 	}
+
+	policy.InboundFee.WhenSome(func(fee lnwire.Fee) {
+		u.InboundFee = tlv.SomeRecordT(tlv.NewRecordT[tlv.TlvType55555, lnwire.Fee](fee))
+	})
+
+	return u
 }
 
 // ChannelUpdateFromEdge reconstructs a signed ChannelUpdate from the given edge
