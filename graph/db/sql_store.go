@@ -704,6 +704,38 @@ func (s *SQLStore) UpdateEdgePolicy(edge *models.ChannelEdgePolicy,
 	return from, to, err
 }
 
+// updateEdgeCache updates our reject and channel caches with the new
+// edge policy information.
+func (s *SQLStore) updateEdgeCache(e *models.ChannelEdgePolicy,
+	isUpdate1 bool) {
+
+	// If an entry for this channel is found in reject cache, we'll modify
+	// the entry with the updated timestamp for the direction that was just
+	// written. If the edge doesn't exist, we'll load the cache entry lazily
+	// during the next query for this edge.
+	if entry, ok := s.rejectCache.get(e.ChannelID); ok {
+		if isUpdate1 {
+			entry.upd1Time = e.LastUpdate.Unix()
+		} else {
+			entry.upd2Time = e.LastUpdate.Unix()
+		}
+		s.rejectCache.insert(e.ChannelID, entry)
+	}
+
+	// If an entry for this channel is found in channel cache, we'll modify
+	// the entry with the updated policy for the direction that was just
+	// written. If the edge doesn't exist, we'll defer loading the info and
+	// policies and lazily read from disk during the next query.
+	if channel, ok := s.chanCache.get(e.ChannelID); ok {
+		if isUpdate1 {
+			channel.Policy1 = e
+		} else {
+			channel.Policy2 = e
+		}
+		s.chanCache.insert(e.ChannelID, channel)
+	}
+}
+
 // ForEachSourceNodeChannel iterates through all channels of the source node,
 // executing the passed callback on each. The call-back is provided with the
 // channel's outpoint, whether we have a policy for the channel and the channel
