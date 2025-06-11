@@ -867,6 +867,40 @@ func (q *Queries) ListChannelsByNodeID(ctx context.Context, arg ListChannelsByNo
 	return items, nil
 }
 
+const listNodeIDsAndPubKeys = `-- name: ListNodeIDsAndPubKeys :many
+SELECT id, pub_key
+FROM nodes
+WHERE version = $1
+`
+
+type ListNodeIDsAndPubKeysRow struct {
+	ID     int64
+	PubKey []byte
+}
+
+func (q *Queries) ListNodeIDsAndPubKeys(ctx context.Context, version int16) ([]ListNodeIDsAndPubKeysRow, error) {
+	rows, err := q.db.QueryContext(ctx, listNodeIDsAndPubKeys, version)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListNodeIDsAndPubKeysRow
+	for rows.Next() {
+		var i ListNodeIDsAndPubKeysRow
+		if err := rows.Scan(&i.ID, &i.PubKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertChanPolicyExtraType = `-- name: UpsertChanPolicyExtraType :exec
 /* ─────────────────────────────────────────────
    channel_policy_extra_types table queries
