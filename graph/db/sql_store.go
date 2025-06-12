@@ -55,7 +55,7 @@ type SQLQueries interface {
 	UpsertNode(ctx context.Context, arg sqlc.UpsertNodeParams) (int64, error)
 	GetNodeByPubKey(ctx context.Context, arg sqlc.GetNodeByPubKeyParams) (sqlc.Node, error)
 	GetNodesByLastUpdateRange(ctx context.Context, arg sqlc.GetNodesByLastUpdateRangeParams) ([]sqlc.Node, error)
-	ListNodes(ctx context.Context, version int16) ([]sqlc.ListNodesRow, error)
+	ListNodes(ctx context.Context, version int16) ([]sqlc.Node, error)
 	ListNodeIDsAndPubKeys(ctx context.Context, version int16) ([]sqlc.ListNodeIDsAndPubKeysRow, error)
 	IsPublicV1Node(ctx context.Context, pubKey []byte) (bool, error)
 	GetUnconnectedNodes(ctx context.Context) ([]sqlc.GetUnconnectedNodesRow, error)
@@ -801,30 +801,24 @@ func (s *SQLStore) ForEachNode(cb func(tx NodeRTx) error) error {
 	var ctx = context.TODO()
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		return forEachNode(ctx, db,
-			func(nodeID int64, nodePub route.Vertex) error {
-				dbNode, err := db.GetNodeByPubKey(
-					ctx, sqlc.GetNodeByPubKeyParams{
-						PubKey:  nodePub[:],
-						Version: int16(ProtocolV1),
-					},
-				)
-				if err != nil {
-					return fmt.Errorf("unable to get "+
-						"node(id=%d): %w", nodeID, err)
-				}
+		nodes, err := db.ListNodes(ctx, int16(ProtocolV1))
+		if err != nil {
+			return fmt.Errorf("unable to fetch nodes: %w", err)
+		}
 
-				node, err := buildNode(ctx, db, &dbNode)
-				if err != nil {
-					return fmt.Errorf("unable to build "+
-						"node(id=%d): %w", nodeID, err)
-				}
+		for _, dbNode := range nodes {
+			node, err := buildNode(ctx, db, &dbNode)
+			if err != nil {
+				return fmt.Errorf("unable to build "+
+					"node(id=%d): %w", dbNode.ID, err)
+			}
 
-				return cb(newSQLGraphNodeTx(
-					db, s.cfg.ChainHash, nodeID, node,
-				))
-			},
-		)
+			return cb(newSQLGraphNodeTx(
+				db, s.cfg.ChainHash, dbNode.ID, node,
+			))
+		}
+
+		return nil
 	}, func() {})
 }
 
@@ -918,7 +912,7 @@ func (s *SQLStore) ForEachNodeCacheable(cb func(route.Vertex,
 	ctx := context.TODO()
 
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		return forEachNode(ctx, db, func(nodeID int64,
+		return forEachNodeCacheable(ctx, db, func(nodeID int64,
 			nodePub route.Vertex) error {
 
 			features, err := getNodeFeatures(ctx, db, nodeID)
@@ -1085,20 +1079,14 @@ func (s *SQLStore) ForEachNodeCached(cb func(node route.Vertex,
 	var ctx = context.TODO()
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		nodes, err := db.ListNodes(ctx, int16(ProtocolV1))
-		if err != nil {
-			return fmt.Errorf("unable to fetch node ids: %w", err)
-		}
+		return forEachNodeCacheable(ctx, db, func(nodeID int64,
+			nodePub route.Vertex) error {
 
-		for _, node := range nodes {
-			features, err := getNodeFeatures(ctx, db, node.ID)
+			features, err := getNodeFeatures(ctx, db, nodeID)
 			if err != nil {
 				return fmt.Errorf("unable to fetch node "+
 					"features: %w", err)
 			}
-
-			var nodePub route.Vertex
-			copy(nodePub[:], node.PubKey)
 
 			toNodeCallback := func() route.Vertex {
 				return nodePub
@@ -1107,7 +1095,7 @@ func (s *SQLStore) ForEachNodeCached(cb func(node route.Vertex,
 			rows, err := db.ListChannelsByNodeID(
 				ctx, sqlc.ListChannelsByNodeIDParams{
 					Version: int16(ProtocolV1),
-					NodeID1: node.ID,
+					NodeID1: nodeID,
 				},
 			)
 			if err != nil {
@@ -1124,7 +1112,7 @@ func (s *SQLStore) ForEachNodeCached(cb func(node route.Vertex,
 					return err
 				}
 
-				e, p1, p2, err := getAndBuildEdgeInfoAndPolicies(
+				e, p1, p2, err := getAndBuildEdgeInfoAndPolicies( //nolint:ll
 					ctx, db, s.cfg.ChainHash, row.ID, row,
 					node1, node2,
 				)
@@ -1178,12 +1166,8 @@ func (s *SQLStore) ForEachNodeCached(cb func(node route.Vertex,
 				channels[e.ChannelID] = directedChannel
 			}
 
-			if err := cb(nodePub, channels); err != nil {
-				return err
-			}
-		}
-
-		return nil
+			return cb(nodePub, channels)
+		})
 	}, func() {})
 }
 
@@ -2727,10 +2711,9 @@ func forEachNodeDirectedChannel(ctx context.Context, db SQLQueries,
 	return nil
 }
 
-// forEachNode fetches all V2 nodes from the database, and executes the
-// provided callback for each node. The callback is provided with the node's
-// DB-assigned ID and public key.
-func forEachNode(ctx context.Context, db SQLQueries,
+// forEachNodeCacheable fetches all V1 node IDs and pub keys from the database,
+// and executes the provided callback for each node.
+func forEachNodeCacheable(ctx context.Context, db SQLQueries,
 	cb func(nodeID int64, nodePub route.Vertex) error) error {
 
 	nodes, err := db.ListNodeIDsAndPubKeys(ctx, int16(ProtocolV1))

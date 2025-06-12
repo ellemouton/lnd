@@ -33,7 +33,7 @@ FROM nodes
 WHERE version = $1;
 
 -- name: ListNodes :many
-SELECT id, pub_key
+SELECT *
 FROM nodes
 WHERE version = $1;
 

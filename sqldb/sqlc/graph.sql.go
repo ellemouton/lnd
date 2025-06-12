@@ -2091,26 +2091,29 @@ func (q *Queries) ListNodeIDsAndPubKeys(ctx context.Context, version int16) ([]L
 }
 
 const listNodes = `-- name: ListNodes :many
-SELECT id, pub_key
+SELECT id, version, pub_key, alias, last_update, color, signature
 FROM nodes
 WHERE version = $1
 `
 
-type ListNodesRow struct {
-	ID     int64
-	PubKey []byte
-}
-
-func (q *Queries) ListNodes(ctx context.Context, version int16) ([]ListNodesRow, error) {
+func (q *Queries) ListNodes(ctx context.Context, version int16) ([]Node, error) {
 	rows, err := q.db.QueryContext(ctx, listNodes, version)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListNodesRow
+	var items []Node
 	for rows.Next() {
-		var i ListNodesRow
-		if err := rows.Scan(&i.ID, &i.PubKey); err != nil {
+		var i Node
+		if err := rows.Scan(
+			&i.ID,
+			&i.Version,
+			&i.PubKey,
+			&i.Alias,
+			&i.LastUpdate,
+			&i.Color,
+			&i.Signature,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
