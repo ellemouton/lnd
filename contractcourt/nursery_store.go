@@ -8,7 +8,6 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/channeldb"
-	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/kvdb"
 )
 
@@ -222,7 +221,7 @@ func prefixOutputKey(statePrefix []byte,
 		return nil, err
 	}
 
-	err := graphdb.WriteOutpoint(&pfxOutputBuffer, &outpoint)
+	err := channeldb.WriteOutpoint(&pfxOutputBuffer, &outpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -739,7 +738,7 @@ func (ns *NurseryStore) ListChannels() ([]wire.OutPoint, error) {
 
 		return chanIndex.ForEach(func(chanBytes, _ []byte) error {
 			var chanPoint wire.OutPoint
-			err := graphdb.ReadOutpoint(
+			err := channeldb.ReadOutpoint(
 				bytes.NewReader(chanBytes), &chanPoint,
 			)
 			if err != nil {
@@ -807,7 +806,7 @@ func (ns *NurseryStore) RemoveChannel(chanPoint *wire.OutPoint) error {
 		// Serialize the provided channel point, such that we can delete
 		// the mature channel bucket.
 		var chanBuffer bytes.Buffer
-		err := graphdb.WriteOutpoint(&chanBuffer, chanPoint)
+		err := channeldb.WriteOutpoint(&chanBuffer, chanPoint)
 		if err != nil {
 			return err
 		}
@@ -963,7 +962,7 @@ func (ns *NurseryStore) createChannelBucket(tx kvdb.RwTx,
 	// Serialize the provided channel point, as this provides the name of
 	// the channel bucket of interest.
 	var chanBuffer bytes.Buffer
-	if err := graphdb.WriteOutpoint(&chanBuffer, chanPoint); err != nil {
+	if err := channeldb.WriteOutpoint(&chanBuffer, chanPoint); err != nil {
 		return nil, err
 	}
 
@@ -993,7 +992,7 @@ func (ns *NurseryStore) getChannelBucket(tx kvdb.RTx,
 	// Serialize the provided channel point and return the bucket matching
 	// the serialized key.
 	var chanBuffer bytes.Buffer
-	if err := graphdb.WriteOutpoint(&chanBuffer, chanPoint); err != nil {
+	if err := channeldb.WriteOutpoint(&chanBuffer, chanPoint); err != nil {
 		return nil
 	}
 
@@ -1021,7 +1020,7 @@ func (ns *NurseryStore) getChannelBucketWrite(tx kvdb.RwTx,
 	// Serialize the provided channel point and return the bucket matching
 	// the serialized key.
 	var chanBuffer bytes.Buffer
-	if err := graphdb.WriteOutpoint(&chanBuffer, chanPoint); err != nil {
+	if err := channeldb.WriteOutpoint(&chanBuffer, chanPoint); err != nil {
 		return nil
 	}
 
@@ -1146,7 +1145,7 @@ func (ns *NurseryStore) createHeightChanBucket(tx kvdb.RwTx,
 	// Serialize the provided channel point, as this generates the name of
 	// the subdirectory corresponding to the channel of interest.
 	var chanBuffer bytes.Buffer
-	if err := graphdb.WriteOutpoint(&chanBuffer, chanPoint); err != nil {
+	if err := channeldb.WriteOutpoint(&chanBuffer, chanPoint); err != nil {
 		return nil, err
 	}
 	chanBytes := chanBuffer.Bytes()
@@ -1172,7 +1171,7 @@ func (ns *NurseryStore) getHeightChanBucketWrite(tx kvdb.RwTx,
 	// Serialize the provided channel point, which generates the key for
 	// looking up the proper height-channel bucket inside the height bucket.
 	var chanBuffer bytes.Buffer
-	if err := graphdb.WriteOutpoint(&chanBuffer, chanPoint); err != nil {
+	if err := channeldb.WriteOutpoint(&chanBuffer, chanPoint); err != nil {
 		return nil
 	}
 	chanBytes := chanBuffer.Bytes()
@@ -1316,7 +1315,7 @@ func (ns *NurseryStore) removeOutputFromHeight(tx kvdb.RwTx, height uint32,
 	}
 
 	var chanBuffer bytes.Buffer
-	if err := graphdb.WriteOutpoint(&chanBuffer, chanPoint); err != nil {
+	if err := channeldb.WriteOutpoint(&chanBuffer, chanPoint); err != nil {
 		return err
 	}
 

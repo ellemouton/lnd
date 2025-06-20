@@ -1,4 +1,4 @@
-package graphdb
+package channeldb
 
 import (
 	"encoding/binary"
@@ -10,6 +10,10 @@ import (
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/tor"
 )
+
+// ErrUnknownAddressType is returned when a node's addressType is not
+// an expected value.
+var ErrUnknownAddressType = fmt.Errorf("address type cannot be resolved")
 
 // addressType specifies the network protocol and version that should be used
 // when connecting to a node at a particular address.
