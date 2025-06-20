@@ -30,6 +30,7 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/discovery"
 	"github.com/lightningnetwork/lnd/funding"
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/htlcswitch/hodl"
 	"github.com/lightningnetwork/lnd/input"
@@ -499,6 +500,8 @@ type Config struct {
 
 	RemoteSigner *lncfg.RemoteSigner `group:"remotesigner" namespace:"remotesigner"`
 
+	RemoteGraph *graphdb.RemoteConfig `group:"remotegraph" namespace:"remotegraph"`
+
 	Sweeper *lncfg.Sweeper `group:"sweeper" namespace:"sweeper"`
 
 	Htlcswitch *lncfg.Htlcswitch `group:"htlcswitch" namespace:"htlcswitch"`
@@ -747,6 +750,9 @@ func DefaultConfig() Config {
 		KeepFailedPaymentAttempts: defaultKeepFailedPaymentAttempts,
 		RemoteSigner: &lncfg.RemoteSigner{
 			Timeout: lncfg.DefaultRemoteSignerRPCTimeout,
+		},
+		RemoteGraph: &graphdb.RemoteConfig{
+			Timeout: graphdb.DefaultRemoteGraphRPCTimeout,
 		},
 		Sweeper: lncfg.DefaultSweeperConfig(),
 		Htlcswitch: &lncfg.Htlcswitch{
@@ -1786,6 +1792,7 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 		cfg.Cluster,
 		cfg.HealthChecks,
 		cfg.RPCMiddleware,
+		cfg.RemoteSigner,
 		cfg.RemoteSigner,
 		cfg.Sweeper,
 		cfg.Htlcswitch,
