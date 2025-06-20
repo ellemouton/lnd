@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS nodes (
 CREATE UNIQUE INDEX IF NOT EXISTS nodes_unique ON nodes (
     pub_key, version
 );
+CREATE INDEX IF NOT EXISTS node_last_update_idx ON nodes(last_update);
 
 -- node_extra_types stores any extra TLV fields covered by a node announcement that
 -- we do not have an explicit column for in the nodes table.
@@ -273,6 +274,7 @@ CREATE TABLE IF NOT EXISTS channel_policies (
 CREATE UNIQUE INDEX IF NOT EXISTS channel_policies_unique ON channel_policies (
     channel_id, node_id, version
 );
+CREATE INDEX IF NOT EXISTS channel_policy_last_update_idx ON channel_policies(last_update);
 
 -- channel_policy_extra_types stores any extra TLV fields covered by a channel
 -- update that we do not have an explicit column for in the channel_policies
@@ -289,4 +291,45 @@ CREATE TABLE IF NOT EXISTS channel_policy_extra_types (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS channel_policy_extra_types_unique ON channel_policy_extra_types (
     type, channel_policy_id
+);
+
+/* ─────────────────────────────────────────────
+   Other graph related tables
+   ─────────────────────────────────────────────
+*/
+
+CREATE TABLE IF NOT EXISTS zombie_channels (
+    -- The channel id (short channel id) of the channel.
+    -- NOTE: we don't use a foreign key here to the `channels`
+    -- table since we may delete the channel record once it
+    -- is marked as a zombie.
+    scid BLOB NOT NULL,
+
+    -- The protocol version that this node was gossiped on.
+    version SMALLINT NOT NULL,
+
+    -- The public key of the node 1 node of the channel. If
+    -- this is not null, it means an update from this node
+    -- will be able to resurrect the channel.
+    node_key_1 BLOB,
+
+    -- The public key of the node 2 node of the channel. If
+    -- this is not null, it means an update from this node
+    -- will be able to resurrect the channel.
+    node_key_2 BLOB
+);
+CREATE UNIQUE INDEX IF NOT EXISTS zombie_channels_channel_id_version_idx
+    ON zombie_channels(scid, version);
+
+CREATE TABLE IF NOT EXISTS prune_log (
+    -- The block height that the prune was performed at.
+    block_height BIGINT PRIMARY KEY,
+
+    -- The block hash that the prune was performed at.
+    block_hash BLOB NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS closed_scids (
+    -- The short channel id of the channel.
+    scid BLOB PRIMARY KEY
 );

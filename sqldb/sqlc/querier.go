@@ -12,25 +12,36 @@ import (
 
 type Querier interface {
 	AddSourceNode(ctx context.Context, nodeID int64) error
+	AddV1ChannelProof(ctx context.Context, arg AddV1ChannelProofParams) error
 	ClearKVInvoiceHashIndex(ctx context.Context) error
+	CountZombieChannels(ctx context.Context, version int16) (int64, error)
 	CreateChannel(ctx context.Context, arg CreateChannelParams) (int64, error)
 	CreateChannelExtraType(ctx context.Context, arg CreateChannelExtraTypeParams) error
 	DeleteCanceledInvoices(ctx context.Context) (sql.Result, error)
+	DeleteChannel(ctx context.Context, id int64) error
 	DeleteChannelPolicyExtraTypes(ctx context.Context, channelPolicyID int64) error
 	DeleteExtraNodeType(ctx context.Context, arg DeleteExtraNodeTypeParams) error
 	DeleteInvoice(ctx context.Context, arg DeleteInvoiceParams) (sql.Result, error)
 	DeleteNodeAddresses(ctx context.Context, nodeID int64) error
 	DeleteNodeByPubKey(ctx context.Context, arg DeleteNodeByPubKeyParams) (sql.Result, error)
 	DeleteNodeFeature(ctx context.Context, arg DeleteNodeFeatureParams) error
+	DeletePruneLogEntriesInRange(ctx context.Context, arg DeletePruneLogEntriesInRangeParams) error
+	DeleteZombieChannel(ctx context.Context, arg DeleteZombieChannelParams) (sql.Result, error)
 	FetchAMPSubInvoiceHTLCs(ctx context.Context, arg FetchAMPSubInvoiceHTLCsParams) ([]FetchAMPSubInvoiceHTLCsRow, error)
 	FetchAMPSubInvoices(ctx context.Context, arg FetchAMPSubInvoicesParams) ([]AmpSubInvoice, error)
 	FetchSettledAMPSubInvoices(ctx context.Context, arg FetchSettledAMPSubInvoicesParams) ([]FetchSettledAMPSubInvoicesRow, error)
 	FilterInvoices(ctx context.Context, arg FilterInvoicesParams) ([]Invoice, error)
 	GetAMPInvoiceID(ctx context.Context, setID []byte) (int64, error)
 	GetChannelAndNodesBySCID(ctx context.Context, arg GetChannelAndNodesBySCIDParams) (GetChannelAndNodesBySCIDRow, error)
+	GetChannelByOutpoint(ctx context.Context, arg GetChannelByOutpointParams) (GetChannelByOutpointRow, error)
+	GetChannelByOutpointWithPolicies(ctx context.Context, arg GetChannelByOutpointWithPoliciesParams) (GetChannelByOutpointWithPoliciesRow, error)
 	GetChannelBySCID(ctx context.Context, arg GetChannelBySCIDParams) (Channel, error)
+	GetChannelBySCIDWithPolicies(ctx context.Context, arg GetChannelBySCIDWithPoliciesParams) (GetChannelBySCIDWithPoliciesRow, error)
 	GetChannelFeaturesAndExtras(ctx context.Context, channelID int64) ([]GetChannelFeaturesAndExtrasRow, error)
+	GetChannelPolicyByChannelAndNode(ctx context.Context, arg GetChannelPolicyByChannelAndNodeParams) (ChannelPolicy, error)
 	GetChannelPolicyExtraTypes(ctx context.Context, arg GetChannelPolicyExtraTypesParams) ([]GetChannelPolicyExtraTypesRow, error)
+	GetChannelsByPolicyLastUpdateRange(ctx context.Context, arg GetChannelsByPolicyLastUpdateRangeParams) ([]GetChannelsByPolicyLastUpdateRangeRow, error)
+	GetChannelsBySCIDRange(ctx context.Context, arg GetChannelsBySCIDRangeParams) ([]GetChannelsBySCIDRangeRow, error)
 	GetDatabaseVersion(ctx context.Context) (int32, error)
 	GetExtraNodeTypes(ctx context.Context, nodeID int64) ([]NodeExtraType, error)
 	// This method may return more than one invoice if filter using multiple fields
@@ -50,12 +61,19 @@ type Querier interface {
 	GetNodeFeaturesByPubKey(ctx context.Context, arg GetNodeFeaturesByPubKeyParams) ([]int32, error)
 	GetNodeIDByPubKey(ctx context.Context, arg GetNodeIDByPubKeyParams) (int64, error)
 	GetNodesByLastUpdateRange(ctx context.Context, arg GetNodesByLastUpdateRangeParams) ([]Node, error)
+	GetPruneTip(ctx context.Context) (PruneLog, error)
+	GetPublicV1ChannelsBySCID(ctx context.Context, arg GetPublicV1ChannelsBySCIDParams) ([]Channel, error)
+	GetSCIDByOutpoint(ctx context.Context, arg GetSCIDByOutpointParams) ([]byte, error)
 	GetSourceNodesByVersion(ctx context.Context, version int16) ([]GetSourceNodesByVersionRow, error)
+	GetUnconnectedNodes(ctx context.Context) ([]GetUnconnectedNodesRow, error)
+	GetV1DisabledSCIDs(ctx context.Context) ([][]byte, error)
+	GetZombieChannel(ctx context.Context, arg GetZombieChannelParams) (ZombieChannel, error)
 	HighestSCID(ctx context.Context, version int16) ([]byte, error)
 	InsertAMPSubInvoice(ctx context.Context, arg InsertAMPSubInvoiceParams) error
 	InsertAMPSubInvoiceHTLC(ctx context.Context, arg InsertAMPSubInvoiceHTLCParams) error
 	InsertChanPolicyExtraType(ctx context.Context, arg InsertChanPolicyExtraTypeParams) error
 	InsertChannelFeature(ctx context.Context, arg InsertChannelFeatureParams) error
+	InsertClosedChannel(ctx context.Context, scid []byte) error
 	InsertInvoice(ctx context.Context, arg InsertInvoiceParams) (int64, error)
 	InsertInvoiceFeature(ctx context.Context, arg InsertInvoiceFeatureParams) error
 	InsertInvoiceHTLC(ctx context.Context, arg InsertInvoiceHTLCParams) (int64, error)
@@ -64,7 +82,12 @@ type Querier interface {
 	InsertMigratedInvoice(ctx context.Context, arg InsertMigratedInvoiceParams) (int64, error)
 	InsertNodeAddress(ctx context.Context, arg InsertNodeAddressParams) error
 	InsertNodeFeature(ctx context.Context, arg InsertNodeFeatureParams) error
+	IsClosedChannel(ctx context.Context, scid []byte) (bool, error)
+	IsPublicV1Node(ctx context.Context, pubKey []byte) (bool, error)
+	IsZombieChannel(ctx context.Context, arg IsZombieChannelParams) (bool, error)
 	ListChannelsByNodeID(ctx context.Context, arg ListChannelsByNodeIDParams) ([]ListChannelsByNodeIDRow, error)
+	ListChannelsPaginated(ctx context.Context, arg ListChannelsPaginatedParams) ([]Channel, error)
+	ListChannelsWithPoliciesPaginated(ctx context.Context, arg ListChannelsWithPoliciesPaginatedParams) ([]ListChannelsWithPoliciesPaginatedRow, error)
 	ListNodeIDsAndPubKeys(ctx context.Context, arg ListNodeIDsAndPubKeysParams) ([]ListNodeIDsAndPubKeysRow, error)
 	ListNodesPaginated(ctx context.Context, arg ListNodesPaginatedParams) ([]Node, error)
 	NextInvoiceSettleIndex(ctx context.Context) (int64, error)
@@ -86,6 +109,8 @@ type Querier interface {
 	UpsertEdgePolicy(ctx context.Context, arg UpsertEdgePolicyParams) (int64, error)
 	UpsertNode(ctx context.Context, arg UpsertNodeParams) (int64, error)
 	UpsertNodeExtraType(ctx context.Context, arg UpsertNodeExtraTypeParams) error
+	UpsertPruneLogEntry(ctx context.Context, arg UpsertPruneLogEntryParams) error
+	UpsertZombieChannel(ctx context.Context, arg UpsertZombieChannelParams) error
 }
 
 var _ Querier = (*Queries)(nil)
