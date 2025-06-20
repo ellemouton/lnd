@@ -1202,7 +1202,9 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		graphStore = kvGraphStore
 	}
 
-	dbs.GraphDB, err = graphdb.NewChannelGraph(graphStore, chanGraphOpts...)
+	dbs.GraphDB, err = graphdb.NewChannelGraph(
+		graphStore, cfg.RemoteGraph, chanGraphOpts...,
+	)
 	if err != nil {
 		cleanUp()
 

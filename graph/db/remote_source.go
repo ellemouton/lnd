@@ -34,8 +34,8 @@ type RemoteConfig struct {
 	TLSCertPath  string        `long:"tlscertpath" description:"The TLS certificate to use for establishing the remote graph's identity"`
 	Timeout      time.Duration `long:"timeout" description:"The timeout for connecting to and signing requests with the remote graph. Valid time units are {s, m, h}."`
 
-	OnNewChannel    fn.Option[func(info *models.ChannelEdgeInfo)]
-	OnChannelUpdate fn.Option[func(policy *models.ChannelEdgePolicy,
+	OnNewChannel    fn.Option[func(info *models.CachedEdgeInfo)]
+	OnChannelUpdate fn.Option[func(policy *models.CachedEdgePolicy,
 		fromNode, toNode route.Vertex, edge1 bool)]
 	OnNodeUpsert fn.Option[func(node route.Vertex,
 		features *lnwire.FeatureVector)]
@@ -300,14 +300,14 @@ func (c *RemoteClient) handleChannelUpdate(
 		edge1 = true
 	}
 
-	edge := &models.ChannelEdgeInfo{
+	edge := &models.CachedEdgeInfo{
 		ChannelID:     update.ChanId,
 		Capacity:      btcutil.Amount(update.Capacity),
 		NodeKey1Bytes: node1,
 		NodeKey2Bytes: node2,
 	}
 
-	c.cfg.OnNewChannel.WhenSome(func(f func(info *models.ChannelEdgeInfo)) {
+	c.cfg.OnNewChannel.WhenSome(func(f func(info *models.CachedEdgeInfo)) {
 		f(edge)
 	})
 
@@ -318,7 +318,7 @@ func (c *RemoteClient) handleChannelUpdate(
 	policy := makePolicy(update.ChanId, update.RoutingPolicy, toNode, edge1)
 
 	c.cfg.OnChannelUpdate.WhenSome(
-		func(f func(policy *models.ChannelEdgePolicy,
+		func(f func(policy *models.CachedEdgePolicy,
 			fromNode route.Vertex, toNode route.Vertex,
 			edge1 bool)) {
 
@@ -330,19 +330,21 @@ func (c *RemoteClient) handleChannelUpdate(
 }
 
 func makePolicy(chanID uint64, rpcPolicy *lnrpc.RoutingPolicy,
-	toNode [33]byte, node1 bool) *models.ChannelEdgePolicy {
+	toNode [33]byte, node1 bool) *models.CachedEdgePolicy {
 
-	policy := &models.ChannelEdgePolicy{
+	policy := &models.CachedEdgePolicy{
 		ChannelID:     chanID,
-		LastUpdate:    time.Unix(int64(rpcPolicy.LastUpdate), 0),
 		TimeLockDelta: uint16(rpcPolicy.TimeLockDelta),
 		MinHTLC:       lnwire.MilliSatoshi(rpcPolicy.MinHtlc),
 		FeeBaseMSat:   lnwire.MilliSatoshi(rpcPolicy.FeeBaseMsat),
 		FeeProportionalMillionths: lnwire.MilliSatoshi(
 			rpcPolicy.FeeRateMilliMsat,
 		),
-		ToNode: toNode,
+		ToNodePubKey: func() route.Vertex {
+			return toNode
+		},
 	}
+
 	if rpcPolicy.MaxHtlcMsat > 0 {
 		policy.MaxHTLC = lnwire.MilliSatoshi(rpcPolicy.MaxHtlcMsat)
 		policy.MessageFlags |= lnwire.ChanUpdateRequiredMaxHtlc
@@ -354,6 +356,15 @@ func makePolicy(chanID uint64, rpcPolicy *lnrpc.RoutingPolicy,
 
 	if !node1 {
 		policy.ChannelFlags |= lnwire.ChanUpdateDirection
+	}
+
+	if rpcPolicy.InboundFeeRateMilliMsat != 0 &&
+		rpcPolicy.InboundFeeBaseMsat != 0 {
+
+		policy.InboundFee = fn.Some(lnwire.Fee{
+			BaseFee: rpcPolicy.InboundFeeBaseMsat,
+			FeeRate: rpcPolicy.InboundFeeRateMilliMsat,
+		})
 	}
 
 	return policy

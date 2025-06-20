@@ -4310,7 +4310,7 @@ func TestGraphLoading(t *testing.T) {
 		t.Skipf("Skipping TestGraphLoading for non-bbolt graph store")
 	}
 
-	graph, err := NewChannelGraph(graphStore)
+	graph, err := NewChannelGraph(graphStore, nil)
 	require.NoError(t, err)
 	require.NoError(t, graph.Start())
 	t.Cleanup(func() {
@@ -4324,7 +4324,7 @@ func TestGraphLoading(t *testing.T) {
 
 	// Recreate the graph. This should cause the graph cache to be
 	// populated.
-	graphReloaded, err := NewChannelGraph(graphStore)
+	graphReloaded, err := NewChannelGraph(graphStore, nil)
 	require.NoError(t, err)
 	require.NoError(t, graphReloaded.Start())
 	t.Cleanup(func() {
