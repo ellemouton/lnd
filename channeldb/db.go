@@ -32,7 +32,6 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb/migration34"
 	"github.com/lightningnetwork/lnd/channeldb/migration_01_to_11"
 	"github.com/lightningnetwork/lnd/clock"
-	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -649,7 +648,7 @@ func (c *ChannelStateDB) fetchNodeChannels(chainBucket kvdb.RBucket) (
 		chanBucket := chainBucket.NestedReadBucket(chanPoint)
 
 		var outPoint wire.OutPoint
-		err := graphdb.ReadOutpoint(
+		err := ReadOutpoint(
 			bytes.NewReader(chanPoint), &outPoint,
 		)
 		if err != nil {
@@ -679,7 +678,7 @@ func (c *ChannelStateDB) FetchChannel(chanPoint wire.OutPoint) (*OpenChannel,
 	error) {
 
 	var targetChanPoint bytes.Buffer
-	err := graphdb.WriteOutpoint(&targetChanPoint, &chanPoint)
+	err := WriteOutpoint(&targetChanPoint, &chanPoint)
 	if err != nil {
 		return nil, err
 	}
@@ -714,7 +713,7 @@ func (c *ChannelStateDB) FetchChannelByID(tx kvdb.RTx, id lnwire.ChannelID) (
 		)
 		err := chainBkt.ForEach(func(k, _ []byte) error {
 			var outPoint wire.OutPoint
-			err := graphdb.ReadOutpoint(
+			err := ReadOutpoint(
 				bytes.NewReader(k), &outPoint,
 			)
 			if err != nil {
@@ -805,7 +804,7 @@ func (c *ChannelStateDB) FetchPermAndTempPeers(
 				}
 
 				var op wire.OutPoint
-				readErr := graphdb.ReadOutpoint(
+				readErr := ReadOutpoint(
 					bytes.NewReader(chanPoint), &op,
 				)
 				if readErr != nil {
@@ -877,7 +876,7 @@ func (c *ChannelStateDB) FetchPermAndTempPeers(
 			}
 
 			var op wire.OutPoint
-			readErr := graphdb.ReadOutpoint(
+			readErr := ReadOutpoint(
 				bytes.NewReader(chanPoint), &op,
 			)
 			if readErr != nil {
@@ -1284,7 +1283,7 @@ func (c *ChannelStateDB) FetchClosedChannel(chanID *wire.OutPoint) (
 
 		var b bytes.Buffer
 		var err error
-		if err = graphdb.WriteOutpoint(&b, chanID); err != nil {
+		if err = WriteOutpoint(&b, chanID); err != nil {
 			return err
 		}
 
@@ -1326,7 +1325,7 @@ func (c *ChannelStateDB) FetchClosedChannelForID(cid lnwire.ChannelID) (
 		// We scan over all possible candidates for this channel ID.
 		for ; op != nil && bytes.Compare(cid[:30], op[:30]) <= 0; op, c = cursor.Next() {
 			var outPoint wire.OutPoint
-			err := graphdb.ReadOutpoint(
+			err := ReadOutpoint(
 				bytes.NewReader(op), &outPoint,
 			)
 			if err != nil {
@@ -1370,7 +1369,7 @@ func (c *ChannelStateDB) MarkChanFullyClosed(chanPoint *wire.OutPoint) error {
 	)
 	err := kvdb.Update(c.backend, func(tx kvdb.RwTx) error {
 		var b bytes.Buffer
-		if err := graphdb.WriteOutpoint(&b, chanPoint); err != nil {
+		if err := WriteOutpoint(&b, chanPoint); err != nil {
 			return err
 		}
 
@@ -1882,7 +1881,7 @@ func fetchHistoricalChanBucket(tx kvdb.RTx,
 	// With the bucket for the node and chain fetched, we can now go down
 	// another level, for the channel itself.
 	var chanPointBuf bytes.Buffer
-	if err := graphdb.WriteOutpoint(&chanPointBuf, outPoint); err != nil {
+	if err := WriteOutpoint(&chanPointBuf, outPoint); err != nil {
 		return nil, err
 	}
 	chanBucket := historicalChanBucket.NestedReadBucket(

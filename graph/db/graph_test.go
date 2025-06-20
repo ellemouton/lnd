@@ -28,6 +28,7 @@ import (
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
+	"github.com/lightningnetwork/lnd/tor"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
@@ -69,6 +70,29 @@ var (
 		0x51, 0xb6, 0x37, 0xd8, 0xfc, 0xd2, 0xc6, 0xda,
 		0x48, 0x59, 0xe6, 0x96, 0x31, 0x13, 0xa1, 0x17,
 		0x2d, 0xe7, 0x93, 0xe4,
+	}
+
+	testIP4 = net.ParseIP("192.168.1.1").To4()
+	testIP6 = net.ParseIP("2001:0db8:0000:0000:0000:ff00:0042:8329")
+
+	testIPV4Addr = &net.TCPAddr{
+		IP:   testIP4,
+		Port: 12345,
+	}
+
+	testIPV6Addr = &net.TCPAddr{
+		IP:   testIP6,
+		Port: 65535,
+	}
+
+	testOnionV2Addr = &tor.OnionAddr{
+		OnionService: "3g2upl4pq6kufc4m.onion",
+		Port:         9735,
+	}
+
+	testOnionV3Addr = &tor.OnionAddr{
+		OnionService: "vww6ybal4bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.onion", //nolint:ll
+		Port:         80,
 	}
 )
 
