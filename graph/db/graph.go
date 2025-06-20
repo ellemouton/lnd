@@ -37,6 +37,12 @@ type ChannelGraph struct {
 	// remoteClient is an optional RPC graph client that can be configured.
 	remoteClient *RemoteClient
 
+	// src is the source that we can use for wider graph related queries.
+	// This will either be backed by just our local graph DB or it will be
+	// a multiplexed version that muxes the results of our local DB with
+	// that of a remote graph source (possibly over RPC).
+	src GraphSource
+
 	V1Store
 	*topologyManager
 
@@ -68,7 +74,10 @@ func NewChannelGraph(v1Store V1Store, remoteGraphCfg *RemoteConfig,
 	// then the graph cache has also been initialised. We set up various
 	// call-backs so that the graph cache is properly updated by the
 	// topology subscription to the remote graph.
-	var remoteClient *RemoteClient
+	var (
+		remoteClient *RemoteClient
+		src          GraphSource = v1Store
+	)
 	if remoteGraphCfg != nil && remoteGraphCfg.Enable {
 		remoteGraphCfg.OnNewChannel = fn.Some(
 			func(edge *models.CachedEdgeInfo) {
@@ -92,11 +101,23 @@ func NewChannelGraph(v1Store V1Store, remoteGraphCfg *RemoteConfig,
 		// TODO(elle): cfg.RemoteConfig.OnChanClose
 
 		remoteClient = NewRemoteClient(remoteGraphCfg)
+		getLocalPub := func() (route.Vertex, error) {
+
+			node, err := v1Store.SourceNode(context.TODO())
+			if err != nil {
+				return route.Vertex{}, err
+			}
+
+			return route.NewVertexFromBytes(node.PubKeyBytes[:])
+		}
+
+		src = NewMuxedSource(v1Store, remoteClient, getLocalPub)
 	}
 
 	return &ChannelGraph{
 		graphCache:      cache,
 		V1Store:         v1Store,
+		src:             src,
 		remoteClient:    remoteClient,
 		topologyManager: newTopologyManager(),
 		quit:            make(chan struct{}),
@@ -222,7 +243,7 @@ func (c *ChannelGraph) populateCache() error {
 	log.Info("Populating in-memory channel graph, this might take a " +
 		"while...")
 
-	err := c.V1Store.ForEachNodeCacheable(func(node route.Vertex,
+	err := c.src.ForEachNodeCacheable(func(node route.Vertex,
 		features *lnwire.FeatureVector) error {
 
 		c.graphCache.AddNodeFeatures(node, features)
@@ -233,7 +254,7 @@ func (c *ChannelGraph) populateCache() error {
 		return err
 	}
 
-	err = c.V1Store.ForEachChannelCacheable(
+	err = c.src.ForEachChannelCacheable(
 		func(info *models.CachedEdgeInfo,
 			policy1, policy2 *models.CachedEdgePolicy) error {
 
@@ -249,6 +270,44 @@ func (c *ChannelGraph) populateCache() error {
 		time.Since(startTime), c.graphCache.Stats())
 
 	return nil
+}
+
+func (c *ChannelGraph) ForEachNode(cb func(tx NodeRTx) error) error {
+	return c.src.ForEachNode(cb)
+}
+
+func (c *ChannelGraph) ForEachChannel(cb func(*models.ChannelEdgeInfo,
+	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
+
+	return c.src.ForEachChannel(cb)
+}
+
+func (c *ChannelGraph) ForEachNodeChannel(nodePub route.Vertex,
+	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy) error) error {
+
+	return c.src.ForEachNodeChannel(nodePub, cb)
+}
+
+func (c *ChannelGraph) ForEachChannelCacheable(cb func(*models.CachedEdgeInfo,
+	*models.CachedEdgePolicy,
+	*models.CachedEdgePolicy) error) error {
+
+	return c.src.ForEachChannelCacheable(cb)
+}
+
+func (c *ChannelGraph) FetchChannelEdgesByID(chanID uint64) (
+	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy, error) {
+
+	return c.src.FetchChannelEdgesByID(chanID)
+}
+
+func (c *ChannelGraph) FetchChannelEdgesByOutpoint(point *wire.OutPoint) (
+	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy, error) {
+
+	return c.src.FetchChannelEdgesByOutpoint(point)
 }
 
 // ForEachNodeDirectedChannel iterates through all channels of a given node,

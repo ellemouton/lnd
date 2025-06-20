@@ -1205,6 +1205,17 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		}
 	}
 
+	// TODO(elle): hack
+	cfg.RemoteGraph.ParseAddressString = func(strAddress string) (net.Addr,
+		error) {
+
+		return lncfg.ParseAddressString(
+			strAddress,
+			strconv.Itoa(defaultPeerPort),
+			cfg.net.ResolveTCPAddr,
+		)
+	}
+
 	dbs.GraphDB, err = graphdb.NewChannelGraph(
 		graphStore, cfg.RemoteGraph, chanGraphOpts...,
 	)
