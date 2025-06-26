@@ -1462,8 +1462,8 @@ func (s *SQLStore) FilterChannelRange(startHeight, endHeight uint32,
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		dbChans, err := db.GetPublicV1ChannelsBySCID(
 			ctx, sqlc.GetPublicV1ChannelsBySCIDParams{
-				StartScid: chanIDStart[:],
-				EndScid:   chanIDEnd[:],
+				StartScid: chanIDStart,
+				EndScid:   chanIDEnd,
 			},
 		)
 		if err != nil {
@@ -1570,7 +1570,7 @@ func (s *SQLStore) MarkEdgeZombie(chanID uint64,
 		return db.UpsertZombieChannel(
 			ctx, sqlc.UpsertZombieChannelParams{
 				Version:  int16(ProtocolV1),
-				Scid:     chanIDB[:],
+				Scid:     chanIDB,
 				NodeKey1: pubKey1[:],
 				NodeKey2: pubKey2[:],
 			},
@@ -1602,7 +1602,7 @@ func (s *SQLStore) MarkEdgeLive(chanID uint64) error {
 	err := s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
 		res, err := db.DeleteZombieChannel(
 			ctx, sqlc.DeleteZombieChannelParams{
-				Scid:    chanIDB[:],
+				Scid:    chanIDB,
 				Version: int16(ProtocolV1),
 			},
 		)
@@ -1652,7 +1652,7 @@ func (s *SQLStore) IsZombieEdge(chanID uint64) (bool, [33]byte, [33]byte) {
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		zombie, err := db.GetZombieChannel(
 			ctx, sqlc.GetZombieChannelParams{
-				Scid:    chanIDB[:],
+				Scid:    chanIDB,
 				Version: int16(ProtocolV1),
 			},
 		)
@@ -1731,7 +1731,7 @@ func (s *SQLStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 
 			row, err := db.GetChannelBySCIDWithPolicies(
 				ctx, sqlc.GetChannelBySCIDWithPoliciesParams{
-					Scid:    chanIDB[:],
+					Scid:    chanIDB,
 					Version: int16(ProtocolV1),
 				},
 			)
@@ -1794,7 +1794,7 @@ func (s *SQLStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 			err = db.UpsertZombieChannel(
 				ctx, sqlc.UpsertZombieChannelParams{
 					Version:  int16(ProtocolV1),
-					Scid:     chanIDB[:],
+					Scid:     chanIDB,
 					NodeKey1: nodeKey1[:],
 					NodeKey2: nodeKey2[:],
 				},
@@ -1841,14 +1841,12 @@ func (s *SQLStore) FetchChannelEdgesByID(chanID uint64) (
 		ctx              = context.TODO()
 		edge             *models.ChannelEdgeInfo
 		policy1, policy2 *models.ChannelEdgePolicy
+		chanIDB          = channelIDToBytes(chanID)
 	)
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		var chanIDB [8]byte
-		byteOrder.PutUint64(chanIDB[:], chanID)
-
 		row, err := db.GetChannelBySCIDWithPolicies(
 			ctx, sqlc.GetChannelBySCIDWithPoliciesParams{
-				Scid:    chanIDB[:],
+				Scid:    chanIDB,
 				Version: int16(ProtocolV1),
 			},
 		)
@@ -1857,7 +1855,7 @@ func (s *SQLStore) FetchChannelEdgesByID(chanID uint64) (
 			// index.
 			isZombie, err := db.IsZombieChannel(
 				ctx, sqlc.IsZombieChannelParams{
-					Scid:    chanIDB[:],
+					Scid:    chanIDB,
 					Version: int16(ProtocolV1),
 				},
 			)
@@ -2029,13 +2027,11 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 		return node1LastUpdate, node2LastUpdate, exists, isZombie, nil
 	}
 
+	chanIDB := channelIDToBytes(chanID)
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		var chanIDB [8]byte
-		byteOrder.PutUint64(chanIDB[:], chanID)
-
 		channel, err := db.GetChannelBySCID(
 			ctx, sqlc.GetChannelBySCIDParams{
-				Scid:    chanIDB[:],
+				Scid:    chanIDB,
 				Version: int16(ProtocolV1),
 			},
 		)
@@ -2043,7 +2039,7 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 			// Check if it is a zombie channel.
 			isZombie, err = db.IsZombieChannel(
 				ctx, sqlc.IsZombieChannelParams{
-					Scid:    chanIDB[:],
+					Scid:    chanIDB,
 					Version: int16(ProtocolV1),
 				},
 			)
@@ -2175,15 +2171,14 @@ func (s *SQLStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 	)
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		for _, chanID := range chanIDs {
-			var chanIDB [8]byte
-			byteOrder.PutUint64(chanIDB[:], chanID)
+			chanIDB := channelIDToBytes(chanID)
 
 			// TODO(elle): potentially optimize this by using
 			//  sqlc.slice() once that works for both SQLite and
 			//  Postgres.
 			row, err := db.GetChannelBySCIDWithPolicies(
 				ctx, sqlc.GetChannelBySCIDWithPoliciesParams{
-					Scid:    chanIDB[:],
+					Scid:    chanIDB,
 					Version: int16(ProtocolV1),
 				},
 			)
@@ -2266,8 +2261,7 @@ func (s *SQLStore) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo) ([]uint64,
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		for _, chanInfo := range chansInfo {
 			channelID := chanInfo.ShortChannelID.ToUint64()
-			var chanIDB [8]byte
-			byteOrder.PutUint64(chanIDB[:], channelID)
+			chanIDB := channelIDToBytes(channelID)
 
 			// TODO(elle): potentially optimize this by using
 			//  sqlc.slice() once that works for both SQLite and
@@ -2275,7 +2269,7 @@ func (s *SQLStore) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo) ([]uint64,
 			_, err := db.GetChannelBySCID(
 				ctx, sqlc.GetChannelBySCIDParams{
 					Version: int16(ProtocolV1),
-					Scid:    chanIDB[:],
+					Scid:    chanIDB,
 				},
 			)
 			if err == nil {
@@ -2287,7 +2281,7 @@ func (s *SQLStore) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo) ([]uint64,
 
 			isZombie, err := db.IsZombieChannel(
 				ctx, sqlc.IsZombieChannelParams{
-					Scid:    chanIDB[:],
+					Scid:    chanIDB,
 					Version: int16(ProtocolV1),
 				},
 			)
@@ -2605,18 +2599,16 @@ func (s *SQLStore) DisconnectBlockAtHeight(height uint32) (
 		endShortChanID = aliasmgr.StartingAlias
 
 		removedChans []*models.ChannelEdgeInfo
-	)
 
-	var chanIDStart [8]byte
-	byteOrder.PutUint64(chanIDStart[:], startShortChanID.ToUint64())
-	var chanIDEnd [8]byte
-	byteOrder.PutUint64(chanIDEnd[:], endShortChanID.ToUint64())
+		chanIDStart = channelIDToBytes(startShortChanID.ToUint64())
+		chanIDEnd   = channelIDToBytes(endShortChanID.ToUint64())
+	)
 
 	err := s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
 		rows, err := db.GetChannelsBySCIDRange(
 			ctx, sqlc.GetChannelsBySCIDRangeParams{
-				StartScid: chanIDStart[:],
-				EndScid:   chanIDEnd[:],
+				StartScid: chanIDStart,
+				EndScid:   chanIDEnd,
 			},
 		)
 		if err != nil {
@@ -2684,7 +2676,7 @@ func (s *SQLStore) AddEdgeProof(scid lnwire.ShortChannelID,
 	err := s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
 		res, err := db.AddV1ChannelProof(
 			ctx, sqlc.AddV1ChannelProofParams{
-				Scid:              scidBytes[:],
+				Scid:              scidBytes,
 				Node1Signature:    proof.NodeSig1Bytes,
 				Node2Signature:    proof.NodeSig2Bytes,
 				Bitcoin1Signature: proof.BitcoinSig1Bytes,
@@ -2730,7 +2722,7 @@ func (s *SQLStore) PutClosedScid(scid lnwire.ShortChannelID) error {
 	)
 
 	return s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
-		return db.InsertClosedChannel(ctx, chanIDB[:])
+		return db.InsertClosedChannel(ctx, chanIDB)
 	}, sqldb.NoOpReset)
 }
 
@@ -2746,7 +2738,7 @@ func (s *SQLStore) IsClosedScid(scid lnwire.ShortChannelID) (bool, error) {
 	)
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		var err error
-		isClosed, err = db.IsClosedChannel(ctx, chanIDB[:])
+		isClosed, err = db.IsClosedChannel(ctx, chanIDB)
 		if err != nil {
 			return fmt.Errorf("unable to fetch closed channel: %w",
 				err)
@@ -3073,7 +3065,7 @@ func updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 	// abort the transaction which would abort the entire batch.
 	dbChan, err := tx.GetChannelAndNodesBySCID(
 		ctx, sqlc.GetChannelAndNodesBySCIDParams{
-			Scid:    chanIDB[:],
+			Scid:    chanIDB,
 			Version: int16(ProtocolV1),
 		},
 	)
@@ -3767,7 +3759,7 @@ func insertChannel(ctx context.Context, db SQLQueries,
 	// batch of transactions.
 	_, err := db.GetChannelBySCID(
 		ctx, sqlc.GetChannelBySCIDParams{
-			Scid:    chanIDB[:],
+			Scid:    chanIDB,
 			Version: int16(ProtocolV1),
 		},
 	)
@@ -3796,7 +3788,7 @@ func insertChannel(ctx context.Context, db SQLQueries,
 
 	createParams := sqlc.CreateChannelParams{
 		Version:     int16(ProtocolV1),
-		Scid:        chanIDB[:],
+		Scid:        chanIDB,
 		NodeID1:     node1DBID,
 		NodeID2:     node2DBID,
 		Outpoint:    edge.ChannelPoint.String(),
@@ -4432,9 +4424,9 @@ func extractChannelPolicies(row any) (*sqlc.ChannelPolicy, *sqlc.ChannelPolicy,
 
 // channelIDToBytes converts a channel ID (SCID) to a byte array
 // representation.
-func channelIDToBytes(channelID uint64) [8]byte {
+func channelIDToBytes(channelID uint64) []byte {
 	var chanIDB [8]byte
 	byteOrder.PutUint64(chanIDB[:], channelID)
 
-	return chanIDB
+	return chanIDB[:]
 }
