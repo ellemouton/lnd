@@ -883,11 +883,13 @@ func (c *KVStore) ForEachNodeCacheable(cb func(route.Vertex,
 // as the center node within a star-graph. This method may be used to kick off
 // a path finding algorithm in order to explore the reachability of another
 // node based off the source node.
-func (c *KVStore) SourceNode(_ context.Context) (*models.LightningNode,
-	error) {
+func (c *KVStore) SourceNode(_ context.Context) (*models.LightningNode, error) {
+	return getSourceNode(c.db)
+}
 
+func getSourceNode(db kvdb.Backend) (*models.LightningNode, error) {
 	var source *models.LightningNode
-	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
+	err := kvdb.View(db, func(tx kvdb.RTx) error {
 		// First grab the nodes bucket which stores the mapping from
 		// pubKey to node information.
 		nodes := tx.ReadBucket(nodeBucket)
@@ -895,7 +897,7 @@ func (c *KVStore) SourceNode(_ context.Context) (*models.LightningNode,
 			return ErrGraphNotFound
 		}
 
-		node, err := c.sourceNode(nodes)
+		node, err := sourceNode(nodes)
 		if err != nil {
 			return err
 		}
@@ -916,9 +918,7 @@ func (c *KVStore) SourceNode(_ context.Context) (*models.LightningNode,
 // of the graph. The source node is treated as the center node within a
 // star-graph. This method may be used to kick off a path finding algorithm in
 // order to explore the reachability of another node based off the source node.
-func (c *KVStore) sourceNode(nodes kvdb.RBucket) (*models.LightningNode,
-	error) {
-
+func sourceNode(nodes kvdb.RBucket) (*models.LightningNode, error) {
 	selfPub := nodes.Get(sourceKey)
 	if selfPub == nil {
 		return nil, ErrSourceNodeNotSet
@@ -1571,7 +1571,7 @@ func (c *KVStore) pruneGraphNodes(nodes kvdb.RwBucket,
 
 	// We'll retrieve the graph's source node to ensure we don't remove it
 	// even if it no longer has any open channels.
-	sourceNode, err := c.sourceNode(nodes)
+	sourceNode, err := sourceNode(nodes)
 	if err != nil {
 		return nil, err
 	}
@@ -3257,7 +3257,7 @@ func (c *KVStore) ForEachSourceNodeChannel(cb func(chanPoint wire.OutPoint,
 			return ErrGraphNotFound
 		}
 
-		node, err := c.sourceNode(nodes)
+		node, err := sourceNode(nodes)
 		if err != nil {
 			return err
 		}
