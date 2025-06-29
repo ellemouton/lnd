@@ -64,7 +64,7 @@ type SQLQueries interface {
 	ListNodesPaginated(ctx context.Context, arg sqlc.ListNodesPaginatedParams) ([]sqlc.Node, error)
 	ListNodeIDsAndPubKeys(ctx context.Context, arg sqlc.ListNodeIDsAndPubKeysParams) ([]sqlc.ListNodeIDsAndPubKeysRow, error)
 	IsPublicV1Node(ctx context.Context, pubKey []byte) (bool, error)
-	GetUnconnectedNodes(ctx context.Context) ([]sqlc.GetUnconnectedNodesRow, error)
+	DeleteUnconnectedNodes(ctx context.Context) ([][]byte, error)
 	DeleteNodeByPubKey(ctx context.Context, arg sqlc.DeleteNodeByPubKeyParams) (sql.Result, error)
 	DeleteNode(ctx context.Context, id int64) error
 
@@ -134,8 +134,9 @@ type SQLQueries interface {
 	/*
 		Prune log table queries.
 	*/
-	GetPruneTip(ctx context.Context) (sqlc.PruneLog, error)
 	UpsertPruneLogEntry(ctx context.Context, arg sqlc.UpsertPruneLogEntryParams) error
+	GetPruneTip(ctx context.Context) (sqlc.PruneLog, error)
+	GetPruneHashByHeight(ctx context.Context, blockHeight int64) ([]byte, error)
 	DeletePruneLogEntriesInRange(ctx context.Context, arg sqlc.DeletePruneLogEntriesInRangeParams) error
 
 	/*
@@ -575,7 +576,7 @@ func (s *SQLStore) AddChannelEdge(ctx context.Context,
 			alreadyExists = false
 		},
 		Do: func(tx SQLQueries) error {
-			err := insertChannel(ctx, tx, edge)
+			_, err := insertChannel(ctx, tx, edge)
 
 			// Silence ErrEdgeAlreadyExist so that the batch can
 			// succeed, but propagate the error via local state.
@@ -1457,8 +1458,8 @@ func (s *SQLStore) FilterChannelRange(startHeight, endHeight uint32,
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		dbChans, err := db.GetPublicV1ChannelsBySCID(
 			ctx, sqlc.GetPublicV1ChannelsBySCIDParams{
-				StartScid: chanIDStart[:],
-				EndScid:   chanIDEnd[:],
+				StartScid: chanIDStart,
+				EndScid:   chanIDEnd,
 			},
 		)
 		if err != nil {
@@ -1565,7 +1566,7 @@ func (s *SQLStore) MarkEdgeZombie(chanID uint64,
 		return db.UpsertZombieChannel(
 			ctx, sqlc.UpsertZombieChannelParams{
 				Version:  int16(ProtocolV1),
-				Scid:     chanIDB[:],
+				Scid:     chanIDB,
 				NodeKey1: pubKey1[:],
 				NodeKey2: pubKey2[:],
 			},
@@ -1597,7 +1598,7 @@ func (s *SQLStore) MarkEdgeLive(chanID uint64) error {
 	err := s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
 		res, err := db.DeleteZombieChannel(
 			ctx, sqlc.DeleteZombieChannelParams{
-				Scid:    chanIDB[:],
+				Scid:    chanIDB,
 				Version: int16(ProtocolV1),
 			},
 		)
@@ -1649,7 +1650,7 @@ func (s *SQLStore) IsZombieEdge(chanID uint64) (bool, [33]byte, [33]byte,
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		zombie, err := db.GetZombieChannel(
 			ctx, sqlc.GetZombieChannelParams{
-				Scid:    chanIDB[:],
+				Scid:    chanIDB,
 				Version: int16(ProtocolV1),
 			},
 		)
@@ -1728,7 +1729,7 @@ func (s *SQLStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 
 			row, err := db.GetChannelBySCIDWithPolicies(
 				ctx, sqlc.GetChannelBySCIDWithPoliciesParams{
-					Scid:    chanIDB[:],
+					Scid:    chanIDB,
 					Version: int16(ProtocolV1),
 				},
 			)
@@ -1791,7 +1792,7 @@ func (s *SQLStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 			err = db.UpsertZombieChannel(
 				ctx, sqlc.UpsertZombieChannelParams{
 					Version:  int16(ProtocolV1),
-					Scid:     chanIDB[:],
+					Scid:     chanIDB,
 					NodeKey1: nodeKey1[:],
 					NodeKey2: nodeKey2[:],
 				},
@@ -1838,14 +1839,12 @@ func (s *SQLStore) FetchChannelEdgesByID(chanID uint64) (
 		ctx              = context.TODO()
 		edge             *models.ChannelEdgeInfo
 		policy1, policy2 *models.ChannelEdgePolicy
+		chanIDB          = channelIDToBytes(chanID)
 	)
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		var chanIDB [8]byte
-		byteOrder.PutUint64(chanIDB[:], chanID)
-
 		row, err := db.GetChannelBySCIDWithPolicies(
 			ctx, sqlc.GetChannelBySCIDWithPoliciesParams{
-				Scid:    chanIDB[:],
+				Scid:    chanIDB,
 				Version: int16(ProtocolV1),
 			},
 		)
@@ -1854,7 +1853,7 @@ func (s *SQLStore) FetchChannelEdgesByID(chanID uint64) (
 			// index.
 			isZombie, err := db.IsZombieChannel(
 				ctx, sqlc.IsZombieChannelParams{
-					Scid:    chanIDB[:],
+					Scid:    chanIDB,
 					Version: int16(ProtocolV1),
 				},
 			)
@@ -2026,13 +2025,11 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 		return node1LastUpdate, node2LastUpdate, exists, isZombie, nil
 	}
 
+	chanIDB := channelIDToBytes(chanID)
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		var chanIDB [8]byte
-		byteOrder.PutUint64(chanIDB[:], chanID)
-
 		channel, err := db.GetChannelBySCID(
 			ctx, sqlc.GetChannelBySCIDParams{
-				Scid:    chanIDB[:],
+				Scid:    chanIDB,
 				Version: int16(ProtocolV1),
 			},
 		)
@@ -2040,7 +2037,7 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 			// Check if it is a zombie channel.
 			isZombie, err = db.IsZombieChannel(
 				ctx, sqlc.IsZombieChannelParams{
-					Scid:    chanIDB[:],
+					Scid:    chanIDB,
 					Version: int16(ProtocolV1),
 				},
 			)
@@ -2172,15 +2169,14 @@ func (s *SQLStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 	)
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		for _, chanID := range chanIDs {
-			var chanIDB [8]byte
-			byteOrder.PutUint64(chanIDB[:], chanID)
+			chanIDB := channelIDToBytes(chanID)
 
 			// TODO(elle): potentially optimize this by using
 			//  sqlc.slice() once that works for both SQLite and
 			//  Postgres.
 			row, err := db.GetChannelBySCIDWithPolicies(
 				ctx, sqlc.GetChannelBySCIDWithPoliciesParams{
-					Scid:    chanIDB[:],
+					Scid:    chanIDB,
 					Version: int16(ProtocolV1),
 				},
 			)
@@ -2263,8 +2259,7 @@ func (s *SQLStore) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo) ([]uint64,
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		for _, chanInfo := range chansInfo {
 			channelID := chanInfo.ShortChannelID.ToUint64()
-			var chanIDB [8]byte
-			byteOrder.PutUint64(chanIDB[:], channelID)
+			chanIDB := channelIDToBytes(channelID)
 
 			// TODO(elle): potentially optimize this by using
 			//  sqlc.slice() once that works for both SQLite and
@@ -2272,7 +2267,7 @@ func (s *SQLStore) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo) ([]uint64,
 			_, err := db.GetChannelBySCID(
 				ctx, sqlc.GetChannelBySCIDParams{
 					Version: int16(ProtocolV1),
-					Scid:    chanIDB[:],
+					Scid:    chanIDB,
 				},
 			)
 			if err == nil {
@@ -2284,7 +2279,7 @@ func (s *SQLStore) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo) ([]uint64,
 
 			isZombie, err := db.IsZombieChannel(
 				ctx, sqlc.IsZombieChannelParams{
-					Scid:    chanIDB[:],
+					Scid:    chanIDB,
 					Version: int16(ProtocolV1),
 				},
 			)
@@ -2556,30 +2551,21 @@ func (s *SQLStore) PruneTip() (*chainhash.Hash, uint32, error) {
 func (s *SQLStore) pruneGraphNodes(ctx context.Context,
 	db SQLQueries) ([]route.Vertex, error) {
 
-	// Fetch all un-connected nodes from the database.
-	// NOTE: this will not include any nodes that are listed in the
-	// source table.
-	nodes, err := db.GetUnconnectedNodes(ctx)
+	nodeKeys, err := db.DeleteUnconnectedNodes(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("unable to fetch unconnected nodes: %w",
-			err)
+		return nil, fmt.Errorf("unable to delete unconnected "+
+			"nodes: %w", err)
 	}
 
-	prunedNodes := make([]route.Vertex, 0, len(nodes))
-	for _, node := range nodes {
-		// TODO(elle): update to use sqlc.slice() once that works.
-		if err = db.DeleteNode(ctx, node.ID); err != nil {
-			return nil, fmt.Errorf("unable to delete "+
-				"node(id=%d): %w", node.ID, err)
-		}
-
-		pubKey, err := route.NewVertexFromBytes(node.PubKey)
+	prunedNodes := make([]route.Vertex, len(nodeKeys))
+	for i, nodeKey := range nodeKeys {
+		pub, err := route.NewVertexFromBytes(nodeKey)
 		if err != nil {
 			return nil, fmt.Errorf("unable to parse pubkey "+
-				"for node(id=%d): %w", node.ID, err)
+				"from bytes: %w", err)
 		}
 
-		prunedNodes = append(prunedNodes, pubKey)
+		prunedNodes[i] = pub
 	}
 
 	return prunedNodes, nil
@@ -2611,18 +2597,16 @@ func (s *SQLStore) DisconnectBlockAtHeight(height uint32) (
 		endShortChanID = aliasmgr.StartingAlias
 
 		removedChans []*models.ChannelEdgeInfo
-	)
 
-	var chanIDStart [8]byte
-	byteOrder.PutUint64(chanIDStart[:], startShortChanID.ToUint64())
-	var chanIDEnd [8]byte
-	byteOrder.PutUint64(chanIDEnd[:], endShortChanID.ToUint64())
+		chanIDStart = channelIDToBytes(startShortChanID.ToUint64())
+		chanIDEnd   = channelIDToBytes(endShortChanID.ToUint64())
+	)
 
 	err := s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
 		rows, err := db.GetChannelsBySCIDRange(
 			ctx, sqlc.GetChannelsBySCIDRangeParams{
-				StartScid: chanIDStart[:],
-				EndScid:   chanIDEnd[:],
+				StartScid: chanIDStart,
+				EndScid:   chanIDEnd,
 			},
 		)
 		if err != nil {
@@ -2690,7 +2674,7 @@ func (s *SQLStore) AddEdgeProof(scid lnwire.ShortChannelID,
 	err := s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
 		res, err := db.AddV1ChannelProof(
 			ctx, sqlc.AddV1ChannelProofParams{
-				Scid:              scidBytes[:],
+				Scid:              scidBytes,
 				Node1Signature:    proof.NodeSig1Bytes,
 				Node2Signature:    proof.NodeSig2Bytes,
 				Bitcoin1Signature: proof.BitcoinSig1Bytes,
@@ -2736,7 +2720,7 @@ func (s *SQLStore) PutClosedScid(scid lnwire.ShortChannelID) error {
 	)
 
 	return s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
-		return db.InsertClosedChannel(ctx, chanIDB[:])
+		return db.InsertClosedChannel(ctx, chanIDB)
 	}, sqldb.NoOpReset)
 }
 
@@ -2752,7 +2736,7 @@ func (s *SQLStore) IsClosedScid(scid lnwire.ShortChannelID) (bool, error) {
 	)
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		var err error
-		isClosed, err = db.IsClosedChannel(ctx, chanIDB[:])
+		isClosed, err = db.IsClosedChannel(ctx, chanIDB)
 		if err != nil {
 			return fmt.Errorf("unable to fetch closed channel: %w",
 				err)
@@ -3079,7 +3063,7 @@ func updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 	// abort the transaction which would abort the entire batch.
 	dbChan, err := tx.GetChannelAndNodesBySCID(
 		ctx, sqlc.GetChannelAndNodesBySCIDParams{
-			Scid:    chanIDB[:],
+			Scid:    chanIDB,
 			Version: int16(ProtocolV1),
 		},
 	)
@@ -3761,9 +3745,17 @@ func marshalExtraOpaqueData(data []byte) (map[uint64][]byte, error) {
 	return records, nil
 }
 
+// dbChanInfo holds the DB level IDs of a channel and the nodes involved in the
+// channel.
+type dbChanInfo struct {
+	channelID int64
+	node1ID   int64
+	node2ID   int64
+}
+
 // insertChannel inserts a new channel record into the database.
 func insertChannel(ctx context.Context, db SQLQueries,
-	edge *models.ChannelEdgeInfo) error {
+	edge *models.ChannelEdgeInfo) (*dbChanInfo, error) {
 
 	chanIDB := channelIDToBytes(edge.ChannelID)
 
@@ -3773,26 +3765,26 @@ func insertChannel(ctx context.Context, db SQLQueries,
 	// batch of transactions.
 	_, err := db.GetChannelBySCID(
 		ctx, sqlc.GetChannelBySCIDParams{
-			Scid:    chanIDB[:],
+			Scid:    chanIDB,
 			Version: int16(ProtocolV1),
 		},
 	)
 	if err == nil {
-		return ErrEdgeAlreadyExist
+		return nil, ErrEdgeAlreadyExist
 	} else if !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("unable to fetch channel: %w", err)
+		return nil, fmt.Errorf("unable to fetch channel: %w", err)
 	}
 
 	// Make sure that at least a "shell" entry for each node is present in
 	// the nodes table.
 	node1DBID, err := maybeCreateShellNode(ctx, db, edge.NodeKey1Bytes)
 	if err != nil {
-		return fmt.Errorf("unable to create shell node: %w", err)
+		return nil, fmt.Errorf("unable to create shell node: %w", err)
 	}
 
 	node2DBID, err := maybeCreateShellNode(ctx, db, edge.NodeKey2Bytes)
 	if err != nil {
-		return fmt.Errorf("unable to create shell node: %w", err)
+		return nil, fmt.Errorf("unable to create shell node: %w", err)
 	}
 
 	var capacity sql.NullInt64
@@ -3802,7 +3794,7 @@ func insertChannel(ctx context.Context, db SQLQueries,
 
 	createParams := sqlc.CreateChannelParams{
 		Version:     int16(ProtocolV1),
-		Scid:        chanIDB[:],
+		Scid:        chanIDB,
 		NodeID1:     node1DBID,
 		NodeID2:     node2DBID,
 		Outpoint:    edge.ChannelPoint.String(),
@@ -3823,7 +3815,7 @@ func insertChannel(ctx context.Context, db SQLQueries,
 	// Insert the new channel record.
 	dbChanID, err := db.CreateChannel(ctx, createParams)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Insert any channel features.
@@ -3831,7 +3823,7 @@ func insertChannel(ctx context.Context, db SQLQueries,
 		chanFeatures := lnwire.NewRawFeatureVector()
 		err := chanFeatures.Decode(bytes.NewReader(edge.Features))
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		fv := lnwire.NewFeatureVector(chanFeatures, lnwire.Features)
@@ -3843,7 +3835,7 @@ func insertChannel(ctx context.Context, db SQLQueries,
 				},
 			)
 			if err != nil {
-				return fmt.Errorf("unable to insert "+
+				return nil, fmt.Errorf("unable to insert "+
 					"channel(%d) feature(%v): %w", dbChanID,
 					feature, err)
 			}
@@ -3853,8 +3845,8 @@ func insertChannel(ctx context.Context, db SQLQueries,
 	// Finally, insert any extra TLV fields in the channel announcement.
 	extra, err := marshalExtraOpaqueData(edge.ExtraOpaqueData)
 	if err != nil {
-		return fmt.Errorf("unable to marshal extra opaque data: %w",
-			err)
+		return nil, fmt.Errorf("unable to marshal extra opaque "+
+			"data: %w", err)
 	}
 
 	for tlvType, value := range extra {
@@ -3866,13 +3858,17 @@ func insertChannel(ctx context.Context, db SQLQueries,
 			},
 		)
 		if err != nil {
-			return fmt.Errorf("unable to upsert channel(%d) extra "+
-				"signed field(%v): %w", edge.ChannelID,
-				tlvType, err)
+			return nil, fmt.Errorf("unable to upsert "+
+				"channel(%d) extra signed field(%v): %w",
+				edge.ChannelID, tlvType, err)
 		}
 	}
 
-	return nil
+	return &dbChanInfo{
+		channelID: dbChanID,
+		node1ID:   node1DBID,
+		node2ID:   node2DBID,
+	}, nil
 }
 
 // maybeCreateShellNode checks if a shell node entry exists for the
@@ -4438,9 +4434,9 @@ func extractChannelPolicies(row any) (*sqlc.ChannelPolicy, *sqlc.ChannelPolicy,
 
 // channelIDToBytes converts a channel ID (SCID) to a byte array
 // representation.
-func channelIDToBytes(channelID uint64) [8]byte {
+func channelIDToBytes(channelID uint64) []byte {
 	var chanIDB [8]byte
 	byteOrder.PutUint64(chanIDB[:], channelID)
 
-	return chanIDB
+	return chanIDB[:]
 }
