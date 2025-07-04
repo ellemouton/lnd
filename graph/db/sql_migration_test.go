@@ -202,23 +202,19 @@ func TestMigrateGraphToSQL(t *testing.T) {
 				// Now, insert a single update for the
 				// first channel.
 				// 	- channel policy count += 1
-				makeTestPolicy(chanID1, node1),
+				makeTestPolicy(chanID1, node1, false),
 
 				// Insert two updates for the second
 				// channel, one for each direction.
 				// 	- channel policy count += 1
 				makeTestPolicy(
-					chanID2, node1,
-					func(p *models.ChannelEdgePolicy) {
-						p.ChannelFlags = 0
-					},
+					chanID2, node1, false,
 				),
 				// This one also has no extra opaque data.
 				// 	- channel policy count += 1
 				makeTestPolicy(
-					chanID2, node2,
+					chanID2, node2, true,
 					func(p *models.ChannelEdgePolicy) {
-						p.ChannelFlags = 1
 						p.ExtraOpaqueData = nil
 					},
 				),
@@ -343,6 +339,269 @@ func TestMigrateGraphToSQL(t *testing.T) {
 	}
 }
 
+type dbState struct {
+	nodes   []*models.LightningNode
+	chans   chanSet
+	closed  []uint64
+	zombies []uint64
+}
+
+func runTestMigration(t *testing.T, populateKV func(t *testing.T, db *KVStore),
+	expState dbState) {
+
+	ctx := context.Background()
+
+	// Set up our source kvdb DB.
+	kvDB := setUpKVStore(t)
+
+	// Set up our destination SQL DB.
+	sql, ok := NewTestDB(t).(*SQLStore)
+	require.True(t, ok)
+
+	// Populate the kvdb store with the test data.
+	populateKV(t, kvDB)
+
+	// Run the migration.
+	err := MigrateGraphToSQL(
+		ctx, kvDB.db, sql.db, testChain,
+	)
+	require.NoError(t, err)
+
+	assertResultState(t, sql, expState)
+}
+
+func assertResultState(t *testing.T, sql *SQLStore, expState dbState) {
+	// Assert that the sql store contains the expected
+	// nodes and channels.
+	require.ElementsMatch(t, expState.nodes, fetchAllNodes(t, sql))
+	require.ElementsMatch(
+		t, expState.chans, fetchAllChannelsAndPolicies(t, sql),
+	)
+
+	for _, closed := range expState.closed {
+		isClosed, err := sql.IsClosedScid(
+			lnwire.NewShortChanIDFromInt(closed),
+		)
+		require.NoError(t, err)
+		require.True(t, isClosed)
+
+		// Any closed SCID should NOT be in the zombie
+		// index.
+		isZombie, _, _, err := sql.IsZombieEdge(closed)
+		require.NoError(t, err)
+		require.False(t, isZombie)
+	}
+
+	for _, zombie := range expState.zombies {
+		isZombie, _, _, err := sql.IsZombieEdge(
+			zombie,
+		)
+		require.NoError(t, err)
+		require.True(t, isZombie)
+	}
+}
+
+// TestSQLMigrationEdgeCases tests various edge cases where the migration will
+// still be successful but the final states of the KVStore and SQLStore
+// will differ slightly.
+func TestSQLMigrationEdgeCases(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	var invalidTLVData = []byte{0x01, 0x02, 0x03}
+
+	// Here, we test that in the case where the KV store contains a node
+	// with invalid TLV data, the migration will still succeed, but the
+	// node will not end up in the SQL store.
+	t.Run("node with bad tlv data", func(t *testing.T) {
+		// Make one valid node and two nodes with invalid TLV data.
+		n1 := makeTestNode(t)
+		n2 := makeTestNode(t, func(n *models.LightningNode) {
+			n.ExtraOpaqueData = invalidTLVData
+		})
+		n3 := makeTestNode(t, func(n *models.LightningNode) {
+			n.ExtraOpaqueData = invalidTLVData
+		})
+
+		// We also make a channel which points to both the valid
+		// node and one of the invalid nodes.
+		c := makeTestChannel(t, func(c *models.ChannelEdgeInfo) {
+			c.NodeKey1Bytes = n1.PubKeyBytes
+			c.NodeKey2Bytes = n2.PubKeyBytes
+		})
+
+		populateKV := func(t *testing.T, db *KVStore) {
+			// Insert all three nodes into the KV store.
+			require.NoError(t, db.AddLightningNode(ctx, n1))
+			require.NoError(t, db.AddLightningNode(ctx, n2))
+			require.NoError(t, db.AddLightningNode(ctx, n3))
+
+			// Also insert the channel.
+			require.NoError(t, db.AddChannelEdge(ctx, c))
+		}
+
+		// We also create a "shell" version of the second node. This
+		// is what we expect to appear in the SQL db since the full
+		// node will be skipped but then a shell node will be included
+		// when the channel that points to the node gets added.
+		n2Shell := makeTestShellNode(t, func(n *models.LightningNode) {
+			n.PubKeyBytes = n2.PubKeyBytes
+		})
+
+		runTestMigration(t, populateKV, dbState{
+			// We expect the valid node along with the shell version
+			// of the second node to be in the SQL db. The third
+			// node will not be included since it has invalid TLV
+			// data and no channels that point to it.
+			nodes: []*models.LightningNode{n1, n2Shell},
+			chans: chanSet{{edgeInfo: c}},
+		})
+	})
+
+	// Here, we test that in the case where the KV store contains a channel
+	// with invalid TLV data, the migration will still succeed, but the
+	// channel and its policies will not end up in the SQL store.
+	t.Run("channel with bad tlv data", func(t *testing.T) {
+		// Make two valid nodes to point to.
+		n1 := makeTestNode(t)
+		n2 := makeTestNode(t)
+
+		// Create two channels between these nodes, one valid one
+		// and one with invalid TLV data.
+		c1 := makeTestChannel(t, func(c *models.ChannelEdgeInfo) {
+			c.NodeKey1Bytes = n1.PubKeyBytes
+			c.NodeKey2Bytes = n2.PubKeyBytes
+		})
+		c2 := makeTestChannel(t, func(c *models.ChannelEdgeInfo) {
+			c.NodeKey1Bytes = n1.PubKeyBytes
+			c.NodeKey2Bytes = n2.PubKeyBytes
+			c.ExtraOpaqueData = invalidTLVData
+		})
+
+		// Create policies for both channels.
+		p1 := makeTestPolicy(c1.ChannelID, n2.PubKeyBytes, true)
+		p2 := makeTestPolicy(c2.ChannelID, n1.PubKeyBytes, false)
+
+		populateKV := func(t *testing.T, db *KVStore) {
+			// Insert both nodes into the KV store.
+			require.NoError(t, db.AddLightningNode(ctx, n1))
+			require.NoError(t, db.AddLightningNode(ctx, n2))
+
+			// Insert both channels into the KV store.
+			require.NoError(t, db.AddChannelEdge(ctx, c1))
+			require.NoError(t, db.AddChannelEdge(ctx, c2))
+
+			// Insert policies for both channels.
+			_, _, err := db.UpdateEdgePolicy(ctx, p1)
+			require.NoError(t, err)
+			_, _, err = db.UpdateEdgePolicy(ctx, p2)
+			require.NoError(t, err)
+		}
+
+		runTestMigration(t, populateKV, dbState{
+			// Both nodes will be present.
+			nodes: []*models.LightningNode{n1, n2},
+			// We only expect the first channel and its policy to
+			// be present in the SQL db.
+			chans: chanSet{{
+				edgeInfo: c1,
+				policy1:  p1,
+			}},
+		})
+	})
+
+	// Here, we test that in the case where the KV store contains a
+	// channel policy with invalid TLV data, the migration will still
+	// succeed, but the channel policy will not end up in the SQL store.
+	t.Run("channel policy with bad tlv data", func(t *testing.T) {
+		// Make two valid nodes to point to.
+		n1 := makeTestNode(t)
+		n2 := makeTestNode(t)
+
+		// Create one valid channels between these nodes.
+		c := makeTestChannel(t, func(c *models.ChannelEdgeInfo) {
+			c.NodeKey1Bytes = n1.PubKeyBytes
+			c.NodeKey2Bytes = n2.PubKeyBytes
+		})
+
+		// Now, create two policies for this channel, one valid one
+		// and one with invalid TLV data.
+		p1 := makeTestPolicy(c.ChannelID, n2.PubKeyBytes, true)
+		p2 := makeTestPolicy(
+			c.ChannelID, n1.PubKeyBytes, false,
+			func(p *models.ChannelEdgePolicy) {
+				p.ExtraOpaqueData = invalidTLVData
+			},
+		)
+
+		populateKV := func(t *testing.T, db *KVStore) {
+			// Insert both nodes into the KV store.
+			require.NoError(t, db.AddLightningNode(ctx, n1))
+			require.NoError(t, db.AddLightningNode(ctx, n2))
+
+			// Insert the channel into the KV store.
+			require.NoError(t, db.AddChannelEdge(ctx, c))
+
+			// Insert policies for the channel.
+			err := db.db.Update(func(tx kvdb.RwTx) error {
+				_, _, _, err := updateEdgePolicy(tx, p1)
+				return err
+			}, func() {})
+			require.NoError(t, err)
+
+			err = db.db.Update(func(tx kvdb.RwTx) error {
+				_, _, _, err := updateEdgePolicy(tx, p2)
+				return err
+			}, func() {})
+			require.NoError(t, err)
+		}
+
+		runTestMigration(t, populateKV, dbState{
+			// Both nodes will be present.
+			nodes: []*models.LightningNode{n1, n2},
+			// The channel will be present, but only the
+			// valid policy will be included in the SQL db.
+			chans: chanSet{{
+				edgeInfo: c,
+				policy1:  p1,
+			}},
+		})
+	})
+
+	// This test covers the case where the KV store contains zombie entries
+	// that it also has entries for in the closed SCID index. In this case,
+	// the SQL store will only insert zombie entries for channels that
+	// are not yet closed.
+	t.Run("zombies and closed scids", func(t *testing.T) {
+		var (
+			n1, n2 route.Vertex
+			cID1   = uint64(1)
+			cID2   = uint64(2)
+		)
+
+		populateKV := func(t *testing.T, db *KVStore) {
+			// Mark both channels as zombies.
+			err := db.MarkEdgeZombie(cID1, n1, n2)
+			require.NoError(t, err)
+
+			err = db.MarkEdgeZombie(cID2, n1, n2)
+			require.NoError(t, err)
+
+			// Mark channel 1 as closed.
+			err = db.PutClosedScid(
+				lnwire.NewShortChanIDFromInt(cID1),
+			)
+			require.NoError(t, err)
+		}
+
+		runTestMigration(t, populateKV, dbState{
+			chans:   make(chanSet, 0),
+			closed:  []uint64{1},
+			zombies: []uint64{2},
+		})
+	})
+}
+
 // graphStats holds expected statistics about the graph after migration.
 type graphStats struct {
 	numNodes    int
@@ -395,7 +654,14 @@ func fetchAllNodes(t *testing.T, store V1Store) []*models.LightningNode {
 	nodes := make([]*models.LightningNode, 0)
 
 	err := store.ForEachNode(func(tx NodeRTx) error {
-		nodes = append(nodes, tx.Node())
+		node := tx.Node()
+
+		// Call PubKey to ensure the objects cached pubkey is set so that
+		// the objects can be compared as a whole.
+		_, err := node.PubKey()
+		require.NoError(t, err)
+
+		nodes = append(nodes, node)
 
 		return nil
 	})
@@ -598,16 +864,36 @@ func makeTestNode(t *testing.T, opts ...testNodeOpt) *models.LightningNode {
 		opt(n)
 	}
 
+	// We call this method so that the internal pubkey field is populated
+	// which then lets us to proper struct comparison later on.
+	_, err := n.PubKey()
+	require.NoError(t, err)
+
 	return n
 }
 
 // makeTestShellNode creates a minimal models.LightningNode
 // that only contains the public key and no other attributes.
-func makeTestShellNode(t *testing.T) *models.LightningNode {
-	return &models.LightningNode{
+func makeTestShellNode(t *testing.T,
+	opts ...testNodeOpt) *models.LightningNode {
+
+	n := &models.LightningNode{
 		HaveNodeAnnouncement: false,
 		PubKeyBytes:          genPubKey(t),
+		Features:             testEmptyFeatures,
+		LastUpdate:           time.Unix(0, 0),
 	}
+
+	for _, opt := range opts {
+		opt(n)
+	}
+
+	// We call this method so that the internal pubkey field is populated
+	// which then lets us to proper struct comparison later on.
+	_, err := n.PubKey()
+	require.NoError(t, err)
+
+	return n
 }
 
 // modify the attributes of a models.ChannelEdgeInfo created by makeTestChannel.
@@ -648,15 +934,20 @@ type testPolicyOpt func(*models.ChannelEdgePolicy)
 
 // makeTestPolicy creates a test models.ChannelEdgePolicy. The functional
 // options can be used to modify the policy's attributes.
-func makeTestPolicy(chanID uint64,
-	toNode route.Vertex, opts ...testPolicyOpt) *models.ChannelEdgePolicy {
+func makeTestPolicy(chanID uint64, toNode route.Vertex, isNode1 bool,
+	opts ...testPolicyOpt) *models.ChannelEdgePolicy {
+
+	chanFlags := lnwire.ChanUpdateChanFlags(1)
+	if isNode1 {
+		chanFlags = 0
+	}
 
 	p := &models.ChannelEdgePolicy{
 		SigBytes:                  testSigBytes,
 		ChannelID:                 chanID,
 		LastUpdate:                nextUpdateTime(),
 		MessageFlags:              1,
-		ChannelFlags:              1,
+		ChannelFlags:              chanFlags,
 		TimeLockDelta:             99,
 		MinHTLC:                   2342135,
 		MaxHTLC:                   13928598,
