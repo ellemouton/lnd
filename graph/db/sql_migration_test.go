@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"image/color"
+	prand "math/rand"
 	"net"
 	"os"
 	"path"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btclog/v2"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/kvdb"
@@ -30,11 +32,18 @@ import (
 )
 
 var (
-	testChain     = *chaincfg.MainNetParams.GenesisHash
-	testColor     = color.RGBA{R: 1, G: 2, B: 3}
-	testTime      = time.Unix(11111, 0)
-	testSigBytes  = testSig.Serialize()
-	testExtraData = []byte{1, 1, 1, 2, 2, 2, 2}
+	testChain         = *chaincfg.MainNetParams.GenesisHash
+	testColor         = color.RGBA{R: 1, G: 2, B: 3}
+	testTime          = time.Unix(11111, 0)
+	testSigBytes      = testSig.Serialize()
+	testExtraData     = []byte{1, 1, 1, 2, 2, 2, 2}
+	testEmptyFeatures = lnwire.EmptyFeatureVector()
+	testAuthProof     = &models.ChannelAuthProof{
+		NodeSig1Bytes:    testSig.Serialize(),
+		NodeSig2Bytes:    testSig.Serialize(),
+		BitcoinSig1Bytes: testSig.Serialize(),
+		BitcoinSig2Bytes: testSig.Serialize(),
+	}
 )
 
 // TestMigrateGraphToSQL tests various deterministic cases that we want to test
@@ -52,11 +61,23 @@ func TestMigrateGraphToSQL(t *testing.T) {
 		switch obj := object.(type) {
 		case *models.LightningNode:
 			err = db.AddLightningNode(ctx, obj)
+		case *models.ChannelEdgeInfo:
+			err = db.AddChannelEdge(ctx, obj)
+		case *models.ChannelEdgePolicy:
+			_, _, err = db.UpdateEdgePolicy(ctx, obj)
 		default:
 			err = fmt.Errorf("unhandled object type: %T", obj)
 		}
 		require.NoError(t, err)
 	}
+
+	var (
+		chanID1 = prand.Uint64()
+		chanID2 = prand.Uint64()
+
+		node1 = genPubKey(t)
+		node2 = genPubKey(t)
+	)
 
 	tests := []struct {
 		name          string
@@ -122,6 +143,84 @@ func TestMigrateGraphToSQL(t *testing.T) {
 				srcNodeSet: true,
 			},
 		},
+		{
+			name:  "channels and policies",
+			write: writeUpdate,
+			objects: []any{
+				// A channel with unknown nodes. This will
+				// result in two shell nodes being created.
+				// 	- channel count += 1
+				// 	- node count += 2
+				makeTestChannel(t),
+
+				// Insert some nodes.
+				// 	- node count += 1
+				makeTestNode(t, func(n *models.LightningNode) {
+					n.PubKeyBytes = node1
+				}),
+				// 	- node count += 1
+				makeTestNode(t, func(n *models.LightningNode) {
+					n.PubKeyBytes = node2
+				}),
+
+				// A channel with known nodes.
+				// - channel count += 1
+				makeTestChannel(
+					t, func(c *models.ChannelEdgeInfo) {
+						c.ChannelID = chanID1
+
+						c.NodeKey1Bytes = node1
+						c.NodeKey2Bytes = node2
+					},
+				),
+
+				// Insert a channel with no auth proof, no
+				// extra opaque data, and empty features.
+				// Use known nodes.
+				// 	- channel count += 1
+				makeTestChannel(
+					t, func(c *models.ChannelEdgeInfo) {
+						c.ChannelID = chanID2
+
+						c.NodeKey1Bytes = node1
+						c.NodeKey2Bytes = node2
+
+						c.AuthProof = nil
+						c.ExtraOpaqueData = nil
+						c.Features = testEmptyFeatures
+					},
+				),
+
+				// Now, insert a single update for the
+				// first channel.
+				// 	- channel policy count += 1
+				makeTestPolicy(chanID1, node1),
+
+				// Insert two updates for the second
+				// channel, one for each direction.
+				// 	- channel policy count += 1
+				makeTestPolicy(
+					chanID2, node1,
+					func(p *models.ChannelEdgePolicy) {
+						p.ChannelFlags = 0
+					},
+				),
+				// This one also has no extra opaque data.
+				// 	- channel policy count += 1
+				makeTestPolicy(
+					chanID2, node2,
+					func(p *models.ChannelEdgePolicy) {
+						p.ChannelFlags = 1
+						p.ExtraOpaqueData = nil
+					},
+				),
+			},
+			expGraphStats: graphStats{
+				numNodes:    4,
+				numChannels: 3,
+				numPolicies: 3,
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -154,8 +253,10 @@ func TestMigrateGraphToSQL(t *testing.T) {
 
 // graphStats holds expected statistics about the graph after migration.
 type graphStats struct {
-	numNodes   int
-	srcNodeSet bool
+	numNodes    int
+	srcNodeSet  bool
+	numChannels int
+	numPolicies int
 }
 
 // assertInSync checks that the KVStore and SQLStore both contain the same
@@ -173,6 +274,12 @@ func assertInSync(t *testing.T, kvDB *KVStore, sqlDB *SQLStore,
 	sqlSourceNode := fetchSourceNode(t, sqlDB)
 	require.Equal(t, stats.srcNodeSet, sqlSourceNode != nil)
 	require.Equal(t, fetchSourceNode(t, kvDB), sqlSourceNode)
+
+	// 3) Compare the channels and policies in the two stores.
+	sqlChannels := fetchAllChannelsAndPolicies(t, sqlDB)
+	require.Len(t, sqlChannels, stats.numChannels)
+	require.Equal(t, stats.numPolicies, sqlChannels.CountPolicies())
+	require.Equal(t, fetchAllChannelsAndPolicies(t, kvDB), sqlChannels)
 }
 
 // fetchAllNodes retrieves all nodes from the given store and returns them
@@ -208,6 +315,68 @@ func fetchSourceNode(t *testing.T, store V1Store) *models.LightningNode {
 	}
 
 	return node
+}
+
+// chanInfo holds information about a channel, including its edge info
+// and the policies for both directions.
+type chanInfo struct {
+	edgeInfo *models.ChannelEdgeInfo
+	policy1  *models.ChannelEdgePolicy
+	policy2  *models.ChannelEdgePolicy
+}
+
+// chanSet is a slice of chanInfo
+type chanSet []chanInfo
+
+// CountPolicies counts the total number of policies in the channel set.
+func (c chanSet) CountPolicies() int {
+	var count int
+	for _, info := range c {
+		if info.policy1 != nil {
+			count++
+		}
+		if info.policy2 != nil {
+			count++
+		}
+	}
+	return count
+}
+
+// fetchAllChannelsAndPolicies retrieves all channels and their policies
+// from the given store and returns them sorted by their channel ID.
+func fetchAllChannelsAndPolicies(t *testing.T, store V1Store) chanSet {
+	channels := make(chanSet, 0)
+	err := store.ForEachChannel(func(info *models.ChannelEdgeInfo,
+		p1 *models.ChannelEdgePolicy,
+		p2 *models.ChannelEdgePolicy) error {
+
+		if len(info.ExtraOpaqueData) == 0 {
+			info.ExtraOpaqueData = nil
+		}
+		if p1 != nil && len(p1.ExtraOpaqueData) == 0 {
+			p1.ExtraOpaqueData = nil
+		}
+		if p2 != nil && len(p2.ExtraOpaqueData) == 0 {
+			p2.ExtraOpaqueData = nil
+		}
+
+		channels = append(channels, chanInfo{
+			edgeInfo: info,
+			policy1:  p1,
+			policy2:  p2,
+		})
+
+		return nil
+	})
+	require.NoError(t, err)
+
+	// Sort the channels by their channel ID to ensure a consistent order.
+	sort.Slice(channels, func(i, j int) bool {
+		return channels[i].edgeInfo.ChannelID <
+			channels[j].edgeInfo.ChannelID
+	})
+
+	return channels
 }
 
 // setUpKVStore initializes a new KVStore for testing.
@@ -266,6 +435,68 @@ func makeTestShellNode(t *testing.T) *models.LightningNode {
 		HaveNodeAnnouncement: false,
 		PubKeyBytes:          genPubKey(t),
 	}
+}
+
+// modify the attributes of a models.ChannelEdgeInfo created by makeTestChannel.
+type testChanOpt func(info *models.ChannelEdgeInfo)
+
+// makeTestChannel creates a test models.ChannelEdgeInfo. The functional options
+// can be used to modify the channel's attributes.
+func makeTestChannel(t *testing.T,
+	opts ...testChanOpt) *models.ChannelEdgeInfo {
+
+	c := &models.ChannelEdgeInfo{
+		ChannelID:        prand.Uint64(),
+		ChainHash:        testChain,
+		NodeKey1Bytes:    genPubKey(t),
+		NodeKey2Bytes:    genPubKey(t),
+		BitcoinKey1Bytes: genPubKey(t),
+		BitcoinKey2Bytes: genPubKey(t),
+		Features:         testFeatures,
+		AuthProof:        testAuthProof,
+		ChannelPoint: wire.OutPoint{
+			Hash:  rev,
+			Index: prand.Uint32(),
+		},
+		Capacity:        10000,
+		ExtraOpaqueData: testExtraData,
+	}
+
+	for _, opt := range opts {
+		opt(c)
+	}
+
+	return c
+}
+
+// testPolicyOpt defines a functional option type that can be used to modify the
+// attributes of a models.ChannelEdgePolicy created by makeTestPolicy.
+type testPolicyOpt func(*models.ChannelEdgePolicy)
+
+// makeTestPolicy creates a test models.ChannelEdgePolicy. The functional
+// options can be used to modify the policy's attributes.
+func makeTestPolicy(chanID uint64,
+	toNode route.Vertex, opts ...testPolicyOpt) *models.ChannelEdgePolicy {
+
+	p := &models.ChannelEdgePolicy{
+		SigBytes:                  testSigBytes,
+		ChannelID:                 chanID,
+		LastUpdate:                nextUpdateTime(),
+		MessageFlags:              1,
+		ChannelFlags:              1,
+		TimeLockDelta:             99,
+		MinHTLC:                   2342135,
+		MaxHTLC:                   13928598,
+		FeeBaseMSat:               4352345,
+		FeeProportionalMillionths: 90392423,
+		ToNode:                    toNode,
+	}
+
+	for _, opt := range opts {
+		opt(p)
+	}
+
+	return p
 }
 
 // TestMigrationWithChannelDB tests the migration of the graph store from a
