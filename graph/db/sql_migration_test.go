@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"image/color"
@@ -32,6 +33,7 @@ import (
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/sqldb"
 	"github.com/stretchr/testify/require"
+	"pgregory.net/rapid"
 )
 
 var (
@@ -582,7 +584,7 @@ func setUpKVStore(t *testing.T) *KVStore {
 }
 
 // genPubKey generates a new public key for testing purposes.
-func genPubKey(t *testing.T) route.Vertex {
+func genPubKey(t require.TestingT) route.Vertex {
 	key, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 
@@ -712,6 +714,141 @@ func makeTestPolicy(chanID uint64, toNode route.Vertex, isNode1 bool,
 	}
 
 	return p
+}
+
+// TestMigrationGraphToSQLRapid uses the rapid package to test the SQL migration
+// against randomly generated graph data.
+func TestMigrateGraphToSQLRapid(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	rapid.Check(t, func(r *rapid.T) {
+		nodes := make([]*models.LightningNode, 0)
+
+		for i := 0; i < 1; i++ {
+			node := generateTestNodeRapid(r)
+			nodes = append(nodes, node)
+		}
+
+		runTestMigration(t, func(t *testing.T, db *KVStore) {
+			// Add all the nodes to the KVStore.
+			for _, node := range nodes {
+				err := db.AddLightningNode(ctx, node)
+				require.NoError(t, err)
+			}
+		}, dbState{
+			nodes: nodes,
+		})
+	})
+}
+
+func generateTestNodeRapid(t *rapid.T) *models.LightningNode {
+	haveAnn := rapid.Bool().Draw(t, "HaveNodeAnnouncement")
+	node := &models.LightningNode{
+		PubKeyBytes:          genPubKey(t),
+		HaveNodeAnnouncement: haveAnn,
+		Features:             testEmptyFeatures,
+		LastUpdate:           time.Unix(0, 0),
+	}
+	if !haveAnn {
+		// If we don't have an announcement, we don't need to set
+		// any other fields.
+		return node
+	}
+
+	node.LastUpdate = time.Unix(
+		rapid.Int64Range(0, 1<<63-1).Draw(t, "LastUpdate"), 0,
+	)
+	node.Color = color.RGBA{
+		R: uint8(rapid.IntRange(0, 255).Draw(t, "R")),
+		G: uint8(rapid.IntRange(0, 255).Draw(t, "G")),
+		B: uint8(rapid.IntRange(0, 255).Draw(t, "B")),
+	}
+	node.Alias = lnwire.RandNodeAlias(t).String()
+	sig := lnwire.RandSignature(t)
+	node.AuthSigBytes = sig.RawBytes()
+
+	node.ExtraOpaqueData = lnwire.RandExtraOpaqueData(t, nil)
+	node.Addresses = lnwire.RandNetAddrs(t)
+	/*
+		Addresses:            generateRandomAddresses(t),
+		Features.
+	*/
+	return node
+}
+
+// genValidTLV generates a random, valid TLV stream with 1–3 records.
+func genValidTLV(t *rapid.T) []byte {
+	var b bytes.Buffer
+
+	numRecords := rapid.IntRange(1, 3).Draw(t, "numTLVRecords")
+	for i := 0; i < numRecords; i++ {
+		// Key: small random type
+		key := uint64(rapid.IntRange(1, 100).Draw(t, "tlvType"))
+
+		// Value: random byte slice (0–20 bytes)
+		value := rapid.SliceOfN(rapid.Byte(), 0, rapid.IntRange(0, 20).Draw(t, "tlvLen")).Draw(t, "tlvValue")
+
+		// Write varint-encoded type and length
+		writeVarInt(&b, key)
+		writeVarInt(&b, uint64(len(value)))
+
+		// Write value bytes
+		b.Write(value)
+	}
+
+	return b.Bytes()
+}
+
+// genInvalidTLV generates intentionally malformed TLV bytes.
+func genInvalidTLV(t *rapid.T) []byte {
+	switch rapid.IntRange(0, 2).Draw(t, "invalidKind") {
+	case 0:
+		// Incomplete TLV: type but no length/value
+		var b bytes.Buffer
+		writeVarInt(&b, uint64(42))
+		return b.Bytes()
+
+	case 1:
+		// Declared length too long for the value
+		var b bytes.Buffer
+		writeVarInt(&b, uint64(1)) // type
+		writeVarInt(&b, uint64(5)) // length
+		b.Write([]byte{0x01})      // too short
+		return b.Bytes()
+
+	case 2:
+		// Completely junk bytes
+		return rapid.SliceOfN(rapid.Byte(), 0, 100).Draw(t, "junkBytes")
+
+	default:
+		return []byte{0xFF}
+	}
+}
+
+// writeVarInt writes a TLV-style big-endian varint (simplified for <2^16).
+func writeVarInt(b *bytes.Buffer, n uint64) {
+	switch {
+	case n < 0xfd:
+		b.WriteByte(byte(n))
+	case n <= 0xffff:
+		b.WriteByte(0xfd)
+		binary.Write(b, binary.BigEndian, uint16(n))
+	default:
+		// For this example, we avoid >16-bit values
+		b.WriteByte(0xfd)
+		binary.Write(b, binary.BigEndian, uint16(0))
+	}
+}
+
+// genExtraOpaqueDataRapid returns mostly-valid TLV data, sometimes invalid.
+// The boolean indicates whether the data is valid or not.
+func genExtraOpaqueDataRapid(t *rapid.T) ([]byte, bool) {
+	// 90% chance to return valid TLV data
+	if rapid.IntRange(1, 10).Draw(t, "validChance") <= 9 {
+		return genValidTLV(t), true
+	}
+	return genInvalidTLV(t), false
 }
 
 // TestMigrationWithChannelDB tests the migration of the graph store from a
