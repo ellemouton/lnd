@@ -2412,10 +2412,10 @@ func TestRejectZombieEdge(t *testing.T) {
 	// zombie within the router. This should reject any announcements for
 	// this edge while it remains as a zombie.
 	chanID := batch.chanAnn.ShortChannelID
-	err = tCtx.router.MarkEdgeZombie(
-		ctx,
-		chanID, batch.chanAnn.NodeID1, batch.chanAnn.NodeID2,
-	)
+       err = tCtx.router.MarkEdgeZombie(
+               ctx, chanID,
+               batch.chanAnn.NodeID1, batch.chanAnn.NodeID2,
+       )
 	if err != nil {
 		t.Fatalf("unable to mark channel %v as zombie: %v", chanID, err)
 	}
@@ -2504,10 +2504,10 @@ func TestProcessZombieEdgeNowLive(t *testing.T) {
 	// want to allow a new update from the second node to allow the entire
 	// edge to be resurrected.
 	chanID := batch.chanAnn.ShortChannelID
-	err = tCtx.router.MarkEdgeZombie(
-		ctx,
-		chanID, [33]byte{}, batch.chanAnn.NodeID2,
-	)
+       err = tCtx.router.MarkEdgeZombie(
+               ctx, chanID,
+               [33]byte{}, batch.chanAnn.NodeID2,
+       )
 	if err != nil {
 		t.Fatalf("unable mark channel %v as zombie: %v", chanID, err)
 	}
