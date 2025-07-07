@@ -3726,7 +3726,7 @@ func (d *AuthenticatedGossiper) ShouldDisconnect(pubkey *btcec.PublicKey) (
 // transaction from chain to ensure that it exists, is not spent and matches
 // the channel announcement proof. The transaction's outpoint and value are
 // returned if we can glean them from the work done in this method.
-func (d *AuthenticatedGossiper) validateFundingTransaction(_ context.Context,
+func (d *AuthenticatedGossiper) validateFundingTransaction(ctx context.Context,
 	ann *lnwire.ChannelAnnouncement1,
 	tapscriptRoot fn.Option[chainhash.Hash]) (wire.OutPoint, btcutil.Amount,
 	[]byte, error) {
@@ -3760,7 +3760,7 @@ func (d *AuthenticatedGossiper) validateFundingTransaction(_ context.Context,
 			// we'll mark the edge itself as a zombie so we don't
 			// continue to request it. We use the "zero key" for
 			// both node pubkeys so this edge can't be resurrected.
-			zErr := d.cfg.Graph.MarkZombieEdge(scid.ToUint64())
+			zErr := d.cfg.Graph.MarkZombieEdge(ctx, scid.ToUint64())
 			if zErr != nil {
 				return wire.OutPoint{}, 0, nil, zErr
 			}
@@ -3798,7 +3798,7 @@ func (d *AuthenticatedGossiper) validateFundingTransaction(_ context.Context,
 	if err != nil {
 		// Mark the edge as a zombie so we won't try to re-validate it
 		// on start up.
-		zErr := d.cfg.Graph.MarkZombieEdge(scid.ToUint64())
+		zErr := d.cfg.Graph.MarkZombieEdge(ctx, scid.ToUint64())
 		if zErr != nil {
 			return wire.OutPoint{}, 0, nil, zErr
 		}
@@ -3815,7 +3815,7 @@ func (d *AuthenticatedGossiper) validateFundingTransaction(_ context.Context,
 	)
 	if err != nil {
 		if errors.Is(err, btcwallet.ErrOutputSpent) {
-			zErr := d.cfg.Graph.MarkZombieEdge(scid.ToUint64())
+			zErr := d.cfg.Graph.MarkZombieEdge(ctx, scid.ToUint64())
 			if zErr != nil {
 				return wire.OutPoint{}, 0, nil, zErr
 			}

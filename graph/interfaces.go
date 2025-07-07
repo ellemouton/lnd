@@ -89,7 +89,7 @@ type ChannelGraphSource interface {
 		route.Vertex) (*models.LightningNode, error)
 
 	// MarkZombieEdge marks the channel with the given ID as a zombie edge.
-	MarkZombieEdge(chanID uint64) error
+	MarkZombieEdge(ctx context.Context, chanID uint64) error
 
 	// IsZombieEdge returns true if the edge with the given channel ID is
 	// currently marked as a zombie edge.
@@ -221,7 +221,8 @@ type DB interface {
 	// MarkEdgeZombie attempts to mark a channel identified by its channel
 	// ID as a zombie. This method is used on an ad-hoc basis, when channels
 	// need to be marked as zombies outside the normal pruning cycle.
-	MarkEdgeZombie(chanID uint64, pubKey1, pubKey2 [33]byte) error
+	MarkEdgeZombie(ctx context.Context, chanID uint64,
+		pubKey1, pubKey2 [33]byte) error
 
 	// UpdateEdgePolicy updates the edge routing policy for a single
 	// directed edge within the database for the referenced channel. The

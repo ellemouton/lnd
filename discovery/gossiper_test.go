@@ -119,9 +119,9 @@ func (r *mockGraphSource) AddNode(_ context.Context, node *models.LightningNode,
 	return nil
 }
 
-func (r *mockGraphSource) MarkZombieEdge(scid uint64) error {
+func (r *mockGraphSource) MarkZombieEdge(ctx context.Context, scid uint64) error {
 	return r.MarkEdgeZombie(
-		lnwire.NewShortChanIDFromInt(scid), [33]byte{}, [33]byte{},
+		ctx, lnwire.NewShortChanIDFromInt(scid), [33]byte{}, [33]byte{},
 	)
 }
 
@@ -414,8 +414,8 @@ func (r *mockGraphSource) MarkEdgeLive(chanID lnwire.ShortChannelID) error {
 }
 
 // MarkEdgeZombie marks an edge as a zombie within our zombie index.
-func (r *mockGraphSource) MarkEdgeZombie(chanID lnwire.ShortChannelID, pubKey1,
-	pubKey2 [33]byte) error {
+func (r *mockGraphSource) MarkEdgeZombie(ctx context.Context,
+	chanID lnwire.ShortChannelID, pubKey1, pubKey2 [33]byte) error {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -2413,6 +2413,7 @@ func TestRejectZombieEdge(t *testing.T) {
 	// this edge while it remains as a zombie.
 	chanID := batch.chanAnn.ShortChannelID
 	err = tCtx.router.MarkEdgeZombie(
+		ctx,
 		chanID, batch.chanAnn.NodeID1, batch.chanAnn.NodeID2,
 	)
 	if err != nil {
@@ -2504,6 +2505,7 @@ func TestProcessZombieEdgeNowLive(t *testing.T) {
 	// edge to be resurrected.
 	chanID := batch.chanAnn.ShortChannelID
 	err = tCtx.router.MarkEdgeZombie(
+		ctx,
 		chanID, [33]byte{}, batch.chanAnn.NodeID2,
 	)
 	if err != nil {

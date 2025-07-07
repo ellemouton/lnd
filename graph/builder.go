@@ -898,12 +898,12 @@ func (b *Builder) assertNodeAnnFreshness(ctx context.Context, node route.Vertex,
 
 // MarkZombieEdge adds a channel that failed complete validation into the zombie
 // index so we can avoid having to re-validate it in the future.
-func (b *Builder) MarkZombieEdge(chanID uint64) error {
+func (b *Builder) MarkZombieEdge(ctx context.Context, chanID uint64) error {
 	// If the edge fails validation we'll mark the edge itself as a zombie
 	// so we don't continue to request it. We use the "zero key" for both
 	// node pubkeys so this edge can't be resurrected.
 	var zeroKey [33]byte
-	err := b.cfg.Graph.MarkEdgeZombie(chanID, zeroKey, zeroKey)
+	err := b.cfg.Graph.MarkEdgeZombie(ctx, chanID, zeroKey, zeroKey)
 	if err != nil {
 		return fmt.Errorf("unable to mark spent chan(id=%v) as a "+
 			"zombie: %w", chanID, err)

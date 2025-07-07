@@ -2255,6 +2255,7 @@ func TestNodeUpdatesInHorizon(t *testing.T) {
 // FilterKnownChanIDs is tested in TestFilterKnownChanIDs.
 func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
 	graph := MakeTestGraph(t)
 
@@ -2272,9 +2273,13 @@ func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 	}
 
 	// Mark channel 1 and 2 as zombies.
-	err := graph.MarkEdgeZombie(scid1.ToUint64(), [33]byte{}, [33]byte{})
+	err := graph.MarkEdgeZombie(
+		ctx, scid1.ToUint64(), [33]byte{}, [33]byte{},
+	)
 	require.NoError(t, err)
-	err = graph.MarkEdgeZombie(scid2.ToUint64(), [33]byte{}, [33]byte{})
+	err = graph.MarkEdgeZombie(
+		ctx, scid2.ToUint64(), [33]byte{}, [33]byte{},
+	)
 	require.NoError(t, err)
 
 	require.True(t, isZombie(scid1))
@@ -2628,6 +2633,7 @@ func TestStressTestChannelGraphAPI(t *testing.T) {
 				}
 
 				return graph.MarkEdgeZombie(
+					ctx,
 					channel.id.ToUint64(),
 					node1.PubKeyBytes,
 					node2.PubKeyBytes,
@@ -3941,6 +3947,7 @@ func TestGraphZombieIndex(t *testing.T) {
 	// If we mark the edge as a zombie manually, then it should show up as
 	// being a zombie once again.
 	err = graph.MarkEdgeZombie(
+		ctx,
 		edge.ChannelID, node1.PubKeyBytes, node2.PubKeyBytes,
 	)
 	require.NoError(t, err, "unable to mark edge as zombie")

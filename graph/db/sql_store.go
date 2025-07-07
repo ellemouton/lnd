@@ -1546,10 +1546,8 @@ func (s *SQLStore) FilterChannelRange(startHeight, endHeight uint32,
 // marked as zombies outside the normal pruning cycle.
 //
 // NOTE: part of the V1Store interface.
-func (s *SQLStore) MarkEdgeZombie(chanID uint64,
+func (s *SQLStore) MarkEdgeZombie(ctx context.Context, chanID uint64,
 	pubKey1, pubKey2 [33]byte) error {
-
-	ctx := context.TODO()
 
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
