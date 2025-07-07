@@ -12,6 +12,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/batch"
+	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -33,15 +34,25 @@ type ChannelGraph struct {
 
 	graphCache *GraphCache
 
+	// remoteClient is an optional RPC graph client that can be configured.
+	remoteClient *RemoteClient
+
+	// src is the source that we can use for wider graph related queries.
+	// This will either be backed by just our local graph DB or it will be
+	// a multiplexed version that muxes the results of our local DB with
+	// that of a remote graph source (possibly over RPC).
+	src GraphSource
+
 	V1Store
 	*topologyManager
 
-	quit chan struct{}
-	wg   sync.WaitGroup
+	quit   chan struct{}
+	wg     sync.WaitGroup
+	cancel fn.Option[context.CancelFunc]
 }
 
 // NewChannelGraph creates a new ChannelGraph instance with the given backend.
-func NewChannelGraph(v1Store V1Store,
+func NewChannelGraph(v1Store V1Store, remoteGraphCfg *RemoteConfig,
 	options ...ChanGraphOption) (*ChannelGraph, error) {
 
 	opts := defaultChanGraphOptions()
@@ -49,19 +60,68 @@ func NewChannelGraph(v1Store V1Store,
 		o(opts)
 	}
 
-	g := &ChannelGraph{
-		V1Store:         v1Store,
-		topologyManager: newTopologyManager(),
-		quit:            make(chan struct{}),
-	}
-
 	// The graph cache can be turned off (e.g. for mobile users) for a
 	// speed/memory usage tradeoff.
+	var cache *GraphCache
 	if opts.useGraphCache {
-		g.graphCache = NewGraphCache(opts.preAllocCacheNumNodes)
+		cache = NewGraphCache(opts.preAllocCacheNumNodes)
+	} else if remoteGraphCfg != nil && remoteGraphCfg.Enable {
+		return nil, fmt.Errorf("the graph cache must be used if " +
+			"a remote RPC graph source is enabled")
 	}
 
-	return g, nil
+	// At this point, we know that if the remote graph has been enabled,
+	// then the graph cache has also been initialised. We set up various
+	// call-backs so that the graph cache is properly updated by the
+	// topology subscription to the remote graph.
+	var (
+		remoteClient *RemoteClient
+		src          GraphSource = v1Store
+	)
+	if remoteGraphCfg != nil && remoteGraphCfg.Enable {
+		remoteGraphCfg.OnNewChannel = fn.Some(
+			func(edge *models.CachedEdgeInfo) {
+				cache.AddChannel(edge, nil, nil)
+			},
+		)
+		remoteGraphCfg.OnChannelUpdate = fn.Some(
+			func(edge *models.CachedEdgePolicy, fromNode,
+				toNode route.Vertex, edge1 bool) {
+
+				cache.UpdatePolicy(edge, fromNode, toNode)
+			},
+		)
+		remoteGraphCfg.OnNodeUpsert = fn.Some(
+			func(node route.Vertex,
+				features *lnwire.FeatureVector) {
+
+				cache.AddNodeFeatures(node, features)
+			},
+		)
+		// TODO(elle): cfg.RemoteConfig.OnChanClose
+
+		remoteClient = NewRemoteClient(remoteGraphCfg)
+		getLocalPub := func() (route.Vertex, error) {
+
+			node, err := v1Store.SourceNode(context.TODO())
+			if err != nil {
+				return route.Vertex{}, err
+			}
+
+			return route.NewVertexFromBytes(node.PubKeyBytes[:])
+		}
+
+		src = NewMuxedSource(v1Store, remoteClient, getLocalPub)
+	}
+
+	return &ChannelGraph{
+		graphCache:      cache,
+		V1Store:         v1Store,
+		src:             src,
+		remoteClient:    remoteClient,
+		topologyManager: newTopologyManager(),
+		quit:            make(chan struct{}),
+	}, nil
 }
 
 // Start kicks off any goroutines required for the ChannelGraph to function.
@@ -73,6 +133,16 @@ func (c *ChannelGraph) Start() error {
 	}
 	log.Debugf("ChannelGraph starting")
 	defer log.Debug("ChannelGraph started")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	c.cancel = fn.Some(cancel)
+
+	if c.remoteClient != nil {
+		if err := c.remoteClient.Start(ctx); err != nil {
+			return fmt.Errorf("could not start remote graph "+
+				"client: %w", err)
+		}
+	}
 
 	if c.graphCache != nil {
 		if err := c.populateCache(); err != nil {
@@ -96,10 +166,19 @@ func (c *ChannelGraph) Stop() error {
 	log.Debugf("ChannelGraph shutting down...")
 	defer log.Debug("ChannelGraph shutdown complete")
 
+	var returnErr error
+	if c.remoteClient != nil {
+		if err := c.remoteClient.Stop(); err != nil {
+			returnErr = fmt.Errorf("could not stop remote graph "+
+				"client: %w", err)
+		}
+	}
+
+	c.cancel.WhenSome(func(fn context.CancelFunc) { fn() })
 	close(c.quit)
 	c.wg.Wait()
 
-	return nil
+	return returnErr
 }
 
 // handleTopologySubscriptions ensures that topology client subscriptions,
@@ -164,7 +243,7 @@ func (c *ChannelGraph) populateCache() error {
 	log.Info("Populating in-memory channel graph, this might take a " +
 		"while...")
 
-	err := c.V1Store.ForEachNodeCacheable(func(node route.Vertex,
+	err := c.src.ForEachNodeCacheable(func(node route.Vertex,
 		features *lnwire.FeatureVector) error {
 
 		c.graphCache.AddNodeFeatures(node, features)
@@ -175,7 +254,7 @@ func (c *ChannelGraph) populateCache() error {
 		return err
 	}
 
-	err = c.V1Store.ForEachChannelCacheable(
+	err = c.src.ForEachChannelCacheable(
 		func(info *models.CachedEdgeInfo,
 			policy1, policy2 *models.CachedEdgePolicy) error {
 
@@ -191,6 +270,44 @@ func (c *ChannelGraph) populateCache() error {
 		time.Since(startTime), c.graphCache.Stats())
 
 	return nil
+}
+
+func (c *ChannelGraph) ForEachNode(cb func(tx NodeRTx) error) error {
+	return c.src.ForEachNode(cb)
+}
+
+func (c *ChannelGraph) ForEachChannel(cb func(*models.ChannelEdgeInfo,
+	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
+
+	return c.src.ForEachChannel(cb)
+}
+
+func (c *ChannelGraph) ForEachNodeChannel(nodePub route.Vertex,
+	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy) error) error {
+
+	return c.src.ForEachNodeChannel(nodePub, cb)
+}
+
+func (c *ChannelGraph) ForEachChannelCacheable(cb func(*models.CachedEdgeInfo,
+	*models.CachedEdgePolicy,
+	*models.CachedEdgePolicy) error) error {
+
+	return c.src.ForEachChannelCacheable(cb)
+}
+
+func (c *ChannelGraph) FetchChannelEdgesByID(chanID uint64) (
+	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy, error) {
+
+	return c.src.FetchChannelEdgesByID(chanID)
+}
+
+func (c *ChannelGraph) FetchChannelEdgesByOutpoint(point *wire.OutPoint) (
+	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy, error) {
+
+	return c.src.FetchChannelEdgesByOutpoint(point)
 }
 
 // ForEachNodeDirectedChannel iterates through all channels of a given node,
@@ -610,7 +727,7 @@ func MakeTestGraph(t testing.TB,
 
 	store := NewTestDB(t)
 
-	graph, err := NewChannelGraph(store, opts...)
+	graph, err := NewChannelGraph(store, nil, opts...)
 	require.NoError(t, err)
 	require.NoError(t, graph.Start())
 

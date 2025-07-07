@@ -383,3 +383,33 @@ type V1Store interface { //nolint:interfacebloat
 	DisconnectBlockAtHeight(height uint32) ([]*models.ChannelEdgeInfo,
 		error)
 }
+
+// GraphSource defines an interface that abstracts the source of the general
+// wider Lightning Network graph queries.
+type GraphSource interface {
+	ForEachNode(cb func(tx NodeRTx) error) error
+
+	ForEachNodeCacheable(cb func(route.Vertex,
+		*lnwire.FeatureVector) error) error
+
+	ForEachChannel(cb func(*models.ChannelEdgeInfo,
+		*models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy) error) error
+
+	ForEachChannelCacheable(cb func(*models.CachedEdgeInfo,
+		*models.CachedEdgePolicy,
+		*models.CachedEdgePolicy) error) error
+
+	ForEachNodeChannel(nodePub route.Vertex,
+		cb func(*models.ChannelEdgeInfo,
+			*models.ChannelEdgePolicy,
+			*models.ChannelEdgePolicy) error) error
+
+	FetchChannelEdgesByID(chanID uint64) (
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, error)
+
+	FetchChannelEdgesByOutpoint(point *wire.OutPoint) (
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, error)
+}
