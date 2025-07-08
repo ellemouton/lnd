@@ -139,11 +139,14 @@ func RandNodeAlias(t *rapid.T) NodeAlias {
 	var alias NodeAlias
 	aliasLength := rapid.IntRange(0, 32).Draw(t, "aliasLength")
 
-	aliasBytes := rapid.StringN(
-		0, aliasLength, aliasLength,
+	// Generate a valid UTF-8 string without any null characters by using a
+	// custom character set.
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	aliasBytes := rapid.SliceOfN(
+		rapid.SampledFrom([]rune(charset)), aliasLength, aliasLength,
 	).Draw(t, "alias")
 
-	copy(alias[:], aliasBytes)
+	copy(alias[:], string(aliasBytes))
 
 	return alias
 }

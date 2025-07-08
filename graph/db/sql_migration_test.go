@@ -27,6 +27,7 @@ import (
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/sqldb"
 	"github.com/stretchr/testify/require"
+	"pgregory.net/rapid"
 )
 
 var (
@@ -37,6 +38,119 @@ var (
 	testExtraData     = []byte{1, 1, 1, 2, 2, 2, 2}
 	testEmptyFeatures = lnwire.EmptyFeatureVector()
 )
+
+// TestMigrateGraphToSQLRapid tests the migration of graph nodes from a KV
+// store to a SQL store using property-based testing to ensure that the
+// migration works for a wide variety of randomly generated graph nodes.
+func TestMigrateGraphToSQLRapid(t *testing.T) {
+	t.Parallel()
+
+	rapid.Check(t, func(rt *rapid.T) {
+		ctx := context.Background()
+
+		// Set up our source kvdb DB.
+		kvDB := setUpKVStore(t)
+
+		// Set up our destination SQL DB.
+		sql, ok := NewTestDB(t).(*SQLStore)
+		require.True(t, ok)
+
+		// nodeGenerator is a rapid generator for creating random
+		// lightning nodes.
+		nodeGenerator := func(t *rapid.T) *models.LightningNode {
+			// Generate a random alias that is valid.
+			aliasBytes := lnwire.RandNodeAlias(rt)
+
+			// Convert the alias to a string, stopping at the first
+			// null byte.
+			var alias string
+			if idx := bytes.IndexByte(aliasBytes[:], 0); idx != -1 {
+				alias = string(aliasBytes[:idx])
+			} else {
+				alias = string(aliasBytes[:])
+			}
+
+			// Generate a random public key.
+			pubKey := lnwire.RandPubKey(rt)
+			var pubKeyBytes [33]byte
+			copy(pubKeyBytes[:], pubKey.SerializeCompressed())
+
+			// Generate a random signature.
+			sig := lnwire.RandSignature(rt)
+			sigBytes := sig.ToSignatureBytes()
+
+			// Generate a random color.
+			randColor := color.RGBA{
+				R: uint8(rapid.IntRange(0, 255).
+					Draw(t, "R")),
+				G: uint8(rapid.IntRange(0, 255).
+					Draw(t, "G")),
+				B: uint8(rapid.IntRange(0, 255).
+					Draw(t, "B")),
+				A: 255,
+			}
+
+			// Generate a random timestamp.
+			randTime := time.Unix(
+				rapid.Int64Range(
+					0, time.Now().Unix(),
+				).Draw(t, "timestamp"), 0,
+			)
+
+			// Generate random addresses.
+			addrs := lnwire.RandNetAddrs(rt)
+			sortAddrs(addrs)
+
+			// Generate a random feature vector.
+			features := lnwire.RandFeatureVector(rt)
+
+			// Generate random extra opaque data.
+			extraOpaqueData := lnwire.RandExtraOpaqueData(rt, nil)
+
+			node := &models.LightningNode{
+				HaveNodeAnnouncement: true,
+				AuthSigBytes:         sigBytes,
+				LastUpdate:           randTime,
+				Color:                randColor,
+				Alias:                alias,
+				Features: lnwire.NewFeatureVector(
+					features, lnwire.Features,
+				),
+				Addresses:       addrs,
+				ExtraOpaqueData: extraOpaqueData,
+				PubKeyBytes:     pubKeyBytes,
+			}
+
+			// We call this method so that the internal
+			// pubkey field is populated which then lets
+			// us to proper struct comparison later on.
+			_, err := node.PubKey()
+			require.NoError(t, err)
+
+			return node
+		}
+
+		// Generate a list of random nodes.
+		nodes := rapid.SliceOf(
+			rapid.Custom(nodeGenerator),
+		).Draw(rt, "nodes")
+
+		// Write the test objects to the kvdb store.
+		for _, node := range nodes {
+			err := kvDB.AddLightningNode(ctx, node)
+			require.NoError(t, err)
+		}
+
+		// Run the migration.
+		err := MigrateGraphToSQL(ctx, kvDB.db, sql.db, testChain)
+		require.NoError(t, err)
+
+		// Validate that the two databases are now in sync.
+		assertInSync(t, kvDB, sql, graphStats{
+			numNodes: len(nodes),
+		})
+	})
+}
 
 // TestMigrateGraphToSQL tests various deterministic cases that we want to test
 // for to ensure that our migration from a graph store backed by a KV DB to a
@@ -176,6 +290,17 @@ func assertInSync(t *testing.T, kvDB *KVStore, sqlDB *SQLStore,
 	require.Equal(t, fetchSourceNode(t, kvDB), sqlSourceNode)
 }
 
+// sortAddrs sorts a slice of net.Addr.
+func sortAddrs(addrs []net.Addr) {
+	if addrs == nil {
+		return
+	}
+
+	slices.SortFunc(addrs, func(i, j net.Addr) int {
+		return strings.Compare(i.String(), j.String())
+	})
+}
+
 // fetchAllNodes retrieves all nodes from the given store and returns them
 // sorted by their public key.
 func fetchAllNodes(t *testing.T, store V1Store) []*models.LightningNode {
@@ -188,6 +313,9 @@ func fetchAllNodes(t *testing.T, store V1Store) []*models.LightningNode {
 		// the objects can be compared as a whole.
 		_, err := node.PubKey()
 		require.NoError(t, err)
+
+		// Sort the addresses to ensure a consistent order.
+		sortAddrs(node.Addresses)
 
 		nodes = append(nodes, node)
 
