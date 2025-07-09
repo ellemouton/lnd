@@ -43,17 +43,16 @@ var (
 // store to a SQL store using property-based testing to ensure that the
 // migration works for a wide variety of randomly generated graph nodes.
 func TestMigrateGraphToSQLRapid(t *testing.T) {
-	t.Parallel()
+	pgFixture := newTestFixture(t)
 
 	rapid.Check(t, func(rt *rapid.T) {
-		ctx := context.Background()
+		ctxb := context.Background()
 
 		// Set up our source kvdb DB.
 		kvDB := setUpKVStore(t)
 
 		// Set up our destination SQL DB.
-		sql, ok := NewTestDB(t).(*SQLStore)
-		require.True(t, ok)
+		sql := newReusedSQLStore(t, pgFixture)
 
 		// nodeGenerator is a rapid generator for creating random
 		// lightning nodes.
@@ -137,12 +136,12 @@ func TestMigrateGraphToSQLRapid(t *testing.T) {
 
 		// Write the test objects to the kvdb store.
 		for _, node := range nodes {
-			err := kvDB.AddLightningNode(ctx, node)
+			err := kvDB.AddLightningNode(ctxb, node)
 			require.NoError(t, err)
 		}
 
 		// Run the migration.
-		err := MigrateGraphToSQL(ctx, kvDB.db, sql.db, testChain)
+		err := MigrateGraphToSQL(ctxb, kvDB.db, sql.db, testChain)
 		require.NoError(t, err)
 
 		// Validate that the two databases are now in sync.

@@ -19,6 +19,14 @@ func newBatchQuerier(t testing.TB) BatchedSQLQueries {
 		pgFixture.TearDown(t)
 	})
 
+	return newBatchQuerierWithFixture(t, pgFixture)
+}
+
+// newBatchQuerierWithFixture creates a new BatchedSQLQueries instance for
+// testing using a PostgreSQL database fixture.
+func newBatchQuerierWithFixture(t testing.TB,
+	pgFixture *sqldb.TestPgFixture) BatchedSQLQueries {
+
 	db := sqldb.NewTestPostgresDB(t, pgFixture).BaseDB
 
 	return sqldb.NewTransactionExecutor(
