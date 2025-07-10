@@ -31,7 +31,11 @@ type ChannelGraph struct {
 	started atomic.Bool
 	stopped atomic.Bool
 
-	graphCache *GraphCache
+	// cacheLoaded is true if the initial graphCache population has
+	// finished. We use this to ensure that when performing any reads,
+	// we only read from the graphCache if it has been fully populated.
+	cacheLoaded atomic.Bool
+	graphCache  *GraphCache
 
 	V1Store
 	*topologyManager
@@ -187,6 +191,8 @@ func (c *ChannelGraph) populateCache() error {
 		return err
 	}
 
+	c.cacheLoaded.Store(true)
+
 	log.Infof("Finished populating in-memory channel graph (took %v, %s)",
 		time.Since(startTime), c.graphCache.Stats())
 
@@ -206,7 +212,7 @@ func (c *ChannelGraph) populateCache() error {
 func (c *ChannelGraph) ForEachNodeDirectedChannel(node route.Vertex,
 	cb func(channel *DirectedChannel) error) error {
 
-	if c.graphCache != nil {
+	if c.graphCache != nil && c.cacheLoaded.Load() {
 		return c.graphCache.ForEachChannel(node, cb)
 	}
 
@@ -222,7 +228,7 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(node route.Vertex,
 func (c *ChannelGraph) FetchNodeFeatures(node route.Vertex) (
 	*lnwire.FeatureVector, error) {
 
-	if c.graphCache != nil {
+	if c.graphCache != nil && c.cacheLoaded.Load() {
 		return c.graphCache.GetFeatures(node), nil
 	}
 
@@ -234,7 +240,7 @@ func (c *ChannelGraph) FetchNodeFeatures(node route.Vertex) (
 // the graph cache is not enabled, then the call-back will be provided with
 // access to the graph via a consistent read-only transaction.
 func (c *ChannelGraph) GraphSession(cb func(graph NodeTraverser) error) error {
-	if c.graphCache != nil {
+	if c.graphCache != nil && c.cacheLoaded.Load() {
 		return cb(c)
 	}
 
@@ -248,7 +254,7 @@ func (c *ChannelGraph) GraphSession(cb func(graph NodeTraverser) error) error {
 func (c *ChannelGraph) ForEachNodeCached(cb func(node route.Vertex,
 	chans map[uint64]*DirectedChannel) error) error {
 
-	if c.graphCache != nil {
+	if c.graphCache != nil && c.cacheLoaded.Load() {
 		return c.graphCache.ForEachNode(cb)
 	}
 
