@@ -3,10 +3,10 @@
 package graphdb
 
 import (
-	"github.com/lightningnetwork/lnd/sqldb"
 	"testing"
 
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/lightningnetwork/lnd/sqldb"
 	"github.com/stretchr/testify/require"
 )
 
