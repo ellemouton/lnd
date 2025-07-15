@@ -242,16 +242,6 @@ FROM channels c
 WHERE c.outpoint IN
     (sqlc.slice('outpoints')/*SLICE:outpoints*/);
 
--- name: GetChannelByOutpoint :one
-SELECT
-    sqlc.embed(c),
-    n1.pub_key AS node1_pubkey,
-    n2.pub_key AS node2_pubkey
-FROM channels c
-    JOIN nodes n1 ON c.node_id_1 = n1.id
-    JOIN nodes n2 ON c.node_id_2 = n2.id
-WHERE c.outpoint = $1;
-
 -- name: GetChannelAndNodesBySCID :one
 SELECT
     c.*,

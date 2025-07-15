@@ -3,6 +3,7 @@
 package graphdb
 
 import (
+	"github.com/lightningnetwork/lnd/sqldb"
 	"testing"
 
 	"github.com/btcsuite/btcd/chaincfg"
@@ -14,7 +15,8 @@ import (
 func NewTestDB(t testing.TB) V1Store {
 	store, err := NewSQLStore(
 		&SQLStoreConfig{
-			ChainHash: *chaincfg.MainNetParams.GenesisHash,
+			ChainHash:     *chaincfg.MainNetParams.GenesisHash,
+			PaginationCfg: sqldb.DefaultPagedQueryConfig(),
 		}, newBatchQuerier(t),
 	)
 	require.NoError(t, err)
