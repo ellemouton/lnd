@@ -8,6 +8,7 @@ package sqlc
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
 
 const addSourceNode = `-- name: AddSourceNode :exec
@@ -867,6 +868,73 @@ func (q *Queries) GetChannelPolicyExtraTypes(ctx context.Context, arg GetChannel
 			&i.NodeID,
 			&i.Type,
 			&i.Value,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getChannelsByOutpoints = `-- name: GetChannelsByOutpoints :many
+SELECT
+    c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature,
+    n1.pub_key AS node1_pubkey,
+    n2.pub_key AS node2_pubkey
+FROM channels c
+    JOIN nodes n1 ON c.node_id_1 = n1.id
+    JOIN nodes n2 ON c.node_id_2 = n2.id
+WHERE c.outpoint IN
+    (/*SLICE:outpoints*/?)
+`
+
+type GetChannelsByOutpointsRow struct {
+	Channel     Channel
+	Node1Pubkey []byte
+	Node2Pubkey []byte
+}
+
+func (q *Queries) GetChannelsByOutpoints(ctx context.Context, outpoints []string) ([]GetChannelsByOutpointsRow, error) {
+	query := getChannelsByOutpoints
+	var queryParams []interface{}
+	if len(outpoints) > 0 {
+		for _, v := range outpoints {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:outpoints*/?", makeQueryParams(len(queryParams), len(outpoints)), 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:outpoints*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetChannelsByOutpointsRow
+	for rows.Next() {
+		var i GetChannelsByOutpointsRow
+		if err := rows.Scan(
+			&i.Channel.ID,
+			&i.Channel.Version,
+			&i.Channel.Scid,
+			&i.Channel.NodeID1,
+			&i.Channel.NodeID2,
+			&i.Channel.Outpoint,
+			&i.Channel.Capacity,
+			&i.Channel.BitcoinKey1,
+			&i.Channel.BitcoinKey2,
+			&i.Channel.Node1Signature,
+			&i.Channel.Node2Signature,
+			&i.Channel.Bitcoin1Signature,
+			&i.Channel.Bitcoin2Signature,
+			&i.Node1Pubkey,
+			&i.Node2Pubkey,
 		); err != nil {
 			return nil, err
 		}

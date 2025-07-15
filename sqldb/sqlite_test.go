@@ -7,6 +7,8 @@ import (
 	"testing"
 )
 
+const isSQLite = true
+
 // NewTestDB is a helper function that creates an SQLite database for testing.
 func NewTestDB(t *testing.T) *SqliteStore {
 	return NewTestSqliteDB(t)

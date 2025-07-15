@@ -7,6 +7,8 @@ import (
 	"testing"
 )
 
+const isSQLite = false
+
 // NewTestDB is a helper function that creates a Postgres database for testing.
 func NewTestDB(t *testing.T) *PostgresStore {
 	pgFixture := NewTestPgFixture(t, DefaultPostgresFixtureLifetime)
