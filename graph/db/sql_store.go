@@ -97,6 +97,7 @@ type SQLQueries interface {
 	GetChannelsByOutpoints(ctx context.Context, outpoints []string) ([]sqlc.GetChannelsByOutpointsRow, error)
 	GetChannelsBySCIDRange(ctx context.Context, arg sqlc.GetChannelsBySCIDRangeParams) ([]sqlc.GetChannelsBySCIDRangeRow, error)
 	GetChannelBySCIDWithPolicies(ctx context.Context, arg sqlc.GetChannelBySCIDWithPoliciesParams) (sqlc.GetChannelBySCIDWithPoliciesRow, error)
+	GetChannelsBySCIDWithPolicies(ctx context.Context, arg sqlc.GetChannelsBySCIDWithPoliciesParams) ([]sqlc.GetChannelsBySCIDWithPoliciesRow, error)
 	GetChannelAndNodesBySCID(ctx context.Context, arg sqlc.GetChannelAndNodesBySCIDParams) (sqlc.GetChannelAndNodesBySCIDRow, error)
 	GetChannelFeaturesAndExtras(ctx context.Context, channelID int64) ([]sqlc.GetChannelFeaturesAndExtrasRow, error)
 	HighestSCID(ctx context.Context, version int16) ([]byte, error)
@@ -2168,27 +2169,11 @@ func (s *SQLStore) IsPublicNode(pubKey [33]byte) (bool, error) {
 func (s *SQLStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 	var (
 		ctx   = context.TODO()
-		edges []ChannelEdge
+		edges = make(map[uint64]ChannelEdge)
 	)
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		for _, chanID := range chanIDs {
-			chanIDB := channelIDToBytes(chanID)
-
-			// TODO(elle): potentially optimize this by using
-			//  sqlc.slice() once that works for both SQLite and
-			//  Postgres.
-			row, err := db.GetChannelBySCIDWithPolicies(
-				ctx, sqlc.GetChannelBySCIDWithPoliciesParams{
-					Scid:    chanIDB,
-					Version: int16(ProtocolV1),
-				},
-			)
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
-			} else if err != nil {
-				return fmt.Errorf("unable to fetch channel: %w",
-					err)
-			}
+		chanCallBack := func(ctx context.Context,
+			row sqlc.GetChannelsBySCIDWithPoliciesRow) error {
 
 			node1, node2, err := buildNodes(
 				ctx, db, row.Node, row.Node_2,
@@ -2223,24 +2208,55 @@ func (s *SQLStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 					"policies: %w", err)
 			}
 
-			edges = append(edges, ChannelEdge{
+			edges[edge.ChannelID] = ChannelEdge{
 				Info:    edge,
 				Policy1: p1,
 				Policy2: p2,
 				Node1:   node1,
 				Node2:   node2,
-			})
+			}
+
+			return nil
+		}
+
+		queryWrapper := func(ctx context.Context, scids [][]byte) (
+			[]sqlc.GetChannelsBySCIDWithPoliciesRow, error) {
+
+			return db.GetChannelsBySCIDWithPolicies(
+				ctx, sqlc.GetChannelsBySCIDWithPoliciesParams{
+					Scids:   scids,
+					Version: int16(ProtocolV1),
+				},
+			)
+		}
+
+		err := sqldb.ExecutePagedQuery(
+			ctx, s.cfg.PaginationCfg, chanIDs, channelIDToBytes,
+			queryWrapper, chanCallBack,
+		)
+		if err != nil {
+			return fmt.Errorf("unable to fetch channels: %w", err)
 		}
 
 		return nil
 	}, func() {
-		edges = nil
+		clear(edges)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to fetch channels: %w", err)
 	}
 
-	return edges, nil
+	res := make([]ChannelEdge, 0, len(edges))
+	for _, chanID := range chanIDs {
+		edge, ok := edges[chanID]
+		if !ok {
+			continue
+		}
+
+		res = append(res, edge)
+	}
+
+	return res, nil
 }
 
 // FilterKnownChanIDs takes a set of channel IDs and return the subset of chan
@@ -4268,6 +4284,50 @@ func extractChannelPolicies(row any) (*sqlc.ChannelPolicy, *sqlc.ChannelPolicy,
 
 	var policy1, policy2 *sqlc.ChannelPolicy
 	switch r := row.(type) {
+	case sqlc.GetChannelsBySCIDWithPoliciesRow:
+		if r.Policy1ID.Valid {
+			policy1 = &sqlc.ChannelPolicy{
+				ID:                      r.Policy1ID.Int64,
+				Version:                 r.Policy1Version.Int16,
+				ChannelID:               r.Channel.ID,
+				NodeID:                  r.Policy1NodeID.Int64,
+				Timelock:                r.Policy1Timelock.Int32,
+				FeePpm:                  r.Policy1FeePpm.Int64,
+				BaseFeeMsat:             r.Policy1BaseFeeMsat.Int64,
+				MinHtlcMsat:             r.Policy1MinHtlcMsat.Int64,
+				MaxHtlcMsat:             r.Policy1MaxHtlcMsat,
+				LastUpdate:              r.Policy1LastUpdate,
+				InboundBaseFeeMsat:      r.Policy1InboundBaseFeeMsat,
+				InboundFeeRateMilliMsat: r.Policy1InboundFeeRateMilliMsat,
+				Disabled:                r.Policy1Disabled,
+				MessageFlags:            r.Policy1MessageFlags,
+				ChannelFlags:            r.Policy1ChannelFlags,
+				Signature:               r.Policy1Signature,
+			}
+		}
+		if r.Policy2ID.Valid {
+			policy2 = &sqlc.ChannelPolicy{
+				ID:                      r.Policy2ID.Int64,
+				Version:                 r.Policy2Version.Int16,
+				ChannelID:               r.Channel.ID,
+				NodeID:                  r.Policy2NodeID.Int64,
+				Timelock:                r.Policy2Timelock.Int32,
+				FeePpm:                  r.Policy2FeePpm.Int64,
+				BaseFeeMsat:             r.Policy2BaseFeeMsat.Int64,
+				MinHtlcMsat:             r.Policy2MinHtlcMsat.Int64,
+				MaxHtlcMsat:             r.Policy2MaxHtlcMsat,
+				LastUpdate:              r.Policy2LastUpdate,
+				InboundBaseFeeMsat:      r.Policy2InboundBaseFeeMsat,
+				InboundFeeRateMilliMsat: r.Policy2InboundFeeRateMilliMsat,
+				Disabled:                r.Policy2Disabled,
+				MessageFlags:            r.Policy2MessageFlags,
+				ChannelFlags:            r.Policy2ChannelFlags,
+				Signature:               r.Policy2Signature,
+			}
+		}
+
+		return policy1, policy2, nil
+
 	case sqlc.GetChannelByOutpointWithPoliciesRow:
 		if r.Policy1ID.Valid {
 			policy1 = &sqlc.ChannelPolicy{
