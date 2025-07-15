@@ -1757,9 +1757,7 @@ func TestGraphPruning(t *testing.T) {
 	graph := MakeTestGraph(t)
 
 	sourceNode := createTestVertex(t)
-	if err := graph.SetSourceNode(ctx, sourceNode); err != nil {
-		t.Fatalf("unable to set source node: %v", err)
-	}
+	require.NoError(t, graph.SetSourceNode(ctx, sourceNode))
 
 	// As initial set up for the test, we'll create a graph with 5 vertexes
 	// and enough edges to create a fully connected graph. The graph will
@@ -1768,10 +1766,7 @@ func TestGraphPruning(t *testing.T) {
 	graphNodes := make([]*models.LightningNode, numNodes)
 	for i := 0; i < numNodes; i++ {
 		node := createTestVertex(t)
-
-		if err := graph.AddLightningNode(ctx, node); err != nil {
-			t.Fatalf("unable to add node: %v", err)
-		}
+		require.NoError(t, graph.AddLightningNode(ctx, node))
 
 		graphNodes[i] = node
 	}
@@ -1810,9 +1805,7 @@ func TestGraphPruning(t *testing.T) {
 			edgeInfo.BitcoinKey2Bytes[:],
 			graphNodes[i+1].PubKeyBytes[:],
 		)
-		if err := graph.AddChannelEdge(ctx, &edgeInfo); err != nil {
-			t.Fatalf("unable to add node: %v", err)
-		}
+		require.NoError(t, graph.AddChannelEdge(ctx, &edgeInfo))
 
 		pkScript, err := genMultiSigP2WSH(
 			edgeInfo.BitcoinKey1Bytes[:],
@@ -1832,9 +1825,7 @@ func TestGraphPruning(t *testing.T) {
 		edge.ChannelFlags = 0
 		edge.ToNode = graphNodes[i].PubKeyBytes
 		edge.SigBytes = testSig.Serialize()
-		if err := graph.UpdateEdgePolicy(ctx, edge); err != nil {
-			t.Fatalf("unable to update edge: %v", err)
-		}
+		require.NoError(t, graph.UpdateEdgePolicy(ctx, edge))
 
 		// Create another random edge that points from node_i+1 ->
 		// node_i this time.
@@ -1842,9 +1833,7 @@ func TestGraphPruning(t *testing.T) {
 		edge.ChannelFlags = 1
 		edge.ToNode = graphNodes[i].PubKeyBytes
 		edge.SigBytes = testSig.Serialize()
-		if err := graph.UpdateEdgePolicy(ctx, edge); err != nil {
-			t.Fatalf("unable to update edge: %v", err)
-		}
+		require.NoError(t, graph.UpdateEdgePolicy(ctx, edge))
 	}
 
 	// With all the channel points added, we'll consult the graph to ensure
@@ -1864,10 +1853,7 @@ func TestGraphPruning(t *testing.T) {
 	block := channelPoints[:2]
 	prunedChans, err := graph.PruneGraph(block, &blockHash, blockHeight)
 	require.NoError(t, err, "unable to prune graph")
-	if len(prunedChans) != 2 {
-		t.Fatalf("incorrect number of channels pruned: "+
-			"expected %v, got %v", 2, prunedChans)
-	}
+	require.Len(t, prunedChans, 2)
 
 	// Now ensure that the prune tip has been updated.
 	assertPruneTip(t, graph, &blockHash, blockHeight)
@@ -1896,9 +1882,7 @@ func TestGraphPruning(t *testing.T) {
 	require.NoError(t, err, "unable to prune graph")
 
 	// No channels should have been detected as pruned.
-	if len(prunedChans) != 0 {
-		t.Fatalf("channels were pruned but shouldn't have been")
-	}
+	require.Empty(t, prunedChans)
 
 	// Once again, the prune tip should have been updated. We should still
 	// see both channels and their participants, along with the source node.
@@ -1917,10 +1901,7 @@ func TestGraphPruning(t *testing.T) {
 
 	// The remainder of the channels should have been pruned from the
 	// graph.
-	if len(prunedChans) != 2 {
-		t.Fatalf("incorrect number of channels pruned: "+
-			"expected %v, got %v", 2, len(prunedChans))
-	}
+	require.Len(t, prunedChans, 2)
 
 	// The prune tip should be updated, no channels should be found, and
 	// only the source node should remain within the current graph.
@@ -1933,10 +1914,7 @@ func TestGraphPruning(t *testing.T) {
 	// channel view.
 	channelView, err = graph.ChannelView()
 	require.NoError(t, err, "unable to get graph channel view")
-	if len(channelView) != 0 {
-		t.Fatalf("channel view should be empty, instead have: %v",
-			channelView)
-	}
+	require.Empty(t, channelView)
 }
 
 // TestHighestChanID tests that we're able to properly retrieve the highest
@@ -3025,13 +3003,9 @@ func TestFetchChanInfos(t *testing.T) {
 	// We'll first populate our graph with two nodes. All channels created
 	// below will be made between these two nodes.
 	node1 := createTestVertex(t)
-	if err := graph.AddLightningNode(ctx, node1); err != nil {
-		t.Fatalf("unable to add node: %v", err)
-	}
+	require.NoError(t, graph.AddLightningNode(ctx, node1))
 	node2 := createTestVertex(t)
-	if err := graph.AddLightningNode(ctx, node2); err != nil {
-		t.Fatalf("unable to add node: %v", err)
-	}
+	require.NoError(t, graph.AddLightningNode(ctx, node2))
 
 	// We'll make 5 test channels, ensuring we keep track of which channel
 	// ID corresponds to a particular ChannelEdge.
@@ -3045,9 +3019,7 @@ func TestFetchChanInfos(t *testing.T) {
 			uint32(i*10), 0, 0, 0, node1, node2,
 		)
 
-		if err := graph.AddChannelEdge(ctx, &channel); err != nil {
-			t.Fatalf("unable to create channel edge: %v", err)
-		}
+		require.NoError(t, graph.AddChannelEdge(ctx, &channel))
 
 		updateTime := endTime
 		endTime = updateTime.Add(time.Second * 10)
@@ -3056,17 +3028,13 @@ func TestFetchChanInfos(t *testing.T) {
 		edge1.ChannelFlags = 0
 		edge1.ToNode = node2.PubKeyBytes
 		edge1.SigBytes = testSig.Serialize()
-		if err := graph.UpdateEdgePolicy(ctx, edge1); err != nil {
-			t.Fatalf("unable to update edge: %v", err)
-		}
+		require.NoError(t, graph.UpdateEdgePolicy(ctx, edge1))
 
 		edge2 := newEdgePolicy(chanID.ToUint64(), updateTime.Unix())
 		edge2.ChannelFlags = 1
 		edge2.ToNode = node1.PubKeyBytes
 		edge2.SigBytes = testSig.Serialize()
-		if err := graph.UpdateEdgePolicy(ctx, edge2); err != nil {
-			t.Fatalf("unable to update edge: %v", err)
-		}
+		require.NoError(t, graph.UpdateEdgePolicy(ctx, edge2))
 
 		edges = append(edges, ChannelEdge{
 			Info:    &channel,
@@ -3086,9 +3054,7 @@ func TestFetchChanInfos(t *testing.T) {
 	zombieChan, zombieChanID := createEdge(
 		666, 0, 0, 0, node1, node2,
 	)
-	if err := graph.AddChannelEdge(ctx, &zombieChan); err != nil {
-		t.Fatalf("unable to create channel edge: %v", err)
-	}
+	require.NoError(t, graph.AddChannelEdge(ctx, &zombieChan))
 	err := graph.DeleteChannelEdges(false, true, zombieChan.ChannelID)
 	require.NoError(t, err, "unable to delete and mark edge zombie")
 	edgeQuery = append(edgeQuery, zombieChanID.ToUint64())
@@ -3098,20 +3064,13 @@ func TestFetchChanInfos(t *testing.T) {
 	// edges back.
 	resp, err := graph.FetchChanInfos(edgeQuery)
 	require.NoError(t, err, "unable to fetch chan edges")
-	if len(resp) != len(edges) {
-		t.Fatalf("expected %v edges, instead got %v", len(edges),
-			len(resp))
-	}
+	require.Len(t, resp, len(edges))
 
 	for i := 0; i < len(resp); i++ {
 		err := compareEdgePolicies(resp[i].Policy1, edges[i].Policy1)
-		if err != nil {
-			t.Fatalf("edge doesn't match: %v", err)
-		}
+		require.NoError(t, err)
 		err = compareEdgePolicies(resp[i].Policy2, edges[i].Policy2)
-		if err != nil {
-			t.Fatalf("edge doesn't match: %v", err)
-		}
+		require.NoError(t, err)
 		assertEdgeInfoEqual(t, resp[i].Info, edges[i].Info)
 	}
 }
