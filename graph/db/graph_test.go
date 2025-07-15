@@ -3066,12 +3066,10 @@ func TestFetchChanInfos(t *testing.T) {
 	require.NoError(t, err, "unable to fetch chan edges")
 	require.Len(t, resp, len(edges))
 
-	for i := 0; i < len(resp); i++ {
-		err := compareEdgePolicies(resp[i].Policy1, edges[i].Policy1)
-		require.NoError(t, err)
-		err = compareEdgePolicies(resp[i].Policy2, edges[i].Policy2)
-		require.NoError(t, err)
-		assertEdgeInfoEqual(t, resp[i].Info, edges[i].Info)
+	for i, r := range resp {
+		require.Equal(t, edges[i].Info, r.Info)
+		require.Equal(t, edges[i].Policy1, r.Policy1)
+		require.Equal(t, edges[i].Policy2, r.Policy2)
 	}
 }
 

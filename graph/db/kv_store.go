@@ -4854,6 +4854,10 @@ func deserializeChanEdgePolicyRaw(r io.Reader) (*models.ChannelEdgePolicy,
 		edge.ExtraOpaqueData = opq[8:]
 	}
 
+	if len(edge.ExtraOpaqueData) == 0 {
+		edge.ExtraOpaqueData = nil
+	}
+
 	// Attempt to extract the inbound fee from the opaque data. If we fail
 	// to parse the TLV here, we return an error we also return the edge
 	// so that the caller can still use it. This is for backwards
