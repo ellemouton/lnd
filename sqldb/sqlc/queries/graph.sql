@@ -231,6 +231,11 @@ WHERE scid >= @start_scid
 SELECT * FROM channels
 WHERE scid = $1 AND version = $2;
 
+-- name: GetChannelsBySCIDs :many
+SELECT * FROM channels
+WHERE version = @version
+  AND scid IN (sqlc.slice('scids')/*SLICE:scids*/);
+
 -- name: GetChannelsByOutpoints :many
 SELECT
     sqlc.embed(c),

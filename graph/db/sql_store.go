@@ -93,6 +93,7 @@ type SQLQueries interface {
 	CreateChannel(ctx context.Context, arg sqlc.CreateChannelParams) (int64, error)
 	AddV1ChannelProof(ctx context.Context, arg sqlc.AddV1ChannelProofParams) (sql.Result, error)
 	GetChannelBySCID(ctx context.Context, arg sqlc.GetChannelBySCIDParams) (sqlc.Channel, error)
+	GetChannelsBySCIDs(ctx context.Context, arg sqlc.GetChannelsBySCIDsParams) ([]sqlc.Channel, error)
 	GetChannelsByOutpoints(ctx context.Context, outpoints []string) ([]sqlc.GetChannelsByOutpointsRow, error)
 	GetChannelsBySCIDRange(ctx context.Context, arg sqlc.GetChannelsBySCIDRangeParams) ([]sqlc.GetChannelsBySCIDRangeRow, error)
 	GetChannelBySCIDWithPolicies(ctx context.Context, arg sqlc.GetChannelBySCIDWithPoliciesParams) (sqlc.GetChannelBySCIDWithPoliciesRow, error)
@@ -2257,27 +2258,54 @@ func (s *SQLStore) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo) ([]uint64,
 		ctx          = context.TODO()
 		newChanIDs   []uint64
 		knownZombies []ChannelUpdateInfo
+		infoLookup   = make(
+			map[uint64]ChannelUpdateInfo, len(chansInfo),
+		)
 	)
-	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		for _, chanInfo := range chansInfo {
-			channelID := chanInfo.ShortChannelID.ToUint64()
-			chanIDB := channelIDToBytes(channelID)
 
-			// TODO(elle): potentially optimize this by using
-			//  sqlc.slice() once that works for both SQLite and
-			//  Postgres.
-			_, err := db.GetChannelBySCID(
-				ctx, sqlc.GetChannelBySCIDParams{
+	for _, chanInfo := range chansInfo {
+		scid := chanInfo.ShortChannelID.ToUint64()
+		infoLookup[scid] = chanInfo
+	}
+
+	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+		queryWrapper := func(ctx context.Context,
+			scids [][]byte) ([]sqlc.Channel, error) {
+
+			return db.GetChannelsBySCIDs(
+				ctx, sqlc.GetChannelsBySCIDsParams{
 					Version: int16(ProtocolV1),
-					Scid:    chanIDB,
+					Scids:   scids,
 				},
 			)
-			if err == nil {
+		}
+
+		chanIDConverter := func(chanInfo ChannelUpdateInfo) []byte {
+			channelID := chanInfo.ShortChannelID.ToUint64()
+
+			return channelIDToBytes(channelID)
+		}
+
+		cb := func(ctx context.Context, channel sqlc.Channel) error {
+			delete(infoLookup, byteOrder.Uint64(channel.Scid))
+
+			return nil
+		}
+
+		err := sqldb.ExecutePagedQuery(
+			ctx, s.cfg.PaginationCfg, chansInfo, chanIDConverter,
+			queryWrapper, cb,
+		)
+		if err != nil {
+			return fmt.Errorf("unable to fetch channels: %w", err)
+		}
+
+		for _, chanInfo := range chansInfo {
+			channelID := chanInfo.ShortChannelID.ToUint64()
+			if _, ok := infoLookup[channelID]; !ok {
 				continue
-			} else if !errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("unable to fetch channel: %w",
-					err)
 			}
+			chanIDB := channelIDToBytes(channelID)
 
 			isZombie, err := db.IsZombieChannel(
 				ctx, sqlc.IsZombieChannelParams{
