@@ -114,6 +114,12 @@ FROM graph_nodes n
 WHERE n.pub_key = $1
   AND n.version = $2;
 
+-- name: GetNodeFeaturesBatch :many
+SELECT node_id, feature_bit
+FROM graph_node_features
+WHERE node_id IN (sqlc.slice('ids')/*SLICE:ids*/)
+ORDER BY node_id, feature_bit;
+
 -- name: DeleteNodeFeature :exec
 DELETE FROM graph_node_features
 WHERE node_id = $1
@@ -134,20 +140,17 @@ INSERT INTO graph_node_addresses (
     $1, $2, $3, $4
  );
 
--- name: GetNodeAddressesByPubKey :many
-SELECT a.type, a.address
-FROM graph_nodes n
--- NOTE: we use a LEFT JOIN here to ensure that we still have an empty
--- row returned if the node in question exists even if it has no addresses.
-LEFT JOIN graph_node_addresses a ON a.node_id = n.id
-WHERE n.pub_key = $1 AND n.version = $2
-ORDER BY a.type ASC, a.position ASC;
-
 -- name: GetNodeAddresses :many
 SELECT type, address
 FROM graph_node_addresses
 WHERE node_id = $1
 ORDER BY type ASC, position ASC;
+
+-- name: GetNodeAddressesBatch :many
+SELECT node_id, type, position, address
+FROM graph_node_addresses
+WHERE node_id IN (sqlc.slice('ids')/*SLICE:ids*/)
+ORDER BY node_id, type, position;
 
 -- name: GetNodesByLastUpdateRange :many
 SELECT *
@@ -178,6 +181,12 @@ ON CONFLICT (type, node_id)
 SELECT *
 FROM graph_node_extra_types
 WHERE node_id = $1;
+
+-- name: GetNodeExtraFieldsBatch :many
+SELECT node_id, type, value
+FROM graph_node_extra_types
+WHERE node_id IN (sqlc.slice('ids')/*SLICE:ids*/)
+ORDER BY node_id, type;
 
 -- name: DeleteExtraNodeType :exec
 DELETE FROM graph_node_extra_types

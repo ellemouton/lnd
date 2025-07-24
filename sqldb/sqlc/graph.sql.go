@@ -1473,36 +1473,38 @@ func (q *Queries) GetNodeAddresses(ctx context.Context, nodeID int64) ([]GetNode
 	return items, nil
 }
 
-const getNodeAddressesByPubKey = `-- name: GetNodeAddressesByPubKey :many
-SELECT a.type, a.address
-FROM graph_nodes n
-LEFT JOIN graph_node_addresses a ON a.node_id = n.id
-WHERE n.pub_key = $1 AND n.version = $2
-ORDER BY a.type ASC, a.position ASC
+const getNodeAddressesBatch = `-- name: GetNodeAddressesBatch :many
+SELECT node_id, type, position, address
+FROM graph_node_addresses
+WHERE node_id IN (/*SLICE:ids*/?)
+ORDER BY node_id, type, position
 `
 
-type GetNodeAddressesByPubKeyParams struct {
-	PubKey  []byte
-	Version int16
-}
-
-type GetNodeAddressesByPubKeyRow struct {
-	Type    sql.NullInt16
-	Address sql.NullString
-}
-
-// NOTE: we use a LEFT JOIN here to ensure that we still have an empty
-// row returned if the node in question exists even if it has no addresses.
-func (q *Queries) GetNodeAddressesByPubKey(ctx context.Context, arg GetNodeAddressesByPubKeyParams) ([]GetNodeAddressesByPubKeyRow, error) {
-	rows, err := q.db.QueryContext(ctx, getNodeAddressesByPubKey, arg.PubKey, arg.Version)
+func (q *Queries) GetNodeAddressesBatch(ctx context.Context, ids []int64) ([]GraphNodeAddress, error) {
+	query := getNodeAddressesBatch
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", makeQueryParams(len(queryParams), len(ids)), 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []GetNodeAddressesByPubKeyRow
+	var items []GraphNodeAddress
 	for rows.Next() {
-		var i GetNodeAddressesByPubKeyRow
-		if err := rows.Scan(&i.Type, &i.Address); err != nil {
+		var i GraphNodeAddress
+		if err := rows.Scan(
+			&i.NodeID,
+			&i.Type,
+			&i.Position,
+			&i.Address,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1543,6 +1545,46 @@ func (q *Queries) GetNodeByPubKey(ctx context.Context, arg GetNodeByPubKeyParams
 	return i, err
 }
 
+const getNodeExtraFieldsBatch = `-- name: GetNodeExtraFieldsBatch :many
+SELECT node_id, type, value
+FROM graph_node_extra_types
+WHERE node_id IN (/*SLICE:ids*/?)
+ORDER BY node_id, type
+`
+
+func (q *Queries) GetNodeExtraFieldsBatch(ctx context.Context, ids []int64) ([]GraphNodeExtraType, error) {
+	query := getNodeExtraFieldsBatch
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", makeQueryParams(len(queryParams), len(ids)), 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GraphNodeExtraType
+	for rows.Next() {
+		var i GraphNodeExtraType
+		if err := rows.Scan(&i.NodeID, &i.Type, &i.Value); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getNodeFeatures = `-- name: GetNodeFeatures :many
 SELECT node_id, feature_bit
 FROM graph_node_features
@@ -1551,6 +1593,46 @@ WHERE node_id = $1
 
 func (q *Queries) GetNodeFeatures(ctx context.Context, nodeID int64) ([]GraphNodeFeature, error) {
 	rows, err := q.db.QueryContext(ctx, getNodeFeatures, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GraphNodeFeature
+	for rows.Next() {
+		var i GraphNodeFeature
+		if err := rows.Scan(&i.NodeID, &i.FeatureBit); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getNodeFeaturesBatch = `-- name: GetNodeFeaturesBatch :many
+SELECT node_id, feature_bit
+FROM graph_node_features
+WHERE node_id IN (/*SLICE:ids*/?)
+ORDER BY node_id, feature_bit
+`
+
+func (q *Queries) GetNodeFeaturesBatch(ctx context.Context, ids []int64) ([]GraphNodeFeature, error) {
+	query := getNodeFeaturesBatch
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", makeQueryParams(len(queryParams), len(ids)), 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
 	}

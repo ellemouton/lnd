@@ -107,6 +107,7 @@ var (
 // BenchmarkDescribeGraph benchmarks how long it takes to iterate over all
 // nodes and channels in the graph for the various graph database
 // implementations.
+// TODO(elle): just split up forEachNOde and for each channel.
 func BenchmarkDescribeGraph(b *testing.B) {
 	ctx := context.Background()
 
