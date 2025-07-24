@@ -33,7 +33,7 @@ import (
 
 // pageSize is the limit for the number of records that can be returned
 // in a paginated query. This can be tuned after some benchmarks.
-const pageSize = 2000
+const pageSize = 40000
 
 // ProtocolVersion is an enum that defines the gossip protocol version of a
 // message.
@@ -732,7 +732,7 @@ func (s *SQLStore) updateEdgeCache(e *models.ChannelEdgePolicy,
 // NOTE: part of the V1Store interface.
 func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
 	cb func(chanPoint wire.OutPoint, havePolicy bool,
-		otherNode *models.LightningNode) error, reset func()) error {
+	otherNode *models.LightningNode) error, reset func()) error {
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		nodeID, nodePub, err := s.getSourceNode(ctx, db, ProtocolV1)
@@ -963,7 +963,7 @@ func (s *SQLStore) ForEachNodeCacheable(ctx context.Context,
 // NOTE: part of the V1Store interface.
 func (s *SQLStore) ForEachNodeChannel(ctx context.Context, nodePub route.Vertex,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
-		*models.ChannelEdgePolicy) error, reset func()) error {
+	*models.ChannelEdgePolicy) error, reset func()) error {
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		dbNode, err := db.GetNodeByPubKey(
@@ -1339,7 +1339,7 @@ func (s *SQLStore) ForEachChannelCacheable(cb func(*models.CachedEdgeInfo,
 // NOTE: part of the V1Store interface.
 func (s *SQLStore) ForEachChannel(ctx context.Context,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
-		*models.ChannelEdgePolicy) error, reset func()) error {
+	*models.ChannelEdgePolicy) error, reset func()) error {
 
 	handleChannel := func(db SQLQueries,
 		row sqlc.ListChannelsWithPoliciesPaginatedRow) error {
@@ -2264,7 +2264,7 @@ func (s *SQLStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 // channels in a paginated manner.
 func (s *SQLStore) forEachChanWithPoliciesInSCIDList(ctx context.Context,
 	db SQLQueries, cb func(ctx context.Context,
-		row sqlc.GetChannelsBySCIDWithPoliciesRow) error,
+	row sqlc.GetChannelsBySCIDWithPoliciesRow) error,
 	chanIDs []uint64) error {
 
 	queryWrapper := func(ctx context.Context,
@@ -2545,7 +2545,7 @@ func (s *SQLStore) PruneGraph(spentOutputs []*wire.OutPoint,
 // NOTE: this fetches channels for all protocol versions.
 func (s *SQLStore) forEachChanInOutpoints(ctx context.Context, db SQLQueries,
 	outpoints []*wire.OutPoint, cb func(ctx context.Context,
-		row sqlc.GetChannelsByOutpointsRow) error) error {
+	row sqlc.GetChannelsByOutpointsRow) error) error {
 
 	// Create a wrapper that uses the transaction's db instance to execute
 	// the query.
@@ -3134,8 +3134,8 @@ func forEachNodeCacheable(ctx context.Context, db SQLQueries,
 // channel and node combo.
 func forEachNodeChannel(ctx context.Context, db SQLQueries,
 	chain chainhash.Hash, id int64, cb func(*models.ChannelEdgeInfo,
-		*models.ChannelEdgePolicy,
-		*models.ChannelEdgePolicy) error) error {
+	*models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy) error) error {
 
 	// Get all the V1 channels for this node.Add commentMore actions
 	rows, err := db.ListChannelsByNodeID(
