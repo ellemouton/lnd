@@ -275,6 +275,15 @@ FROM graph_channels c
 WHERE c.scid = $1
   AND c.version = $2;
 
+-- name: GetChannelPolicyExtraTypesBatch :many
+SELECT
+    channel_policy_id as policy_id,
+    type,
+    value
+FROM graph_channel_policy_extra_types
+WHERE channel_policy_id IN (sqlc.slice('policy_ids')/*SLICE:policy_ids*/)
+ORDER BY channel_policy_id, type;
+
 -- name: GetChannelFeaturesAndExtras :many
 SELECT
     cf.channel_id,
@@ -647,6 +656,15 @@ INSERT INTO graph_channel_features (
     $1, $2
 );
 
+-- GetChannelFeaturesBatch gets features for a batch of channel IDs
+-- name: GetChannelFeaturesBatch :many
+SELECT
+    channel_id,
+    feature_bit
+FROM graph_channel_features
+WHERE channel_id IN (sqlc.slice('chan_ids')/*SLICE:chan_ids*/)
+ORDER BY channel_id, feature_bit;
+
 /* ─────────────────────────────────────────────
    graph_channel_extra_types table queries
    ─────────────────────────────────────────────
@@ -657,6 +675,16 @@ INSERT INTO graph_channel_extra_types (
     channel_id, type, value
 )
 VALUES ($1, $2, $3);
+
+-- GetChannelExtrasBatch gets extra TLV fields for a batch of channel IDs
+-- name: GetChannelExtrasBatch :many
+SELECT
+    channel_id,
+    type,
+    value
+FROM graph_channel_extra_types
+WHERE channel_id IN (sqlc.slice('chan_ids')/*SLICE:chan_ids*/)
+ORDER BY channel_id, type;
 
 /* ─────────────────────────────────────────────
    graph_channel_policies table queries
