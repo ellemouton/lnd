@@ -1438,6 +1438,41 @@ func (q *Queries) GetExtraNodeTypes(ctx context.Context, nodeID int64) ([]GraphN
 	return items, nil
 }
 
+const getNodeAddresses = `-- name: GetNodeAddresses :many
+SELECT type, address
+FROM graph_node_addresses
+WHERE node_id = $1
+ORDER BY type ASC, position ASC
+`
+
+type GetNodeAddressesRow struct {
+	Type    int16
+	Address string
+}
+
+func (q *Queries) GetNodeAddresses(ctx context.Context, nodeID int64) ([]GetNodeAddressesRow, error) {
+	rows, err := q.db.QueryContext(ctx, getNodeAddresses, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetNodeAddressesRow
+	for rows.Next() {
+		var i GetNodeAddressesRow
+		if err := rows.Scan(&i.Type, &i.Address); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getNodeAddressesByPubKey = `-- name: GetNodeAddressesByPubKey :many
 SELECT a.type, a.address
 FROM graph_nodes n
@@ -1456,6 +1491,8 @@ type GetNodeAddressesByPubKeyRow struct {
 	Address sql.NullString
 }
 
+// NOTE: we use a LEFT JOIN here to ensure that we still have an empty
+// row returned if the node in question exists even if it has no addresses.
 func (q *Queries) GetNodeAddressesByPubKey(ctx context.Context, arg GetNodeAddressesByPubKeyParams) ([]GetNodeAddressesByPubKeyRow, error) {
 	rows, err := q.db.QueryContext(ctx, getNodeAddressesByPubKey, arg.PubKey, arg.Version)
 	if err != nil {

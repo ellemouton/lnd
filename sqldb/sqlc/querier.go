@@ -59,6 +59,9 @@ type Querier interface {
 	GetInvoiceHTLCs(ctx context.Context, invoiceID int64) ([]InvoiceHtlc, error)
 	GetKVInvoicePaymentHashByAddIndex(ctx context.Context, addIndex int64) ([]byte, error)
 	GetMigration(ctx context.Context, version int32) (time.Time, error)
+	GetNodeAddresses(ctx context.Context, nodeID int64) ([]GetNodeAddressesRow, error)
+	// NOTE: we use a LEFT JOIN here to ensure that we still have an empty
+	// row returned if the node in question exists even if it has no addresses.
 	GetNodeAddressesByPubKey(ctx context.Context, arg GetNodeAddressesByPubKeyParams) ([]GetNodeAddressesByPubKeyRow, error)
 	GetNodeByPubKey(ctx context.Context, arg GetNodeByPubKeyParams) (GraphNode, error)
 	GetNodeFeatures(ctx context.Context, nodeID int64) ([]GraphNodeFeature, error)
