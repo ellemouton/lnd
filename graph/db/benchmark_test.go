@@ -104,11 +104,7 @@ var (
 	}
 )
 
-// BenchmarkDescribeGraph benchmarks how long it takes to iterate over all
-// nodes and channels in the graph for the various graph database
-// implementations.
-// TODO(elle): just split up forEachNOde and for each channel.
-func BenchmarkDescribeGraph(b *testing.B) {
+func BenchmarkForEachChannelAndPolicy(b *testing.B) {
 	ctx := context.Background()
 
 	tests := []dbConnection{
@@ -131,21 +127,57 @@ func BenchmarkDescribeGraph(b *testing.B) {
 			b.ResetTimer()
 
 			for i := 0; i < b.N; i++ {
-				// Simulate the DescribeGraph call by iterating
-				// over all nodes and channels.
-				err = graph.ForEachNode(
-					ctx, func(_ NodeRTx) error {
+				err = graph.ForEachChannel(
+					ctx, func(_ *models.ChannelEdgeInfo,
+						_ *models.ChannelEdgePolicy,
+						_ *models.ChannelEdgePolicy) error {
+
 						return nil
 					}, func() {},
 				)
 				require.NoError(b, err)
 
-				err = graph.ForEachChannel(ctx, func(
-					_ *models.ChannelEdgeInfo,
-					_, _ *models.ChannelEdgePolicy) error {
+				// If Start() needs to be called fresh each time,
+				// you might need to reset/cleanup here
+				b.StopTimer()
 
-					return nil
-				}, func() {})
+				// Any cleanup between iterations goes here
+				require.NoError(b, graph.Stop())
+
+				b.StartTimer()
+			}
+		})
+	}
+}
+
+func BenchmarkForEachNode(b *testing.B) {
+	ctx := context.Background()
+
+	tests := []dbConnection{
+		kvdbBBoltConn,
+		kvdbSqliteConn,
+		nativeSQLSqliteConn,
+		kvdbPostgresConn,
+		nativeSQLPostgresConn,
+	}
+
+	for _, test := range tests {
+		b.Run(test.name, func(b *testing.B) {
+			graph, err := NewChannelGraph(
+				test.open(b), WithUseGraphCache(false),
+			)
+			require.NoError(b, err)
+			require.NoError(b, graph.Start())
+
+			// Reset timer to exclude setup time.
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				err = graph.ForEachNode(
+					ctx, func(_ NodeRTx) error {
+						return nil
+					}, func() {},
+				)
 				require.NoError(b, err)
 
 				// If Start() needs to be called fresh each time,
