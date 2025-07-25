@@ -3,13 +3,15 @@ package graphdb
 import (
 	"database/sql"
 	"errors"
-	"golang.org/x/time/rate"
+	"github.com/lightningnetwork/lnd/batch"
+	"os"
 	"path"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btclog/v2"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/kvdb/postgres"
@@ -18,6 +20,7 @@ import (
 	"github.com/lightningnetwork/lnd/sqldb"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/context"
+	"golang.org/x/time/rate"
 )
 
 // Here we define various database paths and connection strings that we will use
@@ -40,7 +43,7 @@ var (
 	// testStoreOptions is used to configure the graph stores we open for
 	// testing.
 	testStoreOptions = []StoreOptionModifier{
-		WithBatchCommitInterval(500 * time.Millisecond),
+		WithBatchCommitInterval(5 * time.Second),
 	}
 )
 
@@ -75,12 +78,12 @@ var (
 	}
 
 	// nativeSQLSqliteConn is a connection to a native SQL sqlite database
-	// called channel.sqlite.
+	// called lnd.sqlite.
 	nativeSQLSqliteConn = dbConnection{
 		name: "native-sqlite",
 		open: func(b testing.TB) V1Store {
 			return connectNativeSQLite(
-				b, nativeSQLSqlitePath, "channel.sqlite",
+				b, nativeSQLSqlitePath, "lnd.sqlite",
 			)
 		},
 	}
@@ -228,23 +231,121 @@ func BenchmarkCacheLoading(b *testing.B) {
 	}
 }
 
+func TestPopulateViaMigration(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	logger := btclog.NewDefaultHandler(os.Stdout)
+	UseLogger(btclog.NewSLogger(logger))
+
+	const (
+		timeout  = 10 * time.Second
+		maxConns = 50
+	)
+	sqlbase.Init(maxConns)
+
+	countChannels := func(graph *ChannelGraph) (int, int) {
+		var (
+			numChans    = 0
+			numPolicies = 0
+		)
+		err := graph.ForEachChannel(
+			ctx, func(info *models.ChannelEdgeInfo,
+				policy,
+				policy2 *models.ChannelEdgePolicy) error {
+
+				numChans++
+				if policy != nil {
+					numPolicies++
+				}
+				if policy2 != nil {
+					numPolicies++
+				}
+
+				return nil
+			}, func() {})
+		require.NoError(t, err)
+
+		return numChans, numPolicies
+	}
+
+	// Set your desired source database.
+	kvStore, err := kvdb.Open(
+		kvdb.SqliteBackendName, ctx,
+		&sqlite.Config{
+			Timeout:        timeout,
+			BusyTimeout:    timeout,
+			MaxConnections: maxConns,
+			PragmaOptions: []string{
+				"synchronous=full",
+				"auto_vacuum=incremental",
+				"fullfsync=true",
+			},
+		}, "testdata/oli-mainnet/kvdb-sqlite", "channel.sqlite",
+		// NOTE: we use the raw string here else we get an
+		// import cycle if we try to import lncfg.NSChannelDB.
+		"channeldb",
+	)
+	require.NoError(t, err)
+
+	cg, err := NewChannelGraph(newKVStore(t, kvStore))
+	require.NoError(t, err)
+
+	chanNum, policies := countChannels(cg)
+	t.Logf("ELLE: Number of channels in source graph: %d, %d", chanNum, policies)
+
+	store, err := sqldb.NewSqliteStore(
+		&sqldb.SqliteConfig{
+			Timeout:        timeout,
+			BusyTimeout:    timeout,
+			MaxConnections: maxConns,
+			PragmaOptions: []string{
+				"synchronous=full",
+				"auto_vacuum=incremental",
+				"fullfsync=true",
+			},
+		},
+		path.Join("testdata", "lnd.sqlite"),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	err = store.ApplyAllMigrations(
+		context.Background(), sqldb.GetMigrations(),
+	)
+	require.NoError(t, err)
+
+	graphExecutor := sqldb.NewTransactionExecutor(
+		store, func(tx *sql.Tx) SQLQueries {
+			return store.WithTx(tx)
+		},
+	)
+
+	err = graphExecutor.ExecTx(ctx, sqldb.WriteTxOpt(), func(queries SQLQueries) error {
+		return MigrateGraphToSQL(ctx, kvStore, queries, dbTestChain)
+	}, func() {})
+	require.NoError(t, err)
+}
+
 // TestPopulateDBs is a helper test that can be used to populate various local
 // graph DBs from some source graph DB. This can then be used to run the
 // various benchmark tests against the same graph data.
 func TestPopulateDBs(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 
-	t.Skipf("Skipping local helper test")
+	//t.Skipf("Skipping local helper test")
 
 	// Set your desired source database.
-	sourceDB := kvdbBBoltConn
+	sourceDB := kvdbSqliteConn
 
 	// Populate this list with the desired destination databases.
 	destinations := []dbConnection{
-		kvdbSqliteConn,
+		// kvdbBBoltConn,
 		nativeSQLSqliteConn,
-		kvdbPostgresConn,
-		nativeSQLPostgresConn,
+		// kvdbPostgresConn,
+		//nativeSQLPostgresConn,
 	}
 
 	// Open and start the source graph.
@@ -259,12 +360,10 @@ func TestPopulateDBs(t *testing.T) {
 	// graph.
 	countNodes := func(graph *ChannelGraph) int {
 		numNodes := 0
-		err := graph.ForEachNode(
-			context.Background(), func(tx NodeRTx) error {
-				numNodes++
-				return nil
-			}, func() {},
-		)
+		err := graph.ForEachNode(ctx, func(tx NodeRTx) error {
+			numNodes++
+			return nil
+		}, func() {})
 		require.NoError(t, err)
 
 		return numNodes
@@ -278,7 +377,7 @@ func TestPopulateDBs(t *testing.T) {
 			numPolicies = 0
 		)
 		err := graph.ForEachChannel(
-			context.Background(), func(info *models.ChannelEdgeInfo,
+			ctx, func(info *models.ChannelEdgeInfo,
 				policy,
 				policy2 *models.ChannelEdgePolicy) error {
 
@@ -347,28 +446,37 @@ func syncGraph(t *testing.T, src, dest *ChannelGraph) {
 		mu    sync.Mutex
 	)
 
+	var wgNodes sync.WaitGroup
 	err := src.ForEachNode(ctx, func(tx NodeRTx) error {
-		err := dest.AddLightningNode(ctx, tx.Node())
-		require.NoError(t, err)
 
-		mu.Lock()
-		total++
-		chunk++
-		s.Do(func() {
-			elapsed := time.Since(t0).Seconds()
-			ratePerSec := float64(chunk) / elapsed
-			t.Logf("Migrated %d nodes (last chunk: %d) "+
-				"(%.2f nodes/second)",
-				total, chunk, ratePerSec)
+		wgNodes.Add(1)
+		go func() {
+			defer wgNodes.Done()
 
-			t0 = time.Now()
-			chunk = 0
-		})
-		mu.Unlock()
+			err := dest.AddLightningNode(ctx, tx.Node(), batch.LazyAdd())
+			require.NoError(t, err)
+
+			mu.Lock()
+			total++
+			chunk++
+			s.Do(func() {
+				elapsed := time.Since(t0).Seconds()
+				ratePerSec := float64(chunk) / elapsed
+				t.Logf("Migrated %d nodes (last chunk: %d) "+
+					"(%.2f nodes/second)",
+					total, chunk, ratePerSec)
+
+				t0 = time.Now()
+				chunk = 0
+			})
+			mu.Unlock()
+		}()
 
 		return nil
 	}, func() {})
 	require.NoError(t, err)
+
+	wgNodes.Wait()
 
 	total = 0
 	chunk = 0
@@ -383,18 +491,18 @@ func syncGraph(t *testing.T, src, dest *ChannelGraph) {
 		go func() {
 			defer wg.Done()
 
-			err := dest.AddChannelEdge(ctx, info)
+			err := dest.AddChannelEdge(ctx, info, batch.LazyAdd())
 			if !errors.Is(err, ErrEdgeAlreadyExist) {
 				require.NoError(t, err)
 			}
 
 			if policy1 != nil {
-				err = dest.UpdateEdgePolicy(ctx, policy1)
+				err = dest.UpdateEdgePolicy(ctx, policy1, batch.LazyAdd())
 				require.NoError(t, err)
 			}
 
 			if policy2 != nil {
-				err = dest.UpdateEdgePolicy(ctx, policy2)
+				err = dest.UpdateEdgePolicy(ctx, policy2, batch.LazyAdd())
 				require.NoError(t, err)
 			}
 
@@ -404,9 +512,9 @@ func syncGraph(t *testing.T, src, dest *ChannelGraph) {
 			s.Do(func() {
 				elapsed := time.Since(t0).Seconds()
 				ratePerSec := float64(chunk) / elapsed
-				t.Logf("Migrated %d policies "+
-					"(last chunk: %d) "+
-					"(%.2f policies/second)",
+				t.Logf("Migrated %d channels (and its "+
+					"policies) (last chunk: %d) "+
+					"(%.2f channsl/second)",
 					total, chunk, ratePerSec)
 
 				t0 = time.Now()
