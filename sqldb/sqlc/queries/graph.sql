@@ -114,6 +114,12 @@ FROM graph_nodes n
 WHERE n.pub_key = $1
   AND n.version = $2;
 
+-- name: GetNodeFeaturesBatch :many
+SELECT node_id, feature_bit
+FROM graph_node_features
+WHERE node_id IN (sqlc.slice('ids')/*SLICE:ids*/)
+ORDER BY node_id, feature_bit;
+
 -- name: DeleteNodeFeature :exec
 DELETE FROM graph_node_features
 WHERE node_id = $1
@@ -134,12 +140,17 @@ INSERT INTO graph_node_addresses (
     $1, $2, $3, $4
  );
 
--- name: GetNodeAddressesByPubKey :many
-SELECT a.type, a.address
-FROM graph_nodes n
-LEFT JOIN graph_node_addresses a ON a.node_id = n.id
-WHERE n.pub_key = $1 AND n.version = $2
-ORDER BY a.type ASC, a.position ASC;
+-- name: GetNodeAddresses :many
+SELECT type, address
+FROM graph_node_addresses
+WHERE node_id = $1
+ORDER BY type ASC, position ASC;
+
+-- name: GetNodeAddressesBatch :many
+SELECT node_id, type, position, address
+FROM graph_node_addresses
+WHERE node_id IN (sqlc.slice('ids')/*SLICE:ids*/)
+ORDER BY node_id, type, position;
 
 -- name: GetNodesByLastUpdateRange :many
 SELECT *
@@ -170,6 +181,12 @@ ON CONFLICT (type, node_id)
 SELECT *
 FROM graph_node_extra_types
 WHERE node_id = $1;
+
+-- name: GetNodeExtraFieldsBatch :many
+SELECT node_id, type, value
+FROM graph_node_extra_types
+WHERE node_id IN (sqlc.slice('ids')/*SLICE:ids*/)
+ORDER BY node_id, type;
 
 -- name: DeleteExtraNodeType :exec
 DELETE FROM graph_node_extra_types
@@ -257,6 +274,15 @@ FROM graph_channels c
     JOIN graph_nodes n2 ON c.node_id_2 = n2.id
 WHERE c.scid = $1
   AND c.version = $2;
+
+-- name: GetChannelPolicyExtraTypesBatch :many
+SELECT
+    channel_policy_id as policy_id,
+    type,
+    value
+FROM graph_channel_policy_extra_types
+WHERE channel_policy_id IN (sqlc.slice('policy_ids')/*SLICE:policy_ids*/)
+ORDER BY channel_policy_id, type;
 
 -- name: GetChannelFeaturesAndExtras :many
 SELECT
@@ -569,6 +595,51 @@ WHERE c.version = $1 AND c.id > $2
 ORDER BY c.id
 LIMIT $3;
 
+-- name: ListChannelsWithPoliciesForCachePaginated :many
+SELECT
+    c.id as id,
+    c.scid as scid,
+    c.capacity AS capacity,
+
+    -- Join node pubkeys
+    n1.pub_key AS node1_pubkey,
+    n2.pub_key AS node2_pubkey,
+
+    -- Node 1 policy
+    cp1.timelock AS policy_1_timelock,
+    cp1.fee_ppm AS policy_1_fee_ppm,
+    cp1.base_fee_msat AS policy_1_base_fee_msat,
+    cp1.min_htlc_msat AS policy_1_min_htlc_msat,
+    cp1.max_htlc_msat AS policy_1_max_htlc_msat,
+    cp1.disabled AS policy_1_disabled,
+    cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
+    cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
+    cp1.message_flags AS policy1_message_flags,
+    cp1.channel_flags AS policy1_channel_flags,
+
+    -- Node 2 policy
+    cp2.timelock AS policy_2_timelock,
+    cp2.fee_ppm AS policy_2_fee_ppm,
+    cp2.base_fee_msat AS policy_2_base_fee_msat,
+    cp2.min_htlc_msat AS policy_2_min_htlc_msat,
+    cp2.max_htlc_msat AS policy_2_max_htlc_msat,
+    cp2.disabled AS policy_2_disabled,
+    cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
+    cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
+    cp2.message_flags AS policy2_message_flags,
+    cp2.channel_flags AS policy2_channel_flags
+
+FROM graph_channels c
+         JOIN graph_nodes n1 ON c.node_id_1 = n1.id
+         JOIN graph_nodes n2 ON c.node_id_2 = n2.id
+         LEFT JOIN graph_channel_policies cp1
+                   ON cp1.channel_id = c.id AND cp1.node_id = c.node_id_1 AND cp1.version = c.version
+         LEFT JOIN graph_channel_policies cp2
+                   ON cp2.channel_id = c.id AND cp2.node_id = c.node_id_2 AND cp2.version = c.version
+WHERE c.version = $1 AND c.id > $2
+ORDER BY c.id
+LIMIT $3;
+
 -- name: DeleteChannels :exec
 DELETE FROM graph_channels
 WHERE id IN (sqlc.slice('ids')/*SLICE:ids*/);
@@ -585,6 +656,15 @@ INSERT INTO graph_channel_features (
     $1, $2
 );
 
+-- GetChannelFeaturesBatch gets features for a batch of channel IDs
+-- name: GetChannelFeaturesBatch :many
+SELECT
+    channel_id,
+    feature_bit
+FROM graph_channel_features
+WHERE channel_id IN (sqlc.slice('chan_ids')/*SLICE:chan_ids*/)
+ORDER BY channel_id, feature_bit;
+
 /* ─────────────────────────────────────────────
    graph_channel_extra_types table queries
    ─────────────────────────────────────────────
@@ -595,6 +675,16 @@ INSERT INTO graph_channel_extra_types (
     channel_id, type, value
 )
 VALUES ($1, $2, $3);
+
+-- GetChannelExtrasBatch gets extra TLV fields for a batch of channel IDs
+-- name: GetChannelExtrasBatch :many
+SELECT
+    channel_id,
+    type,
+    value
+FROM graph_channel_extra_types
+WHERE channel_id IN (sqlc.slice('chan_ids')/*SLICE:chan_ids*/)
+ORDER BY channel_id, type;
 
 /* ─────────────────────────────────────────────
    graph_channel_policies table queries

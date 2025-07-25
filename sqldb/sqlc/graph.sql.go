@@ -701,6 +701,50 @@ func (q *Queries) GetChannelBySCIDWithPolicies(ctx context.Context, arg GetChann
 	return i, err
 }
 
+const getChannelExtrasBatch = `-- name: GetChannelExtrasBatch :many
+SELECT
+    channel_id,
+    type,
+    value
+FROM graph_channel_extra_types
+WHERE channel_id IN (/*SLICE:chan_ids*/?)
+ORDER BY channel_id, type
+`
+
+// GetChannelExtrasBatch gets extra TLV fields for a batch of channel IDs
+func (q *Queries) GetChannelExtrasBatch(ctx context.Context, chanIds []int64) ([]GraphChannelExtraType, error) {
+	query := getChannelExtrasBatch
+	var queryParams []interface{}
+	if len(chanIds) > 0 {
+		for _, v := range chanIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:chan_ids*/?", makeQueryParams(len(queryParams), len(chanIds)), 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:chan_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GraphChannelExtraType
+	for rows.Next() {
+		var i GraphChannelExtraType
+		if err := rows.Scan(&i.ChannelID, &i.Type, &i.Value); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getChannelFeaturesAndExtras = `-- name: GetChannelFeaturesAndExtras :many
 SELECT
     cf.channel_id,
@@ -747,6 +791,49 @@ func (q *Queries) GetChannelFeaturesAndExtras(ctx context.Context, channelID int
 			&i.ExtraKey,
 			&i.Value,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getChannelFeaturesBatch = `-- name: GetChannelFeaturesBatch :many
+SELECT
+    channel_id,
+    feature_bit
+FROM graph_channel_features
+WHERE channel_id IN (/*SLICE:chan_ids*/?)
+ORDER BY channel_id, feature_bit
+`
+
+// GetChannelFeaturesBatch gets features for a batch of channel IDs
+func (q *Queries) GetChannelFeaturesBatch(ctx context.Context, chanIds []int64) ([]GraphChannelFeature, error) {
+	query := getChannelFeaturesBatch
+	var queryParams []interface{}
+	if len(chanIds) > 0 {
+		for _, v := range chanIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:chan_ids*/?", makeQueryParams(len(queryParams), len(chanIds)), 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:chan_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GraphChannelFeature
+	for rows.Next() {
+		var i GraphChannelFeature
+		if err := rows.Scan(&i.ChannelID, &i.FeatureBit); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -840,6 +927,55 @@ func (q *Queries) GetChannelPolicyExtraTypes(ctx context.Context, arg GetChannel
 			&i.Type,
 			&i.Value,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getChannelPolicyExtraTypesBatch = `-- name: GetChannelPolicyExtraTypesBatch :many
+SELECT
+    channel_policy_id as policy_id,
+    type,
+    value
+FROM graph_channel_policy_extra_types
+WHERE channel_policy_id IN (/*SLICE:policy_ids*/?)
+ORDER BY channel_policy_id, type
+`
+
+type GetChannelPolicyExtraTypesBatchRow struct {
+	PolicyID int64
+	Type     int64
+	Value    []byte
+}
+
+func (q *Queries) GetChannelPolicyExtraTypesBatch(ctx context.Context, policyIds []int64) ([]GetChannelPolicyExtraTypesBatchRow, error) {
+	query := getChannelPolicyExtraTypesBatch
+	var queryParams []interface{}
+	if len(policyIds) > 0 {
+		for _, v := range policyIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:policy_ids*/?", makeQueryParams(len(queryParams), len(policyIds)), 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:policy_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetChannelPolicyExtraTypesBatchRow
+	for rows.Next() {
+		var i GetChannelPolicyExtraTypesBatchRow
+		if err := rows.Scan(&i.PolicyID, &i.Type, &i.Value); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1438,34 +1574,73 @@ func (q *Queries) GetExtraNodeTypes(ctx context.Context, nodeID int64) ([]GraphN
 	return items, nil
 }
 
-const getNodeAddressesByPubKey = `-- name: GetNodeAddressesByPubKey :many
-SELECT a.type, a.address
-FROM graph_nodes n
-LEFT JOIN graph_node_addresses a ON a.node_id = n.id
-WHERE n.pub_key = $1 AND n.version = $2
-ORDER BY a.type ASC, a.position ASC
+const getNodeAddresses = `-- name: GetNodeAddresses :many
+SELECT type, address
+FROM graph_node_addresses
+WHERE node_id = $1
+ORDER BY type ASC, position ASC
 `
 
-type GetNodeAddressesByPubKeyParams struct {
-	PubKey  []byte
-	Version int16
+type GetNodeAddressesRow struct {
+	Type    int16
+	Address string
 }
 
-type GetNodeAddressesByPubKeyRow struct {
-	Type    sql.NullInt16
-	Address sql.NullString
-}
-
-func (q *Queries) GetNodeAddressesByPubKey(ctx context.Context, arg GetNodeAddressesByPubKeyParams) ([]GetNodeAddressesByPubKeyRow, error) {
-	rows, err := q.db.QueryContext(ctx, getNodeAddressesByPubKey, arg.PubKey, arg.Version)
+func (q *Queries) GetNodeAddresses(ctx context.Context, nodeID int64) ([]GetNodeAddressesRow, error) {
+	rows, err := q.db.QueryContext(ctx, getNodeAddresses, nodeID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []GetNodeAddressesByPubKeyRow
+	var items []GetNodeAddressesRow
 	for rows.Next() {
-		var i GetNodeAddressesByPubKeyRow
+		var i GetNodeAddressesRow
 		if err := rows.Scan(&i.Type, &i.Address); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getNodeAddressesBatch = `-- name: GetNodeAddressesBatch :many
+SELECT node_id, type, position, address
+FROM graph_node_addresses
+WHERE node_id IN (/*SLICE:ids*/?)
+ORDER BY node_id, type, position
+`
+
+func (q *Queries) GetNodeAddressesBatch(ctx context.Context, ids []int64) ([]GraphNodeAddress, error) {
+	query := getNodeAddressesBatch
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", makeQueryParams(len(queryParams), len(ids)), 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GraphNodeAddress
+	for rows.Next() {
+		var i GraphNodeAddress
+		if err := rows.Scan(
+			&i.NodeID,
+			&i.Type,
+			&i.Position,
+			&i.Address,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1506,6 +1681,46 @@ func (q *Queries) GetNodeByPubKey(ctx context.Context, arg GetNodeByPubKeyParams
 	return i, err
 }
 
+const getNodeExtraFieldsBatch = `-- name: GetNodeExtraFieldsBatch :many
+SELECT node_id, type, value
+FROM graph_node_extra_types
+WHERE node_id IN (/*SLICE:ids*/?)
+ORDER BY node_id, type
+`
+
+func (q *Queries) GetNodeExtraFieldsBatch(ctx context.Context, ids []int64) ([]GraphNodeExtraType, error) {
+	query := getNodeExtraFieldsBatch
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", makeQueryParams(len(queryParams), len(ids)), 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GraphNodeExtraType
+	for rows.Next() {
+		var i GraphNodeExtraType
+		if err := rows.Scan(&i.NodeID, &i.Type, &i.Value); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getNodeFeatures = `-- name: GetNodeFeatures :many
 SELECT node_id, feature_bit
 FROM graph_node_features
@@ -1514,6 +1729,46 @@ WHERE node_id = $1
 
 func (q *Queries) GetNodeFeatures(ctx context.Context, nodeID int64) ([]GraphNodeFeature, error) {
 	rows, err := q.db.QueryContext(ctx, getNodeFeatures, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GraphNodeFeature
+	for rows.Next() {
+		var i GraphNodeFeature
+		if err := rows.Scan(&i.NodeID, &i.FeatureBit); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getNodeFeaturesBatch = `-- name: GetNodeFeaturesBatch :many
+SELECT node_id, feature_bit
+FROM graph_node_features
+WHERE node_id IN (/*SLICE:ids*/?)
+ORDER BY node_id, feature_bit
+`
+
+func (q *Queries) GetNodeFeaturesBatch(ctx context.Context, ids []int64) ([]GraphNodeFeature, error) {
+	query := getNodeFeaturesBatch
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", makeQueryParams(len(queryParams), len(ids)), 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
 	if err != nil {
 		return nil, err
 	}
@@ -2216,6 +2471,135 @@ func (q *Queries) ListChannelsPaginated(ctx context.Context, arg ListChannelsPag
 			&i.BitcoinKey1,
 			&i.BitcoinKey2,
 			&i.Outpoint,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChannelsWithPoliciesForCachePaginated = `-- name: ListChannelsWithPoliciesForCachePaginated :many
+SELECT
+    c.id as id,
+    c.scid as scid,
+    c.capacity AS capacity,
+
+    -- Join node pubkeys
+    n1.pub_key AS node1_pubkey,
+    n2.pub_key AS node2_pubkey,
+
+    -- Node 1 policy
+    cp1.timelock AS policy_1_timelock,
+    cp1.fee_ppm AS policy_1_fee_ppm,
+    cp1.base_fee_msat AS policy_1_base_fee_msat,
+    cp1.min_htlc_msat AS policy_1_min_htlc_msat,
+    cp1.max_htlc_msat AS policy_1_max_htlc_msat,
+    cp1.disabled AS policy_1_disabled,
+    cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
+    cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
+    cp1.message_flags AS policy1_message_flags,
+    cp1.channel_flags AS policy1_channel_flags,
+
+    -- Node 2 policy
+    cp2.timelock AS policy_2_timelock,
+    cp2.fee_ppm AS policy_2_fee_ppm,
+    cp2.base_fee_msat AS policy_2_base_fee_msat,
+    cp2.min_htlc_msat AS policy_2_min_htlc_msat,
+    cp2.max_htlc_msat AS policy_2_max_htlc_msat,
+    cp2.disabled AS policy_2_disabled,
+    cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
+    cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
+    cp2.message_flags AS policy2_message_flags,
+    cp2.channel_flags AS policy2_channel_flags
+
+FROM graph_channels c
+         JOIN graph_nodes n1 ON c.node_id_1 = n1.id
+         JOIN graph_nodes n2 ON c.node_id_2 = n2.id
+         LEFT JOIN graph_channel_policies cp1
+                   ON cp1.channel_id = c.id AND cp1.node_id = c.node_id_1 AND cp1.version = c.version
+         LEFT JOIN graph_channel_policies cp2
+                   ON cp2.channel_id = c.id AND cp2.node_id = c.node_id_2 AND cp2.version = c.version
+WHERE c.version = $1 AND c.id > $2
+ORDER BY c.id
+LIMIT $3
+`
+
+type ListChannelsWithPoliciesForCachePaginatedParams struct {
+	Version int16
+	ID      int64
+	Limit   int32
+}
+
+type ListChannelsWithPoliciesForCachePaginatedRow struct {
+	ID                             int64
+	Scid                           []byte
+	Capacity                       sql.NullInt64
+	Node1Pubkey                    []byte
+	Node2Pubkey                    []byte
+	Policy1Timelock                sql.NullInt32
+	Policy1FeePpm                  sql.NullInt64
+	Policy1BaseFeeMsat             sql.NullInt64
+	Policy1MinHtlcMsat             sql.NullInt64
+	Policy1MaxHtlcMsat             sql.NullInt64
+	Policy1Disabled                sql.NullBool
+	Policy1InboundBaseFeeMsat      sql.NullInt64
+	Policy1InboundFeeRateMilliMsat sql.NullInt64
+	Policy1MessageFlags            sql.NullInt16
+	Policy1ChannelFlags            sql.NullInt16
+	Policy2Timelock                sql.NullInt32
+	Policy2FeePpm                  sql.NullInt64
+	Policy2BaseFeeMsat             sql.NullInt64
+	Policy2MinHtlcMsat             sql.NullInt64
+	Policy2MaxHtlcMsat             sql.NullInt64
+	Policy2Disabled                sql.NullBool
+	Policy2InboundBaseFeeMsat      sql.NullInt64
+	Policy2InboundFeeRateMilliMsat sql.NullInt64
+	Policy2MessageFlags            sql.NullInt16
+	Policy2ChannelFlags            sql.NullInt16
+}
+
+func (q *Queries) ListChannelsWithPoliciesForCachePaginated(ctx context.Context, arg ListChannelsWithPoliciesForCachePaginatedParams) ([]ListChannelsWithPoliciesForCachePaginatedRow, error) {
+	rows, err := q.db.QueryContext(ctx, listChannelsWithPoliciesForCachePaginated, arg.Version, arg.ID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListChannelsWithPoliciesForCachePaginatedRow
+	for rows.Next() {
+		var i ListChannelsWithPoliciesForCachePaginatedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Scid,
+			&i.Capacity,
+			&i.Node1Pubkey,
+			&i.Node2Pubkey,
+			&i.Policy1Timelock,
+			&i.Policy1FeePpm,
+			&i.Policy1BaseFeeMsat,
+			&i.Policy1MinHtlcMsat,
+			&i.Policy1MaxHtlcMsat,
+			&i.Policy1Disabled,
+			&i.Policy1InboundBaseFeeMsat,
+			&i.Policy1InboundFeeRateMilliMsat,
+			&i.Policy1MessageFlags,
+			&i.Policy1ChannelFlags,
+			&i.Policy2Timelock,
+			&i.Policy2FeePpm,
+			&i.Policy2BaseFeeMsat,
+			&i.Policy2MinHtlcMsat,
+			&i.Policy2MaxHtlcMsat,
+			&i.Policy2Disabled,
+			&i.Policy2InboundBaseFeeMsat,
+			&i.Policy2InboundFeeRateMilliMsat,
+			&i.Policy2MessageFlags,
+			&i.Policy2ChannelFlags,
 		); err != nil {
 			return nil, err
 		}

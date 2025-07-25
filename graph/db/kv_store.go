@@ -406,7 +406,7 @@ func (c *KVStore) AddrsForNode(ctx context.Context,
 // callback.
 func (c *KVStore) ForEachChannel(_ context.Context,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
-		*models.ChannelEdgePolicy) error, reset func()) error {
+	*models.ChannelEdgePolicy) error, reset func()) error {
 
 	return forEachChannel(c.db, cb, reset)
 }
@@ -444,10 +444,12 @@ func forEachChannel(db kvdb.Backend, cb func(*models.ChannelEdgeInfo,
 
 		// Load edge index, recombine each channel with the policies
 		// loaded above and invoke the callback.
-		return kvdb.ForAll(
+		count := 0
+		err = kvdb.ForAll(
 			edgeIndex, func(k, edgeInfoBytes []byte) error {
 				var chanID [8]byte
 				copy(chanID[:], k)
+				count++
 
 				edgeInfoReader := bytes.NewReader(edgeInfoBytes)
 				info, err := deserializeChanEdgeInfo(
@@ -470,6 +472,12 @@ func forEachChannel(db kvdb.Backend, cb func(*models.ChannelEdgeInfo,
 				return cb(&info, policy1, policy2)
 			},
 		)
+		if err != nil {
+			return err
+		}
+		log.Infof("ELLE: had %d edges in the edge index", count)
+
+		return nil
 	}, reset)
 }
 
@@ -3174,7 +3182,7 @@ func (c *KVStore) HasLightningNode(_ context.Context,
 // function's View/Update call which will then apply to the whole transaction.
 func nodeTraversal(tx kvdb.RTx, nodePub []byte, db kvdb.Backend,
 	cb func(kvdb.RTx, *models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
-		*models.ChannelEdgePolicy) error, reset func()) error {
+	*models.ChannelEdgePolicy) error, reset func()) error {
 
 	traversal := func(tx kvdb.RTx) error {
 		edges := tx.ReadBucket(edgeBucket)
@@ -3263,7 +3271,7 @@ func nodeTraversal(tx kvdb.RTx, nodePub []byte, db kvdb.Backend,
 // Unknown policies are passed into the callback as nil values.
 func (c *KVStore) ForEachNodeChannel(_ context.Context, nodePub route.Vertex,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
-		*models.ChannelEdgePolicy) error, reset func()) error {
+	*models.ChannelEdgePolicy) error, reset func()) error {
 
 	return nodeTraversal(
 		nil, nodePub[:], c.db, func(_ kvdb.RTx,
@@ -3281,7 +3289,7 @@ func (c *KVStore) ForEachNodeChannel(_ context.Context, nodePub route.Vertex,
 // peer's node information.
 func (c *KVStore) ForEachSourceNodeChannel(_ context.Context,
 	cb func(chanPoint wire.OutPoint, havePolicy bool,
-		otherNode *models.LightningNode) error, reset func()) error {
+	otherNode *models.LightningNode) error, reset func()) error {
 
 	return kvdb.View(c.db, func(tx kvdb.RTx) error {
 		nodes := tx.ReadBucket(nodeBucket)
@@ -3331,7 +3339,7 @@ func (c *KVStore) ForEachSourceNodeChannel(_ context.Context,
 // NOTE: the reset function is only meaningful if the tx param is nil.
 func (c *KVStore) forEachNodeChannelTx(tx kvdb.RTx,
 	nodePub route.Vertex, cb func(kvdb.RTx, *models.ChannelEdgeInfo,
-		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error,
+	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error,
 	reset func()) error {
 
 	return nodeTraversal(tx, nodePub[:], c.db, cb, reset)

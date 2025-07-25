@@ -3,6 +3,7 @@ package batch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/lightningnetwork/lnd/sqldb"
@@ -56,6 +57,7 @@ func (b *batch[Q]) run(ctx context.Context) {
 	for len(b.reqs) > 0 {
 		var failIdx = -1
 		err := b.db.ExecTx(ctx, b.txOpts, func(tx Q) error {
+			fmt.Println("doing batch with", len(b.reqs), "requests")
 			for i, req := range b.reqs {
 				err := req.Do(tx)
 				if err != nil {

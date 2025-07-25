@@ -23,7 +23,7 @@ type PagedQueryConfig struct {
 // DefaultPagedQueryConfig returns a default configuration
 func DefaultPagedQueryConfig() *PagedQueryConfig {
 	return &PagedQueryConfig{
-		PageSize: 1000,
+		PageSize: 10000,
 	}
 }
 
