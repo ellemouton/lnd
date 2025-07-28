@@ -26,8 +26,11 @@ import (
 // NOTE: this is currently not called from any code path. It is called via tests
 // only for now and will be called from the main lnd binary once the
 // migration is fully implemented and tested.
-func MigrateGraphToSQL(ctx context.Context, kvBackend kvdb.Backend,
-	sqlDB SQLQueries, chain chainhash.Hash) error {
+func MigrateGraphToSQL(ctx context.Context,
+	kvBackend kvdb.Backend, sqlDB SQLQueries, chain chainhash.Hash) error {
+
+	// TODO(elle): make configurable.
+	cfg := sqldb.DefaultPagedQueryConfig()
 
 	log.Infof("Starting migration of the graph store from KV to SQL")
 	t0 := time.Now()
@@ -43,7 +46,7 @@ func MigrateGraphToSQL(ctx context.Context, kvBackend kvdb.Backend,
 	}
 
 	// 1) Migrate all the nodes.
-	if err := migrateNodes(ctx, kvBackend, sqlDB); err != nil {
+	if err := migrateNodes(ctx, cfg, kvBackend, sqlDB); err != nil {
 		return fmt.Errorf("could not migrate nodes: %w", err)
 	}
 
@@ -108,8 +111,8 @@ func checkGraphExists(db kvdb.Backend) (bool, error) {
 // migrateNodes migrates all nodes from the KV backend to the SQL database.
 // This includes doing a sanity check after each migration to ensure that the
 // migrated node matches the original node.
-func migrateNodes(ctx context.Context, kvBackend kvdb.Backend,
-	sqlDB SQLQueries) error {
+func migrateNodes(ctx context.Context, cfg *sqldb.PagedQueryConfig,
+	kvBackend kvdb.Backend, sqlDB SQLQueries) error {
 
 	// Keep track of the number of nodes migrated and the number of
 	// nodes skipped due to errors.
@@ -192,7 +195,7 @@ func migrateNodes(ctx context.Context, kvBackend kvdb.Backend,
 				pub, id, dbNode.ID)
 		}
 
-		migratedNode, err := buildNode(ctx, sqlDB, &dbNode)
+		migratedNode, err := buildNode(ctx, cfg, sqlDB, &dbNode)
 		if err != nil {
 			return fmt.Errorf("could not build migrated node "+
 				"from dbNode(db id: %d, node pub: %x): %w",

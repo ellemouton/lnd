@@ -69,15 +69,18 @@ type SQLQueries interface {
 	DeleteNode(ctx context.Context, id int64) error
 
 	GetExtraNodeTypes(ctx context.Context, nodeID int64) ([]sqlc.GraphNodeExtraType, error)
+	GetNodeExtraTypesBatch(ctx context.Context, ids []int64) ([]sqlc.GraphNodeExtraType, error)
 	UpsertNodeExtraType(ctx context.Context, arg sqlc.UpsertNodeExtraTypeParams) error
 	DeleteExtraNodeType(ctx context.Context, arg sqlc.DeleteExtraNodeTypeParams) error
 
 	InsertNodeAddress(ctx context.Context, arg sqlc.InsertNodeAddressParams) error
 	GetNodeAddresses(ctx context.Context, nodeID int64) ([]sqlc.GetNodeAddressesRow, error)
+	GetNodeAddressesBatch(ctx context.Context, ids []int64) ([]sqlc.GraphNodeAddress, error)
 	DeleteNodeAddresses(ctx context.Context, nodeID int64) error
 
 	InsertNodeFeature(ctx context.Context, arg sqlc.InsertNodeFeatureParams) error
 	GetNodeFeatures(ctx context.Context, nodeID int64) ([]sqlc.GraphNodeFeature, error)
+	GetNodeFeaturesBatch(ctx context.Context, ids []int64) ([]sqlc.GraphNodeFeature, error)
 	GetNodeFeaturesByPubKey(ctx context.Context, arg sqlc.GetNodeFeaturesByPubKeyParams) ([]int32, error)
 	DeleteNodeFeature(ctx context.Context, arg sqlc.DeleteNodeFeatureParams) error
 
@@ -254,7 +257,9 @@ func (s *SQLStore) FetchLightningNode(ctx context.Context,
 	var node *models.LightningNode
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		var err error
-		_, node, err = getNodeByPubKey(ctx, db, pubKey)
+		_, node, err = getNodeByPubKey(
+			ctx, s.cfg.PaginationCfg, db, pubKey,
+		)
 
 		return err
 	}, sqldb.NoOpReset)
@@ -482,7 +487,9 @@ func (s *SQLStore) SourceNode(ctx context.Context) (*models.LightningNode,
 				err)
 		}
 
-		_, node, err = getNodeByPubKey(ctx, db, nodePub)
+		_, node, err = getNodeByPubKey(
+			ctx, s.cfg.PaginationCfg, db, nodePub,
+		)
 
 		return err
 	}, sqldb.NoOpReset)
@@ -552,7 +559,9 @@ func (s *SQLStore) NodeUpdatesInHorizon(startTime,
 		}
 
 		for _, dbNode := range dbNodes {
-			node, err := buildNode(ctx, db, &dbNode)
+			node, err := buildNode(
+				ctx, s.cfg.PaginationCfg, db, &dbNode,
+			)
 			if err != nil {
 				return fmt.Errorf("unable to build node: %w",
 					err)
@@ -776,7 +785,8 @@ func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
 				}
 
 				_, otherNode, err := getNodeByPubKey(
-					ctx, db, otherNodePub,
+					ctx, s.cfg.PaginationCfg, db,
+					otherNodePub,
 				)
 				if err != nil {
 					return fmt.Errorf("unable to fetch "+
@@ -806,14 +816,14 @@ func (s *SQLStore) ForEachNode(ctx context.Context,
 
 	var lastID int64 = 0
 	handleNode := func(db SQLQueries, dbNode sqlc.GraphNode) error {
-		node, err := buildNode(ctx, db, &dbNode)
+		node, err := buildNode(ctx, s.cfg.PaginationCfg, db, &dbNode)
 		if err != nil {
 			return fmt.Errorf("unable to build node(id=%d): %w",
 				dbNode.ID, err)
 		}
 
 		err = cb(
-			newSQLGraphNodeTx(db, s.cfg.ChainHash, dbNode.ID, node),
+			newSQLGraphNodeTx(db, s.cfg, dbNode.ID, node),
 		)
 		if err != nil {
 			return fmt.Errorf("callback failed for node(id=%d): %w",
@@ -858,24 +868,24 @@ func (s *SQLStore) ForEachNode(ctx context.Context,
 // sqlGraphNodeTx is an implementation of the NodeRTx interface backed by the
 // SQLStore and a SQL transaction.
 type sqlGraphNodeTx struct {
-	db    SQLQueries
-	id    int64
-	node  *models.LightningNode
-	chain chainhash.Hash
+	cfg  *SQLStoreConfig
+	db   SQLQueries
+	id   int64
+	node *models.LightningNode
 }
 
 // A compile-time constraint to ensure sqlGraphNodeTx implements the NodeRTx
 // interface.
 var _ NodeRTx = (*sqlGraphNodeTx)(nil)
 
-func newSQLGraphNodeTx(db SQLQueries, chain chainhash.Hash,
+func newSQLGraphNodeTx(db SQLQueries, cfg *SQLStoreConfig,
 	id int64, node *models.LightningNode) *sqlGraphNodeTx {
 
 	return &sqlGraphNodeTx{
-		db:    db,
-		chain: chain,
-		id:    id,
-		node:  node,
+		cfg:  cfg,
+		db:   db,
+		id:   id,
+		node: node,
 	}
 }
 
@@ -895,7 +905,7 @@ func (s *sqlGraphNodeTx) ForEachChannel(cb func(*models.ChannelEdgeInfo,
 
 	ctx := context.TODO()
 
-	return forEachNodeChannel(ctx, s.db, s.chain, s.id, cb)
+	return forEachNodeChannel(ctx, s.db, s.cfg.ChainHash, s.id, cb)
 }
 
 // FetchNode fetches the node with the given pub key under the same transaction
@@ -906,13 +916,15 @@ func (s *sqlGraphNodeTx) ForEachChannel(cb func(*models.ChannelEdgeInfo,
 func (s *sqlGraphNodeTx) FetchNode(nodePub route.Vertex) (NodeRTx, error) {
 	ctx := context.TODO()
 
-	id, node, err := getNodeByPubKey(ctx, s.db, nodePub)
+	id, node, err := getNodeByPubKey(
+		ctx, s.cfg.PaginationCfg, s.db, nodePub,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to fetch V1 node(%x): %w",
 			nodePub, err)
 	}
 
-	return newSQLGraphNodeTx(s.db, s.chain, id, node), nil
+	return newSQLGraphNodeTx(s.db, s.cfg, id, node), nil
 }
 
 // ForEachNodeDirectedChannel iterates through all channels of a given node,
@@ -1046,7 +1058,8 @@ func (s *SQLStore) ChanUpdatesInHorizon(startTime,
 			}
 
 			node1, node2, err := buildNodes(
-				ctx, db, row.GraphNode, row.GraphNode_2,
+				ctx, s.cfg.PaginationCfg, db, row.GraphNode,
+				row.GraphNode_2,
 			)
 			if err != nil {
 				return err
@@ -2205,7 +2218,8 @@ func (s *SQLStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 			row sqlc.GetChannelsBySCIDWithPoliciesRow) error {
 
 			node1, node2, err := buildNodes(
-				ctx, db, row.GraphNode, row.GraphNode_2,
+				ctx, s.cfg.PaginationCfg, db, row.GraphNode,
+				row.GraphNode_2,
 			)
 			if err != nil {
 				return fmt.Errorf("unable to fetch nodes: %w",
@@ -3308,8 +3322,9 @@ func updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 }
 
 // getNodeByPubKey attempts to look up a target node by its public key.
-func getNodeByPubKey(ctx context.Context, db SQLQueries,
-	pubKey route.Vertex) (int64, *models.LightningNode, error) {
+func getNodeByPubKey(ctx context.Context, cfg *sqldb.PagedQueryConfig,
+	db SQLQueries, pubKey route.Vertex) (int64, *models.LightningNode,
+	error) {
 
 	dbNode, err := db.GetNodeByPubKey(
 		ctx, sqlc.GetNodeByPubKeyParams{
@@ -3323,7 +3338,7 @@ func getNodeByPubKey(ctx context.Context, db SQLQueries,
 		return 0, nil, fmt.Errorf("unable to fetch node: %w", err)
 	}
 
-	node, err := buildNode(ctx, db, &dbNode)
+	node, err := buildNode(ctx, cfg, db, &dbNode)
 	if err != nil {
 		return 0, nil, fmt.Errorf("unable to build node: %w", err)
 	}
@@ -3344,11 +3359,45 @@ func buildCacheableChannelInfo(scid []byte, capacity int64, node1Pub,
 	}
 }
 
+// batchNodeData holds all the related data for a batch of nodes.
+type batchNodeData struct {
+	// features is a map from a DB node ID to the feature bits for that
+	// node.
+	features map[int64][]int
+
+	// addresses is a map from a DB node ID to the node's addresses.
+	addresses map[int64][]nodeAddress
+
+	// extraFields is a map from a DB node ID to the extra signed fields
+	// for that node.
+	extraFields map[int64]map[uint64][]byte
+}
+
+// nodeAddress holds the address type, position and address string for a
+// node. This is used to batch the fetching of node addresses.
+type nodeAddress struct {
+	addrType int16
+	position int32
+	address  string
+}
+
 // buildNode constructs a LightningNode instance from the given database node
 // record. The node's features, addresses and extra signed fields are also
 // fetched from the database and set on the node.
-func buildNode(ctx context.Context, db SQLQueries, dbNode *sqlc.GraphNode) (
-	*models.LightningNode, error) {
+func buildNode(ctx context.Context, cfg *sqldb.PagedQueryConfig, db SQLQueries,
+	dbNode *sqlc.GraphNode) (*models.LightningNode, error) {
+
+	data, err := batchLoadNodeData(ctx, cfg, db, []int64{dbNode.ID})
+	if err != nil {
+		return nil, fmt.Errorf("unable to batch load node data: %w",
+			err)
+	}
+
+	return buildNodeWithBatchData(dbNode, data)
+}
+
+func buildNodeWithBatchData(dbNode *sqlc.GraphNode,
+	batchData *batchNodeData) (*models.LightningNode, error) {
 
 	if dbNode.Version != int16(ProtocolV1) {
 		return nil, fmt.Errorf("unsupported node version: %d",
@@ -3382,38 +3431,111 @@ func buildNode(ctx context.Context, db SQLQueries, dbNode *sqlc.GraphNode) (
 		}
 	}
 
-	// Fetch the node's features.
-	node.Features, err = getNodeFeatures(ctx, db, dbNode.ID)
-	if err != nil {
-		return nil, fmt.Errorf("unable to fetch node(%d) "+
-			"features: %w", dbNode.ID, err)
+	// Use preloaded features.
+	if features, exists := batchData.features[dbNode.ID]; exists {
+		fv := lnwire.EmptyFeatureVector()
+		for _, bit := range features {
+			fv.Set(lnwire.FeatureBit(bit))
+		}
+		node.Features = fv
 	}
 
-	// Fetch the node's addresses.
-	node.Addresses, err = getNodeAddresses(ctx, db, dbNode.ID)
-	if err != nil {
-		return nil, fmt.Errorf("unable to fetch node(%d) "+
-			"addresses: %w", dbNode.ID, err)
+	// Use preloaded addresses.
+	addresses, exists := batchData.addresses[dbNode.ID]
+	if exists && len(addresses) > 0 {
+		node.Addresses, err = buildNodeAddresses(addresses)
+		if err != nil {
+			return nil, fmt.Errorf("unable to build addresses "+
+				"for node(%d): %w", dbNode.ID, err)
+		}
 	}
 
-	// Fetch the node's extra signed fields.
-	extraTLVMap, err := getNodeExtraSignedFields(ctx, db, dbNode.ID)
-	if err != nil {
-		return nil, fmt.Errorf("unable to fetch node(%d) "+
-			"extra signed fields: %w", dbNode.ID, err)
-	}
-
-	recs, err := lnwire.CustomRecords(extraTLVMap).Serialize()
-	if err != nil {
-		return nil, fmt.Errorf("unable to serialize extra signed "+
-			"fields: %w", err)
-	}
-
-	if len(recs) != 0 {
-		node.ExtraOpaqueData = recs
+	// Use preloaded extra fields.
+	if extraFields, exists := batchData.extraFields[dbNode.ID]; exists {
+		recs, err := lnwire.CustomRecords(extraFields).Serialize()
+		if err != nil {
+			return nil, fmt.Errorf("unable to serialize extra "+
+				"signed fields: %w", err)
+		}
+		if len(recs) != 0 {
+			node.ExtraOpaqueData = recs
+		}
 	}
 
 	return node, nil
+}
+
+func buildNodeAddresses(addresses []nodeAddress) ([]net.Addr, error) {
+	if len(addresses) == 0 {
+		return nil, nil
+	}
+
+	result := make([]net.Addr, 0, len(addresses))
+	for _, addr := range addresses {
+		netAddr, err := parseAddress(dbAddressType(addr.addrType), addr.address)
+		if err != nil {
+			return nil, fmt.Errorf("unable to parse address %s of type %d: %w",
+				addr.address, addr.addrType, err)
+		}
+		if netAddr != nil {
+			result = append(result, netAddr)
+		}
+	}
+
+	// If we have no valid addresses, return nil instead of empty slice
+	if len(result) == 0 {
+		return nil, nil
+	}
+
+	return result, nil
+}
+
+func parseAddress(addrType dbAddressType, address string) (net.Addr, error) {
+	switch addrType {
+	case addressTypeIPv4:
+		tcp, err := net.ResolveTCPAddr("tcp4", address)
+		if err != nil {
+			return nil, err
+		}
+		tcp.IP = tcp.IP.To4()
+		return tcp, nil
+
+	case addressTypeIPv6:
+		tcp, err := net.ResolveTCPAddr("tcp6", address)
+		if err != nil {
+			return nil, err
+		}
+		return tcp, nil
+
+	case addressTypeTorV3, addressTypeTorV2:
+		service, portStr, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, fmt.Errorf("unable to split tor address: %v", address)
+		}
+
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			return nil, err
+		}
+
+		return &tor.OnionAddr{
+			OnionService: service,
+			Port:         port,
+		}, nil
+
+	case addressTypeOpaque:
+		opaque, err := hex.DecodeString(address)
+		if err != nil {
+			return nil, fmt.Errorf("unable to decode opaque address: %v", address)
+		}
+
+		return &lnwire.OpaqueAddrs{
+			Payload: opaque,
+		}, nil
+
+	default:
+		return nil, fmt.Errorf("unknown address type: %v", addrType)
+	}
 }
 
 // getNodeFeatures fetches the feature bits and constructs the feature vector
@@ -4333,16 +4455,16 @@ func buildChanPolicy(dbPolicy sqlc.GraphChannelPolicy, channelID uint64,
 
 // buildNodes builds the models.LightningNode instances for the
 // given row which is expected to be a sqlc type that contains node information.
-func buildNodes(ctx context.Context, db SQLQueries, dbNode1,
-	dbNode2 sqlc.GraphNode) (*models.LightningNode, *models.LightningNode,
-	error) {
+func buildNodes(ctx context.Context, cfg *sqldb.PagedQueryConfig, db SQLQueries,
+	dbNode1, dbNode2 sqlc.GraphNode) (*models.LightningNode,
+	*models.LightningNode, error) {
 
-	node1, err := buildNode(ctx, db, &dbNode1)
+	node1, err := buildNode(ctx, cfg, db, &dbNode1)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	node2, err := buildNode(ctx, db, &dbNode2)
+	node2, err := buildNode(ctx, cfg, db, &dbNode2)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -4669,4 +4791,129 @@ func channelIDToBytes(channelID uint64) []byte {
 	byteOrder.PutUint64(chanIDB[:], channelID)
 
 	return chanIDB[:]
+}
+
+// batchLoadNodeData loads all related data for a batch of node IDs
+func batchLoadNodeData(ctx context.Context, cfg *sqldb.PagedQueryConfig,
+	db SQLQueries, nodeIDs []int64) (*batchNodeData, error) {
+
+	// Batch load the node features.
+	features, err := batchLoadNodeFeaturesHelper(ctx, cfg, db, nodeIDs)
+	if err != nil {
+		return nil, fmt.Errorf("unable to batch load node "+
+			"features: %w", err)
+	}
+
+	// Batch load the node addresses.
+	addrs, err := batchLoadNodeAddressesHelper(ctx, cfg, db, nodeIDs)
+	if err != nil {
+		return nil, fmt.Errorf("unable to batch load node "+
+			"addresses: %w", err)
+	}
+
+	// Batch load the node extra signed fields.
+	extraTypes, err := batchLoadNodeExtraFieldsHelper(ctx, cfg, db, nodeIDs)
+	if err != nil {
+		return nil, fmt.Errorf("unable to batch load node extra "+
+			"signed fields: %w", err)
+	}
+
+	return &batchNodeData{
+		features:    features,
+		addresses:   addrs,
+		extraFields: extraTypes,
+	}, nil
+}
+
+// batchLoadNodeFeaturesHelper loads node features for a batch of node IDs
+// using ExecutePagedQuery wrapper around the GetNodeFeaturesBatch query.
+func batchLoadNodeFeaturesHelper(ctx context.Context,
+	cfg *sqldb.PagedQueryConfig, db SQLQueries,
+	nodeIDs []int64) (map[int64][]int, error) {
+
+	features := make(map[int64][]int)
+
+	return features, sqldb.ExecutePagedQuery(
+		ctx, cfg, nodeIDs,
+		func(id int64) int64 {
+			return id
+		},
+		func(ctx context.Context, ids []int64) ([]sqlc.GraphNodeFeature,
+			error) {
+
+			return db.GetNodeFeaturesBatch(ctx, ids)
+		},
+		func(ctx context.Context, feature sqlc.GraphNodeFeature) error {
+			features[feature.NodeID] = append(
+				features[feature.NodeID],
+				int(feature.FeatureBit),
+			)
+
+			return nil
+		},
+	)
+}
+
+// batchLoadNodeAddressesHelper loads node addresses using ExecutePagedQuery
+func batchLoadNodeAddressesHelper(ctx context.Context,
+	cfg *sqldb.PagedQueryConfig, db SQLQueries,
+	nodeIDs []int64) (map[int64][]nodeAddress, error) {
+
+	addrs := make(map[int64][]nodeAddress)
+
+	return addrs, sqldb.ExecutePagedQuery(
+		ctx, cfg, nodeIDs,
+		func(id int64) int64 {
+			return id
+		},
+		func(ctx context.Context, ids []int64) ([]sqlc.GraphNodeAddress,
+			error) {
+
+			return db.GetNodeAddressesBatch(ctx, ids)
+		},
+		func(ctx context.Context, addr sqlc.GraphNodeAddress) error {
+			addrs[addr.NodeID] = append(
+				addrs[addr.NodeID], nodeAddress{
+					addrType: addr.Type,
+					position: addr.Position,
+					address:  addr.Address,
+				},
+			)
+			return nil
+		},
+	)
+}
+
+// batchLoadNodeExtraTypesHelper loads node extra type bytes for a batch of
+// node IDs using ExecutePagedQuery wrapper around the GetNodeExtraTypesBatch
+// query.
+func batchLoadNodeExtraFieldsHelper(ctx context.Context,
+	cfg *sqldb.PagedQueryConfig, db SQLQueries,
+	nodeIDs []int64) (map[int64]map[uint64][]byte, error) {
+
+	extraFields := make(map[int64]map[uint64][]byte)
+
+	callback := func(ctx context.Context,
+		field sqlc.GraphNodeExtraType) error {
+
+		if extraFields[field.NodeID] == nil {
+			extraFields[field.NodeID] = make(map[uint64][]byte)
+		}
+		extraFields[field.NodeID][uint64(field.Type)] = field.Value
+
+		return nil
+	}
+
+	return extraFields, sqldb.ExecutePagedQuery(
+		ctx, cfg, nodeIDs,
+		func(id int64) int64 {
+			return id
+		},
+		func(ctx context.Context, ids []int64) (
+			[]sqlc.GraphNodeExtraType, error) {
+
+			return db.GetNodeExtraTypesBatch(ctx, ids)
+		},
+		callback,
+	)
 }
