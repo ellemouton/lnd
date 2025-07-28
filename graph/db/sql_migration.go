@@ -30,7 +30,10 @@ func MigrateGraphToSQL(ctx context.Context,
 	kvBackend kvdb.Backend, sqlDB SQLQueries, chain chainhash.Hash) error {
 
 	// TODO(elle): make configurable.
-	cfg := sqldb.DefaultPagedQueryConfig()
+	cfg := &SQLStoreConfig{
+		ChainHash:     chain,
+		PaginationCfg: sqldb.DefaultPagedQueryConfig(),
+	}
 
 	log.Infof("Starting migration of the graph store from KV to SQL")
 	t0 := time.Now()
@@ -46,7 +49,8 @@ func MigrateGraphToSQL(ctx context.Context,
 	}
 
 	// 1) Migrate all the nodes.
-	if err := migrateNodes(ctx, cfg, kvBackend, sqlDB); err != nil {
+	err = migrateNodes(ctx, cfg.PaginationCfg, kvBackend, sqlDB)
+	if err != nil {
 		return fmt.Errorf("could not migrate nodes: %w", err)
 	}
 
@@ -56,7 +60,7 @@ func MigrateGraphToSQL(ctx context.Context,
 	}
 
 	// 3) Migrate all the channels and channel policies.
-	err = migrateChannelsAndPolicies(ctx, kvBackend, sqlDB, chain)
+	err = migrateChannelsAndPolicies(ctx, cfg, kvBackend, sqlDB)
 	if err != nil {
 		return fmt.Errorf("could not migrate channels and policies: %w",
 			err)
@@ -323,8 +327,8 @@ func migrateSourceNode(ctx context.Context, kvdb kvdb.Backend,
 
 // migrateChannelsAndPolicies migrates all channels and their policies
 // from the KV backend to the SQL database.
-func migrateChannelsAndPolicies(ctx context.Context, kvBackend kvdb.Backend,
-	sqlDB SQLQueries, chain chainhash.Hash) error {
+func migrateChannelsAndPolicies(ctx context.Context, cfg *SQLStoreConfig,
+	kvBackend kvdb.Backend, sqlDB SQLQueries) error {
 
 	var (
 		channelCount       uint64
@@ -376,9 +380,10 @@ func migrateChannelsAndPolicies(ctx context.Context, kvBackend kvdb.Backend,
 		// info, but rather rely on the chain hash LND is running with.
 		// So this is our way of ensuring that LND is running on the
 		// correct network at migration time.
-		if channel.ChainHash != chain {
+		if channel.ChainHash != cfg.ChainHash {
 			return fmt.Errorf("channel %d has chain hash %s, "+
-				"expected %s", scid, channel.ChainHash, chain)
+				"expected %s", scid, channel.ChainHash,
+				cfg.ChainHash)
 		}
 
 		// Sanity check to ensure that the channel has valid extra
@@ -414,7 +419,8 @@ func migrateChannelsAndPolicies(ctx context.Context, kvBackend kvdb.Backend,
 
 		channelCount++
 		err = migrateSingleChannel(
-			ctx, sqlDB, channel, policy1, policy2, migChanPolicy,
+			ctx, cfg, sqlDB, channel, policy1, policy2,
+			migChanPolicy,
 		)
 		if err != nil {
 			return fmt.Errorf("could not migrate channel %d: %w",
@@ -449,7 +455,8 @@ func migrateChannelsAndPolicies(ctx context.Context, kvBackend kvdb.Backend,
 	return nil
 }
 
-func migrateSingleChannel(ctx context.Context, sqlDB SQLQueries,
+func migrateSingleChannel(ctx context.Context, cfg *SQLStoreConfig,
+	sqlDB SQLQueries,
 	channel *models.ChannelEdgeInfo,
 	policy1, policy2 *models.ChannelEdgePolicy,
 	migChanPolicy func(*models.ChannelEdgePolicy) error) error {
@@ -509,7 +516,7 @@ func migrateSingleChannel(ctx context.Context, sqlDB SQLQueries,
 	}
 
 	migChan, migPol1, migPol2, err := getAndBuildChanAndPolicies(
-		ctx, sqlDB, row, channel.ChainHash,
+		ctx, cfg, sqlDB, row,
 	)
 	if err != nil {
 		return fmt.Errorf("could not build migrated channel and "+
@@ -703,9 +710,9 @@ func migratePruneLog(ctx context.Context, kvBackend kvdb.Backend,
 // getAndBuildChanAndPolicies is a helper that builds the channel edge info
 // and policies from the given row returned by the SQL query
 // GetChannelBySCIDWithPolicies.
-func getAndBuildChanAndPolicies(ctx context.Context, db SQLQueries,
-	row sqlc.GetChannelBySCIDWithPoliciesRow,
-	chain chainhash.Hash) (*models.ChannelEdgeInfo,
+func getAndBuildChanAndPolicies(ctx context.Context, cfg *SQLStoreConfig,
+	db SQLQueries,
+	row sqlc.GetChannelBySCIDWithPoliciesRow) (*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error) {
 
 	node1, node2, err := buildNodeVertices(
@@ -716,8 +723,7 @@ func getAndBuildChanAndPolicies(ctx context.Context, db SQLQueries,
 	}
 
 	edge, err := getAndBuildEdgeInfo(
-		ctx, db, chain, row.GraphChannel.ID, row.GraphChannel, node1,
-		node2,
+		ctx, cfg, db, row.GraphChannel, node1, node2,
 	)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("unable to build channel "+

@@ -115,7 +115,9 @@ type SQLQueries interface {
 	DeleteChannels(ctx context.Context, ids []int64) error
 
 	CreateChannelExtraType(ctx context.Context, arg sqlc.CreateChannelExtraTypeParams) error
+	GetChannelExtrasBatch(ctx context.Context, chanIds []int64) ([]sqlc.GraphChannelExtraType, error)
 	InsertChannelFeature(ctx context.Context, arg sqlc.InsertChannelFeatureParams) error
+	GetChannelFeaturesBatch(ctx context.Context, chanIds []int64) ([]sqlc.GraphChannelFeature, error)
 
 	/*
 		Channel Policy table queries.
@@ -126,6 +128,7 @@ type SQLQueries interface {
 
 	InsertChanPolicyExtraType(ctx context.Context, arg sqlc.InsertChanPolicyExtraTypeParams) error
 	GetChannelPolicyExtraTypes(ctx context.Context, arg sqlc.GetChannelPolicyExtraTypesParams) ([]sqlc.GetChannelPolicyExtraTypesRow, error)
+	GetChannelPolicyExtraTypesBatch(ctx context.Context, policyIds []int64) ([]sqlc.GetChannelPolicyExtraTypesBatchRow, error)
 	DeleteChannelPolicyExtraTypes(ctx context.Context, channelPolicyID int64) error
 
 	/*
@@ -763,7 +766,7 @@ func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
 		}
 
 		return forEachNodeChannel(
-			ctx, db, s.cfg.ChainHash, nodeID,
+			ctx, s.cfg, db, nodeID,
 			func(info *models.ChannelEdgeInfo,
 				outPolicy *models.ChannelEdgePolicy,
 				_ *models.ChannelEdgePolicy) error {
@@ -939,7 +942,7 @@ func (s *sqlGraphNodeTx) ForEachChannel(cb func(*models.ChannelEdgeInfo,
 
 	ctx := context.TODO()
 
-	return forEachNodeChannel(ctx, s.db, s.cfg.ChainHash, s.id, cb)
+	return forEachNodeChannel(ctx, s.cfg, s.db, s.id, cb)
 }
 
 // FetchNode fetches the node with the given pub key under the same transaction
@@ -1036,9 +1039,7 @@ func (s *SQLStore) ForEachNodeChannel(ctx context.Context, nodePub route.Vertex,
 			return fmt.Errorf("unable to fetch node: %w", err)
 		}
 
-		return forEachNodeChannel(
-			ctx, db, s.cfg.ChainHash, dbNode.ID, cb,
-		)
+		return forEachNodeChannel(ctx, s.cfg, db, dbNode.ID, cb)
 	}, reset)
 }
 
@@ -1100,7 +1101,7 @@ func (s *SQLStore) ChanUpdatesInHorizon(startTime,
 			}
 
 			channel, err := getAndBuildEdgeInfo(
-				ctx, db, s.cfg.ChainHash, row.GraphChannel.ID,
+				ctx, s.cfg, db,
 				row.GraphChannel, node1.PubKeyBytes,
 				node2.PubKeyBytes,
 			)
@@ -1207,8 +1208,7 @@ func (s *SQLStore) ForEachNodeCached(ctx context.Context,
 				}
 
 				e, err := getAndBuildEdgeInfo(
-					ctx, db, s.cfg.ChainHash,
-					row.GraphChannel.ID, row.GraphChannel,
+					ctx, s.cfg, db, row.GraphChannel,
 					node1, node2,
 				)
 				if err != nil {
@@ -1400,7 +1400,7 @@ func (s *SQLStore) ForEachChannel(ctx context.Context,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error, reset func()) error {
 
-	handleChannel := func(db SQLQueries,
+	handleChannel := func(db SQLQueries, batchData *batchChannelData,
 		row sqlc.ListChannelsWithPoliciesPaginatedRow) error {
 
 		node1, node2, err := buildNodeVertices(
@@ -1411,9 +1411,9 @@ func (s *SQLStore) ForEachChannel(ctx context.Context,
 				err)
 		}
 
-		edge, err := getAndBuildEdgeInfo(
-			ctx, db, s.cfg.ChainHash, row.GraphChannel.ID,
-			row.GraphChannel, node1, node2,
+		edge, err := buildEdgeInfoWithBatchData(
+			s.cfg.ChainHash, row.GraphChannel, node1, node2,
+			batchData,
 		)
 		if err != nil {
 			return fmt.Errorf("unable to build channel info: %w",
@@ -1426,8 +1426,8 @@ func (s *SQLStore) ForEachChannel(ctx context.Context,
 				"policies: %w", err)
 		}
 
-		p1, p2, err := getAndBuildChanPolicies(
-			ctx, db, dbPol1, dbPol2, edge.ChannelID, node1, node2,
+		p1, p2, err := buildChanPoliciesWithBatchData(
+			dbPol1, dbPol2, edge.ChannelID, node1, node2, batchData,
 		)
 		if err != nil {
 			return fmt.Errorf("unable to build channel "+
@@ -1462,8 +1462,44 @@ func (s *SQLStore) ForEachChannel(ctx context.Context,
 				break
 			}
 
+			// Collect the channel & policy IDs that we want to
+			// do a batch collection for.
+			var (
+				channelIDs = make([]int64, len(rows))
+				policyIDs  []int64
+			)
+			for i, row := range rows {
+				channelIDs[i] = row.GraphChannel.ID
+
+				// Extract policy IDs from the row
+				dbPol1, dbPol2, err := extractChannelPolicies(
+					row,
+				)
+				if err != nil {
+					return fmt.Errorf("unable to extract "+
+						"channel policies: %w", err)
+				}
+
+				if dbPol1 != nil {
+					policyIDs = append(policyIDs, dbPol1.ID)
+				}
+
+				if dbPol2 != nil {
+					policyIDs = append(policyIDs, dbPol2.ID)
+				}
+			}
+
+			batchData, err := batchLoadChannelData(
+				ctx, s.cfg.PaginationCfg, db, channelIDs,
+				policyIDs,
+			)
+			if err != nil {
+				return fmt.Errorf("unable to batch load "+
+					"channel data: %w", err)
+			}
+
 			for _, row := range rows {
-				err := handleChannel(db, row)
+				err := handleChannel(db, batchData, row)
 				if err != nil {
 					return err
 				}
@@ -1801,7 +1837,7 @@ func (s *SQLStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 			}
 
 			info, err := getAndBuildEdgeInfo(
-				ctx, db, s.cfg.ChainHash, row.GraphChannel.ID,
+				ctx, s.cfg, db,
 				row.GraphChannel, node1, node2,
 			)
 			if err != nil {
@@ -1954,8 +1990,7 @@ func (s *SQLStore) FetchChannelEdgesByID(chanID uint64) (
 		}
 
 		edge, err = getAndBuildEdgeInfo(
-			ctx, db, s.cfg.ChainHash, row.GraphChannel.ID,
-			row.GraphChannel, node1, node2,
+			ctx, s.cfg, db, row.GraphChannel, node1, node2,
 		)
 		if err != nil {
 			return fmt.Errorf("unable to build channel info: %w",
@@ -2026,8 +2061,7 @@ func (s *SQLStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 		}
 
 		edge, err = getAndBuildEdgeInfo(
-			ctx, db, s.cfg.ChainHash, row.GraphChannel.ID,
-			row.GraphChannel, node1, node2,
+			ctx, s.cfg, db, row.GraphChannel, node1, node2,
 		)
 		if err != nil {
 			return fmt.Errorf("unable to build channel info: %w",
@@ -2261,9 +2295,8 @@ func (s *SQLStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 			}
 
 			edge, err := getAndBuildEdgeInfo(
-				ctx, db, s.cfg.ChainHash, row.GraphChannel.ID,
-				row.GraphChannel, node1.PubKeyBytes,
-				node2.PubKeyBytes,
+				ctx, s.cfg, db, row.GraphChannel,
+				node1.PubKeyBytes, node2.PubKeyBytes,
 			)
 			if err != nil {
 				return fmt.Errorf("unable to build "+
@@ -2534,8 +2567,7 @@ func (s *SQLStore) PruneGraph(spentOutputs []*wire.OutPoint,
 			}
 
 			info, err := getAndBuildEdgeInfo(
-				ctx, db, s.cfg.ChainHash, row.GraphChannel.ID,
-				row.GraphChannel, node1, node2,
+				ctx, s.cfg, db, row.GraphChannel, node1, node2,
 			)
 			if err != nil {
 				return err
@@ -2833,8 +2865,7 @@ func (s *SQLStore) DisconnectBlockAtHeight(height uint32) (
 			}
 
 			channel, err := getAndBuildEdgeInfo(
-				ctx, db, s.cfg.ChainHash, row.GraphChannel.ID,
-				row.GraphChannel, node1, node2,
+				ctx, s.cfg, db, row.GraphChannel, node1, node2,
 			)
 			if err != nil {
 				return err
@@ -3193,9 +3224,8 @@ func forEachNodeCacheable(ctx context.Context, db SQLQueries,
 // the passed callback on each. The call-back is provided with the channel's
 // edge information, the outgoing policy and the incoming policy for the
 // channel and node combo.
-func forEachNodeChannel(ctx context.Context, db SQLQueries,
-	chain chainhash.Hash, id int64, cb func(*models.ChannelEdgeInfo,
-		*models.ChannelEdgePolicy,
+func forEachNodeChannel(ctx context.Context, cfg *SQLStoreConfig, db SQLQueries,
+	id int64, cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
 
 	// Get all the V1 channels for this node.Add commentMore actions
@@ -3220,8 +3250,7 @@ func forEachNodeChannel(ctx context.Context, db SQLQueries,
 		}
 
 		edge, err := getAndBuildEdgeInfo(
-			ctx, db, chain, row.GraphChannel.ID, row.GraphChannel,
-			node1, node2,
+			ctx, cfg, db, row.GraphChannel, node1, node2,
 		)
 		if err != nil {
 			return fmt.Errorf("unable to build channel info: %w",
@@ -4183,20 +4212,46 @@ func upsertChanPolicyExtraSignedFields(ctx context.Context, db SQLQueries,
 // getAndBuildEdgeInfo builds a models.ChannelEdgeInfo instance from the
 // provided dbChanRow and also fetches any other required information
 // to construct the edge info.
-func getAndBuildEdgeInfo(ctx context.Context, db SQLQueries,
-	chain chainhash.Hash, dbChanID int64, dbChan sqlc.GraphChannel, node1,
+func getAndBuildEdgeInfo(ctx context.Context, cfg *SQLStoreConfig,
+	db SQLQueries, dbChan sqlc.GraphChannel, node1,
 	node2 route.Vertex) (*models.ChannelEdgeInfo, error) {
+
+	data, err := batchLoadChannelData(
+		ctx, cfg.PaginationCfg, db, []int64{dbChan.ID}, nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to batch load channel data: %w",
+			err)
+	}
+
+	return buildEdgeInfoWithBatchData(
+		cfg.ChainHash, dbChan, node1, node2, data,
+	)
+}
+
+// buildEdgeInfoWithBatchData builds edge info using pre-loaded batch data.
+func buildEdgeInfoWithBatchData(chain chainhash.Hash,
+	dbChan sqlc.GraphChannel, node1, node2 route.Vertex,
+	batchData *batchChannelData) (*models.ChannelEdgeInfo, error) {
 
 	if dbChan.Version != int16(ProtocolV1) {
 		return nil, fmt.Errorf("unsupported channel version: %d",
 			dbChan.Version)
 	}
 
-	fv, extras, err := getChanFeaturesAndExtras(
-		ctx, db, dbChanID,
-	)
-	if err != nil {
-		return nil, err
+	// Use pre-loaded features and extras
+	fv := lnwire.EmptyFeatureVector()
+	if features, exists := batchData.chanfeatures[dbChan.ID]; exists {
+		for _, bit := range features {
+			fv.Set(lnwire.FeatureBit(bit))
+		}
+	}
+
+	var extras map[uint64][]byte
+	if channelExtras, exists := batchData.chanExtraTypes[dbChan.ID]; exists {
+		extras = channelExtras
+	} else {
+		extras = make(map[uint64][]byte)
 	}
 
 	op, err := wire.NewOutPointFromString(dbChan.Outpoint)
@@ -4230,9 +4285,7 @@ func getAndBuildEdgeInfo(ctx context.Context, db SQLQueries,
 		ExtraOpaqueData:  recs,
 	}
 
-	// We always set all the signatures at the same time, so we can
-	// safely check if one signature is present to determine if we have the
-	// rest of the signatures for the auth proof.
+	// Set auth proof if signatures are present
 	if len(dbChan.Bitcoin1Signature) > 0 {
 		channel.AuthProof = &models.ChannelAuthProof{
 			NodeSig1Bytes:    dbChan.Node1Signature,
@@ -4243,6 +4296,51 @@ func getAndBuildEdgeInfo(ctx context.Context, db SQLQueries,
 	}
 
 	return channel, nil
+}
+
+func buildChanPoliciesWithBatchData(dbPol1, dbPol2 *sqlc.GraphChannelPolicy,
+	channelID uint64, node1, node2 route.Vertex,
+	batchData *batchChannelData) (*models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy, error) {
+
+	if dbPol1 == nil && dbPol2 == nil {
+		return nil, nil, nil
+	}
+
+	var pol1, pol2 *models.ChannelEdgePolicy
+	var err error
+
+	if dbPol1 != nil {
+		var dbPol1Extras map[uint64][]byte
+		if extras, exists := batchData.policyExtras[dbPol1.ID]; exists {
+			dbPol1Extras = extras
+		} else {
+			dbPol1Extras = make(map[uint64][]byte)
+		}
+
+		pol1, err = buildChanPolicy(*dbPol1, channelID, dbPol1Extras, node2)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	if dbPol2 != nil {
+		var dbPol2Extras map[uint64][]byte
+		if extras, exists := batchData.policyExtras[dbPol2.ID]; exists {
+			dbPol2Extras = extras
+		} else {
+			dbPol2Extras = make(map[uint64][]byte)
+		}
+
+		pol2, err = buildChanPolicy(
+			*dbPol2, channelID, dbPol2Extras, node1,
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	return pol1, pol2, nil
 }
 
 // buildNodeVertices is a helper that converts raw node public keys
@@ -4888,5 +4986,153 @@ func batchLoadNodeExtraFieldsHelper(ctx context.Context,
 			return db.GetNodeExtraTypesBatch(ctx, ids)
 		},
 		callback,
+	)
+}
+
+// batchChannelData holds all the related data for a batch of channels.
+type batchChannelData struct {
+	// chanFeatures is a map from DB channel ID to a slice of feature bits.
+	chanfeatures map[int64][]int
+
+	// chanExtras is a map from DB channel ID to a map of TLV type to
+	// extra signed field bytes.
+	chanExtraTypes map[int64]map[uint64][]byte
+
+	// policyExtras is a map from DB channel policy ID to a map of TLV type
+	// to extra signed field bytes.
+	policyExtras map[int64]map[uint64][]byte
+}
+
+// batchLoadChannelData loads all related data for batches of channels and
+// policies.
+func batchLoadChannelData(ctx context.Context, cfg *sqldb.PagedQueryConfig,
+	db SQLQueries, channelIDs []int64,
+	policyIDs []int64) (*batchChannelData, error) {
+
+	batchData := &batchChannelData{
+		chanfeatures:   make(map[int64][]int),
+		chanExtraTypes: make(map[int64]map[uint64][]byte),
+		policyExtras:   make(map[int64]map[uint64][]byte),
+	}
+
+	// Batch load channel features and extras
+	var err error
+	if len(channelIDs) > 0 {
+		batchData.chanfeatures, err = batchLoadChannelFeaturesHelper(
+			ctx, cfg, db, channelIDs,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("unable to batch load "+
+				"channel features: %w", err)
+		}
+
+		batchData.chanExtraTypes, err = batchLoadChannelExtrasHelper(
+			ctx, cfg, db, channelIDs,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("unable to batch load "+
+				"channel extras: %w", err)
+		}
+	}
+
+	if len(policyIDs) > 0 {
+		//nolint:ll
+		batchData.policyExtras, err = batchLoadChannelPolicyExtrasHelper(
+			ctx, cfg, db, policyIDs,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("unable to batch load "+
+				"policy extras: %w", err)
+		}
+	}
+
+	return batchData, nil
+}
+
+func batchLoadChannelFeaturesHelper(ctx context.Context,
+	cfg *sqldb.PagedQueryConfig, db SQLQueries,
+	channelIDs []int64) (map[int64][]int, error) {
+
+	features := make(map[int64][]int)
+
+	return features, sqldb.ExecutePagedQuery(
+		ctx, cfg, channelIDs,
+		func(id int64) int64 {
+			return id
+		},
+		func(ctx context.Context,
+			ids []int64) ([]sqlc.GraphChannelFeature, error) {
+
+			return db.GetChannelFeaturesBatch(ctx, ids)
+		},
+		func(ctx context.Context,
+			feature sqlc.GraphChannelFeature) error {
+
+			features[feature.ChannelID] = append(
+				features[feature.ChannelID],
+				int(feature.FeatureBit),
+			)
+
+			return nil
+		},
+	)
+}
+
+func batchLoadChannelExtrasHelper(ctx context.Context,
+	cfg *sqldb.PagedQueryConfig, db SQLQueries,
+	channelIDs []int64) (map[int64]map[uint64][]byte, error) {
+
+	extras := make(map[int64]map[uint64][]byte)
+
+	cb := func(ctx context.Context,
+		extra sqlc.GraphChannelExtraType) error {
+
+		if extras[extra.ChannelID] == nil {
+			extras[extra.ChannelID] = make(map[uint64][]byte)
+		}
+		extras[extra.ChannelID][uint64(extra.Type)] = extra.Value
+
+		return nil
+	}
+
+	return extras, sqldb.ExecutePagedQuery(
+		ctx, cfg, channelIDs,
+		func(id int64) int64 {
+			return id
+		},
+		func(ctx context.Context,
+			ids []int64) ([]sqlc.GraphChannelExtraType, error) {
+
+			return db.GetChannelExtrasBatch(ctx, ids)
+		}, cb,
+	)
+}
+
+func batchLoadChannelPolicyExtrasHelper(ctx context.Context,
+	cfg *sqldb.PagedQueryConfig, db SQLQueries,
+	policyIDs []int64) (map[int64]map[uint64][]byte, error) {
+
+	extras := make(map[int64]map[uint64][]byte)
+
+	return extras, sqldb.ExecutePagedQuery(
+		ctx, cfg, policyIDs,
+		func(id int64) int64 {
+			return id
+		},
+		func(ctx context.Context, ids []int64) (
+			[]sqlc.GetChannelPolicyExtraTypesBatchRow, error) {
+
+			return db.GetChannelPolicyExtraTypesBatch(ctx, ids)
+		},
+		func(ctx context.Context,
+			row sqlc.GetChannelPolicyExtraTypesBatchRow) error {
+
+			if extras[row.PolicyID] == nil {
+				extras[row.PolicyID] = make(map[uint64][]byte)
+			}
+			extras[row.PolicyID][uint64(row.Type)] = row.Value
+
+			return nil
+		},
 	)
 }
