@@ -30,8 +30,8 @@ const (
 	bboltDBPath          = "testdata/kvdb"
 	kvdbSqlitePath       = "testdata/kvdb"
 	nativeSQLSqlitePath  = "testdata"
-	kvdbPostgresDNS      = "postgres://test@localhost/graphbenchmark_kvdb"
-	nativeSQLPostgresDNS = "postgres://test@localhost/graphbenchmark"
+	kvdbPostgresDNS      = "postgres://ellemouton@localhost/graphbenchmark_kvdb"
+	nativeSQLPostgresDNS = "postgres://ellemouton@localhost/graphbenchmark"
 
 	kvdbSqliteFile      = "channel.sqlite"
 	kvdbBBoltFile       = "channel.db"

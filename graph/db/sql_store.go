@@ -834,45 +834,69 @@ func (s *SQLStore) ForEachNode(ctx context.Context,
 				break
 			}
 
-			// Extract node IDs for batch loading.
-			nodeIDs := make([]int64, len(nodes))
-			for i, node := range nodes {
-				nodeIDs[i] = node.ID
-			}
-
-			// Batch load all related data for this page.
-			batchData, err := batchLoadNodeData(
-				ctx, s.cfg.PaginationCfg, db, nodeIDs,
-			)
-			if err != nil {
-				return fmt.Errorf("unable to batch load node "+
-					"data: %w", err)
-			}
-
-			for _, dbNode := range nodes {
-				node, err := buildNodeWithBatchData(
-					&dbNode, batchData,
-				)
-				if err != nil {
-					return fmt.Errorf("unable to build "+
-						"node(id=%d): %w", dbNode.ID,
-						err)
-				}
+			cb := func(dbID int64,
+				node *models.LightningNode) error {
 
 				err = cb(newSQLGraphNodeTx(
-					db, s.cfg, dbNode.ID, node,
+					db, s.cfg, dbID, node,
 				))
 				if err != nil {
 					return fmt.Errorf("callback failed "+
-						"for node(id=%d): %w",
-						dbNode.ID, err)
+						"for node(id=%d): %w", dbID,
+						err)
 				}
-				lastID = dbNode.ID
+				lastID = dbID
+
+				return nil
+			}
+
+			err = forEachNodeInBatch(
+				ctx, s.cfg.PaginationCfg, db, nodes, cb,
+			)
+			if err != nil {
+				return fmt.Errorf("unable to iterate over "+
+					"nodes: %w", err)
 			}
 		}
 
 		return nil
 	}, reset)
+}
+
+func forEachNodeInBatch(ctx context.Context, cfg *sqldb.PagedQueryConfig,
+	db SQLQueries, nodes []sqlc.GraphNode,
+	cb func(dbID int64, node *models.LightningNode) error) error {
+
+	// Extract node IDs for batch loading.
+	nodeIDs := make([]int64, len(nodes))
+	for i, node := range nodes {
+		nodeIDs[i] = node.ID
+	}
+
+	// Batch load all related data for this page.
+	batchData, err := batchLoadNodeData(ctx, cfg, db, nodeIDs)
+	if err != nil {
+		return fmt.Errorf("unable to batch load node "+
+			"data: %w", err)
+	}
+
+	for _, dbNode := range nodes {
+		node, err := buildNodeWithBatchData(
+			&dbNode, batchData,
+		)
+		if err != nil {
+			return fmt.Errorf("unable to build "+
+				"node(id=%d): %w", dbNode.ID,
+				err)
+		}
+
+		if err := cb(dbNode.ID, node); err != nil {
+			return fmt.Errorf("callback failed for node(id=%d): %w",
+				dbNode.ID, err)
+		}
+	}
+
+	return nil
 }
 
 // sqlGraphNodeTx is an implementation of the NodeRTx interface backed by the
