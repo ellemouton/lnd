@@ -18,6 +18,7 @@ import (
 	"github.com/lightningnetwork/lnd/kvdb/postgres"
 	"github.com/lightningnetwork/lnd/kvdb/sqlbase"
 	"github.com/lightningnetwork/lnd/kvdb/sqlite"
+	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/sqldb"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/time/rate"
@@ -688,6 +689,47 @@ func BenchmarkForEachChannelAndPolicy(b *testing.B) {
 					ctx, func(_ *models.ChannelEdgeInfo,
 						_ *models.ChannelEdgePolicy,
 						_ *models.ChannelEdgePolicy) error {
+
+						return nil
+					}, func() {},
+				)
+				require.NoError(b, err)
+
+				b.StopTimer()
+				require.NoError(b, graph.Stop())
+				b.StartTimer()
+			}
+		})
+	}
+}
+
+func BenchmarkForEachNodeCached(b *testing.B) {
+	ctx := context.Background()
+
+	tests := []dbConnection{
+		kvdbBBoltConn,
+		kvdbSqliteConn,
+		nativeSQLSqliteConn,
+		kvdbPostgresConn,
+		nativeSQLPostgresConn,
+	}
+
+	for _, test := range tests {
+		b.Run(test.name, func(b *testing.B) {
+			graph, err := NewChannelGraph(
+				test.open(b), WithUseGraphCache(false),
+			)
+			require.NoError(b, err)
+			require.NoError(b, graph.Start())
+
+			// Reset timer to exclude setup time.
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				//nolint:ll
+				err = graph.ForEachNodeCached(
+					ctx, func(_ route.Vertex,
+						_ map[uint64]*DirectedChannel) error {
 
 						return nil
 					}, func() {},

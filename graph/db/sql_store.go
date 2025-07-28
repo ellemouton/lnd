@@ -1198,6 +1198,12 @@ func (s *SQLStore) ForEachNodeCached(ctx context.Context,
 					"of node(id=%d): %w", nodeID, err)
 			}
 
+			// Collect channel DB IDs.
+			chanIDs := make([]int64, 0, len(rows))
+			for _, row := range rows {
+				chanIDs = append(chanIDs, row.GraphChannel.ID)
+			}
+
 			channels := make(map[uint64]*DirectedChannel, len(rows))
 			for _, row := range rows {
 				node1, node2, err := buildNodeVertices(
@@ -1247,7 +1253,7 @@ func (s *SQLStore) ForEachNodeCached(ctx context.Context,
 				var cachedInPolicy *models.CachedEdgePolicy
 				if inPolicy != nil {
 					cachedInPolicy = models.NewCachedPolicy(
-						p2,
+						inPolicy,
 					)
 					cachedInPolicy.ToNodePubKey =
 						toNodeCallback
@@ -1256,11 +1262,13 @@ func (s *SQLStore) ForEachNodeCached(ctx context.Context,
 				}
 
 				var inboundFee lnwire.Fee
-				outPolicy.InboundFee.WhenSome(
-					func(fee lnwire.Fee) {
-						inboundFee = fee
-					},
-				)
+				if outPolicy != nil {
+					outPolicy.InboundFee.WhenSome(
+						func(fee lnwire.Fee) {
+							inboundFee = fee
+						},
+					)
+				}
 
 				directedChannel := &DirectedChannel{
 					ChannelID: e.ChannelID,
@@ -1268,7 +1276,7 @@ func (s *SQLStore) ForEachNodeCached(ctx context.Context,
 						e.NodeKey1Bytes,
 					OtherNode:    e.NodeKey2Bytes,
 					Capacity:     e.Capacity,
-					OutPolicySet: p1 != nil,
+					OutPolicySet: outPolicy != nil,
 					InPolicy:     cachedInPolicy,
 					InboundFee:   inboundFee,
 				}
