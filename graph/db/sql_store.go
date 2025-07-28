@@ -993,17 +993,13 @@ func (s *SQLStore) ForEachNodeCacheable(ctx context.Context,
 	reset func()) error {
 
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		return forEachNodeCacheable(ctx, db, func(nodeID int64,
-			nodePub route.Vertex) error {
+		return forEachNodeCacheable(ctx, s.cfg.PaginationCfg, db,
+			func(nodeID int64, nodePub route.Vertex,
+				features *lnwire.FeatureVector) error {
 
-			features, err := getNodeFeatures(ctx, db, nodeID)
-			if err != nil {
-				return fmt.Errorf("unable to fetch node "+
-					"features: %w", err)
-			}
-
-			return cb(nodePub, features)
-		})
+				return cb(nodePub, features)
+			},
+		)
 	}, reset)
 	if err != nil {
 		return fmt.Errorf("unable to fetch nodes: %w", err)
@@ -1174,123 +1170,148 @@ func (s *SQLStore) ForEachNodeCached(ctx context.Context,
 	reset func()) error {
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		return forEachNodeCacheable(ctx, db, func(nodeID int64,
-			nodePub route.Vertex) error {
+		return forEachNodeCacheable(ctx, s.cfg.PaginationCfg, db,
+			func(nodeID int64, nodePub route.Vertex,
+				features *lnwire.FeatureVector) error {
 
-			features, err := getNodeFeatures(ctx, db, nodeID)
-			if err != nil {
-				return fmt.Errorf("unable to fetch "+
-					"node(id=%d) features: %w", nodeID, err)
-			}
+				toNodeCallback := func() route.Vertex {
+					return nodePub
+				}
 
-			toNodeCallback := func() route.Vertex {
-				return nodePub
-			}
-
-			rows, err := db.ListChannelsByNodeID(
-				ctx, sqlc.ListChannelsByNodeIDParams{
-					Version: int16(ProtocolV1),
-					NodeID1: nodeID,
-				},
-			)
-			if err != nil {
-				return fmt.Errorf("unable to fetch channels "+
-					"of node(id=%d): %w", nodeID, err)
-			}
-
-			// Collect channel DB IDs.
-			chanIDs := make([]int64, 0, len(rows))
-			for _, row := range rows {
-				chanIDs = append(chanIDs, row.GraphChannel.ID)
-			}
-
-			channels := make(map[uint64]*DirectedChannel, len(rows))
-			for _, row := range rows {
-				node1, node2, err := buildNodeVertices(
-					row.Node1Pubkey, row.Node2Pubkey,
+				rows, err := db.ListChannelsByNodeID(
+					ctx, sqlc.ListChannelsByNodeIDParams{
+						Version: int16(ProtocolV1),
+						NodeID1: nodeID,
+					},
 				)
 				if err != nil {
-					return err
+					return fmt.Errorf("unable to fetch channels "+
+						"of node(id=%d): %w", nodeID, err)
 				}
 
-				e, err := getAndBuildEdgeInfo(
-					ctx, s.cfg, db, row.GraphChannel,
-					node1, node2,
+				// Collect the channel & policy IDs that we want to
+				// do a batch collection for.
+				var (
+					channelIDs = make([]int64, len(rows))
+					policyIDs  []int64
 				)
-				if err != nil {
-					return fmt.Errorf("unable to build "+
-						"channel info: %w", err)
-				}
+				for i, row := range rows {
+					channelIDs[i] = row.GraphChannel.ID
 
-				dbPol1, dbPol2, err := extractChannelPolicies(
-					row,
-				)
-				if err != nil {
-					return fmt.Errorf("unable to "+
-						"extract channel "+
-						"policies: %w", err)
-				}
-
-				p1, p2, err := getAndBuildChanPolicies(
-					ctx, db, dbPol1, dbPol2, e.ChannelID,
-					node1, node2,
-				)
-				if err != nil {
-					return fmt.Errorf("unable to "+
-						"build channel policies: %w",
-						err)
-				}
-
-				// Determine the outgoing and incoming policy
-				// for this channel and node combo.
-				outPolicy, inPolicy := p1, p2
-				if p1 != nil && p1.ToNode == nodePub {
-					outPolicy, inPolicy = p2, p1
-				} else if p2 != nil && p2.ToNode != nodePub {
-					outPolicy, inPolicy = p2, p1
-				}
-
-				var cachedInPolicy *models.CachedEdgePolicy
-				if inPolicy != nil {
-					cachedInPolicy = models.NewCachedPolicy(
-						inPolicy,
+					// Extract policy IDs from the row
+					dbPol1, dbPol2, err := extractChannelPolicies(
+						row,
 					)
-					cachedInPolicy.ToNodePubKey =
-						toNodeCallback
-					cachedInPolicy.ToNodeFeatures =
-						features
+					if err != nil {
+						return fmt.Errorf("unable to extract "+
+							"channel policies: %w", err)
+					}
+
+					if dbPol1 != nil {
+						policyIDs = append(policyIDs, dbPol1.ID)
+					}
+
+					if dbPol2 != nil {
+						policyIDs = append(policyIDs, dbPol2.ID)
+					}
 				}
 
-				var inboundFee lnwire.Fee
-				if outPolicy != nil {
-					outPolicy.InboundFee.WhenSome(
-						func(fee lnwire.Fee) {
-							inboundFee = fee
-						},
+				data, err := batchLoadChannelData(
+					ctx, s.cfg.PaginationCfg, db, channelIDs,
+					policyIDs,
+				)
+				if err != nil {
+					return fmt.Errorf("unable to batch load "+
+						"channel data: %w", err)
+				}
+
+				channels := make(map[uint64]*DirectedChannel, len(rows))
+				for _, row := range rows {
+					node1, node2, err := buildNodeVertices(
+						row.Node1Pubkey, row.Node2Pubkey,
 					)
+					if err != nil {
+						return err
+					}
+
+					e, err := buildEdgeInfoWithBatchData(
+						s.cfg.ChainHash, row.GraphChannel,
+						node1, node2, data,
+					)
+					if err != nil {
+						return fmt.Errorf("unable to build "+
+							"channel info: %w", err)
+					}
+
+					dbPol1, dbPol2, err := extractChannelPolicies(
+						row,
+					)
+					if err != nil {
+						return fmt.Errorf("unable to "+
+							"extract channel "+
+							"policies: %w", err)
+					}
+
+					p1, p2, err := buildChanPoliciesWithBatchData(
+						dbPol1, dbPol2, e.ChannelID, node1,
+						node2, data,
+					)
+					if err != nil {
+						return fmt.Errorf("unable to "+
+							"build channel policies: %w",
+							err)
+					}
+
+					// Determine the outgoing and incoming policy
+					// for this channel and node combo.
+					outPolicy, inPolicy := p1, p2
+					if p1 != nil && p1.ToNode == nodePub {
+						outPolicy, inPolicy = p2, p1
+					} else if p2 != nil && p2.ToNode != nodePub {
+						outPolicy, inPolicy = p2, p1
+					}
+
+					var cachedInPolicy *models.CachedEdgePolicy
+					if inPolicy != nil {
+						cachedInPolicy = models.NewCachedPolicy(
+							inPolicy,
+						)
+						cachedInPolicy.ToNodePubKey =
+							toNodeCallback
+						cachedInPolicy.ToNodeFeatures =
+							features
+					}
+
+					var inboundFee lnwire.Fee
+					if outPolicy != nil {
+						outPolicy.InboundFee.WhenSome(
+							func(fee lnwire.Fee) {
+								inboundFee = fee
+							},
+						)
+					}
+
+					directedChannel := &DirectedChannel{
+						ChannelID: e.ChannelID,
+						IsNode1: nodePub ==
+							e.NodeKey1Bytes,
+						OtherNode:    e.NodeKey2Bytes,
+						Capacity:     e.Capacity,
+						OutPolicySet: outPolicy != nil,
+						InPolicy:     cachedInPolicy,
+						InboundFee:   inboundFee,
+					}
+
+					if nodePub == e.NodeKey2Bytes {
+						directedChannel.OtherNode =
+							e.NodeKey1Bytes
+					}
+
+					channels[e.ChannelID] = directedChannel
 				}
 
-				directedChannel := &DirectedChannel{
-					ChannelID: e.ChannelID,
-					IsNode1: nodePub ==
-						e.NodeKey1Bytes,
-					OtherNode:    e.NodeKey2Bytes,
-					Capacity:     e.Capacity,
-					OutPolicySet: outPolicy != nil,
-					InPolicy:     cachedInPolicy,
-					InboundFee:   inboundFee,
-				}
-
-				if nodePub == e.NodeKey2Bytes {
-					directedChannel.OtherNode =
-						e.NodeKey1Bytes
-				}
-
-				channels[e.ChannelID] = directedChannel
-			}
-
-			return cb(nodePub, channels)
-		})
+				return cb(nodePub, channels)
+			})
 	}, reset)
 }
 
@@ -3190,8 +3211,10 @@ func forEachNodeDirectedChannel(ctx context.Context, db SQLQueries,
 
 // forEachNodeCacheable fetches all V1 node IDs and pub keys from the database,
 // and executes the provided callback for each node.
-func forEachNodeCacheable(ctx context.Context, db SQLQueries,
-	cb func(nodeID int64, nodePub route.Vertex) error) error {
+func forEachNodeCacheable(ctx context.Context, cfg *sqldb.PagedQueryConfig,
+	db SQLQueries,
+	cb func(nodeID int64, nodePub route.Vertex,
+		features *lnwire.FeatureVector) error) error {
 
 	lastID := int64(-1)
 
@@ -3211,11 +3234,35 @@ func forEachNodeCacheable(ctx context.Context, db SQLQueries,
 			break
 		}
 
+		// Collect the node IDs so we can batch load their features.
+		nodeIDs := make([]int64, len(nodes))
+		for i, node := range nodes {
+			nodeIDs[i] = node.ID
+		}
+
+		// Batch load the node features.
+		features, err := batchLoadNodeFeaturesHelper(
+			ctx, cfg, db, nodeIDs,
+		)
+		if err != nil {
+			return fmt.Errorf("unable to batch load node "+
+				"features: %w", err)
+		}
+
 		for _, node := range nodes {
 			var pub route.Vertex
 			copy(pub[:], node.PubKey)
 
-			if err := cb(node.ID, pub); err != nil {
+			var f *lnwire.FeatureVector
+			if features, exists := features[node.ID]; exists {
+				fv := lnwire.EmptyFeatureVector()
+				for _, bit := range features {
+					fv.Set(lnwire.FeatureBit(bit))
+				}
+				f = fv
+			}
+
+			if err := cb(node.ID, pub, f); err != nil {
 				return fmt.Errorf("forEachNodeCacheable "+
 					"callback failed for node(id=%d): %w",
 					node.ID, err)
