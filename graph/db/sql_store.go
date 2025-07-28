@@ -814,24 +814,7 @@ func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
 func (s *SQLStore) ForEachNode(ctx context.Context,
 	cb func(tx NodeRTx) error, reset func()) error {
 
-	var lastID int64 = 0
-	handleNode := func(db SQLQueries, dbNode sqlc.GraphNode) error {
-		node, err := buildNode(ctx, s.cfg.PaginationCfg, db, &dbNode)
-		if err != nil {
-			return fmt.Errorf("unable to build node(id=%d): %w",
-				dbNode.ID, err)
-		}
-
-		err = cb(
-			newSQLGraphNodeTx(db, s.cfg, dbNode.ID, node),
-		)
-		if err != nil {
-			return fmt.Errorf("callback failed for node(id=%d): %w",
-				dbNode.ID, err)
-		}
-
-		return nil
-	}
+	var lastID int64
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		for {
@@ -851,12 +834,39 @@ func (s *SQLStore) ForEachNode(ctx context.Context,
 				break
 			}
 
+			// Extract node IDs for batch loading.
+			nodeIDs := make([]int64, len(nodes))
+			for i, node := range nodes {
+				nodeIDs[i] = node.ID
+			}
+
+			// Batch load all related data for this page.
+			batchData, err := batchLoadNodeData(
+				ctx, s.cfg.PaginationCfg, db, nodeIDs,
+			)
+			if err != nil {
+				return fmt.Errorf("unable to batch load node "+
+					"data: %w", err)
+			}
+
 			for _, dbNode := range nodes {
-				err = handleNode(db, dbNode)
+				node, err := buildNodeWithBatchData(
+					&dbNode, batchData,
+				)
 				if err != nil {
-					return err
+					return fmt.Errorf("unable to build "+
+						"node(id=%d): %w", dbNode.ID,
+						err)
 				}
 
+				err = cb(newSQLGraphNodeTx(
+					db, s.cfg, dbNode.ID, node,
+				))
+				if err != nil {
+					return fmt.Errorf("callback failed "+
+						"for node(id=%d): %w",
+						dbNode.ID, err)
+				}
 				lastID = dbNode.ID
 			}
 		}
