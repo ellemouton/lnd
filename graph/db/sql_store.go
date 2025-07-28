@@ -3591,25 +3591,6 @@ func getNodeFeatures(ctx context.Context, db SQLQueries,
 	return features, nil
 }
 
-// getNodeExtraSignedFields fetches the extra signed fields for a node with the
-// given DB ID.
-func getNodeExtraSignedFields(ctx context.Context, db SQLQueries,
-	nodeID int64) (map[uint64][]byte, error) {
-
-	fields, err := db.GetExtraNodeTypes(ctx, nodeID)
-	if err != nil {
-		return nil, fmt.Errorf("unable to get node(%d) extra "+
-			"signed fields: %w", nodeID, err)
-	}
-
-	extraFields := make(map[uint64][]byte)
-	for _, field := range fields {
-		extraFields[uint64(field.Type)] = field.Value
-	}
-
-	return extraFields, nil
-}
-
 // upsertNode upserts the node record into the database. If the node already
 // exists, then the node's information is updated. If the node doesn't exist,
 // then a new node is created. The node's features, addresses and extra TLV
@@ -3865,55 +3846,13 @@ func getNodeAddresses(ctx context.Context, db SQLQueries, id int64) ([]net.Addr,
 	for _, row := range rows {
 		address := row.Address
 
-		switch dbAddressType(row.Type) {
-		case addressTypeIPv4:
-			tcp, err := net.ResolveTCPAddr("tcp4", address)
-			if err != nil {
-				return nil, err
-			}
-			tcp.IP = tcp.IP.To4()
-
-			addresses = append(addresses, tcp)
-
-		case addressTypeIPv6:
-			tcp, err := net.ResolveTCPAddr("tcp6", address)
-			if err != nil {
-				return nil, err
-			}
-			addresses = append(addresses, tcp)
-
-		case addressTypeTorV3, addressTypeTorV2:
-			service, portStr, err := net.SplitHostPort(address)
-			if err != nil {
-				return nil, fmt.Errorf("unable to "+
-					"split tor v3 address: %v", address)
-			}
-
-			port, err := strconv.Atoi(portStr)
-			if err != nil {
-				return nil, err
-			}
-
-			addresses = append(addresses, &tor.OnionAddr{
-				OnionService: service,
-				Port:         port,
-			})
-
-		case addressTypeOpaque:
-			opaque, err := hex.DecodeString(address)
-			if err != nil {
-				return nil, fmt.Errorf("unable to "+
-					"decode opaque address: %v", address)
-			}
-
-			addresses = append(addresses, &lnwire.OpaqueAddrs{
-				Payload: opaque,
-			})
-
-		default:
-			return nil, fmt.Errorf("unknown address type: %v",
-				row.Type)
+		addr, err := parseAddress(dbAddressType(row.Type), address)
+		if err != nil {
+			return nil, fmt.Errorf("unable to parse address "+
+				"for node(%d): %v: %w", id, address, err)
 		}
+
+		addresses = append(addresses, addr)
 	}
 
 	// If we have no addresses, then we'll return nil instead of an
