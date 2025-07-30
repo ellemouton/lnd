@@ -185,8 +185,8 @@ type SQLStoreConfig struct {
 	// messages in this store are aimed at.
 	ChainHash chainhash.Hash
 
-	// PaginationCfg is the configuration for paginated queries.
-	PaginationCfg *sqldb.PagedQueryConfig
+	// BatchQueryCfg is the configuration for batched queries.
+	BatchQueryCfg *sqldb.BatchQueryConfig
 }
 
 // NewSQLStore creates a new SQLStore instance given an open BatchedSQLQueries
@@ -2281,8 +2281,8 @@ func (s *SQLStore) forEachChanWithPoliciesInSCIDList(ctx context.Context,
 		)
 	}
 
-	return sqldb.ExecutePagedQuery(
-		ctx, s.cfg.PaginationCfg, chanIDs, channelIDToBytes,
+	return sqldb.ExecuteBatchQuery(
+		ctx, s.cfg.BatchQueryCfg, chanIDs, channelIDToBytes,
 		queryWrapper, cb,
 	)
 }
@@ -2404,8 +2404,8 @@ func (s *SQLStore) forEachChanInSCIDList(ctx context.Context, db SQLQueries,
 		return channelIDToBytes(channelID)
 	}
 
-	return sqldb.ExecutePagedQuery(
-		ctx, s.cfg.PaginationCfg, chansInfo, chanIDConverter,
+	return sqldb.ExecuteBatchQuery(
+		ctx, s.cfg.BatchQueryCfg, chansInfo, chanIDConverter,
 		queryWrapper, cb,
 	)
 }
@@ -2563,8 +2563,8 @@ func (s *SQLStore) forEachChanInOutpoints(ctx context.Context, db SQLQueries,
 		return outpoint.String()
 	}
 
-	return sqldb.ExecutePagedQuery(
-		ctx, s.cfg.PaginationCfg, outpoints, outpointToString,
+	return sqldb.ExecuteBatchQuery(
+		ctx, s.cfg.BatchQueryCfg, outpoints, outpointToString,
 		queryWrapper, cb,
 	)
 }
@@ -2582,8 +2582,8 @@ func (s *SQLStore) deleteChannels(ctx context.Context, db SQLQueries,
 		return id
 	}
 
-	return sqldb.ExecutePagedQuery(
-		ctx, s.cfg.PaginationCfg, dbIDs, idConverter,
+	return sqldb.ExecuteBatchQuery(
+		ctx, s.cfg.BatchQueryCfg, dbIDs, idConverter,
 		queryWrapper, func(ctx context.Context, _ any) error {
 			return nil
 		},

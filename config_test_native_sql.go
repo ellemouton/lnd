@@ -33,7 +33,7 @@ func (d *DefaultDatabaseBuilder) getGraphStore(baseDB *sqldb.BaseDB,
 	return graphdb.NewSQLStore(
 		&graphdb.SQLStoreConfig{
 			ChainHash:     *d.cfg.ActiveNetParams.GenesisHash,
-			PaginationCfg: sqldb.DefaultPagedQueryConfig(),
+			BatchQueryCfg: sqldb.DefaultBatchQueryConfig(),
 		},
 		graphExecutor, opts...,
 	)

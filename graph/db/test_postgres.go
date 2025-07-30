@@ -43,7 +43,7 @@ func NewTestDBWithFixture(t testing.TB,
 	store, err := NewSQLStore(
 		&SQLStoreConfig{
 			ChainHash:     *chaincfg.MainNetParams.GenesisHash,
-			PaginationCfg: sqldb.DefaultPagedQueryConfig(),
+			BatchQueryCfg: sqldb.DefaultBatchQueryConfig(),
 		}, querier,
 	)
 	require.NoError(t, err)
