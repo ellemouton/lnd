@@ -792,54 +792,45 @@ func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
 func (s *SQLStore) ForEachNode(ctx context.Context,
 	cb func(tx NodeRTx) error, reset func()) error {
 
-	var lastID int64 = 0
-	handleNode := func(db SQLQueries, dbNode sqlc.GraphNode) error {
-		node, err := buildNode(ctx, db, &dbNode)
+	cfg := sqldb.DefaultPaginatedQueryConfig()
+
+	queryFunc := func(ctx context.Context, lastID int64,
+		limit int32) ([]sqlc.GraphNode, error) {
+
+		return s.db.ListNodesPaginated(
+			ctx, sqlc.ListNodesPaginatedParams{
+				Version: int16(ProtocolV1),
+				ID:      lastID,
+				Limit:   limit,
+			},
+		)
+	}
+
+	extractCursor := func(node sqlc.GraphNode) int64 {
+		return node.ID
+	}
+
+	processItem := func(ctx context.Context, dbNode sqlc.GraphNode) error {
+		node, err := buildNode(ctx, s.db, &dbNode)
 		if err != nil {
 			return fmt.Errorf("unable to build node(id=%d): %w",
 				dbNode.ID, err)
 		}
 
-		err = cb(
-			newSQLGraphNodeTx(db, s.cfg.ChainHash, dbNode.ID, node),
-		)
-		if err != nil {
-			return fmt.Errorf("callback failed for node(id=%d): %w",
-				dbNode.ID, err)
-		}
-
-		return nil
+		return cb(newSQLGraphNodeTx(
+			s.db, s.cfg.ChainHash, dbNode.ID, node,
+		))
 	}
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		for {
-			nodes, err := db.ListNodesPaginated(
-				ctx, sqlc.ListNodesPaginatedParams{
-					Version: int16(ProtocolV1),
-					ID:      lastID,
-					Limit:   pageSize,
-				},
-			)
-			if err != nil {
-				return fmt.Errorf("unable to fetch nodes: %w",
-					err)
-			}
-
-			if len(nodes) == 0 {
-				break
-			}
-
-			for _, dbNode := range nodes {
-				err = handleNode(db, dbNode)
-				if err != nil {
-					return err
-				}
-
-				lastID = dbNode.ID
-			}
-		}
-
-		return nil
+		return sqldb.ExecutePaginatedQuery(
+			ctx,
+			cfg,
+			int64(0), // initial cursor
+			queryFunc,
+			extractCursor,
+			processItem,
+		)
 	}, reset)
 }
 
@@ -1246,85 +1237,75 @@ func (s *SQLStore) ForEachChannelCacheable(cb func(*models.CachedEdgeInfo,
 	reset func()) error {
 
 	ctx := context.TODO()
-
-	handleChannel := func(db SQLQueries,
-		row sqlc.ListChannelsWithPoliciesPaginatedRow) error {
-
-		node1, node2, err := buildNodeVertices(
-			row.Node1Pubkey, row.Node2Pubkey,
-		)
-		if err != nil {
-			return err
-		}
-
-		edge := buildCacheableChannelInfo(
-			row.GraphChannel, node1, node2,
-		)
-
-		dbPol1, dbPol2, err := extractChannelPolicies(row)
-		if err != nil {
-			return err
-		}
-
-		var pol1, pol2 *models.CachedEdgePolicy
-		if dbPol1 != nil {
-			policy1, err := buildChanPolicy(
-				*dbPol1, edge.ChannelID, nil, node2,
-			)
-			if err != nil {
-				return err
-			}
-
-			pol1 = models.NewCachedPolicy(policy1)
-		}
-		if dbPol2 != nil {
-			policy2, err := buildChanPolicy(
-				*dbPol2, edge.ChannelID, nil, node1,
-			)
-			if err != nil {
-				return err
-			}
-
-			pol2 = models.NewCachedPolicy(policy2)
-		}
-
-		if err := cb(edge, pol1, pol2); err != nil {
-			return err
-		}
-
-		return nil
-	}
+	cfg := sqldb.DefaultPaginatedQueryConfig()
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		lastID := int64(-1)
-		for {
-			//nolint:ll
-			rows, err := db.ListChannelsWithPoliciesPaginated(
+		queryFunc := func(ctx context.Context, lastID int64,
+			limit int32) ([]sqlc.ListChannelsWithPoliciesPaginatedRow, error) {
+
+			return db.ListChannelsWithPoliciesPaginated(
 				ctx, sqlc.ListChannelsWithPoliciesPaginatedParams{
 					Version: int16(ProtocolV1),
 					ID:      lastID,
-					Limit:   pageSize,
+					Limit:   limit,
 				},
+			)
+		}
+
+		extractCursor := func(row sqlc.ListChannelsWithPoliciesPaginatedRow) int64 {
+			return row.GraphChannel.ID
+		}
+
+		processItem := func(ctx context.Context, row sqlc.ListChannelsWithPoliciesPaginatedRow) error {
+			node1, node2, err := buildNodeVertices(
+				row.Node1Pubkey, row.Node2Pubkey,
 			)
 			if err != nil {
 				return err
 			}
 
-			if len(rows) == 0 {
-				break
+			edge := buildCacheableChannelInfo(
+				row.GraphChannel, node1, node2,
+			)
+
+			dbPol1, dbPol2, err := extractChannelPolicies(row)
+			if err != nil {
+				return err
 			}
 
-			for _, row := range rows {
-				err := handleChannel(db, row)
+			var pol1, pol2 *models.CachedEdgePolicy
+			if dbPol1 != nil {
+				policy1, err := buildChanPolicy(
+					*dbPol1, edge.ChannelID, nil, node2,
+				)
 				if err != nil {
 					return err
 				}
 
-				lastID = row.GraphChannel.ID
+				pol1 = models.NewCachedPolicy(policy1)
 			}
+			if dbPol2 != nil {
+				policy2, err := buildChanPolicy(
+					*dbPol2, edge.ChannelID, nil, node1,
+				)
+				if err != nil {
+					return err
+				}
+
+				pol2 = models.NewCachedPolicy(policy2)
+			}
+
+			return cb(edge, pol1, pol2)
 		}
 
-		return nil
+		return sqldb.ExecutePaginatedQuery(
+			ctx,
+			cfg,
+			int64(-1), // initial cursor (matching original)
+			queryFunc,
+			extractCursor,
+			processItem,
+		)
 	}, reset)
 }
 
@@ -1343,79 +1324,69 @@ func (s *SQLStore) ForEachChannel(ctx context.Context,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error, reset func()) error {
 
-	handleChannel := func(db SQLQueries,
-		row sqlc.ListChannelsWithPoliciesPaginatedRow) error {
-
-		node1, node2, err := buildNodeVertices(
-			row.Node1Pubkey, row.Node2Pubkey,
-		)
-		if err != nil {
-			return fmt.Errorf("unable to build node vertices: %w",
-				err)
-		}
-
-		edge, err := getAndBuildEdgeInfo(
-			ctx, db, s.cfg.ChainHash, row.GraphChannel.ID,
-			row.GraphChannel, node1, node2,
-		)
-		if err != nil {
-			return fmt.Errorf("unable to build channel info: %w",
-				err)
-		}
-
-		dbPol1, dbPol2, err := extractChannelPolicies(row)
-		if err != nil {
-			return fmt.Errorf("unable to extract channel "+
-				"policies: %w", err)
-		}
-
-		p1, p2, err := getAndBuildChanPolicies(
-			ctx, db, dbPol1, dbPol2, edge.ChannelID, node1, node2,
-		)
-		if err != nil {
-			return fmt.Errorf("unable to build channel "+
-				"policies: %w", err)
-		}
-
-		err = cb(edge, p1, p2)
-		if err != nil {
-			return fmt.Errorf("callback failed for channel "+
-				"id=%d: %w", edge.ChannelID, err)
-		}
-
-		return nil
-	}
+	cfg := sqldb.DefaultPaginatedQueryConfig()
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		lastID := int64(-1)
-		for {
-			//nolint:ll
-			rows, err := db.ListChannelsWithPoliciesPaginated(
+		queryFunc := func(ctx context.Context, lastID int64,
+			limit int32) ([]sqlc.ListChannelsWithPoliciesPaginatedRow, error) {
+
+			return db.ListChannelsWithPoliciesPaginated(
 				ctx, sqlc.ListChannelsWithPoliciesPaginatedParams{
 					Version: int16(ProtocolV1),
 					ID:      lastID,
-					Limit:   pageSize,
+					Limit:   limit,
 				},
 			)
-			if err != nil {
-				return err
-			}
-
-			if len(rows) == 0 {
-				break
-			}
-
-			for _, row := range rows {
-				err := handleChannel(db, row)
-				if err != nil {
-					return err
-				}
-
-				lastID = row.GraphChannel.ID
-			}
 		}
 
-		return nil
+		extractCursor := func(row sqlc.ListChannelsWithPoliciesPaginatedRow) int64 {
+			return row.GraphChannel.ID
+		}
+
+		processItem := func(ctx context.Context, row sqlc.ListChannelsWithPoliciesPaginatedRow) error {
+			node1, node2, err := buildNodeVertices(
+				row.Node1Pubkey, row.Node2Pubkey,
+			)
+			if err != nil {
+				return fmt.Errorf("unable to build node vertices: %w", err)
+			}
+
+			edge, err := getAndBuildEdgeInfo(
+				ctx, db, s.cfg.ChainHash, row.GraphChannel.ID,
+				row.GraphChannel, node1, node2,
+			)
+			if err != nil {
+				return fmt.Errorf("unable to build channel info: %w", err)
+			}
+
+			dbPol1, dbPol2, err := extractChannelPolicies(row)
+			if err != nil {
+				return fmt.Errorf("unable to extract channel policies: %w", err)
+			}
+
+			p1, p2, err := getAndBuildChanPolicies(
+				ctx, db, dbPol1, dbPol2, edge.ChannelID, node1, node2,
+			)
+			if err != nil {
+				return fmt.Errorf("unable to build channel policies: %w", err)
+			}
+
+			err = cb(edge, p1, p2)
+			if err != nil {
+				return fmt.Errorf("callback failed for channel id=%d: %w", edge.ChannelID, err)
+			}
+
+			return nil
+		}
+
+		return sqldb.ExecutePaginatedQuery(
+			ctx,
+			cfg,
+			int64(-1), // initial cursor (matching original)
+			queryFunc,
+			extractCursor,
+			processItem,
+		)
 	}, reset)
 }
 
@@ -2602,60 +2573,58 @@ func (s *SQLStore) ChannelView() ([]EdgePoint, error) {
 		edgePoints []EdgePoint
 	)
 
-	handleChannel := func(db SQLQueries,
-		channel sqlc.ListChannelsPaginatedRow) error {
-
-		pkScript, err := genMultiSigP2WSH(
-			channel.BitcoinKey1, channel.BitcoinKey2,
-		)
-		if err != nil {
-			return err
-		}
-
-		op, err := wire.NewOutPointFromString(channel.Outpoint)
-		if err != nil {
-			return err
-		}
-
-		edgePoints = append(edgePoints, EdgePoint{
-			FundingPkScript: pkScript,
-			OutPoint:        *op,
-		})
-
-		return nil
-	}
+	cfg := sqldb.DefaultPaginatedQueryConfig()
 
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		lastID := int64(-1)
-		for {
-			rows, err := db.ListChannelsPaginated(
+		queryFunc := func(ctx context.Context, lastID int64,
+			limit int32) ([]sqlc.ListChannelsPaginatedRow, error) {
+
+			return db.ListChannelsPaginated(
 				ctx, sqlc.ListChannelsPaginatedParams{
 					Version: int16(ProtocolV1),
 					ID:      lastID,
-					Limit:   pageSize,
+					Limit:   limit,
 				},
+			)
+		}
+
+		extractCursor := func(row sqlc.ListChannelsPaginatedRow) int64 {
+			return row.ID
+		}
+
+		processItem := func(ctx context.Context,
+			channel sqlc.ListChannelsPaginatedRow) error {
+
+			pkScript, err := genMultiSigP2WSH(
+				channel.BitcoinKey1, channel.BitcoinKey2,
 			)
 			if err != nil {
 				return err
 			}
 
-			if len(rows) == 0 {
-				break
+			op, err := wire.NewOutPointFromString(channel.Outpoint)
+			if err != nil {
+				return err
 			}
 
-			for _, row := range rows {
-				err := handleChannel(db, row)
-				if err != nil {
-					return err
-				}
+			edgePoints = append(edgePoints, EdgePoint{
+				FundingPkScript: pkScript,
+				OutPoint:        *op,
+			})
 
-				lastID = row.ID
-			}
+			return nil
 		}
 
-		return nil
+		return sqldb.ExecutePaginatedQuery(
+			ctx,
+			cfg,
+			int64(-1), // initial cursor (matching original)
+			queryFunc,
+			extractCursor,
+			processItem,
+		)
 	}, func() {
-		edgePoints = nil
+		edgePoints = nil // reset function
 	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to fetch channel view: %w", err)
@@ -3095,39 +3064,44 @@ func forEachNodeDirectedChannel(ctx context.Context, db SQLQueries,
 func forEachNodeCacheable(ctx context.Context, db SQLQueries,
 	cb func(nodeID int64, nodePub route.Vertex) error) error {
 
-	lastID := int64(-1)
+	cfg := sqldb.DefaultPaginatedQueryConfig()
 
-	for {
-		nodes, err := db.ListNodeIDsAndPubKeys(
+	queryFunc := func(ctx context.Context, lastID int64,
+		limit int32) ([]sqlc.ListNodeIDsAndPubKeysRow, error) {
+
+		return db.ListNodeIDsAndPubKeys(
 			ctx, sqlc.ListNodeIDsAndPubKeysParams{
 				Version: int16(ProtocolV1),
 				ID:      lastID,
-				Limit:   pageSize,
+				Limit:   limit,
 			},
 		)
-		if err != nil {
-			return fmt.Errorf("unable to fetch nodes: %w", err)
-		}
-
-		if len(nodes) == 0 {
-			break
-		}
-
-		for _, node := range nodes {
-			var pub route.Vertex
-			copy(pub[:], node.PubKey)
-
-			if err := cb(node.ID, pub); err != nil {
-				return fmt.Errorf("forEachNodeCacheable "+
-					"callback failed for node(id=%d): %w",
-					node.ID, err)
-			}
-
-			lastID = node.ID
-		}
 	}
 
-	return nil
+	extractCursor := func(node sqlc.ListNodeIDsAndPubKeysRow) int64 {
+		return node.ID
+	}
+
+	processItem := func(ctx context.Context, node sqlc.ListNodeIDsAndPubKeysRow) error {
+		var pub route.Vertex
+		copy(pub[:], node.PubKey)
+
+		if err := cb(node.ID, pub); err != nil {
+			return fmt.Errorf("forEachNodeCacheable callback failed for node(id=%d): %w",
+				node.ID, err)
+		}
+
+		return nil
+	}
+
+	return sqldb.ExecutePaginatedQuery(
+		ctx,
+		cfg,
+		int64(-1), // initial cursor
+		queryFunc,
+		extractCursor,
+		processItem,
+	)
 }
 
 // forEachNodeChannel iterates through all channels of a node, executing

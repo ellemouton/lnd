@@ -84,3 +84,75 @@ func ExecuteBatchQuery[I any, T any, R any](ctx context.Context,
 
 	return nil
 }
+
+// PagedQueryFunc represents a function that fetches a page of results using a cursor.
+// It returns the fetched items and should return an empty slice when no more results.
+type PagedQueryFunc[C any, T any] func(context.Context, C, int32) ([]T, error)
+
+// CursorExtractFunc represents a function that extracts the cursor value from an item.
+// This cursor will be used for the next page fetch.
+type CursorExtractFunc[T any, C any] func(T) C
+
+// ItemProcessFunc represents a function that processes individual items.
+type ItemProcessFunc[T any] func(context.Context, T) error
+
+// PaginatedQueryConfig holds configuration values for paginated queries.
+type PaginatedQueryConfig struct {
+	PageSize int32
+}
+
+// DefaultPaginatedQueryConfig returns a default configuration
+func DefaultPaginatedQueryConfig() *PaginatedQueryConfig {
+	return &PaginatedQueryConfig{
+		PageSize: 1000, // Different default than batch queries
+	}
+}
+
+// ExecutePaginatedQuery executes a cursor-based paginated query.
+// It continues fetching pages until no more results are returned,
+// processing each item with the provided callback.
+//
+// Parameters:
+// - ctx: context for the operation
+// - cfg: configuration including page size
+// - initialCursor: the starting cursor value (e.g., 0, -1, "", etc.)
+// - queryFunc: function that fetches a page given cursor and limit
+// - extractCursor: function that extracts cursor from an item for next page
+// - processItem: function that processes each individual item
+func ExecutePaginatedQuery[C any, T any](
+	ctx context.Context,
+	cfg *PaginatedQueryConfig,
+	initialCursor C,
+	queryFunc PagedQueryFunc[C, T],
+	extractCursor CursorExtractFunc[T, C],
+	processItem ItemProcessFunc[T],
+) error {
+	cursor := initialCursor
+
+	for {
+		// Fetch the next page.
+		items, err := queryFunc(ctx, cursor, cfg.PageSize)
+		if err != nil {
+			return fmt.Errorf("failed to fetch page with "+
+				"cursor %v: %w", cursor, err)
+		}
+
+		// If no items returned, we're done.
+		if len(items) == 0 {
+			break
+		}
+
+		// Process each item in the page.
+		for _, item := range items {
+			if err := processItem(ctx, item); err != nil {
+				return fmt.Errorf("failed to process item: %w",
+					err)
+			}
+
+			// Update cursor for next iteration.
+			cursor = extractCursor(item)
+		}
+	}
+
+	return nil
+}
