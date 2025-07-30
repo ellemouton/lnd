@@ -55,7 +55,7 @@ func TestExecutePagedQuery(t *testing.T) {
 			convertedItems  []string
 			callbackResults []string
 			inputItems      = []int{1, 2, 3, 4, 5}
-			cfg             = &BatchQueryConfig{
+			cfg             = &QueryConfig{
 				MaxBatchSize: 10,
 			}
 		)
@@ -104,7 +104,7 @@ func TestExecutePagedQuery(t *testing.T) {
 			pageSizes      []int
 			allResults     []string
 			inputItems     = []int{1, 2, 3, 4, 5, 6, 7, 8}
-			cfg            = &BatchQueryConfig{
+			cfg            = &QueryConfig{
 				MaxBatchSize: 3,
 			}
 		)
@@ -205,7 +205,7 @@ func TestExecutePagedQuery(t *testing.T) {
 	t.Run("query error in second page is propagated", func(t *testing.T) {
 		var (
 			inputItems = []int{1, 2, 3, 4}
-			cfg        = &BatchQueryConfig{
+			cfg        = &QueryConfig{
 				MaxBatchSize: 2,
 			}
 			queryCallCount int

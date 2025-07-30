@@ -181,8 +181,8 @@ type SQLStoreConfig struct {
 	// messages in this store are aimed at.
 	ChainHash chainhash.Hash
 
-	// BatchQueryCfg is the configuration for batched queries.
-	BatchQueryCfg *sqldb.BatchQueryConfig
+	// QueryCfg is the configuration for sql queries.
+	QueryCfg *sqldb.QueryConfig
 }
 
 // NewSQLStore creates a new SQLStore instance given an open BatchedSQLQueries
@@ -805,8 +805,6 @@ func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
 func (s *SQLStore) ForEachNode(ctx context.Context,
 	cb func(tx NodeRTx) error, reset func()) error {
 
-	cfg := sqldb.DefaultPaginatedQueryConfig()
-
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		processItem := func(ctx context.Context,
 			dbNode sqlc.GraphNode) error {
@@ -822,13 +820,12 @@ func (s *SQLStore) ForEachNode(ctx context.Context,
 			))
 		}
 
-		return forEachNodeSQL(ctx, db, cfg, processItem)
+		return forEachNodeSQL(ctx, db, s.cfg.QueryCfg, processItem)
 
 	}, reset)
 }
 
-func forEachNodeSQL(ctx context.Context, db SQLQueries,
-	cfg *sqldb.PaginatedQueryConfig,
+func forEachNodeSQL(ctx context.Context, db SQLQueries, cfg *sqldb.QueryConfig,
 	processNode func(context.Context, sqlc.GraphNode) error) error {
 
 	queryFunc := func(ctx context.Context, lastID int64,
@@ -945,17 +942,18 @@ func (s *SQLStore) ForEachNodeCacheable(ctx context.Context,
 	reset func()) error {
 
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		return forEachNodeCacheable(ctx, db, func(nodeID int64,
-			nodePub route.Vertex) error {
+		// TODO(elle): combine pagination & batching here.
+		return forEachNodeCacheable(ctx, db, s.cfg.QueryCfg,
+			func(nodeID int64, nodePub route.Vertex) error {
 
-			features, err := getNodeFeatures(ctx, db, nodeID)
-			if err != nil {
-				return fmt.Errorf("unable to fetch node "+
-					"features: %w", err)
-			}
+				features, err := getNodeFeatures(ctx, db, nodeID)
+				if err != nil {
+					return fmt.Errorf("unable to fetch node "+
+						"features: %w", err)
+				}
 
-			return cb(nodePub, features)
-		})
+				return cb(nodePub, features)
+			})
 	}, reset)
 	if err != nil {
 		return fmt.Errorf("unable to fetch nodes: %w", err)
@@ -1127,118 +1125,120 @@ func (s *SQLStore) ForEachNodeCached(ctx context.Context,
 	reset func()) error {
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		return forEachNodeCacheable(ctx, db, func(nodeID int64,
-			nodePub route.Vertex) error {
+		// TODO(elle): use batching here. Currently fetching channel
+		// info individually for each node, which is not optimal.
+		return forEachNodeCacheable(
+			ctx, db, s.cfg.QueryCfg,
+			func(nodeID int64, nodePub route.Vertex) error {
+				features, err := getNodeFeatures(ctx, db, nodeID)
+				if err != nil {
+					return fmt.Errorf("unable to fetch "+
+						"node(id=%d) features: %w", nodeID, err)
+				}
 
-			features, err := getNodeFeatures(ctx, db, nodeID)
-			if err != nil {
-				return fmt.Errorf("unable to fetch "+
-					"node(id=%d) features: %w", nodeID, err)
-			}
+				toNodeCallback := func() route.Vertex {
+					return nodePub
+				}
 
-			toNodeCallback := func() route.Vertex {
-				return nodePub
-			}
-
-			rows, err := db.ListChannelsByNodeID(
-				ctx, sqlc.ListChannelsByNodeIDParams{
-					Version: int16(ProtocolV1),
-					NodeID1: nodeID,
-				},
-			)
-			if err != nil {
-				return fmt.Errorf("unable to fetch channels "+
-					"of node(id=%d): %w", nodeID, err)
-			}
-
-			channels := make(map[uint64]*DirectedChannel, len(rows))
-			for _, row := range rows {
-				node1, node2, err := buildNodeVertices(
-					row.Node1Pubkey, row.Node2Pubkey,
+				rows, err := db.ListChannelsByNodeID(
+					ctx, sqlc.ListChannelsByNodeIDParams{
+						Version: int16(ProtocolV1),
+						NodeID1: nodeID,
+					},
 				)
 				if err != nil {
-					return err
+					return fmt.Errorf("unable to fetch channels "+
+						"of node(id=%d): %w", nodeID, err)
 				}
 
-				e, err := getAndBuildEdgeInfo(
-					ctx, db, s.cfg.ChainHash,
-					row.GraphChannel.ID, row.GraphChannel,
-					node1, node2,
-				)
-				if err != nil {
-					return fmt.Errorf("unable to build "+
-						"channel info: %w", err)
-				}
-
-				dbPol1, dbPol2, err := extractChannelPolicies(
-					row,
-				)
-				if err != nil {
-					return fmt.Errorf("unable to "+
-						"extract channel "+
-						"policies: %w", err)
-				}
-
-				p1, p2, err := getAndBuildChanPolicies(
-					ctx, db, dbPol1, dbPol2, e.ChannelID,
-					node1, node2,
-				)
-				if err != nil {
-					return fmt.Errorf("unable to "+
-						"build channel policies: %w",
-						err)
-				}
-
-				// Determine the outgoing and incoming policy
-				// for this channel and node combo.
-				outPolicy, inPolicy := p1, p2
-				if p1 != nil && p1.ToNode == nodePub {
-					outPolicy, inPolicy = p2, p1
-				} else if p2 != nil && p2.ToNode != nodePub {
-					outPolicy, inPolicy = p2, p1
-				}
-
-				var cachedInPolicy *models.CachedEdgePolicy
-				if inPolicy != nil {
-					cachedInPolicy = models.NewCachedPolicy(
-						inPolicy,
+				channels := make(map[uint64]*DirectedChannel, len(rows))
+				for _, row := range rows {
+					node1, node2, err := buildNodeVertices(
+						row.Node1Pubkey, row.Node2Pubkey,
 					)
-					cachedInPolicy.ToNodePubKey =
-						toNodeCallback
-					cachedInPolicy.ToNodeFeatures =
-						features
-				}
+					if err != nil {
+						return err
+					}
 
-				var inboundFee lnwire.Fee
-				if outPolicy != nil {
-					outPolicy.InboundFee.WhenSome(
-						func(fee lnwire.Fee) {
-							inboundFee = fee
-						},
+					e, err := getAndBuildEdgeInfo(
+						ctx, db, s.cfg.ChainHash,
+						row.GraphChannel.ID, row.GraphChannel,
+						node1, node2,
 					)
+					if err != nil {
+						return fmt.Errorf("unable to build "+
+							"channel info: %w", err)
+					}
+
+					dbPol1, dbPol2, err := extractChannelPolicies(
+						row,
+					)
+					if err != nil {
+						return fmt.Errorf("unable to "+
+							"extract channel "+
+							"policies: %w", err)
+					}
+
+					p1, p2, err := getAndBuildChanPolicies(
+						ctx, db, dbPol1, dbPol2, e.ChannelID,
+						node1, node2,
+					)
+					if err != nil {
+						return fmt.Errorf("unable to "+
+							"build channel policies: %w",
+							err)
+					}
+
+					// Determine the outgoing and incoming policy
+					// for this channel and node combo.
+					outPolicy, inPolicy := p1, p2
+					if p1 != nil && p1.ToNode == nodePub {
+						outPolicy, inPolicy = p2, p1
+					} else if p2 != nil && p2.ToNode != nodePub {
+						outPolicy, inPolicy = p2, p1
+					}
+
+					var cachedInPolicy *models.CachedEdgePolicy
+					if inPolicy != nil {
+						cachedInPolicy = models.NewCachedPolicy(
+							inPolicy,
+						)
+						cachedInPolicy.ToNodePubKey =
+							toNodeCallback
+						cachedInPolicy.ToNodeFeatures =
+							features
+					}
+
+					var inboundFee lnwire.Fee
+					if outPolicy != nil {
+						outPolicy.InboundFee.WhenSome(
+							func(fee lnwire.Fee) {
+								inboundFee = fee
+							},
+						)
+					}
+
+					directedChannel := &DirectedChannel{
+						ChannelID: e.ChannelID,
+						IsNode1: nodePub ==
+							e.NodeKey1Bytes,
+						OtherNode:    e.NodeKey2Bytes,
+						Capacity:     e.Capacity,
+						OutPolicySet: outPolicy != nil,
+						InPolicy:     cachedInPolicy,
+						InboundFee:   inboundFee,
+					}
+
+					if nodePub == e.NodeKey2Bytes {
+						directedChannel.OtherNode =
+							e.NodeKey1Bytes
+					}
+
+					channels[e.ChannelID] = directedChannel
 				}
 
-				directedChannel := &DirectedChannel{
-					ChannelID: e.ChannelID,
-					IsNode1: nodePub ==
-						e.NodeKey1Bytes,
-					OtherNode:    e.NodeKey2Bytes,
-					Capacity:     e.Capacity,
-					OutPolicySet: outPolicy != nil,
-					InPolicy:     cachedInPolicy,
-					InboundFee:   inboundFee,
-				}
-
-				if nodePub == e.NodeKey2Bytes {
-					directedChannel.OtherNode =
-						e.NodeKey1Bytes
-				}
-
-				channels[e.ChannelID] = directedChannel
-			}
-
-			return cb(nodePub, channels)
-		})
+				return cb(nodePub, channels)
+			})
 	}, reset)
 }
 
@@ -1259,12 +1259,12 @@ func (s *SQLStore) ForEachChannelCacheable(cb func(*models.CachedEdgeInfo,
 	reset func()) error {
 
 	ctx := context.TODO()
-	cfg := sqldb.DefaultPaginatedQueryConfig()
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		channelCB := func(ctx context.Context,
 			row sqlc.ListChannelsWithPoliciesPaginatedRow) error {
 
+			// TODO(elle): use batch fetching here!!.
 			node1, node2, err := buildNodeVertices(
 				row.Node1Pubkey, row.Node2Pubkey,
 			)
@@ -1306,7 +1306,9 @@ func (s *SQLStore) ForEachChannelCacheable(cb func(*models.CachedEdgeInfo,
 			return cb(edge, pol1, pol2)
 		}
 
-		return forEachChannelWithPolicies(ctx, db, cfg, channelCB)
+		return forEachChannelWithPolicies(
+			ctx, db, s.cfg.QueryCfg, channelCB,
+		)
 	}, reset)
 }
 
@@ -1324,8 +1326,6 @@ func (s *SQLStore) ForEachChannelCacheable(cb func(*models.CachedEdgeInfo,
 func (s *SQLStore) ForEachChannel(ctx context.Context,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error, reset func()) error {
-
-	cfg := sqldb.DefaultPaginatedQueryConfig()
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		channelCB := func(ctx context.Context,
@@ -1372,12 +1372,14 @@ func (s *SQLStore) ForEachChannel(ctx context.Context,
 			return nil
 		}
 
-		return forEachChannelWithPolicies(ctx, db, cfg, channelCB)
+		return forEachChannelWithPolicies(
+			ctx, db, s.cfg.QueryCfg, channelCB,
+		)
 	}, reset)
 }
 
 func forEachChannelSQL(ctx context.Context, db SQLQueries,
-	cfg *sqldb.PaginatedQueryConfig,
+	cfg *sqldb.QueryConfig,
 	processChannel func(context.Context,
 		sqlc.ListChannelsPaginatedRow) error) error {
 
@@ -1408,7 +1410,7 @@ func forEachChannelSQL(ctx context.Context, db SQLQueries,
 }
 
 func forEachChannelWithPolicies(ctx context.Context, db SQLQueries,
-	cfg *sqldb.PaginatedQueryConfig,
+	cfg *sqldb.QueryConfig,
 	processChannel func(ctx context.Context,
 		row sqlc.ListChannelsWithPoliciesPaginatedRow) error) error {
 
@@ -2304,7 +2306,7 @@ func (s *SQLStore) forEachChanWithPoliciesInSCIDList(ctx context.Context,
 	}
 
 	return sqldb.ExecuteBatchQuery(
-		ctx, s.cfg.BatchQueryCfg, chanIDs, channelIDToBytes,
+		ctx, s.cfg.QueryCfg, chanIDs, channelIDToBytes,
 		queryWrapper, cb,
 	)
 }
@@ -2427,7 +2429,7 @@ func (s *SQLStore) forEachChanInSCIDList(ctx context.Context, db SQLQueries,
 	}
 
 	return sqldb.ExecuteBatchQuery(
-		ctx, s.cfg.BatchQueryCfg, chansInfo, chanIDConverter,
+		ctx, s.cfg.QueryCfg, chansInfo, chanIDConverter,
 		queryWrapper, cb,
 	)
 }
@@ -2586,7 +2588,7 @@ func (s *SQLStore) forEachChanInOutpoints(ctx context.Context, db SQLQueries,
 	}
 
 	return sqldb.ExecuteBatchQuery(
-		ctx, s.cfg.BatchQueryCfg, outpoints, outpointToString,
+		ctx, s.cfg.QueryCfg, outpoints, outpointToString,
 		queryWrapper, cb,
 	)
 }
@@ -2605,7 +2607,7 @@ func (s *SQLStore) deleteChannels(ctx context.Context, db SQLQueries,
 	}
 
 	return sqldb.ExecuteBatchQuery(
-		ctx, s.cfg.BatchQueryCfg, dbIDs, idConverter,
+		ctx, s.cfg.QueryCfg, dbIDs, idConverter,
 		queryWrapper, func(ctx context.Context, _ any) error {
 			return nil
 		},
@@ -2623,8 +2625,6 @@ func (s *SQLStore) ChannelView() ([]EdgePoint, error) {
 		ctx        = context.TODO()
 		edgePoints []EdgePoint
 	)
-
-	cfg := sqldb.DefaultPaginatedQueryConfig()
 
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		processChan := func(ctx context.Context,
@@ -2650,7 +2650,7 @@ func (s *SQLStore) ChannelView() ([]EdgePoint, error) {
 			return nil
 		}
 
-		return forEachChannelSQL(ctx, db, cfg, processChan)
+		return forEachChannelSQL(ctx, db, s.cfg.QueryCfg, processChan)
 	}, func() {
 		edgePoints = nil // reset function
 	})
@@ -3090,9 +3090,8 @@ func forEachNodeDirectedChannel(ctx context.Context, db SQLQueries,
 // forEachNodeCacheable fetches all V1 node IDs and pub keys from the database,
 // and executes the provided callback for each node.
 func forEachNodeCacheable(ctx context.Context, db SQLQueries,
+	cfg *sqldb.QueryConfig,
 	cb func(nodeID int64, nodePub route.Vertex) error) error {
-
-	cfg := sqldb.DefaultPaginatedQueryConfig()
 
 	queryFunc := func(ctx context.Context, lastID int64,
 		limit int32) ([]sqlc.ListNodeIDsAndPubKeysRow, error) {
@@ -3140,6 +3139,8 @@ func forEachNodeChannel(ctx context.Context, db SQLQueries,
 	chain chainhash.Hash, id int64, cb func(*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
+
+	// TODO(elle): batch fetching!!
 
 	// Get all the V1 channels for this node.Add commentMore actions
 	rows, err := db.ListChannelsByNodeID(

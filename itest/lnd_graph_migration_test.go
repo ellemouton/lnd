@@ -144,8 +144,8 @@ func openNativeSQLGraphDB(ht *lntest.HarnessTest,
 
 	store, err := graphdb.NewSQLStore(
 		&graphdb.SQLStoreConfig{
-			ChainHash:     *ht.Miner().ActiveNet.GenesisHash,
-			BatchQueryCfg: sqldb.DefaultBatchQueryConfig(),
+			ChainHash: *ht.Miner().ActiveNet.GenesisHash,
+			QueryCfg:  sqldb.DefaultBatchQueryConfig(),
 		},
 		executor,
 	)

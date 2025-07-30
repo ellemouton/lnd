@@ -16,17 +16,22 @@ type ItemCallbackFunc[R any] func(context.Context, R) error
 // for the batch query.
 type ConvertFunc[I any, T any] func(I) T
 
-// BatchQueryConfig holds configuration values for calls to ExecuteBatchQuery.
-type BatchQueryConfig struct {
+// QueryConfig holds various query config parameters.
+type QueryConfig struct {
 	// MaxBatchSize is the maximum number of items included in a batch
 	// query IN clauses list.
 	MaxBatchSize int
+
+	// MaxPageSize is the maximum number of items returned in a single page
+	// of results. This is used for paginated queries.
+	MaxPageSize int32
 }
 
-// DefaultBatchQueryConfig returns a default configuration for batched queries.
-func DefaultBatchQueryConfig() *BatchQueryConfig {
-	return &BatchQueryConfig{
+// DefaultQueryConfig returns a default QueryConfig with reasonable values.
+func DefaultQueryConfig() *QueryConfig {
+	return &QueryConfig{
 		MaxBatchSize: 1000,
+		MaxPageSize:  1000,
 	}
 }
 
@@ -42,7 +47,7 @@ func DefaultBatchQueryConfig() *BatchQueryConfig {
 // split up, a result that is returned in one page should not be expected to
 // be returned in another page.
 func ExecuteBatchQuery[I any, T any, R any](ctx context.Context,
-	cfg *BatchQueryConfig, inputItems []I, convertFunc ConvertFunc[I, T],
+	cfg *QueryConfig, inputItems []I, convertFunc ConvertFunc[I, T],
 	queryFunc BatchQueryFunc[T, R], callback ItemCallbackFunc[R]) error {
 
 	if len(inputItems) == 0 {
@@ -96,18 +101,6 @@ type CursorExtractFunc[T any, C any] func(T) C
 // ItemProcessFunc represents a function that processes individual items.
 type ItemProcessFunc[T any] func(context.Context, T) error
 
-// PaginatedQueryConfig holds configuration values for paginated queries.
-type PaginatedQueryConfig struct {
-	PageSize int32
-}
-
-// DefaultPaginatedQueryConfig returns a default configuration
-func DefaultPaginatedQueryConfig() *PaginatedQueryConfig {
-	return &PaginatedQueryConfig{
-		PageSize: 1000, // Different default than batch queries
-	}
-}
-
 // ExecutePaginatedQuery executes a cursor-based paginated query.
 // It continues fetching pages until no more results are returned,
 // processing each item with the provided callback.
@@ -121,7 +114,7 @@ func DefaultPaginatedQueryConfig() *PaginatedQueryConfig {
 // - processItem: function that processes each individual item
 func ExecutePaginatedQuery[C any, T any](
 	ctx context.Context,
-	cfg *PaginatedQueryConfig,
+	cfg *QueryConfig,
 	initialCursor C,
 	queryFunc PagedQueryFunc[C, T],
 	extractCursor CursorExtractFunc[T, C],
@@ -131,7 +124,7 @@ func ExecutePaginatedQuery[C any, T any](
 
 	for {
 		// Fetch the next page.
-		items, err := queryFunc(ctx, cursor, cfg.PageSize)
+		items, err := queryFunc(ctx, cursor, cfg.MaxPageSize)
 		if err != nil {
 			return fmt.Errorf("failed to fetch page with "+
 				"cursor %v: %w", cursor, err)
