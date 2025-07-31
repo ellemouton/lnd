@@ -1091,60 +1091,9 @@ func (s *SQLStore) ForEachNodeCached(ctx context.Context,
 			return nodePub
 		}
 
-		// TODO(elle): batch fetch node's channels and
-		// the channel data.
-		rows, err := db.ListChannelsByNodeID(
-			ctx, sqlc.ListChannelsByNodeIDParams{
-				Version: int16(ProtocolV1),
-				NodeID1: nodeID,
-			},
-		)
-		if err != nil {
-			return fmt.Errorf("unable to fetch channels of "+
-				"node(id=%d): %w", nodeID, err)
-		}
-
-		channels := make(map[uint64]*DirectedChannel, len(rows))
-		for _, row := range rows {
-			node1, node2, err := buildNodeVertices(
-				row.Node1Pubkey, row.Node2Pubkey,
-			)
-			if err != nil {
-				return err
-			}
-
-			e, err := getAndBuildEdgeInfo(
-				ctx, db, s.cfg.ChainHash, row.GraphChannel,
-				node1, node2,
-			)
-			if err != nil {
-				return fmt.Errorf("unable to build channel "+
-					"info: %w", err)
-			}
-
-			dbPol1, dbPol2, err := extractChannelPolicies(row)
-			if err != nil {
-				return fmt.Errorf("unable to extract channel "+
-					"policies: %w", err)
-			}
-
-			p1, p2, err := getAndBuildChanPolicies(
-				ctx, db, dbPol1, dbPol2, e.ChannelID, node1,
-				node2,
-			)
-			if err != nil {
-				return fmt.Errorf("unable to build channel "+
-					"policies: %w", err)
-			}
-
-			// Determine the outgoing and incoming policy
-			// for this channel and node combo.
-			outPolicy, inPolicy := p1, p2
-			if p1 != nil && p1.ToNode == nodePub {
-				outPolicy, inPolicy = p2, p1
-			} else if p2 != nil && p2.ToNode != nodePub {
-				outPolicy, inPolicy = p2, p1
-			}
+		channels := make(map[uint64]*DirectedChannel)
+		chanCB := func(e *models.ChannelEdgeInfo, outPolicy,
+			inPolicy *models.ChannelEdgePolicy) error {
 
 			var cachedInPolicy *models.CachedEdgePolicy
 			if inPolicy != nil {
@@ -1179,6 +1128,13 @@ func (s *SQLStore) ForEachNodeCached(ctx context.Context,
 			}
 
 			channels[e.ChannelID] = directedChannel
+
+			return nil
+		}
+
+		err := forEachNodeChannel(ctx, db, s.cfg, nodeID, chanCB)
+		if err != nil {
+			return err
 		}
 
 		return cb(nodePub, channels)
@@ -2780,15 +2736,15 @@ func (s *SQLStore) GraphSession(cb func(graph NodeTraverser) error,
 	var ctx = context.TODO()
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		return cb(newSQLNodeTraverser(db, s.cfg.ChainHash))
+		return cb(newSQLNodeTraverser(db, s.cfg))
 	}, reset)
 }
 
 // sqlNodeTraverser implements the NodeTraverser interface but with a backing
 // read only transaction for a consistent view of the graph.
 type sqlNodeTraverser struct {
-	db    SQLQueries
-	chain chainhash.Hash
+	db  SQLQueries
+	cfg *SQLStoreConfig
 }
 
 // A compile-time assertion to ensure that sqlNodeTraverser implements the
@@ -2796,12 +2752,10 @@ type sqlNodeTraverser struct {
 var _ NodeTraverser = (*sqlNodeTraverser)(nil)
 
 // newSQLNodeTraverser creates a new instance of the sqlNodeTraverser.
-func newSQLNodeTraverser(db SQLQueries,
-	chain chainhash.Hash) *sqlNodeTraverser {
-
+func newSQLNodeTraverser(db SQLQueries, cfg *SQLStoreConfig) *sqlNodeTraverser {
 	return &sqlNodeTraverser{
-		db:    db,
-		chain: chain,
+		db:  db,
+		cfg: cfg,
 	}
 }
 
@@ -2852,93 +2806,45 @@ func forEachNodeDirectedChannel(ctx context.Context, db SQLQueries,
 		return fmt.Errorf("unable to fetch node: %w", err)
 	}
 
-	rows, err := db.ListChannelsByNodeID(
-		ctx, sqlc.ListChannelsByNodeIDParams{
-			Version: int16(ProtocolV1),
-			NodeID1: dbID,
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("unable to fetch channels: %w", err)
-	}
-
-	// Exit early if there are no channels for this node so we don't
-	// do the unnecessary feature fetching.
-	if len(rows) == 0 {
-		return nil
-	}
-
 	features, err := getNodeFeatures(ctx, db, dbID)
 	if err != nil {
 		return fmt.Errorf("unable to fetch node features: %w", err)
 	}
 
-	for _, row := range rows {
-		node1, node2, err := buildNodeVertices(
-			row.Node1Pubkey, row.Node2Pubkey,
-		)
-		if err != nil {
-			return fmt.Errorf("unable to build node vertices: %w",
-				err)
-		}
+	return forEachNodeChannelCacheable(
+		ctx, db, dbID, func(edge *models.CachedEdgeInfo,
+			outPolicy, inPolicy *models.CachedEdgePolicy) error {
 
-		edge := buildCacheableChannelInfo(
-			row.GraphChannel.Scid, row.GraphChannel.Capacity.Int64,
-			node1, node2,
-		)
+			var cachedInPolicy *models.CachedEdgePolicy
+			if inPolicy != nil {
+				cachedInPolicy = inPolicy
+				cachedInPolicy.ToNodePubKey = toNodeCallback
+				cachedInPolicy.ToNodeFeatures = features
+			}
 
-		dbPol1, dbPol2, err := extractChannelPolicies(row)
-		if err != nil {
-			return err
-		}
+			directedChannel := &DirectedChannel{
+				ChannelID:    edge.ChannelID,
+				IsNode1:      nodePub == edge.NodeKey1Bytes,
+				OtherNode:    edge.NodeKey2Bytes,
+				Capacity:     edge.Capacity,
+				OutPolicySet: outPolicy != nil,
+				InPolicy:     cachedInPolicy,
+			}
+			if outPolicy != nil {
+				outPolicy.InboundFee.WhenSome(
+					func(fee lnwire.Fee) {
+						directedChannel.InboundFee = fee
+					},
+				)
+			}
 
-		p1, p2, err := buildCachedChanPolicies(
-			dbPol1, dbPol2, edge.ChannelID, node1, node2,
-		)
-		if err != nil {
-			return err
-		}
+			if nodePub == edge.NodeKey2Bytes {
+				directedChannel.OtherNode = edge.NodeKey1Bytes
+			}
 
-		// Determine the outgoing and incoming policy for this
-		// channel and node combo.
-		outPolicy, inPolicy := p1, p2
-		if p1 != nil && node2 == nodePub {
-			outPolicy, inPolicy = p2, p1
-		} else if p2 != nil && node1 != nodePub {
-			outPolicy, inPolicy = p2, p1
-		}
-
-		var cachedInPolicy *models.CachedEdgePolicy
-		if inPolicy != nil {
-			cachedInPolicy = inPolicy
-			cachedInPolicy.ToNodePubKey = toNodeCallback
-			cachedInPolicy.ToNodeFeatures = features
-		}
-
-		directedChannel := &DirectedChannel{
-			ChannelID:    edge.ChannelID,
-			IsNode1:      nodePub == edge.NodeKey1Bytes,
-			OtherNode:    edge.NodeKey2Bytes,
-			Capacity:     edge.Capacity,
-			OutPolicySet: outPolicy != nil,
-			InPolicy:     cachedInPolicy,
-		}
-		if outPolicy != nil {
-			outPolicy.InboundFee.WhenSome(func(fee lnwire.Fee) {
-				directedChannel.InboundFee = fee
-			})
-		}
-
-		if nodePub == edge.NodeKey2Bytes {
-			directedChannel.OtherNode = edge.NodeKey1Bytes
-		}
-
-		if err := cb(directedChannel); err != nil {
-			return err
-		}
-	}
-
-	return nil
+			return cb(directedChannel)
+		},
+	)
 }
 
 // forEachNodeCacheable fetches all V1 node IDs and pub keys from the database,
@@ -3070,6 +2976,84 @@ func forEachNodeChannel(ctx context.Context, db SQLQueries,
 		if err != nil {
 			return fmt.Errorf("unable to build channel "+
 				"policies: %w", err)
+		}
+
+		// Determine the outgoing and incoming policy for this
+		// channel and node combo.
+		p1ToNode := row.GraphChannel.NodeID2
+		p2ToNode := row.GraphChannel.NodeID1
+		outPolicy, inPolicy := p1, p2
+		if (p1 != nil && p1ToNode == id) ||
+			(p2 != nil && p2ToNode != id) {
+
+			outPolicy, inPolicy = p2, p1
+		}
+
+		if err := cb(edge, outPolicy, inPolicy); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func forEachNodeChannelCacheable(ctx context.Context, db SQLQueries, id int64,
+	cb func(*models.CachedEdgeInfo,
+		*models.CachedEdgePolicy,
+		*models.CachedEdgePolicy) error) error {
+
+	// Get all the V1 channels for this node.
+	rows, err := db.ListChannelsByNodeID(
+		ctx, sqlc.ListChannelsByNodeIDParams{
+			Version: int16(ProtocolV1),
+			NodeID1: id,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("unable to fetch channels: %w", err)
+	}
+
+	// Collect all the channel and policy IDs.
+	var (
+		chanIDs   = make([]int64, 0, len(rows))
+		policyIDs = make([]int64, 0, 2*len(rows))
+	)
+	for _, row := range rows {
+		chanIDs = append(chanIDs, row.GraphChannel.ID)
+
+		if row.Policy1ID.Valid {
+			policyIDs = append(policyIDs, row.Policy1ID.Int64)
+		}
+		if row.Policy2ID.Valid {
+			policyIDs = append(policyIDs, row.Policy2ID.Int64)
+		}
+	}
+
+	// Call the call-back for each channel and its known policies.
+	for _, row := range rows {
+		node1, node2, err := buildNodeVertices(
+			row.Node1Pubkey, row.Node2Pubkey,
+		)
+		if err != nil {
+			return fmt.Errorf("unable to build node vertices: %w",
+				err)
+		}
+
+		edge := buildCacheableChannelInfo(
+			row.GraphChannel.Scid, row.GraphChannel.Capacity.Int64,
+			node1, node2,
+		)
+
+		dbPol1, dbPol2, err := extractChannelPolicies(row)
+		if err != nil {
+			return err
+		}
+
+		p1, p2, err := buildCachedChanPolicies(
+			dbPol1, dbPol2, edge.ChannelID, node1, node2,
+		)
+		if err != nil {
+			return err
 		}
 
 		// Determine the outgoing and incoming policy for this
