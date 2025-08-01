@@ -19,6 +19,8 @@ import (
 	"github.com/lightningnetwork/lnd/kvdb/postgres"
 	"github.com/lightningnetwork/lnd/kvdb/sqlbase"
 	"github.com/lightningnetwork/lnd/kvdb/sqlite"
+	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/sqldb"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/time/rate"
@@ -31,8 +33,8 @@ const (
 	bboltDBPath          = "testdata/kvdb"
 	kvdbSqlitePath       = "testdata/kvdb"
 	nativeSQLSqlitePath  = "testdata"
-	kvdbPostgresDNS      = "postgres://test@localhost/graphbenchmark_kvdb"
-	nativeSQLPostgresDNS = "postgres://test@localhost/graphbenchmark"
+	kvdbPostgresDNS      = "postgres://ellemouton@localhost/graphbenchmark_kvdb"
+	nativeSQLPostgresDNS = "postgres://ellemouton@localhost/graphbenchmark"
 
 	kvdbSqliteFile      = "channel.sqlite"
 	kvdbBBoltFile       = "channel.db"
@@ -335,7 +337,7 @@ func TestPopulateDBs(t *testing.T) {
 	// graph.
 	countNodes := func(graph *ChannelGraph) int {
 		numNodes := 0
-		err := graph.ForEachNode(ctx, func(tx NodeRTx) error {
+		err := graph.ForEachNode(ctx, func(node *models.LightningNode) error {
 			numNodes++
 			return nil
 		}, func() {
@@ -484,7 +486,7 @@ func syncGraph(t *testing.T, src, dest *ChannelGraph) {
 	}
 
 	var wgNodes sync.WaitGroup
-	err := src.ForEachNode(ctx, func(tx NodeRTx) error {
+	err := src.ForEachNode(ctx, func(node *models.LightningNode) error {
 		wgNodes.Add(1)
 		go func() {
 			defer wgNodes.Done()
@@ -494,7 +496,7 @@ func syncGraph(t *testing.T, src, dest *ChannelGraph) {
 			// Node() result since that is a static object that
 			// is not affected by the transaction state.
 			err := dest.AddLightningNode(
-				ctx, tx.Node(), batch.LazyAdd(),
+				ctx, node, batch.LazyAdd(),
 			)
 			require.NoError(t, err)
 
@@ -636,11 +638,11 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 	ctx := context.Background()
 
 	backends := []dbConnection{
-		kvdbBBoltConn,
-		kvdbSqliteConn,
+		//kvdbBBoltConn,
+		//kvdbSqliteConn,
 		nativeSQLSqliteConn,
-		kvdbPostgresConn,
-		nativeSQLPostgresConn,
+		//kvdbPostgresConn,
+		//nativeSQLPostgresConn,
 	}
 
 	tests := []struct {
@@ -651,7 +653,7 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 			name: "ForEachNode",
 			fn: func(b testing.TB, store V1Store) {
 				err := store.ForEachNode(
-					ctx, func(_ NodeRTx) error {
+					ctx, func(_ *models.LightningNode) error {
 						return nil
 					}, func() {},
 				)
@@ -677,6 +679,83 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 			name: "NodeUpdatesInHorizon",
 			fn: func(b testing.TB, store V1Store) {
 				_, err := store.NodeUpdatesInHorizon(
+					time.Unix(0, 0), time.Now(),
+				)
+				require.NoError(b, err)
+			},
+		},
+		{
+			name: "ForEachNodeCacheable",
+			fn: func(b testing.TB, store V1Store) {
+				err := store.ForEachNodeCacheable(
+					ctx, func(_ route.Vertex,
+						_ *lnwire.FeatureVector) error {
+
+						return nil
+					}, func() {},
+				)
+				require.NoError(b, err)
+			},
+		},
+		{
+			name: "ForEachNodeCached",
+			fn: func(b testing.TB, store V1Store) {
+				//nolint:ll
+				err := store.ForEachNodeCached(
+					ctx, func(route.Vertex,
+						map[uint64]*DirectedChannel) error {
+
+						return nil
+					}, func() {},
+				)
+				require.NoError(b, err)
+			},
+		},
+		{
+			name: "ForEachNodeChannel",
+			fn: func(b testing.TB, store V1Store) {
+				err := store.ForEachNodesChannels(
+					ctx, func(node *models.LightningNode,
+						chans []*NodeChannel) error {
+
+						return nil
+					}, func() {},
+				)
+				require.NoError(b, err)
+				//err := store.ForEachNode(
+				//	ctx, func(tx NodeRTx) error {
+				//		//nolint:ll
+				//		return tx.ForEachChannel(
+				//			func(*models.ChannelEdgeInfo,
+				//				*models.ChannelEdgePolicy,
+				//				*models.ChannelEdgePolicy) error {
+				//
+				//				return nil
+				//			},
+				//		)
+				//	}, func() {},
+				//)
+				//require.NoError(b, err)
+			},
+		},
+		{
+			name: "ForEachNodeCached",
+			fn: func(b testing.TB, store V1Store) {
+				//nolint:ll
+				err := store.ForEachNodeCached(
+					ctx, func(route.Vertex,
+						map[uint64]*DirectedChannel) error {
+
+						return nil
+					}, func() {},
+				)
+				require.NoError(b, err)
+			},
+		},
+		{
+			name: "ChanUpdatesInHorizon",
+			fn: func(b testing.TB, store V1Store) {
+				_, err := store.ChanUpdatesInHorizon(
 					time.Unix(0, 0), time.Now(),
 				)
 				require.NoError(b, err)

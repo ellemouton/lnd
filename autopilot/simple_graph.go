@@ -1,6 +1,13 @@
 package autopilot
 
-import "context"
+import (
+	"bytes"
+	"context"
+
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
+	"github.com/lightningnetwork/lnd/graph/db/models"
+	"github.com/lightningnetwork/lnd/routing/route"
+)
 
 // diameterCutoff is used to discard nodes in the diameter calculation.
 // It is the multiplier for the eccentricity of the highest-degree node,
@@ -31,8 +38,8 @@ func NewSimpleGraph(ctx context.Context, g ChannelGraph) (*SimpleGraph, error) {
 	// The returned index is then used to create a simplified adjacency list
 	// where each node is identified by its index instead of its pubkey, and
 	// also to create a mapping from node index to node pubkey.
-	getNodeIndex := func(node Node) int {
-		key := NodeID(node.PubKey())
+	getNodeIndex := func(node route.Vertex) int {
+		key := NodeID(node)
 		nodeIndex, ok := nodes[key]
 
 		if !ok {
@@ -46,20 +53,23 @@ func NewSimpleGraph(ctx context.Context, g ChannelGraph) (*SimpleGraph, error) {
 
 	// Iterate over each node and each channel and update the adj and the
 	// node index.
-	err := g.ForEachNode(ctx, func(ctx context.Context, node Node) error {
-		u := getNodeIndex(node)
+	err := g.ForEachNodesChannels(ctx, func(node *models.LightningNode,
+		channels []*graphdb.NodeChannel) error {
 
-		return node.ForEachChannel(
-			ctx, func(_ context.Context,
-				edge ChannelEdge) error {
+		u := getNodeIndex(node.PubKeyBytes)
 
-				v := getNodeIndex(edge.Peer)
+		for _, channel := range channels {
+			peer := channel.Edge.NodeKey1Bytes
+			if bytes.Equal(peer[:], node.PubKeyBytes[:]) {
+				peer = channel.Edge.NodeKey2Bytes
+			}
 
-				adj[u] = append(adj[u], v)
+			v := getNodeIndex(peer)
 
-				return nil
-			},
-		)
+			adj[u] = append(adj[u], v)
+		}
+
+		return nil
 	}, func() {
 		clear(adj)
 		clear(nodes)

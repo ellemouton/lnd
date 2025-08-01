@@ -13,6 +13,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/lightningnetwork/lnd/fn/v2"
+	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
 
@@ -609,9 +610,9 @@ func (a *Agent) openChans(ctx context.Context, availableFunds btcutil.Amount,
 	nodes := make(map[NodeID]struct{})
 	addresses := make(map[NodeID][]net.Addr)
 	if err := a.cfg.Graph.ForEachNode(ctx, func(_ context.Context,
-		node Node) error {
+		node *models.LightningNode) error {
 
-		nID := NodeID(node.PubKey())
+		nID := NodeID(node.PubKeyBytes)
 
 		// If we come across ourselves, them we'll continue in
 		// order to avoid attempting to make a channel with
@@ -623,7 +624,7 @@ func (a *Agent) openChans(ctx context.Context, availableFunds btcutil.Amount,
 
 		// If the node has no known addresses, we cannot connect to it,
 		// so we'll skip it.
-		addrs := node.Addrs()
+		addrs := node.Addresses
 		if len(addrs) == 0 {
 			log.Tracef("Skipping node %x since no addresses known",
 				nID[:])

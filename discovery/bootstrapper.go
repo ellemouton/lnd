@@ -16,6 +16,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/bech32"
 	"github.com/lightningnetwork/lnd/autopilot"
+	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnutils"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -201,9 +202,9 @@ func (c *ChannelGraphBootstrapper) SampleNodeAddrs(_ context.Context,
 		)
 
 		err := c.chanGraph.ForEachNode(ctx, func(_ context.Context,
-			node autopilot.Node) error {
+			node *models.LightningNode) error {
 
-			nID := autopilot.NodeID(node.PubKey())
+			nID := autopilot.NodeID(node.PubKeyBytes)
 			if _, ok := c.tried[nID]; ok {
 				return nil
 			}
@@ -213,12 +214,12 @@ func (c *ChannelGraphBootstrapper) SampleNodeAddrs(_ context.Context,
 			// value. When comparing, we skip the first byte as
 			// it's 50/50. If it isn't less, than then we'll
 			// continue forward.
-			nodePubKeyBytes := node.PubKey()
+			nodePubKeyBytes := node.PubKeyBytes
 			if c.hashAccumulator.skipNode(nodePubKeyBytes) {
 				return nil
 			}
 
-			for _, nodeAddr := range node.Addrs() {
+			for _, nodeAddr := range node.Addresses {
 				// If we haven't yet reached our limit, then
 				// we'll copy over the details of this node
 				// into the set of addresses to be returned.

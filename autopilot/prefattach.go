@@ -7,6 +7,8 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
+	"github.com/lightningnetwork/lnd/graph/db/models"
 )
 
 // minMedianChanSizeFraction determines the minimum size a channel must have to
@@ -89,26 +91,26 @@ func (p *PrefAttachment) NodeScores(ctx context.Context, g ChannelGraph,
 		allChans  []btcutil.Amount
 		seenChans = make(map[uint64]struct{})
 	)
-	if err := g.ForEachNode(ctx, func(ctx context.Context, n Node) error {
-		err := n.ForEachChannel(ctx, func(_ context.Context,
-			e ChannelEdge) error {
+	err := g.ForEachNodesChannels(
+		ctx, func(node *models.LightningNode,
+			channels []*graphdb.NodeChannel) error {
 
-			if _, ok := seenChans[e.ChanID.ToUint64()]; ok {
-				return nil
+			for _, channel := range channels {
+				e := channel.Edge
+				if _, ok := seenChans[e.ChannelID]; ok {
+					return nil
+				}
+				seenChans[e.ChannelID] = struct{}{}
+				allChans = append(allChans, e.Capacity)
 			}
-			seenChans[e.ChanID.ToUint64()] = struct{}{}
-			allChans = append(allChans, e.Capacity)
-			return nil
-		})
-		if err != nil {
-			return err
-		}
 
-		return nil
-	}, func() {
-		allChans = nil
-		clear(seenChans)
-	}); err != nil {
+			return nil
+		}, func() {
+			allChans = nil
+			clear(seenChans)
+		},
+	)
+	if err != nil {
 		return nil, err
 	}
 
@@ -120,55 +122,55 @@ func (p *PrefAttachment) NodeScores(ctx context.Context, g ChannelGraph,
 	// the graph.
 	var maxChans int
 	nodeChanNum := make(map[NodeID]int)
-	if err := g.ForEachNode(ctx, func(ctx context.Context, n Node) error {
-		var nodeChans int
-		err := n.ForEachChannel(ctx, func(_ context.Context,
-			e ChannelEdge) error {
+	err = g.ForEachNodesChannels(
+		ctx, func(n *models.LightningNode,
+			channels []*graphdb.NodeChannel) error {
 
-			// Since connecting to nodes with a lot of small
-			// channels actually worsens our connectivity in the
-			// graph (we will potentially waste time trying to use
-			// these useless channels in path finding), we decrease
-			// the counter for such channels.
-			if e.Capacity <
-				medianChanSize/minMedianChanSizeFraction {
+			var nodeChans int
+			for _, channel := range channels {
+				// Since connecting to nodes with a lot of small
+				// channels actually worsens our connectivity in the
+				// graph (we will potentially waste time trying to use
+				// these useless channels in path finding), we decrease
+				// the counter for such channels.
+				if channel.Edge.Capacity <
+					medianChanSize/minMedianChanSizeFraction {
 
-				nodeChans--
+					nodeChans--
+					return nil
+				}
+
+				// Larger channels we count.
+				nodeChans++
 				return nil
 			}
 
-			// Larger channels we count.
-			nodeChans++
+			// We keep track of the highest-degree node we've seen, as this
+			// will be given the max score.
+			if nodeChans > maxChans {
+				maxChans = nodeChans
+			}
+
+			// If this node is not among our nodes to score, we can return
+			// early.
+			nID := NodeID(n.PubKeyBytes)
+			if _, ok := nodes[nID]; !ok {
+				log.Tracef("Node %x not among nodes to score, "+
+					"ignoring", nID[:])
+				return nil
+			}
+
+			// Otherwise we'll record the number of channels.
+			nodeChanNum[nID] = nodeChans
+			log.Tracef("Counted %v channels for node %x", nodeChans, nID[:])
+
 			return nil
-		})
-		if err != nil {
-			return err
-		}
-
-		// We keep track of the highest-degree node we've seen, as this
-		// will be given the max score.
-		if nodeChans > maxChans {
-			maxChans = nodeChans
-		}
-
-		// If this node is not among our nodes to score, we can return
-		// early.
-		nID := NodeID(n.PubKey())
-		if _, ok := nodes[nID]; !ok {
-			log.Tracef("Node %x not among nodes to score, "+
-				"ignoring", nID[:])
-			return nil
-		}
-
-		// Otherwise we'll record the number of channels.
-		nodeChanNum[nID] = nodeChans
-		log.Tracef("Counted %v channels for node %x", nodeChans, nID[:])
-
-		return nil
-	}, func() {
-		maxChans = 0
-		clear(nodeChanNum)
-	}); err != nil {
+		}, func() {
+			maxChans = 0
+			clear(nodeChanNum)
+		},
+	)
+	if err != nil {
 		return nil, err
 	}
 

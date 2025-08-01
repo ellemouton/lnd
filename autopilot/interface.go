@@ -8,6 +8,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/wire"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
+	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -16,29 +17,6 @@ import (
 // TODO(halseth): possibly make dynamic, going aggressive->lax as more channels
 // are opened.
 const DefaultConfTarget = 3
-
-// Node is an interface which represents n abstract vertex within the
-// channel graph. All nodes should have at least a single edge to/from them
-// within the graph.
-//
-// TODO(roasbeef): combine with routing.ChannelGraphSource
-type Node interface {
-	// PubKey is the identity public key of the node. This will be used to
-	// attempt to target a node for channel opening by the main autopilot
-	// agent. The key will be returned in serialized compressed format.
-	PubKey() [33]byte
-
-	// Addrs returns a slice of publicly reachable public TCP addresses
-	// that the peer is known to be listening on.
-	Addrs() []net.Addr
-
-	// ForEachChannel is a higher-order function that will be used to
-	// iterate through all edges emanating from/to the target node. For
-	// each active channel, this function should be called with the
-	// populated ChannelEdge that describes the active channel.
-	ForEachChannel(context.Context, func(context.Context,
-		ChannelEdge) error) error
-}
 
 // LocalChannel is a simple struct which contains relevant details of a
 // particular channel the local node has. The fields in this struct may be used
@@ -72,7 +50,7 @@ type ChannelEdge struct {
 
 	// Peer is the peer that this channel creates an edge to in the channel
 	// graph.
-	Peer Node
+	Peer *models.LightningNode
 }
 
 // ChannelGraph in an interface that represents a traversable channel graph.
@@ -85,8 +63,12 @@ type ChannelGraph interface {
 	// ForEachNode is a higher-order function that should be called once
 	// for each connected node within the channel graph. If the passed
 	// callback returns an error, then execution should be terminated.
-	ForEachNode(context.Context, func(context.Context, Node) error,
+	ForEachNode(context.Context, func(context.Context, *models.LightningNode) error,
 		func()) error
+
+	ForEachNodesChannels(ctx context.Context,
+		cb func(*models.LightningNode, []*graphdb.NodeChannel) error,
+		reset func()) error
 }
 
 // NodeScore is a tuple mapping a NodeID to a score indicating the preference
@@ -229,7 +211,7 @@ type GraphSource interface {
 	// the callback returns an error, then the transaction is aborted and
 	// the iteration stops early. Any operations performed on the NodeTx
 	// passed to the call-back are executed under the same read transaction.
-	ForEachNode(context.Context, func(graphdb.NodeRTx) error, func()) error
+	ForEachNode(context.Context, func(node *models.LightningNode) error, func()) error
 
 	// ForEachNodeCached is similar to ForEachNode, but it utilizes the
 	// channel graph cache if one is available. It is less consistent than
@@ -237,5 +219,9 @@ type GraphSource interface {
 	// transactions.
 	ForEachNodeCached(ctx context.Context, cb func(node route.Vertex,
 		chans map[uint64]*graphdb.DirectedChannel) error,
+		reset func()) error
+
+	ForEachNodesChannels(ctx context.Context,
+		cb func(*models.LightningNode, []*graphdb.NodeChannel) error,
 		reset func()) error
 }
