@@ -1966,7 +1966,8 @@ func (s *SQLStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 		deleted []*models.ChannelEdgeInfo
 	)
 	err := s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
-		chanIDsToDelete := make([]int64, 0, len(chanIDs))
+		// First, collect all channel rows
+		var channelRows []sqlc.GetChannelsBySCIDWithPoliciesRow
 		chanCallBack := func(ctx context.Context,
 			row sqlc.GetChannelsBySCIDWithPoliciesRow) error {
 
@@ -1975,65 +1976,7 @@ func (s *SQLStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 			scid := byteOrder.Uint64(row.GraphChannel.Scid)
 			delete(chanLookup, scid)
 
-			node1, node2, err := buildNodeVertices(
-				row.GraphNode.PubKey, row.GraphNode_2.PubKey,
-			)
-			if err != nil {
-				return err
-			}
-
-			info, err := getAndBuildEdgeInfo(
-				ctx, db, s.cfg.ChainHash, row.GraphChannel,
-				node1, node2,
-			)
-			if err != nil {
-				return err
-			}
-
-			deleted = append(deleted, info)
-			chanIDsToDelete = append(
-				chanIDsToDelete, row.GraphChannel.ID,
-			)
-
-			if !markZombie {
-				return nil
-			}
-
-			nodeKey1, nodeKey2 := info.NodeKey1Bytes,
-				info.NodeKey2Bytes
-			if strictZombiePruning {
-				var e1UpdateTime, e2UpdateTime *time.Time
-				if row.Policy1LastUpdate.Valid {
-					e1Time := time.Unix(
-						row.Policy1LastUpdate.Int64, 0,
-					)
-					e1UpdateTime = &e1Time
-				}
-				if row.Policy2LastUpdate.Valid {
-					e2Time := time.Unix(
-						row.Policy2LastUpdate.Int64, 0,
-					)
-					e2UpdateTime = &e2Time
-				}
-
-				nodeKey1, nodeKey2 = makeZombiePubkeys(
-					info, e1UpdateTime, e2UpdateTime,
-				)
-			}
-
-			err = db.UpsertZombieChannel(
-				ctx, sqlc.UpsertZombieChannelParams{
-					Version:  int16(ProtocolV1),
-					Scid:     channelIDToBytes(scid),
-					NodeKey1: nodeKey1[:],
-					NodeKey2: nodeKey2[:],
-				},
-			)
-			if err != nil {
-				return fmt.Errorf("unable to mark channel as "+
-					"zombie: %w", err)
-			}
-
+			channelRows = append(channelRows, row)
 			return nil
 		}
 
@@ -2048,6 +1991,19 @@ func (s *SQLStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 			return ErrEdgeNotFound
 		}
 
+		if len(channelRows) == 0 {
+			return nil
+		}
+
+		// Batch build all channel edges
+		channelEdges, chanIDsToDelete, err := batchBuildChannelEdgesForDeletion(
+			ctx, s.cfg, db, channelRows, strictZombiePruning, markZombie,
+		)
+		if err != nil {
+			return err
+		}
+
+		deleted = channelEdges
 		return s.deleteChannels(ctx, db, chanIDsToDelete)
 	}, func() {
 		deleted = nil
@@ -2058,8 +2014,7 @@ func (s *SQLStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 		}
 	})
 	if err != nil {
-		return nil, fmt.Errorf("unable to delete channel edges: %w",
-			err)
+		return nil, fmt.Errorf("unable to delete channel edges: %w", err)
 	}
 
 	for _, chanID := range chanIDs {
@@ -2068,6 +2023,113 @@ func (s *SQLStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 	}
 
 	return deleted, nil
+}
+
+// Helper method to batch build channel edges for deletion
+func batchBuildChannelEdgesForDeletion(ctx context.Context,
+	cfg *SQLStoreConfig,
+	db SQLQueries, rows []sqlc.GetChannelsBySCIDWithPoliciesRow,
+	strictZombiePruning, markZombie bool) ([]*models.ChannelEdgeInfo, []int64, error) {
+
+	if len(rows) == 0 {
+		return nil, nil, nil
+	}
+
+	// Collect all IDs needed for batch loading
+	var (
+		channelIDs      = make([]int64, len(rows))
+		policyIDs       = make([]int64, 0, len(rows)*2)
+		chanIDsToDelete = make([]int64, len(rows))
+	)
+
+	for i, row := range rows {
+		channelIDs[i] = row.GraphChannel.ID
+		chanIDsToDelete[i] = row.GraphChannel.ID
+
+		// Collect policy IDs
+		if row.Policy1ID.Valid {
+			policyIDs = append(policyIDs, row.Policy1ID.Int64)
+		}
+		if row.Policy2ID.Valid {
+			policyIDs = append(policyIDs, row.Policy2ID.Int64)
+		}
+	}
+
+	// Batch load channel data
+	channelBatchData, err := batchLoadChannelData(ctx, cfg.QueryCfg, db, channelIDs, policyIDs)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to batch load channel data: %w", err)
+	}
+
+	// Build all channel edges using batch data
+	var deleted []*models.ChannelEdgeInfo
+
+	for _, row := range rows {
+		scid := byteOrder.Uint64(row.GraphChannel.Scid)
+
+		node1, node2, err := buildNodeVertices(
+			row.GraphNode.PubKey, row.GraphNode_2.PubKey,
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		// Build channel info using batch data
+		info, err := buildEdgeInfoWithBatchData(
+			cfg.ChainHash, row.GraphChannel, node1, node2,
+			channelBatchData,
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		deleted = append(deleted, info)
+
+		// Handle zombie marking if needed
+		if markZombie {
+			err = handleZombieMarking(
+				ctx, db, row, info, strictZombiePruning, scid,
+			)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+
+	return deleted, chanIDsToDelete, nil
+}
+
+// Helper method to handle zombie marking for a single channel
+func handleZombieMarking(ctx context.Context, db SQLQueries,
+	row sqlc.GetChannelsBySCIDWithPoliciesRow, info *models.ChannelEdgeInfo,
+	strictZombiePruning bool, scid uint64) error {
+
+	nodeKey1, nodeKey2 := info.NodeKey1Bytes, info.NodeKey2Bytes
+
+	if strictZombiePruning {
+		var e1UpdateTime, e2UpdateTime *time.Time
+		if row.Policy1LastUpdate.Valid {
+			e1Time := time.Unix(row.Policy1LastUpdate.Int64, 0)
+			e1UpdateTime = &e1Time
+		}
+		if row.Policy2LastUpdate.Valid {
+			e2Time := time.Unix(row.Policy2LastUpdate.Int64, 0)
+			e2UpdateTime = &e2Time
+		}
+
+		nodeKey1, nodeKey2 = makeZombiePubkeys(
+			info, e1UpdateTime, e2UpdateTime,
+		)
+	}
+
+	return db.UpsertZombieChannel(
+		ctx, sqlc.UpsertZombieChannelParams{
+			Version:  int16(ProtocolV1),
+			Scid:     channelIDToBytes(scid),
+			NodeKey1: nodeKey1[:],
+			NodeKey2: nodeKey2[:],
+		},
+	)
 }
 
 // FetchChannelEdgesByID attempts to lookup the two directed edges for the
@@ -2441,6 +2503,7 @@ func (s *SQLStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 					err)
 			}
 
+			// Batch.
 			edge, err := getAndBuildEdgeInfo(
 				ctx, db, s.cfg.ChainHash, row.GraphChannel,
 				node1.PubKeyBytes, node2.PubKeyBytes,
@@ -2713,6 +2776,7 @@ func (s *SQLStore) PruneGraph(spentOutputs []*wire.OutPoint,
 				return err
 			}
 
+			// TODO: batch.
 			info, err := getAndBuildEdgeInfo(
 				ctx, db, s.cfg.ChainHash, row.GraphChannel,
 				node1, node2,
@@ -3004,6 +3068,7 @@ func (s *SQLStore) DisconnectBlockAtHeight(height uint32) (
 				return err
 			}
 
+			// TODO: batch.
 			channel, err := getAndBuildEdgeInfo(
 				ctx, db, s.cfg.ChainHash, row.GraphChannel,
 				node1, node2,
