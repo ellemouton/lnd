@@ -196,6 +196,20 @@ type KVStore struct {
 	nodeScheduler batch.Scheduler[kvdb.RwTx]
 }
 
+func (c *KVStore) ForEachNodeAndChannel(ctx context.Context,
+	cb func(node *models.LightningNode,
+		edge *models.ChannelEdgeInfo, outPolicy,
+		inPolicy *models.ChannelEdgePolicy) error, reset func()) error {
+
+	return c.ForEachNode(ctx, func(nodeTx NodeRTx) error {
+		return nodeTx.ForEachChannel(func(info *models.ChannelEdgeInfo,
+			p1, p2 *models.ChannelEdgePolicy) error {
+
+			return cb(nodeTx.Node(), info, p1, p2)
+		})
+	}, reset)
+}
+
 // A compile-time assertion to ensure that the KVStore struct implements the
 // V1Store interface.
 var _ V1Store = (*KVStore)(nil)

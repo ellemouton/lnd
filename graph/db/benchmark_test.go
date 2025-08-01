@@ -638,7 +638,7 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 	ctx := context.Background()
 
 	backends := []dbConnection{
-		kvdbBBoltConn,
+		//kvdbBBoltConn,
 		kvdbSqliteConn,
 		nativeSQLSqliteConn,
 		kvdbPostgresConn,
@@ -714,24 +714,40 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 		{
 			name: "ForEachNodeChannel",
 			fn: func(b testing.TB, store V1Store) {
-				err := store.ForEachNode(
-					ctx, func(tx NodeRTx) error {
-						//nolint:ll
-						return tx.ForEachChannel(
-							func(*models.ChannelEdgeInfo,
-								*models.ChannelEdgePolicy,
-								*models.ChannelEdgePolicy) error {
+				n := make(map[route.Vertex]map[uint64]struct{})
+				err := store.ForEachNodeAndChannel(
+					ctx, func(node *models.LightningNode,
+						edge *models.ChannelEdgeInfo,
+						outPolicy,
+						inPolicy *models.ChannelEdgePolicy) error {
 
-								return nil
-							},
-						)
+						if n[node.PubKeyBytes] == nil {
+							n[node.PubKeyBytes] = make(map[uint64]struct{})
+						}
+						n[node.PubKeyBytes][edge.ChannelID] = struct{}{}
+
+						return nil
 					}, func() {},
 				)
 				require.NoError(b, err)
+				//err := store.ForEachNode(
+				//	ctx, func(tx NodeRTx) error {
+				//		//nolint:ll
+				//		return tx.ForEachChannel(
+				//			func(*models.ChannelEdgeInfo,
+				//				*models.ChannelEdgePolicy,
+				//				*models.ChannelEdgePolicy) error {
+				//
+				//				return nil
+				//			},
+				//		)
+				//	}, func() {},
+				//)
+				//require.NoError(b, err)
 			},
 		},
 		{
-			name: "ForEachNodeChannel",
+			name: "ForEachNodeCached",
 			fn: func(b testing.TB, store V1Store) {
 				//nolint:ll
 				err := store.ForEachNodeCached(
