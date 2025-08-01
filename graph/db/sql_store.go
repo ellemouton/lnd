@@ -3121,27 +3121,25 @@ func (s *SQLStore) DisconnectBlockAtHeight(height uint32) (
 			return fmt.Errorf("unable to fetch channels: %w", err)
 		}
 
-		chanIDsToDelete := make([]int64, len(rows))
-		for i, row := range rows {
-			node1, node2, err := buildNodeVertices(
-				row.Node1PubKey, row.Node2PubKey,
+		if len(rows) == 0 {
+			// No channels to disconnect, but still clean up prune log
+			return db.DeletePruneLogEntriesInRange(
+				ctx, sqlc.DeletePruneLogEntriesInRangeParams{
+					StartHeight: int64(height),
+					EndHeight:   int64(endShortChanID.BlockHeight),
+				},
 			)
-			if err != nil {
-				return err
-			}
-
-			// TODO: batch.
-			channel, err := getAndBuildEdgeInfo(
-				ctx, db, s.cfg.ChainHash, row.GraphChannel,
-				node1, node2,
-			)
-			if err != nil {
-				return err
-			}
-
-			chanIDsToDelete[i] = row.GraphChannel.ID
-			removedChans = append(removedChans, channel)
 		}
+
+		// Batch build all channel edges for disconnection
+		channelEdges, chanIDsToDelete, err := s.batchBuildChannelEdgesForDisconnect(
+			ctx, db, rows,
+		)
+		if err != nil {
+			return err
+		}
+
+		removedChans = channelEdges
 
 		err = s.deleteChannels(ctx, db, chanIDsToDelete)
 		if err != nil {
@@ -3168,6 +3166,58 @@ func (s *SQLStore) DisconnectBlockAtHeight(height uint32) (
 	}
 
 	return removedChans, nil
+}
+
+// Helper method to batch build channel edges for block disconnection
+func (s *SQLStore) batchBuildChannelEdgesForDisconnect(ctx context.Context,
+	db SQLQueries, rows []sqlc.GetChannelsBySCIDRangeRow) (
+	[]*models.ChannelEdgeInfo, []int64, error) {
+
+	if len(rows) == 0 {
+		return nil, nil, nil
+	}
+
+	// Collect all IDs needed for batch loading
+	var (
+		channelIDs      = make([]int64, len(rows))
+		chanIDsToDelete = make([]int64, len(rows))
+	)
+
+	for i, row := range rows {
+		channelIDs[i] = row.GraphChannel.ID
+		chanIDsToDelete[i] = row.GraphChannel.ID
+	}
+
+	// Batch load channel data
+	channelBatchData, err := batchLoadChannelData(ctx, s.cfg.QueryCfg, db, channelIDs, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to batch load channel data: %w", err)
+	}
+
+	// Build all channel edges using batch data
+	var removedChans []*models.ChannelEdgeInfo
+
+	for _, row := range rows {
+		node1, node2, err := buildNodeVertices(
+			row.Node1PubKey, row.Node2PubKey,
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		// Build channel info using batch data
+		channel, err := buildEdgeInfoWithBatchData(
+			s.cfg.ChainHash, row.GraphChannel, node1, node2,
+			channelBatchData,
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		removedChans = append(removedChans, channel)
+	}
+
+	return removedChans, chanIDsToDelete, nil
 }
 
 // AddEdgeProof sets the proof of an existing edge in the graph database.
