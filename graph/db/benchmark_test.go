@@ -724,6 +724,15 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 				require.NoError(b, err)
 			},
 		},
+		{
+			name: "ChanUpdatesInHorizon",
+			fn: func(b testing.TB, store V1Store) {
+				_, err := store.ChanUpdatesInHorizon(
+					time.Unix(0, 0), time.Now(),
+				)
+				require.NoError(b, err)
+			},
+		},
 	}
 
 	for _, test := range tests {
