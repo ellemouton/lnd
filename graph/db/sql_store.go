@@ -1019,7 +1019,7 @@ type NodeChannelBatchData struct {
 //
 // NOTE: part of the V1Store interface.
 func (s *SQLStore) ForEachNode(ctx context.Context,
-	cb func(tx NodeRTx) error, reset func()) error {
+	cb func(tx *models.LightningNode) error, reset func()) error {
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		return forEachNodePaginated(
@@ -1027,72 +1027,10 @@ func (s *SQLStore) ForEachNode(ctx context.Context,
 			func(ctx context.Context, dbNodeID int64,
 				node *models.LightningNode) error {
 
-				return cb(newSQLGraphNodeTx(
-					db, s.cfg, dbNodeID, node,
-				))
+				return cb(node)
 			},
 		)
 	}, reset)
-}
-
-// sqlGraphNodeTx is an implementation of the NodeRTx interface backed by the
-// SQLStore and a SQL transaction.
-type sqlGraphNodeTx struct {
-	db   SQLQueries
-	id   int64
-	node *models.LightningNode
-	cfg  *SQLStoreConfig
-}
-
-// A compile-time constraint to ensure sqlGraphNodeTx implements the NodeRTx
-// interface.
-var _ NodeRTx = (*sqlGraphNodeTx)(nil)
-
-func newSQLGraphNodeTx(db SQLQueries, cfg *SQLStoreConfig,
-	id int64, node *models.LightningNode) *sqlGraphNodeTx {
-
-	return &sqlGraphNodeTx{
-		db:   db,
-		cfg:  cfg,
-		id:   id,
-		node: node,
-	}
-}
-
-// Node returns the raw information of the node.
-//
-// NOTE: This is a part of the NodeRTx interface.
-func (s *sqlGraphNodeTx) Node() *models.LightningNode {
-	return s.node
-}
-
-// ForEachChannel can be used to iterate over the node's channels under the same
-// transaction used to fetch the node.
-//
-// NOTE: This is a part of the NodeRTx interface.
-func (s *sqlGraphNodeTx) ForEachChannel(cb func(*models.ChannelEdgeInfo,
-	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
-
-	ctx := context.TODO()
-
-	return forEachNodeChannel(ctx, s.db, s.cfg, s.id, cb)
-}
-
-// FetchNode fetches the node with the given pub key under the same transaction
-// used to fetch the current node. The returned node is also a NodeRTx and any
-// operations on that NodeRTx will also be done under the same transaction.
-//
-// NOTE: This is a part of the NodeRTx interface.
-func (s *sqlGraphNodeTx) FetchNode(nodePub route.Vertex) (NodeRTx, error) {
-	ctx := context.TODO()
-
-	id, node, err := getNodeByPubKey(ctx, s.db, nodePub)
-	if err != nil {
-		return nil, fmt.Errorf("unable to fetch V1 node(%x): %w",
-			nodePub, err)
-	}
-
-	return newSQLGraphNodeTx(s.db, s.cfg, id, node), nil
 }
 
 // ForEachNodeDirectedChannel iterates through all channels of a given node,

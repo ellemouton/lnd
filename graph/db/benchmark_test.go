@@ -337,7 +337,7 @@ func TestPopulateDBs(t *testing.T) {
 	// graph.
 	countNodes := func(graph *ChannelGraph) int {
 		numNodes := 0
-		err := graph.ForEachNode(ctx, func(tx NodeRTx) error {
+		err := graph.ForEachNode(ctx, func(node *models.LightningNode) error {
 			numNodes++
 			return nil
 		}, func() {
@@ -486,7 +486,7 @@ func syncGraph(t *testing.T, src, dest *ChannelGraph) {
 	}
 
 	var wgNodes sync.WaitGroup
-	err := src.ForEachNode(ctx, func(tx NodeRTx) error {
+	err := src.ForEachNode(ctx, func(node *models.LightningNode) error {
 		wgNodes.Add(1)
 		go func() {
 			defer wgNodes.Done()
@@ -496,7 +496,7 @@ func syncGraph(t *testing.T, src, dest *ChannelGraph) {
 			// Node() result since that is a static object that
 			// is not affected by the transaction state.
 			err := dest.AddLightningNode(
-				ctx, tx.Node(), batch.LazyAdd(),
+				ctx, node, batch.LazyAdd(),
 			)
 			require.NoError(t, err)
 
@@ -653,7 +653,7 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 			name: "ForEachNode",
 			fn: func(b testing.TB, store V1Store) {
 				err := store.ForEachNode(
-					ctx, func(_ NodeRTx) error {
+					ctx, func(_ *models.LightningNode) error {
 						return nil
 					}, func() {},
 				)

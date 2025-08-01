@@ -47,96 +47,31 @@ func ChannelGraphFromDatabase(db GraphSource) ChannelGraph {
 	}
 }
 
-// type dbNode is a wrapper struct around a database transaction an
-// channeldb.LightningNode. The wrapper method implement the autopilot.Node
-// interface.
-type dbNode struct {
-	tx graphdb.NodeRTx
-}
-
-// A compile time assertion to ensure dbNode meets the autopilot.Node
-// interface.
-var _ Node = (*dbNode)(nil)
-
-// PubKey is the identity public key of the node. This will be used to attempt
-// to target a node for channel opening by the main autopilot agent. The key
-// will be returned in serialized compressed format.
-//
-// NOTE: Part of the autopilot.Node interface.
-func (d *dbNode) PubKey() [33]byte {
-	return d.tx.Node().PubKeyBytes
-}
-
-// Addrs returns a slice of publicly reachable public TCP addresses that the
-// peer is known to be listening on.
-//
-// NOTE: Part of the autopilot.Node interface.
-func (d *dbNode) Addrs() []net.Addr {
-	return d.tx.Node().Addresses
-}
-
-// ForEachChannel is a higher-order function that will be used to iterate
-// through all edges emanating from/to the target node. For each active
-// channel, this function should be called with the populated ChannelEdge that
-// describes the active channel.
-//
-// NOTE: Part of the autopilot.Node interface.
-func (d *dbNode) ForEachChannel(ctx context.Context,
-	cb func(context.Context, ChannelEdge) error) error {
-
-	return d.tx.ForEachChannel(func(ei *models.ChannelEdgeInfo, ep,
-		_ *models.ChannelEdgePolicy) error {
-
-		// Skip channels for which no outgoing edge policy is available.
-		//
-		// TODO(joostjager): Ideally the case where channels have a nil
-		// policy should be supported, as autopilot is not looking at
-		// the policies. For now, it is not easily possible to get a
-		// reference to the other end LightningNode object without
-		// retrieving the policy.
-		if ep == nil {
-			return nil
-		}
-
-		node, err := d.tx.FetchNode(ep.ToNode)
-		if err != nil {
-			return err
-		}
-
-		edge := ChannelEdge{
-			ChanID:   lnwire.NewShortChanIDFromInt(ep.ChannelID),
-			Capacity: ei.Capacity,
-			Peer: &dbNode{
-				tx: node,
-			},
-		}
-
-		return cb(ctx, edge)
-	})
-}
-
 // ForEachNode is a higher-order function that should be called once for each
 // connected node within the channel graph. If the passed callback returns an
 // error, then execution should be terminated.
 //
 // NOTE: Part of the autopilot.ChannelGraph interface.
 func (d *databaseChannelGraph) ForEachNode(ctx context.Context,
-	cb func(context.Context, Node) error, reset func()) error {
+	cb func(context.Context, *models.LightningNode) error, reset func()) error {
 
-	return d.db.ForEachNode(ctx, func(nodeTx graphdb.NodeRTx) error {
+	return d.db.ForEachNode(ctx, func(node *models.LightningNode) error {
 		// We'll skip over any node that doesn't have any advertised
 		// addresses. As we won't be able to reach them to actually
 		// open any channels.
-		if len(nodeTx.Node().Addresses) == 0 {
+		if len(node.Addresses) == 0 {
 			return nil
-		}
-
-		node := &dbNode{
-			tx: nodeTx,
 		}
 
 		return cb(ctx, node)
 	}, reset)
+}
+
+func (d *databaseChannelGraph) ForEachNodesChannels(ctx context.Context,
+	cb func(*models.LightningNode, []*graphdb.NodeChannel) error,
+	reset func()) error {
+
+	return d.db.ForEachNodesChannels(ctx, cb, reset)
 }
 
 // databaseChannelGraphCached wraps a channeldb.ChannelGraph instance with the
@@ -164,10 +99,6 @@ type dbNodeCached struct {
 	node     route.Vertex
 	channels map[uint64]*graphdb.DirectedChannel
 }
-
-// A compile time assertion to ensure dbNodeCached meets the autopilot.Node
-// interface.
-var _ Node = (*dbNodeCached)(nil)
 
 // PubKey is the identity public key of the node.
 //
@@ -198,8 +129,8 @@ func (nc dbNodeCached) ForEachChannel(ctx context.Context,
 		edge := ChannelEdge{
 			ChanID:   lnwire.NewShortChanIDFromInt(cid),
 			Capacity: channel.Capacity,
-			Peer: dbNodeCached{
-				node: channel.OtherNode,
+			Peer: &models.LightningNode{
+				PubKeyBytes: channel.OtherNode,
 			},
 		}
 
@@ -217,21 +148,26 @@ func (nc dbNodeCached) ForEachChannel(ctx context.Context,
 //
 // NOTE: Part of the autopilot.ChannelGraph interface.
 func (dc *databaseChannelGraphCached) ForEachNode(ctx context.Context,
-	cb func(context.Context, Node) error, reset func()) error {
+	cb func(context.Context, *models.LightningNode) error, reset func()) error {
 
 	return dc.db.ForEachNodeCached(ctx, func(n route.Vertex,
 		channels map[uint64]*graphdb.DirectedChannel) error {
 
 		if len(channels) > 0 {
-			node := dbNodeCached{
-				node:     n,
-				channels: channels,
-			}
-
-			return cb(ctx, node)
+			// TODO(ELLE): put the interface back.
+			return cb(ctx, &models.LightningNode{
+				PubKeyBytes: n,
+			})
 		}
 		return nil
 	}, reset)
+}
+
+func (dc *databaseChannelGraphCached) ForEachNodesChannels(ctx context.Context,
+	cb func(*models.LightningNode, []*graphdb.NodeChannel) error,
+	reset func()) error {
+
+	return dc.db.ForEachNodesChannels(ctx, cb, reset)
 }
 
 // memNode is a purely in-memory implementation of the autopilot.Node
@@ -242,47 +178,6 @@ type memNode struct {
 	chans []ChannelEdge
 
 	addrs []net.Addr
-}
-
-// A compile time assertion to ensure memNode meets the autopilot.Node
-// interface.
-var _ Node = (*memNode)(nil)
-
-// PubKey is the identity public key of the node. This will be used to attempt
-// to target a node for channel opening by the main autopilot agent.
-//
-// NOTE: Part of the autopilot.Node interface.
-func (m memNode) PubKey() [33]byte {
-	var n [33]byte
-	copy(n[:], m.pub.SerializeCompressed())
-
-	return n
-}
-
-// Addrs returns a slice of publicly reachable public TCP addresses that the
-// peer is known to be listening on.
-//
-// NOTE: Part of the autopilot.Node interface.
-func (m memNode) Addrs() []net.Addr {
-	return m.addrs
-}
-
-// ForEachChannel is a higher-order function that will be used to iterate
-// through all edges emanating from/to the target node. For each active
-// channel, this function should be called with the populated ChannelEdge that
-// describes the active channel.
-//
-// NOTE: Part of the autopilot.Node interface.
-func (m memNode) ForEachChannel(ctx context.Context,
-	cb func(context.Context, ChannelEdge) error) error {
-
-	for _, channel := range m.chans {
-		if err := cb(ctx, channel); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 // Median returns the median value in the slice of Amounts.
