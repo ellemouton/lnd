@@ -2492,56 +2492,37 @@ func (s *SQLStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 		edges = make(map[uint64]ChannelEdge)
 	)
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+		// First, collect all channel rows
+		var channelRows []sqlc.GetChannelsBySCIDWithPoliciesRow
+
 		chanCallBack := func(ctx context.Context,
 			row sqlc.GetChannelsBySCIDWithPoliciesRow) error {
 
-			node1, node2, err := buildNodes(
-				ctx, db, row.GraphNode, row.GraphNode_2,
-			)
-			if err != nil {
-				return fmt.Errorf("unable to fetch nodes: %w",
-					err)
-			}
-
-			// Batch.
-			edge, err := getAndBuildEdgeInfo(
-				ctx, db, s.cfg.ChainHash, row.GraphChannel,
-				node1.PubKeyBytes, node2.PubKeyBytes,
-			)
-			if err != nil {
-				return fmt.Errorf("unable to build "+
-					"channel info: %w", err)
-			}
-
-			dbPol1, dbPol2, err := extractChannelPolicies(row)
-			if err != nil {
-				return fmt.Errorf("unable to extract channel "+
-					"policies: %w", err)
-			}
-
-			p1, p2, err := getAndBuildChanPolicies(
-				ctx, db, dbPol1, dbPol2, edge.ChannelID,
-				node1.PubKeyBytes, node2.PubKeyBytes,
-			)
-			if err != nil {
-				return fmt.Errorf("unable to build channel "+
-					"policies: %w", err)
-			}
-
-			edges[edge.ChannelID] = ChannelEdge{
-				Info:    edge,
-				Policy1: p1,
-				Policy2: p2,
-				Node1:   node1,
-				Node2:   node2,
-			}
-
+			channelRows = append(channelRows, row)
 			return nil
 		}
 
-		return s.forEachChanWithPoliciesInSCIDList(
+		err := s.forEachChanWithPoliciesInSCIDList(
 			ctx, db, chanCallBack, chanIDs,
 		)
+		if err != nil {
+			return err
+		}
+
+		if len(channelRows) == 0 {
+			return nil
+		}
+
+		// Batch build all channel edges
+		channelEdges, err := s.batchBuildChannelEdgesForFetch(
+			ctx, db, channelRows,
+		)
+		if err != nil {
+			return err
+		}
+
+		edges = channelEdges
+		return nil
 	}, func() {
 		clear(edges)
 	})
@@ -2560,6 +2541,113 @@ func (s *SQLStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 	}
 
 	return res, nil
+}
+
+// Helper method to batch build channel edges for fetching
+func (s *SQLStore) batchBuildChannelEdgesForFetch(ctx context.Context,
+	db SQLQueries, rows []sqlc.GetChannelsBySCIDWithPoliciesRow) (
+	map[uint64]ChannelEdge, error) {
+
+	if len(rows) == 0 {
+		return make(map[uint64]ChannelEdge), nil
+	}
+
+	// Collect all IDs needed for batch loading
+	var (
+		channelIDs = make([]int64, len(rows))
+		policyIDs  = make([]int64, 0, len(rows)*2)
+		nodeIDs    = make([]int64, 0, len(rows)*2)
+	)
+
+	// Maps to avoid duplicate node loading
+	nodeIDSet := make(map[int64]bool)
+
+	for i, row := range rows {
+		channelIDs[i] = row.GraphChannel.ID
+
+		// Collect policy IDs
+		dbPol1, dbPol2, err := extractChannelPolicies(row)
+		if err != nil {
+			return nil, fmt.Errorf("unable to extract channel policies: %w", err)
+		}
+		if dbPol1 != nil {
+			policyIDs = append(policyIDs, dbPol1.ID)
+		}
+		if dbPol2 != nil {
+			policyIDs = append(policyIDs, dbPol2.ID)
+		}
+
+		// Collect unique node IDs
+		if !nodeIDSet[row.GraphNode.ID] {
+			nodeIDs = append(nodeIDs, row.GraphNode.ID)
+			nodeIDSet[row.GraphNode.ID] = true
+		}
+		if !nodeIDSet[row.GraphNode_2.ID] {
+			nodeIDs = append(nodeIDs, row.GraphNode_2.ID)
+			nodeIDSet[row.GraphNode_2.ID] = true
+		}
+	}
+
+	// Batch load all data
+	channelBatchData, err := batchLoadChannelData(ctx, s.cfg.QueryCfg, db, channelIDs, policyIDs)
+	if err != nil {
+		return nil, fmt.Errorf("unable to batch load channel data: %w", err)
+	}
+
+	nodeBatchData, err := batchLoadNodeData(ctx, s.cfg.QueryCfg, db, nodeIDs)
+	if err != nil {
+		return nil, fmt.Errorf("unable to batch load node data: %w", err)
+	}
+
+	// Build all channel edges using batch data
+	edges := make(map[uint64]ChannelEdge)
+
+	for _, row := range rows {
+		// Build nodes using batch data
+		node1, err := buildNodeWithBatchData(&row.GraphNode, nodeBatchData)
+		if err != nil {
+			return nil, fmt.Errorf("unable to build node1: %w", err)
+		}
+
+		node2, err := buildNodeWithBatchData(&row.GraphNode_2, nodeBatchData)
+		if err != nil {
+			return nil, fmt.Errorf("unable to build node2: %w", err)
+		}
+
+		// Build channel info using batch data
+		edge, err := buildEdgeInfoWithBatchData(
+			s.cfg.ChainHash, row.GraphChannel,
+			node1.PubKeyBytes, node2.PubKeyBytes,
+			channelBatchData,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("unable to build channel info: %w", err)
+		}
+
+		// Extract and build policies using batch data
+		dbPol1, dbPol2, err := extractChannelPolicies(row)
+		if err != nil {
+			return nil, fmt.Errorf("unable to extract channel policies: %w", err)
+		}
+
+		p1, p2, err := buildChanPoliciesWithBatchData(
+			dbPol1, dbPol2, edge.ChannelID,
+			node1.PubKeyBytes, node2.PubKeyBytes, channelBatchData,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("unable to build channel policies: %w", err)
+		}
+
+		edges[edge.ChannelID] = ChannelEdge{
+			Info:    edge,
+			Policy1: p1,
+			Policy2: p2,
+			Node1:   node1,
+			Node2:   node2,
+		}
+	}
+
+	return edges, nil
 }
 
 // forEachChanWithPoliciesInSCIDList is a wrapper around the
@@ -4703,25 +4791,6 @@ func buildChanPolicy(dbPolicy sqlc.GraphChannelPolicy, channelID uint64,
 		InboundFee:                inboundFee,
 		ExtraOpaqueData:           recs,
 	}, nil
-}
-
-// buildNodes builds the models.LightningNode instances for the
-// given row which is expected to be a sqlc type that contains node information.
-func buildNodes(ctx context.Context, db SQLQueries, dbNode1,
-	dbNode2 sqlc.GraphNode) (*models.LightningNode, *models.LightningNode,
-	error) {
-
-	node1, err := buildNode(ctx, db, &dbNode1)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	node2, err := buildNode(ctx, db, &dbNode2)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return node1, node2, nil
 }
 
 // extractChannelPolicies extracts the sqlc.GraphChannelPolicy records from the give
