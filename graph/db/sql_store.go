@@ -1281,74 +1281,226 @@ func (s *SQLStore) ForEachNodeCached(ctx context.Context,
 	cb func(node route.Vertex, chans map[uint64]*DirectedChannel) error,
 	reset func()) error {
 
-	handleNode := func(db SQLQueries, nodeID int64,
-		nodePub route.Vertex, features *lnwire.FeatureVector) error {
-
-		toNodeCallback := func() route.Vertex {
-			return nodePub
-		}
-
-		channels := make(map[uint64]*DirectedChannel)
-		chanCB := func(e *models.ChannelEdgeInfo, outPolicy,
-			inPolicy *models.ChannelEdgePolicy) error {
-
-			var cachedInPolicy *models.CachedEdgePolicy
-			if inPolicy != nil {
-				cachedInPolicy = models.NewCachedPolicy(
-					inPolicy,
-				)
-				cachedInPolicy.ToNodePubKey = toNodeCallback
-				cachedInPolicy.ToNodeFeatures = features
-			}
-
-			var inboundFee lnwire.Fee
-			if outPolicy != nil {
-				outPolicy.InboundFee.WhenSome(
-					func(fee lnwire.Fee) {
-						inboundFee = fee
-					},
-				)
-			}
-
-			directedChannel := &DirectedChannel{
-				ChannelID:    e.ChannelID,
-				IsNode1:      nodePub == e.NodeKey1Bytes,
-				OtherNode:    e.NodeKey2Bytes,
-				Capacity:     e.Capacity,
-				OutPolicySet: outPolicy != nil,
-				InPolicy:     cachedInPolicy,
-				InboundFee:   inboundFee,
-			}
-
-			if nodePub == e.NodeKey2Bytes {
-				directedChannel.OtherNode = e.NodeKey1Bytes
-			}
-
-			channels[e.ChannelID] = directedChannel
-
-			return nil
-		}
-
-		err := forEachNodeChannel(ctx, db, s.cfg, nodeID, chanCB)
-		if err != nil {
-			return err
-		}
-
-		return cb(nodePub, channels)
-	}
-
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		return forEachNodeCacheable(
-			ctx, s.cfg.QueryCfg, db,
-			func(nodeID int64, nodePub route.Vertex,
-				features *lnwire.FeatureVector) error {
+		// Step 1: Page through nodes (using the lighter query for IDs and pubkeys)
+		pageQueryFunc := func(ctx context.Context, lastID int64,
+			limit int32) ([]sqlc.ListNodeIDsAndPubKeysRow, error) {
 
-				return handleNode(
-					db, nodeID, nodePub, features,
-				)
-			},
+			return db.ListNodeIDsAndPubKeys(ctx, sqlc.ListNodeIDsAndPubKeysParams{
+				Version: int16(ProtocolV1),
+				ID:      lastID,
+				Limit:   limit,
+			})
+		}
+
+		extractPageCursor := func(node sqlc.ListNodeIDsAndPubKeysRow) int64 {
+			return node.ID
+		}
+
+		collectFunc := func(node sqlc.ListNodeIDsAndPubKeysRow) (int64, error) {
+			return node.ID, nil
+		}
+
+		// Step 2: Batch load node features, channels, and channel data
+		batchDataFunc := func(ctx context.Context,
+			nodeIDs []int64) (*NodeCachedBatchData, error) {
+
+			// Batch load node features
+			nodeFeatures, err := batchLoadNodeFeaturesHelper(ctx, s.cfg.QueryCfg, db, nodeIDs)
+			if err != nil {
+				return nil, fmt.Errorf("unable to batch load node features: %w", err)
+			}
+
+			// Batch load ALL unique channels for ALL nodes in this page
+			allChannels, err := db.ListChannelsForNodeIDs(ctx, sqlc.ListChannelsForNodeIDsParams{
+				Version: int16(ProtocolV1),
+				NodeIds: nodeIDs,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("unable to batch fetch channels for nodes: %w", err)
+			}
+
+			// Deduplicate channels and collect IDs
+			uniqueChannels := make(map[int64]sqlc.ListChannelsForNodeIDsRow)
+			var allChannelIDs []int64
+			var allPolicyIDs []int64
+
+			for _, channel := range allChannels {
+				channelID := channel.GraphChannel.ID
+
+				// Only process each unique channel once
+				if _, exists := uniqueChannels[channelID]; !exists {
+					uniqueChannels[channelID] = channel
+					allChannelIDs = append(allChannelIDs, channelID)
+
+					if channel.Policy1ID.Valid {
+						allPolicyIDs = append(allPolicyIDs, channel.Policy1ID.Int64)
+					}
+					if channel.Policy2ID.Valid {
+						allPolicyIDs = append(allPolicyIDs, channel.Policy2ID.Int64)
+					}
+				}
+			}
+
+			// Batch load channel data for all unique channels
+			channelBatchData, err := batchLoadChannelData(ctx, s.cfg.QueryCfg, db, allChannelIDs, allPolicyIDs)
+			if err != nil {
+				return nil, fmt.Errorf("unable to batch load channel data: %w", err)
+			}
+
+			// Create map of node ID -> channels that involve this node
+			nodeChannelMap := make(map[int64][]sqlc.ListChannelsForNodeIDsRow)
+			nodeIDSet := make(map[int64]bool)
+			for _, nodeID := range nodeIDs {
+				nodeIDSet[nodeID] = true
+			}
+
+			for _, channel := range uniqueChannels {
+				// Add channel to both nodes if they're in our current page
+				if nodeIDSet[channel.GraphChannel.NodeID1] {
+					nodeChannelMap[channel.GraphChannel.NodeID1] = append(
+						nodeChannelMap[channel.GraphChannel.NodeID1], channel)
+				}
+				if nodeIDSet[channel.GraphChannel.NodeID2] {
+					nodeChannelMap[channel.GraphChannel.NodeID2] = append(
+						nodeChannelMap[channel.GraphChannel.NodeID2], channel)
+				}
+			}
+
+			return &NodeCachedBatchData{
+				NodeFeatures:     nodeFeatures,
+				ChannelBatchData: channelBatchData,
+				NodeChannelMap:   nodeChannelMap,
+			}, nil
+		}
+
+		// Step 3: Process each node and build its cached channel map
+		processItem := func(ctx context.Context, nodeData sqlc.ListNodeIDsAndPubKeysRow,
+			batchData *NodeCachedBatchData) error {
+
+			// Build feature vector for this node
+			fv := lnwire.EmptyFeatureVector()
+			if features, exists := batchData.NodeFeatures[nodeData.ID]; exists {
+				for _, bit := range features {
+					fv.Set(lnwire.FeatureBit(bit))
+				}
+			}
+
+			var nodePub route.Vertex
+			copy(nodePub[:], nodeData.PubKey)
+
+			// Build cached channels map for this node
+			channels := make(map[uint64]*DirectedChannel)
+			nodeChannels := batchData.NodeChannelMap[nodeData.ID]
+
+			toNodeCallback := func() route.Vertex {
+				return nodePub
+			}
+
+			for _, channelRow := range nodeChannels {
+				err := s.processCachedNodeChannel(ctx, nodeData.ID, nodePub,
+					channelRow, batchData.ChannelBatchData, fv,
+					toNodeCallback, channels)
+				if err != nil {
+					return err
+				}
+			}
+
+			return cb(nodePub, channels)
+		}
+
+		return sqldb.ExecuteCollectAndBatchWithSharedDataQuery(
+			ctx, s.cfg.QueryCfg, int64(-1),
+			pageQueryFunc, extractPageCursor, collectFunc,
+			batchDataFunc, processItem,
 		)
 	}, reset)
+}
+
+// Helper method to process a single node-channel combination for caching
+func (s *SQLStore) processCachedNodeChannel(ctx context.Context, nodeID int64,
+	nodePub route.Vertex, channelRow sqlc.ListChannelsForNodeIDsRow,
+	channelBatchData *batchChannelData, features *lnwire.FeatureVector,
+	toNodeCallback func() route.Vertex, channels map[uint64]*DirectedChannel) error {
+
+	node1, node2, err := buildNodeVertices(
+		channelRow.Node1Pubkey, channelRow.Node2Pubkey,
+	)
+	if err != nil {
+		return fmt.Errorf("unable to build node vertices: %w", err)
+	}
+
+	edge, err := buildEdgeInfoWithBatchData(
+		s.cfg.ChainHash, channelRow.GraphChannel, node1, node2,
+		channelBatchData,
+	)
+	if err != nil {
+		return fmt.Errorf("unable to build channel info: %w", err)
+	}
+
+	dbPol1, dbPol2, err := extractChannelPolicies(channelRow)
+	if err != nil {
+		return fmt.Errorf("unable to extract channel policies: %w", err)
+	}
+
+	p1, p2, err := buildChanPoliciesWithBatchData(
+		dbPol1, dbPol2, edge.ChannelID, node1, node2,
+		channelBatchData,
+	)
+	if err != nil {
+		return fmt.Errorf("unable to build channel policies: %w", err)
+	}
+
+	// Determine outgoing and incoming policy for this specific node
+	p1ToNode := channelRow.GraphChannel.NodeID2
+	p2ToNode := channelRow.GraphChannel.NodeID1
+	outPolicy, inPolicy := p1, p2
+	if (p1 != nil && p1ToNode == nodeID) ||
+		(p2 != nil && p2ToNode != nodeID) {
+		outPolicy, inPolicy = p2, p1
+	}
+
+	// Build cached policy
+	var cachedInPolicy *models.CachedEdgePolicy
+	if inPolicy != nil {
+		cachedInPolicy = models.NewCachedPolicy(inPolicy)
+		cachedInPolicy.ToNodePubKey = toNodeCallback
+		cachedInPolicy.ToNodeFeatures = features
+	}
+
+	// Extract inbound fee
+	var inboundFee lnwire.Fee
+	if outPolicy != nil {
+		outPolicy.InboundFee.WhenSome(func(fee lnwire.Fee) {
+			inboundFee = fee
+		})
+	}
+
+	// Build directed channel
+	directedChannel := &DirectedChannel{
+		ChannelID:    edge.ChannelID,
+		IsNode1:      nodePub == edge.NodeKey1Bytes,
+		OtherNode:    edge.NodeKey2Bytes,
+		Capacity:     edge.Capacity,
+		OutPolicySet: outPolicy != nil,
+		InPolicy:     cachedInPolicy,
+		InboundFee:   inboundFee,
+	}
+
+	if nodePub == edge.NodeKey2Bytes {
+		directedChannel.OtherNode = edge.NodeKey1Bytes
+	}
+
+	channels[edge.ChannelID] = directedChannel
+
+	return nil
+}
+
+// Helper struct
+type NodeCachedBatchData struct {
+	NodeFeatures     map[int64][]int
+	ChannelBatchData *batchChannelData
+	NodeChannelMap   map[int64][]sqlc.ListChannelsForNodeIDsRow
 }
 
 // ForEachChannelCacheable iterates through all the channel edges stored

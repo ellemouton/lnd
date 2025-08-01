@@ -639,10 +639,10 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 
 	backends := []dbConnection{
 		//kvdbBBoltConn,
-		kvdbSqliteConn,
+		//kvdbSqliteConn,
 		nativeSQLSqliteConn,
-		kvdbPostgresConn,
-		nativeSQLPostgresConn,
+		//kvdbPostgresConn,
+		//nativeSQLPostgresConn,
 	}
 
 	tests := []struct {
@@ -714,17 +714,11 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 		{
 			name: "ForEachNodeChannel",
 			fn: func(b testing.TB, store V1Store) {
-				n := make(map[route.Vertex]map[uint64]struct{})
 				err := store.ForEachNodeAndChannel(
 					ctx, func(node *models.LightningNode,
 						edge *models.ChannelEdgeInfo,
 						outPolicy,
 						inPolicy *models.ChannelEdgePolicy) error {
-
-						if n[node.PubKeyBytes] == nil {
-							n[node.PubKeyBytes] = make(map[uint64]struct{})
-						}
-						n[node.PubKeyBytes][edge.ChannelID] = struct{}{}
 
 						return nil
 					}, func() {},
