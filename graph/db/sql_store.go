@@ -796,11 +796,16 @@ func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
 	}, reset)
 }
 
-// ForEachNodeAndChannel iterates through all nodes and their channels efficiently
+type NodeChannel struct {
+	Edge      *models.ChannelEdgeInfo
+	OutPolicy *models.ChannelEdgePolicy
+	InPolicy  *models.ChannelEdgePolicy
+}
+
+// ForEachNodesChannels iterates through all nodes and their channels efficiently
 // by fetching each channel only once and calling the callback for both nodes that own it.
-func (s *SQLStore) ForEachNodeAndChannel(ctx context.Context,
-	cb func(node *models.LightningNode,
-		edge *models.ChannelEdgeInfo, outPolicy, inPolicy *models.ChannelEdgePolicy) error,
+func (s *SQLStore) ForEachNodesChannels(ctx context.Context,
+	cb func(*models.LightningNode, []*NodeChannel) error,
 	reset func()) error {
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
@@ -915,18 +920,31 @@ func (s *SQLStore) ForEachNodeAndChannel(ctx context.Context,
 			// Get all channels for this specific node
 			channels := batchData.NodeChannelMap[nodeData.ID]
 
+			nodeChans := make([]*NodeChannel, 0, len(channels))
 			// Process each channel for this node
 			for _, channelRow := range channels {
 				err := s.processNodeChannel(
-					nodeData.ID, node, channelRow,
-					batchData.ChannelBatchData, cb,
+					nodeData.ID, channelRow,
+					batchData.ChannelBatchData,
+					func(info *models.ChannelEdgeInfo,
+						outPolicy,
+						inPolicy *models.ChannelEdgePolicy) error {
+
+						nodeChans = append(nodeChans, &NodeChannel{
+							Edge:      info,
+							OutPolicy: outPolicy,
+							InPolicy:  inPolicy,
+						})
+
+						return nil
+					},
 				)
 				if err != nil {
 					return err
 				}
 			}
 
-			return nil
+			return cb(node, nodeChans)
 		}
 
 		return sqldb.ExecuteCollectAndBatchWithSharedDataQuery(
@@ -938,9 +956,9 @@ func (s *SQLStore) ForEachNodeAndChannel(ctx context.Context,
 }
 
 // Helper method to process a single node-channel combination
-func (s *SQLStore) processNodeChannel(nodeID int64, node *models.LightningNode,
+func (s *SQLStore) processNodeChannel(nodeID int64,
 	channelRow sqlc.ListChannelsForNodeIDsRow, channelBatchData *batchChannelData,
-	cb func(*models.LightningNode, *models.ChannelEdgeInfo,
+	cb func(*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error) error {
 
 	node1, node2, err := buildNodeVertices(
@@ -980,7 +998,7 @@ func (s *SQLStore) processNodeChannel(nodeID int64, node *models.LightningNode,
 		outPolicy, inPolicy = p2, p1
 	}
 
-	return cb(node, edge, outPolicy, inPolicy)
+	return cb(edge, outPolicy, inPolicy)
 }
 
 // Helper structs

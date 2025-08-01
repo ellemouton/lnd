@@ -714,11 +714,9 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 		{
 			name: "ForEachNodeChannel",
 			fn: func(b testing.TB, store V1Store) {
-				err := store.ForEachNodeAndChannel(
+				err := store.ForEachNodesChannels(
 					ctx, func(node *models.LightningNode,
-						edge *models.ChannelEdgeInfo,
-						outPolicy,
-						inPolicy *models.ChannelEdgePolicy) error {
+						chans []*NodeChannel) error {
 
 						return nil
 					}, func() {},

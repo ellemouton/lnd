@@ -196,17 +196,30 @@ type KVStore struct {
 	nodeScheduler batch.Scheduler[kvdb.RwTx]
 }
 
-func (c *KVStore) ForEachNodeAndChannel(ctx context.Context,
-	cb func(node *models.LightningNode,
-		edge *models.ChannelEdgeInfo, outPolicy,
-		inPolicy *models.ChannelEdgePolicy) error, reset func()) error {
+func (c *KVStore) ForEachNodesChannels(ctx context.Context,
+	cb func(*models.LightningNode, []*NodeChannel) error,
+	reset func()) error {
 
 	return c.ForEachNode(ctx, func(nodeTx NodeRTx) error {
-		return nodeTx.ForEachChannel(func(info *models.ChannelEdgeInfo,
+		chans := make([]*NodeChannel, 0)
+
+		err := nodeTx.ForEachChannel(func(info *models.ChannelEdgeInfo,
 			p1, p2 *models.ChannelEdgePolicy) error {
 
-			return cb(nodeTx.Node(), info, p1, p2)
+			chans = append(chans, &NodeChannel{
+				Edge:      info,
+				OutPolicy: p1,
+				InPolicy:  p2,
+			})
+
+			return nil
 		})
+		if err != nil {
+			return fmt.Errorf("unable to fetch channels for "+
+				"node %x: %w", nodeTx.Node().PubKeyBytes, err)
+		}
+
+		return cb(nodeTx.Node(), chans)
 	}, reset)
 }
 
