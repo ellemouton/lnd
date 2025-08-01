@@ -2763,33 +2763,14 @@ func (s *SQLStore) PruneGraph(spentOutputs []*wire.OutPoint,
 		prunedNodes []route.Vertex
 	)
 	err := s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
-		var chansToDelete []int64
+		// First, collect all channel rows that need to be pruned
+		var channelRows []sqlc.GetChannelsByOutpointsRow
 
-		// Define the callback function for processing each channel.
+		// Define the callback function for collecting channels.
 		channelCallback := func(ctx context.Context,
 			row sqlc.GetChannelsByOutpointsRow) error {
 
-			node1, node2, err := buildNodeVertices(
-				row.Node1Pubkey, row.Node2Pubkey,
-			)
-			if err != nil {
-				return err
-			}
-
-			// TODO: batch.
-			info, err := getAndBuildEdgeInfo(
-				ctx, db, s.cfg.ChainHash, row.GraphChannel,
-				node1, node2,
-			)
-			if err != nil {
-				return err
-			}
-
-			closedChans = append(closedChans, info)
-			chansToDelete = append(
-				chansToDelete, row.GraphChannel.ID,
-			)
-
+			channelRows = append(channelRows, row)
 			return nil
 		}
 
@@ -2800,6 +2781,31 @@ func (s *SQLStore) PruneGraph(spentOutputs []*wire.OutPoint,
 			return fmt.Errorf("unable to fetch channels by "+
 				"outpoints: %w", err)
 		}
+
+		if len(channelRows) == 0 {
+			// No channels to prune, but still update prune log
+			err = db.UpsertPruneLogEntry(
+				ctx, sqlc.UpsertPruneLogEntryParams{
+					BlockHash:   blockHash[:],
+					BlockHeight: int64(blockHeight),
+				},
+			)
+			if err != nil {
+				return fmt.Errorf("unable to insert prune log "+
+					"entry: %w", err)
+			}
+			return nil
+		}
+
+		// Batch build all channel edges for pruning
+		channelEdges, chansToDelete, err := s.batchBuildChannelEdgesForPruning(
+			ctx, db, channelRows,
+		)
+		if err != nil {
+			return err
+		}
+
+		closedChans = channelEdges
 
 		err = s.deleteChannels(ctx, db, chansToDelete)
 		if err != nil {
@@ -2821,8 +2827,7 @@ func (s *SQLStore) PruneGraph(spentOutputs []*wire.OutPoint,
 		// nodes that no longer have any channels.
 		prunedNodes, err = s.pruneGraphNodes(ctx, db)
 		if err != nil {
-			return fmt.Errorf("unable to prune graph nodes: %w",
-				err)
+			return fmt.Errorf("unable to prune graph nodes: %w", err)
 		}
 
 		return nil
@@ -2840,6 +2845,63 @@ func (s *SQLStore) PruneGraph(spentOutputs []*wire.OutPoint,
 	}
 
 	return closedChans, prunedNodes, nil
+}
+
+// Helper method to batch build channel edges for pruning
+func (s *SQLStore) batchBuildChannelEdgesForPruning(ctx context.Context,
+	db SQLQueries, rows []sqlc.GetChannelsByOutpointsRow) (
+	[]*models.ChannelEdgeInfo, []int64, error) {
+
+	if len(rows) == 0 {
+		return nil, nil, nil
+	}
+
+	// Collect all IDs needed for batch loading
+	var (
+		channelIDs    = make([]int64, len(rows))
+		policyIDs     = make([]int64, 0, len(rows)*2)
+		chansToDelete = make([]int64, len(rows))
+	)
+
+	for i, row := range rows {
+		channelIDs[i] = row.GraphChannel.ID
+		chansToDelete[i] = row.GraphChannel.ID
+
+		// Collect policy IDs if they exist
+		// Note: The GetChannelsByOutpointsRow might not have policy info,
+		// so we'll let batchLoadChannelData handle policy loading
+	}
+
+	// Batch load channel data
+	channelBatchData, err := batchLoadChannelData(ctx, s.cfg.QueryCfg, db, channelIDs, policyIDs)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to batch load channel data: %w", err)
+	}
+
+	// Build all channel edges using batch data
+	var closedChans []*models.ChannelEdgeInfo
+
+	for _, row := range rows {
+		node1, node2, err := buildNodeVertices(
+			row.Node1Pubkey, row.Node2Pubkey,
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		// Build channel info using batch data
+		info, err := buildEdgeInfoWithBatchData(
+			s.cfg.ChainHash, row.GraphChannel, node1, node2,
+			channelBatchData,
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		closedChans = append(closedChans, info)
+	}
+
+	return closedChans, chansToDelete, nil
 }
 
 // forEachChanInOutpoints is a helper function that executes a paginated
