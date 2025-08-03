@@ -473,6 +473,42 @@ func forEachChannel(db kvdb.Backend, cb func(*models.ChannelEdgeInfo,
 	}, reset)
 }
 
+func (c *KVStore) ForEachNodesChannels(_ context.Context,
+	cb func(*models.LightningNode, []*NodeChannel) error,
+	reset func()) error {
+
+	return forEachNode(c.db, func(tx kvdb.RTx,
+		node *models.LightningNode) error {
+
+		chans := make([]*NodeChannel, 0)
+
+		err := c.forEachNodeChannelTx(
+			tx, node.PubKeyBytes,
+			func(_ kvdb.RTx, info *models.ChannelEdgeInfo, policy1,
+				policy2 *models.ChannelEdgePolicy) error {
+
+				chans = append(chans, &NodeChannel{
+					Edge:      info,
+					OutPolicy: policy1,
+					InPolicy:  policy2,
+				})
+
+				return nil
+			},
+			// NOTE: We don't need to reset anything here as the caller is
+			// expected to pass in the reset function to the ForEachNode
+			// method that constructed the chanGraphNodeTx.
+			func() {},
+		)
+		if err != nil {
+			return fmt.Errorf("unable to fetch channels for "+
+				"node %x: %w", node.PubKeyBytes, err)
+		}
+
+		return cb(node, chans)
+	}, reset)
+}
+
 // ForEachChannelCacheable iterates through all the channel edges stored within
 // the graph and invokes the passed callback for each edge. The callback takes
 // two edges as since this is a directed graph, both the in/out edges are

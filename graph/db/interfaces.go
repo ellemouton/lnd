@@ -51,6 +51,10 @@ type NodeTraverser interface {
 type V1Store interface { //nolint:interfacebloat
 	NodeTraverser
 
+	ForEachNodesChannels(ctx context.Context,
+		cb func(*models.LightningNode, []*NodeChannel) error,
+		reset func()) error
+
 	// AddLightningNode adds a vertex/node to the graph database. If the
 	// node is not in the database from before, this will add a new,
 	// unconnected one to the graph. If it is present from before, this will

@@ -711,6 +711,19 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 				require.NoError(b, err)
 			},
 		},
+		{
+			name: "ForEachNodeChannel",
+			fn: func(b testing.TB, store V1Store) {
+				err := store.ForEachNodesChannels(
+					ctx, func(node *models.LightningNode,
+						chans []*NodeChannel) error {
+
+						return nil
+					}, func() {},
+				)
+				require.NoError(b, err)
+			},
+		},
 	}
 
 	for _, test := range tests {
