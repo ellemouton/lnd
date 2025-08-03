@@ -7183,8 +7183,8 @@ func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 	// network, tallying up the total number of nodes, and also gathering
 	// each node so we can measure the graph diameter and degree stats
 	// below.
-	err := graph.ForEachNodeCached(ctx, func(node route.Vertex,
-		edges map[uint64]*graphdb.DirectedChannel) error {
+	err := graph.ForEachNodeCached(ctx, false, func(node route.Vertex,
+		_ []net.Addr, edges map[uint64]*graphdb.DirectedChannel) error {
 
 		// Increment the total number of nodes with each iteration.
 		numNodes++

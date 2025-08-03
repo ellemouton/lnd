@@ -31,13 +31,6 @@ type Node interface {
 	// Addrs returns a slice of publicly reachable public TCP addresses
 	// that the peer is known to be listening on.
 	Addrs() []net.Addr
-
-	// ForEachChannel is a higher-order function that will be used to
-	// iterate through all edges emanating from/to the target node. For
-	// each active channel, this function should be called with the
-	// populated ChannelEdge that describes the active channel.
-	ForEachChannel(context.Context, func(context.Context,
-		ChannelEdge) error) error
 }
 
 // LocalChannel is a simple struct which contains relevant details of a
@@ -87,6 +80,10 @@ type ChannelGraph interface {
 	// callback returns an error, then execution should be terminated.
 	ForEachNode(context.Context, func(context.Context, Node) error,
 		func()) error
+
+	ForEachNodesChannels(ctx context.Context,
+		cb func(context.Context, Node, []*ChannelEdge) error,
+		reset func()) error
 }
 
 // NodeScore is a tuple mapping a NodeID to a score indicating the preference
@@ -235,7 +232,8 @@ type GraphSource interface {
 	// channel graph cache if one is available. It is less consistent than
 	// ForEachNode since any further calls are made across multiple
 	// transactions.
-	ForEachNodeCached(ctx context.Context, cb func(node route.Vertex,
-		chans map[uint64]*graphdb.DirectedChannel) error,
+	ForEachNodeCached(ctx context.Context, withAddrs bool,
+		cb func(node route.Vertex, addrs []net.Addr,
+			chans map[uint64]*graphdb.DirectedChannel) error,
 		reset func()) error
 }

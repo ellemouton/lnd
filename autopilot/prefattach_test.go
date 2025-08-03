@@ -242,32 +242,29 @@ func TestPrefAttachmentSelectGreedyAllocation(t *testing.T) {
 			numNodes := 0
 			twoChans := false
 			nodes := make(map[NodeID]struct{})
-			err = graph.ForEachNode(
-				ctx, func(ctx context.Context, n Node) error {
+			err = graph.ForEachNodesChannels(
+				ctx, func(_ context.Context, node Node,
+					edges []*ChannelEdge) error {
+
 					numNodes++
-					nodes[n.PubKey()] = struct{}{}
+					nodes[node.PubKey()] = struct{}{}
 					numChans := 0
-					err := n.ForEachChannel(ctx,
-						func(_ context.Context, c ChannelEdge) error { //nolint:ll
-							numChans++
-							return nil
-						},
-					)
-					if err != nil {
-						return err
+
+					for range edges {
+						numChans++
 					}
 
 					twoChans = twoChans || (numChans == 2)
 
 					return nil
-				}, func() {
+				},
+				func() {
 					numNodes = 0
 					twoChans = false
 					clear(nodes)
 				},
 			)
 			require.NoError(t1, err)
-
 			require.EqualValues(t1, 3, numNodes)
 			require.True(t1, twoChans, "have two chans")
 
@@ -606,6 +603,23 @@ func (m *memChannelGraph) ForEachNode(ctx context.Context,
 	return nil
 }
 
+func (m *memChannelGraph) ForEachNodesChannels(ctx context.Context,
+	cb func(context.Context, Node, []*ChannelEdge) error, _ func()) error {
+
+	for _, node := range m.graph {
+		edges := make([]*ChannelEdge, 0, len(node.chans))
+		for _, edge := range node.chans {
+			edges = append(edges, &edge)
+		}
+
+		if err := cb(ctx, node, edges); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // randChanID generates a new random channel ID.
 func randChanID() lnwire.ShortChannelID {
 	id := atomic.AddUint64(&chanIDCounter, 1)
@@ -740,18 +754,6 @@ func (t *testNodeTx) ForEachChannel(f func(*models.ChannelEdgeInfo,
 			return f(edge, policy1, policy2)
 		}, func() {},
 	)
-}
-
-func (t *testNodeTx) FetchNode(pub route.Vertex) (graphdb.NodeRTx, error) {
-	node, err := t.db.db.FetchLightningNode(context.Background(), pub)
-	if err != nil {
-		return nil, err
-	}
-
-	return &testNodeTx{
-		db:   t.db,
-		node: node,
-	}, nil
 }
 
 var _ graphdb.NodeRTx = (*testNodeTx)(nil)

@@ -69,23 +69,22 @@ func testGraphMigration(ht *lntest.HarnessTest) {
 			numNodes int
 			edges    = make(map[uint64]bool)
 		)
-		err := db.ForEachNode(ctx, func(tx graphdb.NodeRTx) error {
-			numNodes++
+		err = db.ForEachNodesChannels(
+			ctx, func(node *models.LightningNode,
+				channels []*graphdb.NodeChannel) error {
 
-			// For each node, also count the number of edges.
-			return tx.ForEachChannel(
-				func(info *models.ChannelEdgeInfo,
-					_ *models.ChannelEdgePolicy,
-					_ *models.ChannelEdgePolicy) error {
+				numNodes++
 
-					edges[info.ChannelID] = true
-					return nil
-				},
-			)
-		}, func() {
-			clear(edges)
-			numNodes = 0
-		})
+				for _, channel := range channels {
+					edges[channel.Edge.ChannelID] = true
+				}
+
+				return nil
+			}, func() {
+				clear(edges)
+				numNodes = 0
+			},
+		)
 		require.NoError(ht, err)
 		require.Equal(ht, expNumNodes, numNodes)
 		require.Equal(ht, expNumChans, len(edges))

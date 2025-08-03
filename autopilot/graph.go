@@ -10,7 +10,6 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
-	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -51,7 +50,8 @@ func ChannelGraphFromDatabase(db GraphSource) ChannelGraph {
 // channeldb.LightningNode. The wrapper method implement the autopilot.Node
 // interface.
 type dbNode struct {
-	tx graphdb.NodeRTx
+	pub   [33]byte
+	addrs []net.Addr
 }
 
 // A compile time assertion to ensure dbNode meets the autopilot.Node
@@ -64,7 +64,7 @@ var _ Node = (*dbNode)(nil)
 //
 // NOTE: Part of the autopilot.Node interface.
 func (d *dbNode) PubKey() [33]byte {
-	return d.tx.Node().PubKeyBytes
+	return d.pub
 }
 
 // Addrs returns a slice of publicly reachable public TCP addresses that the
@@ -72,45 +72,7 @@ func (d *dbNode) PubKey() [33]byte {
 //
 // NOTE: Part of the autopilot.Node interface.
 func (d *dbNode) Addrs() []net.Addr {
-	return d.tx.Node().Addresses
-}
-
-// ForEachChannel is a higher-order function that will be used to iterate
-// through all edges emanating from/to the target node. For each active
-// channel, this function should be called with the populated ChannelEdge that
-// describes the active channel.
-//
-// NOTE: Part of the autopilot.Node interface.
-func (d *dbNode) ForEachChannel(ctx context.Context,
-	cb func(context.Context, ChannelEdge) error) error {
-
-	return d.tx.ForEachChannel(func(ei *models.ChannelEdgeInfo, ep,
-		_ *models.ChannelEdgePolicy) error {
-
-		// Skip channels for which no outgoing edge policy is available.
-		//
-		// TODO(joostjager): Ideally the case where channels have a nil
-		// policy should be supported, as autopilot is not looking at
-		// the policies. For now, it is not easily possible to get a
-		// reference to the other end LightningNode object without
-		// retrieving the policy.
-		if ep == nil {
-			return nil
-		}
-
-		node, err := d.tx.FetchNode(ep.ToNode)
-		if err != nil {
-			return err
-		}
-
-		edge := ChannelEdge{
-			ChanID:   lnwire.NewShortChanIDFromInt(ep.ChannelID),
-			Capacity: ei.Capacity,
-			Peer:     node.Node().PubKeyBytes,
-		}
-
-		return cb(ctx, edge)
-	})
+	return d.addrs
 }
 
 // ForEachNode is a higher-order function that should be called once for each
@@ -130,11 +92,47 @@ func (d *databaseChannelGraph) ForEachNode(ctx context.Context,
 		}
 
 		node := &dbNode{
-			tx: nodeTx,
+			pub:   nodeTx.Node().PubKeyBytes,
+			addrs: nodeTx.Node().Addresses,
 		}
 
 		return cb(ctx, node)
 	}, reset)
+}
+
+func (d *databaseChannelGraph) ForEachNodesChannels(ctx context.Context,
+	cb func(context.Context, Node, []*ChannelEdge) error,
+	reset func()) error {
+
+	return d.db.ForEachNodeCached(
+		ctx, true, func(node route.Vertex, addrs []net.Addr,
+			chans map[uint64]*graphdb.DirectedChannel) error {
+
+			// We'll skip over any node that doesn't have any
+			// advertised addresses. As we won't be able to reach
+			// them to actually open any channels.
+			if len(addrs) == 0 {
+				return nil
+			}
+
+			edges := make([]*ChannelEdge, 0, len(chans))
+			for _, channel := range chans {
+				edges = append(edges, &ChannelEdge{
+					ChanID: lnwire.NewShortChanIDFromInt(
+						channel.ChannelID,
+					),
+					Capacity: channel.Capacity,
+					Peer:     channel.OtherNode,
+				})
+			}
+
+			return cb(ctx, &dbNode{
+				pub:   node,
+				addrs: addrs,
+			}, edges)
+
+		}, reset,
+	)
 }
 
 // databaseChannelGraphCached wraps a channeldb.ChannelGraph instance with the
@@ -183,30 +181,6 @@ func (nc dbNodeCached) Addrs() []net.Addr {
 	return []net.Addr{}
 }
 
-// ForEachChannel is a higher-order function that will be used to iterate
-// through all edges emanating from/to the target node. For each active
-// channel, this function should be called with the populated ChannelEdge that
-// describes the active channel.
-//
-// NOTE: Part of the autopilot.Node interface.
-func (nc dbNodeCached) ForEachChannel(ctx context.Context,
-	cb func(context.Context, ChannelEdge) error) error {
-
-	for cid, channel := range nc.channels {
-		edge := ChannelEdge{
-			ChanID:   lnwire.NewShortChanIDFromInt(cid),
-			Capacity: channel.Capacity,
-			Peer:     channel.OtherNode,
-		}
-
-		if err := cb(ctx, edge); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 // ForEachNode is a higher-order function that should be called once for each
 // connected node within the channel graph. If the passed callback returns an
 // error, then execution should be terminated.
@@ -215,7 +189,8 @@ func (nc dbNodeCached) ForEachChannel(ctx context.Context,
 func (dc *databaseChannelGraphCached) ForEachNode(ctx context.Context,
 	cb func(context.Context, Node) error, reset func()) error {
 
-	return dc.db.ForEachNodeCached(ctx, func(n route.Vertex,
+	return dc.db.ForEachNodeCached(ctx, false, func(n route.Vertex,
+		_ []net.Addr,
 		channels map[uint64]*graphdb.DirectedChannel) error {
 
 		if len(channels) > 0 {
@@ -225,6 +200,37 @@ func (dc *databaseChannelGraphCached) ForEachNode(ctx context.Context,
 			}
 
 			return cb(ctx, node)
+		}
+		return nil
+	}, reset)
+}
+
+func (dc *databaseChannelGraphCached) ForEachNodesChannels(ctx context.Context,
+	cb func(context.Context, Node, []*ChannelEdge) error,
+	reset func()) error {
+
+	return dc.db.ForEachNodeCached(ctx, false, func(n route.Vertex,
+		_ []net.Addr,
+		channels map[uint64]*graphdb.DirectedChannel) error {
+
+		edges := make([]*ChannelEdge, 0, len(channels))
+		for cid, channel := range channels {
+			edges = append(edges, &ChannelEdge{
+				ChanID:   lnwire.NewShortChanIDFromInt(cid),
+				Capacity: channel.Capacity,
+				Peer:     channel.OtherNode,
+			})
+		}
+
+		if len(channels) > 0 {
+			node := dbNodeCached{
+				node:     n,
+				channels: channels,
+			}
+
+			if err := cb(ctx, node, edges); err != nil {
+				return err
+			}
 		}
 		return nil
 	}, reset)
@@ -261,24 +267,6 @@ func (m memNode) PubKey() [33]byte {
 // NOTE: Part of the autopilot.Node interface.
 func (m memNode) Addrs() []net.Addr {
 	return m.addrs
-}
-
-// ForEachChannel is a higher-order function that will be used to iterate
-// through all edges emanating from/to the target node. For each active
-// channel, this function should be called with the populated ChannelEdge that
-// describes the active channel.
-//
-// NOTE: Part of the autopilot.Node interface.
-func (m memNode) ForEachChannel(ctx context.Context,
-	cb func(context.Context, ChannelEdge) error) error {
-
-	for _, channel := range m.chans {
-		if err := cb(ctx, channel); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 // Median returns the median value in the slice of Amounts.

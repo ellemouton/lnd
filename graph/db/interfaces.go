@@ -25,12 +25,6 @@ type NodeRTx interface {
 	// the same transaction used to fetch the node.
 	ForEachChannel(func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error
-
-	// FetchNode fetches the node with the given pub key under the same
-	// transaction used to fetch the current node. The returned node is also
-	// a NodeRTx and any operations on that NodeRTx will also be done under
-	// the same transaction.
-	FetchNode(node route.Vertex) (NodeRTx, error)
 }
 
 // NodeTraverser is an abstract read only interface that provides information
@@ -96,8 +90,9 @@ type V1Store interface { //nolint:interfacebloat
 	// DirectedChannel data to the call-back.
 	//
 	// NOTE: The callback contents MUST not be modified.
-	ForEachNodeCached(ctx context.Context, cb func(node route.Vertex,
-		chans map[uint64]*DirectedChannel) error, reset func()) error
+	ForEachNodeCached(ctx context.Context, withAddrs bool,
+		cb func(node route.Vertex, addrs []net.Addr,
+			chans map[uint64]*DirectedChannel) error, reset func()) error
 
 	// ForEachNode iterates through all the stored vertices/nodes in the
 	// graph, executing the passed callback with each node encountered. If

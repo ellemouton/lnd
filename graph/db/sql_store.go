@@ -1314,12 +1314,13 @@ func (s *SQLStore) ChanUpdatesInHorizon(startTime,
 // NOTE: The callback contents MUST not be modified.
 //
 // NOTE: part of the V1Store interface.
-func (s *SQLStore) ForEachNodeCached(ctx context.Context,
-	cb func(node route.Vertex, chans map[uint64]*DirectedChannel) error,
-	reset func()) error {
+func (s *SQLStore) ForEachNodeCached(ctx context.Context, withAddrs bool,
+	cb func(node route.Vertex, nodeAddrs []net.Addr,
+		chans map[uint64]*DirectedChannel) error, reset func()) error {
 
 	type nodeCachedBatchData struct {
 		features      map[int64][]int
+		addrs         map[int64][]nodeAddress
 		chanBatchData *batchChannelData
 		chanMap       map[int64][]sqlc.ListChannelsForNodeIDsRow
 	}
@@ -1350,6 +1351,18 @@ func (s *SQLStore) ForEachNodeCached(ctx context.Context,
 			if err != nil {
 				return nil, fmt.Errorf("unable to batch load "+
 					"node features: %w", err)
+			}
+
+			var nodeAddrs map[int64][]nodeAddress
+			if withAddrs {
+				nodeAddrs, err = batchLoadNodeAddressesHelper(
+					ctx, s.cfg.QueryCfg, db, nodeIDs,
+				)
+				if err != nil {
+					return nil, fmt.Errorf("unable to "+
+						"batch load node "+
+						"addresses: %w", err)
+				}
 			}
 
 			// Batch load ALL unique channels for ALL nodes in this
@@ -1440,6 +1453,7 @@ func (s *SQLStore) ForEachNodeCached(ctx context.Context,
 
 			return &nodeCachedBatchData{
 				features:      nodeFeatures,
+				addrs:         nodeAddrs,
 				chanBatchData: channelBatchData,
 				chanMap:       nodeChannelMap,
 			}, nil
@@ -1499,7 +1513,15 @@ func (s *SQLStore) ForEachNodeCached(ctx context.Context,
 				}
 			}
 
-			return cb(nodePub, channels)
+			addrs, err := buildNodeAddresses(
+				batchData.addrs[nodeData.ID],
+			)
+			if err != nil {
+				return fmt.Errorf("unable to build node "+
+					"addresses: %w", err)
+			}
+
+			return cb(nodePub, addrs, channels)
 		}
 
 		return sqldb.ExecuteCollectAndBatchWithSharedDataQuery(
