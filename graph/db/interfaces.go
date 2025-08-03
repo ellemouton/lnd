@@ -14,19 +14,6 @@ import (
 	"github.com/lightningnetwork/lnd/routing/route"
 )
 
-// NodeRTx represents transaction object with an underlying node associated that
-// can be used to make further queries to the graph under the same transaction.
-// This is useful for consistency during graph traversal and queries.
-type NodeRTx interface {
-	// Node returns the raw information of the node.
-	Node() *models.LightningNode
-
-	// ForEachChannel can be used to iterate over the node's channels under
-	// the same transaction used to fetch the node.
-	ForEachChannel(func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
-		*models.ChannelEdgePolicy) error) error
-}
-
 // NodeTraverser is an abstract read only interface that provides information
 // about nodes and their edges. The interface is about providing fast read-only
 // access to the graph and so if a cache is available, it should be used.
@@ -97,12 +84,9 @@ type V1Store interface { //nolint:interfacebloat
 	// ForEachNode iterates through all the stored vertices/nodes in the
 	// graph, executing the passed callback with each node encountered. If
 	// the callback returns an error, then the transaction is aborted and
-	// the iteration stops early. Any operations performed on the NodeTx
-	// passed to the call-back are executed under the same read transaction
-	// and so, methods on the NodeTx object _MUST_ only be called from
-	// within the call-back.
-	ForEachNode(ctx context.Context, cb func(tx NodeRTx) error,
-		reset func()) error
+	// the iteration stops early.
+	ForEachNode(ctx context.Context,
+		cb func(node *models.LightningNode) error, reset func()) error
 
 	// ForEachNodeCacheable iterates through all the stored vertices/nodes
 	// in the graph, executing the passed callback with each node
