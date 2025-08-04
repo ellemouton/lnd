@@ -52,26 +52,21 @@ const (
 
 	// v3OnionAddr denotes a version 3 Tor (prop224) onion service address.
 	v3OnionAddr addressType = 4
+
+	dnsAddr addressType = 5
 )
 
-// AddrLen returns the number of bytes that it takes to encode the target
-// address.
-func (a addressType) AddrLen() uint16 {
-	switch a {
-	case noAddr:
-		return 0
-	case tcp4Addr:
-		return 6
-	case tcp6Addr:
-		return 18
-	case v2OnionAddr:
-		return 12
-	case v3OnionAddr:
-		return 37
-	default:
-		return 0
-	}
-}
+const (
+	tcp4AddrLen = 6 // 4 bytes for the IP, 2 bytes for the port.
+
+	tcp6AddrLen = 18 // 16 bytes for the IP, 2 bytes for the port.
+
+	v2OnionAddrLen = 12 // 10 bytes for the onion address, 2 bytes for the port.
+
+	v3OnionAddrLen = 37 // 35 bytes for the onion address, 2 bytes for the port.
+
+	dnsAddrOverhead = 1 + 2 // 1 byte for the hostname length, 2 bytes for the port.
+)
 
 // WriteElement is a one-stop shop to write the big endian representation of
 // any element which is to be serialized for the wire protocol.
@@ -345,6 +340,11 @@ func WriteElement(w *bytes.Buffer, element interface{}) error {
 
 	case *tor.OnionAddr:
 		if err := WriteOnionAddr(w, e); err != nil {
+			return err
+		}
+
+	case *DNSAddress:
+		if err := WriteDNSAddress(w, e); err != nil {
 			return err
 		}
 
@@ -743,7 +743,6 @@ func ReadElement(r io.Reader, element interface{}) error {
 			var address net.Addr
 			switch aType := addressType(descriptor[0]); aType {
 			case noAddr:
-				addrBytesRead += aType.AddrLen()
 				continue
 
 			case tcp4Addr:
@@ -761,7 +760,7 @@ func ReadElement(r io.Reader, element interface{}) error {
 					IP:   net.IP(ip[:]),
 					Port: int(binary.BigEndian.Uint16(port[:])),
 				}
-				addrBytesRead += aType.AddrLen()
+				addrBytesRead += tcp4AddrLen
 
 			case tcp6Addr:
 				var ip [16]byte
@@ -778,7 +777,7 @@ func ReadElement(r io.Reader, element interface{}) error {
 					IP:   net.IP(ip[:]),
 					Port: int(binary.BigEndian.Uint16(port[:])),
 				}
-				addrBytesRead += aType.AddrLen()
+				addrBytesRead += tcp6AddrLen
 
 			case v2OnionAddr:
 				var h [tor.V2DecodedLen]byte
@@ -799,7 +798,7 @@ func ReadElement(r io.Reader, element interface{}) error {
 					OnionService: onionService,
 					Port:         port,
 				}
-				addrBytesRead += aType.AddrLen()
+				addrBytesRead += v2OnionAddrLen
 
 			case v3OnionAddr:
 				var h [tor.V3DecodedLen]byte
@@ -820,7 +819,35 @@ func ReadElement(r io.Reader, element interface{}) error {
 					OnionService: onionService,
 					Port:         port,
 				}
-				addrBytesRead += aType.AddrLen()
+				addrBytesRead += v3OnionAddrLen
+
+			case dnsAddr:
+				var hostnameLen [1]byte
+				_, err := io.ReadFull(addrBuf, hostnameLen[:])
+				if err != nil {
+					return err
+				}
+
+				hostname := make([]byte, hostnameLen[0])
+				_, err = io.ReadFull(addrBuf, hostname)
+				if err != nil {
+					return err
+				}
+
+				var port [2]byte
+				_, err = io.ReadFull(addrBuf, port[:])
+				if err != nil {
+					return err
+				}
+
+				address = &DNSAddress{
+					Hostname: string(hostname),
+					Port: binary.BigEndian.Uint16(
+						port[:],
+					),
+				}
+				addrBytesRead += dnsAddrOverhead +
+					uint16(len(hostname))
 
 			default:
 				// If we don't understand this address type,

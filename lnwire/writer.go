@@ -29,6 +29,8 @@ var (
 	// ErrNilOnionAddress is returned when the supplied address is nil.
 	ErrNilOnionAddress = errors.New("cannot write nil onion address")
 
+	ErrNilDNSAddress = errors.New("cannot write nil DNS address")
+
 	// ErrNilNetAddress is returned when a nil value is used in []net.Addr.
 	ErrNilNetAddress = errors.New("cannot write nil address")
 
@@ -320,6 +322,27 @@ func WriteTCPAddr(buf *bytes.Buffer, addr *net.TCPAddr) error {
 	return WriteUint16(buf, uint16(addr.Port))
 }
 
+func WriteDNSAddress(buf *bytes.Buffer, addr *DNSAddress) error {
+	if addr == nil {
+		return ErrNilDNSAddress
+	}
+
+	// Write the descriptor, the hostname length, and the hostname.
+	if _, err := buf.Write([]byte{byte(dnsAddr)}); err != nil {
+		return err
+	}
+
+	if err := WriteUint8(buf, uint8(len(addr.Hostname))); err != nil {
+		return err
+	}
+
+	if _, err := buf.Write([]byte(addr.Hostname)); err != nil {
+		return err
+	}
+
+	return WriteUint16(buf, addr.Port)
+}
+
 // WriteOnionAddr appends the onion address to the provided buffer.
 func WriteOnionAddr(buf *bytes.Buffer, addr *tor.OnionAddr) error {
 	if addr == nil {
@@ -391,6 +414,10 @@ func WriteNetAddrs(buf *bytes.Buffer, addresses []net.Addr) error {
 			}
 		case *tor.OnionAddr:
 			if err := WriteOnionAddr(addrBuf, a); err != nil {
+				return err
+			}
+		case *DNSAddress:
+			if err := WriteDNSAddress(addrBuf, a); err != nil {
 				return err
 			}
 		case *OpaqueAddrs:
