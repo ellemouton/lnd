@@ -37,9 +37,13 @@ var (
 		Port: 9000}
 	anotherAddr, _ = net.ResolveTCPAddr("tcp",
 		"[2001:db8:85a3:0:0:8a2e:370:7334]:80")
-	testAddrs      = []net.Addr{testAddr, anotherAddr}
+	testAddrs = []net.Addr{testAddr, anotherAddr}
+
 	testOpaqueAddr = &lnwire.OpaqueAddrs{
-		Payload: []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06},
+		// NOTE: the first byte is a protocol level address type. So
+		// for we set it to 0xff to guarantee that we do not know this
+		// type yet.
+		Payload: []byte{0xff, 0x02, 0x03, 0x04, 0x05, 0x06},
 	}
 
 	testRBytes, _ = hex.DecodeString("8ce2bc69281ce27da07e6683571319d18" +
@@ -208,6 +212,8 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 		// Add one v2 and one v3 onion address.
 		testOnionV2Addr,
 		testOnionV3Addr,
+		// Add a DNS hostname,
+		testDNSAddr,
 		// Make sure to also test the opaque address type.
 		testOpaqueAddr,
 	}
@@ -240,7 +246,7 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, expAddrs, dbNode.Addresses)
 
-	// Finally, update the set to only contain the Tor addresses.
+	// Update the set to only contain the Tor addresses.
 	expAddrs = []net.Addr{
 		testOnionV2Addr,
 		testOnionV3Addr,
@@ -252,6 +258,68 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 	dbNode, err = graph.FetchLightningNode(ctx, testPub)
 	require.NoError(t, err)
 	require.Equal(t, expAddrs, dbNode.Addresses)
+
+	// The rest of this test only applies to the KVStore DB impl since only
+	// in that impl is it possible to have DNS addresses embedded within the
+	// opaque address type.
+	_, ok := graph.V1Store.(*KVStore)
+	if !ok {
+		t.Skipf("skipping test that is aimed at a bbolt graph DB")
+	}
+
+	testOpaqueAddrWithEmbeddedDNSAddr := &lnwire.OpaqueAddrs{
+		Payload: []byte{
+			/* Here we embed an actual DNS address */
+			// The protocol level type for DNS addresses.
+			0x05,
+			// Hostname length: 11.
+			0x0B,
+			// The hostname itself.
+			'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'c', 'o', 'm',
+			// port 9735 in big-endian.
+			0x26, 0x07,
+			// Now we add more opaque bytes to represent more
+			// addresses that we dont know about yet.
+			// NOTE: the 0xff is an address type that we definitely
+			// don't know about yet
+			0xff, 0x02, 0x03, 0x04, 0x05, 0x06,
+		},
+	}
+	expectedDNSAddr := &lnwire.DNSAddress{
+		Hostname: "example.com",
+		Port:     9735,
+	}
+	expectedOpaqueAddr := &lnwire.OpaqueAddrs{
+		Payload: []byte{0xff, 0x02, 0x03, 0x04, 0x05, 0x06},
+	}
+
+	// Now we will do another address test that is designed to test the case
+	// where we previously had DNS addresses embedded within the opaque
+	// address type.
+	addrsToWrite := []net.Addr{
+		// Start with some known addresses.
+		testOnionV2Addr,
+		testAddr,
+		// Now, add an opaque address type that embeds a DNS address.
+		testOpaqueAddrWithEmbeddedDNSAddr,
+	}
+
+	node = nodeWithAddrs(addrsToWrite)
+	require.NoError(t, graph.AddLightningNode(ctx, node))
+
+	// Our expected addresses will now have the DNS address properly
+	// extracted.
+	expectedAddrs := []net.Addr{
+		testOnionV2Addr,
+		testAddr,
+		expectedDNSAddr,
+		expectedOpaqueAddr,
+	}
+
+	// Fetch the node and assert the updated addresses.
+	dbNode, err = graph.FetchLightningNode(ctx, testPub)
+	require.NoError(t, err)
+	require.Equal(t, expectedAddrs, dbNode.Addresses)
 }
 
 // TestPartialNode checks that we can add and retrieve a LightningNode where

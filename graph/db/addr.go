@@ -31,7 +31,34 @@ const (
 	// opaqueAddrs denotes an address (or a set of addresses) that LND was
 	// not able to parse since LND is not yet aware of the address type.
 	opaqueAddrs addressType = 4
+
+	// dnsAddr denotes a DNS address.
+	dnsAddr addressType = 5
 )
+
+func encodeDNSAddr(w io.Writer, addr *lnwire.DNSAddress) error {
+	if _, err := w.Write([]byte{byte(dnsAddr)}); err != nil {
+		return err
+	}
+
+	// Write the length of the hostname.
+	hostLen := len(addr.Hostname)
+	if _, err := w.Write([]byte{byte(hostLen)}); err != nil {
+		return err
+	}
+
+	if _, err := w.Write([]byte(addr.Hostname)); err != nil {
+		return err
+	}
+
+	var port [2]byte
+	byteOrder.PutUint16(port[:], addr.Port)
+	if _, err := w.Write(port[:]); err != nil {
+		return err
+	}
+
+	return nil
+}
 
 // encodeTCPAddr serializes a TCP address into its compact raw bytes
 // representation.
@@ -150,7 +177,7 @@ func encodeOpaqueAddrs(w io.Writer, addr *lnwire.OpaqueAddrs) error {
 // DeserializeAddr reads the serialized raw representation of an address and
 // deserializes it into the actual address. This allows us to avoid address
 // resolution within the channeldb package.
-func DeserializeAddr(r io.Reader) (net.Addr, error) {
+func DeserializeAddr(r io.Reader) ([]net.Addr, error) {
 	var addrType [1]byte
 	if _, err := r.Read(addrType[:]); err != nil {
 		return nil, err
@@ -231,27 +258,43 @@ func DeserializeAddr(r io.Reader) (net.Addr, error) {
 		}
 
 	case opaqueAddrs:
-		// Read the length of the payload.
-		var l [2]byte
-		if _, err := r.Read(l[:]); err != nil {
+		// NOTE: we supported the lnwire.OpaqueAddrs type before the
+		// DNS type, so there is a chance that we have DNS address types
+		// persisted under the lnwire.OpaqueAddrs type and so we will
+		// convert these on the fly right now. The protocol level
+		// address type for these are retained within the payload
+		// ....
+		return lnwire.ReadAddresses(r)
+
+	case dnsAddr:
+		// Read the length of the hostname.
+		var hostLen [1]byte
+		if _, err := r.Read(hostLen[:]); err != nil {
 			return nil, err
 		}
 
-		// Read the payload.
-		payload := make([]byte, binary.BigEndian.Uint16(l[:]))
-		if _, err := r.Read(payload); err != nil {
+		// Read the hostname.
+		hostname := make([]byte, hostLen[0])
+		if _, err := r.Read(hostname); err != nil {
 			return nil, err
 		}
 
-		address = &lnwire.OpaqueAddrs{
-			Payload: payload,
+		// Read the port.
+		var port [2]byte
+		if _, err := r.Read(port[:]); err != nil {
+			return nil, err
+		}
+
+		address = &lnwire.DNSAddress{
+			Hostname: string(hostname),
+			Port:     binary.BigEndian.Uint16(port[:]),
 		}
 
 	default:
 		return nil, ErrUnknownAddressType
 	}
 
-	return address, nil
+	return []net.Addr{address}, nil
 }
 
 // SerializeAddr serializes an address into its raw bytes representation so that
@@ -264,6 +307,8 @@ func SerializeAddr(w io.Writer, address net.Addr) error {
 		return encodeOnionAddr(w, addr)
 	case *lnwire.OpaqueAddrs:
 		return encodeOpaqueAddrs(w, addr)
+	case *lnwire.DNSAddress:
+		return encodeDNSAddr(w, addr)
 	default:
 		return ErrUnknownAddressType
 	}

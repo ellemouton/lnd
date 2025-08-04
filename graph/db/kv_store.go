@@ -4281,7 +4281,7 @@ func deserializeLightningNode(r io.Reader) (models.LightningNode, error) {
 		if err != nil {
 			return models.LightningNode{}, err
 		}
-		addresses = append(addresses, address)
+		addresses = append(addresses, address...)
 	}
 	node.Addresses = addresses
 

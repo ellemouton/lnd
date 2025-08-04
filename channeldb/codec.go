@@ -426,11 +426,15 @@ func ReadElement(r io.Reader, element interface{}) error {
 		}
 
 	case *net.Addr:
-		addr, err := graphdb.DeserializeAddr(r)
+		addrs, err := graphdb.DeserializeAddr(r)
 		if err != nil {
 			return err
 		}
-		*e = addr
+		if len(addrs) != 1 {
+			return fmt.Errorf("expected exactly one address, got %d",
+				len(addrs))
+		}
+		*e = addrs[0]
 
 	case *[]net.Addr:
 		var numAddrs uint32
@@ -438,13 +442,13 @@ func ReadElement(r io.Reader, element interface{}) error {
 			return err
 		}
 
-		*e = make([]net.Addr, numAddrs)
+		*e = make([]net.Addr, 0, numAddrs)
 		for i := uint32(0); i < numAddrs; i++ {
-			addr, err := graphdb.DeserializeAddr(r)
+			addrs, err := graphdb.DeserializeAddr(r)
 			if err != nil {
 				return err
 			}
-			(*e)[i] = addr
+			*e = append(*e, addrs...)
 		}
 
 	default:

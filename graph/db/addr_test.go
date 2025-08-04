@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/tor"
 	"github.com/stretchr/testify/require"
 )
@@ -37,6 +38,11 @@ var (
 	testOnionV3Addr = &tor.OnionAddr{
 		OnionService: "vww6ybal4bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.onion", //nolint:ll
 		Port:         80,
+	}
+
+	testDNSAddr = &lnwire.DNSAddress{
+		Hostname: "example.com",
+		Port:     8080,
 	}
 )
 
@@ -147,11 +153,11 @@ func TestAddrSerialization(t *testing.T) {
 			continue
 		}
 
-		addr, err := DeserializeAddr(&b)
+		addrs, err := DeserializeAddr(&b)
 		if err != nil {
 			t.Fatalf("unable to deserialize address: %v", err)
 		}
-
-		require.Equal(t, test.expAddr, addr)
+		require.Len(t, addrs, 1)
+		require.Equal(t, test.expAddr, addrs[0])
 	}
 }
