@@ -131,6 +131,34 @@ func migrateNodes(ctx context.Context, kvBackend kvdb.Backend,
 
 		pub := node.PubKeyBytes
 
+		// TODO(elle): check here if the node has opaque addr that
+		// included DNS addresses type. If it does, it means it failed
+		// to extract the DNS addresses from the opaque type addresses
+		// meaning that the DNS address was invalid. If this is the
+		// case, we should skip migrating this node. We know that the
+		// Opaque address contains a DNS address if the first byte of
+		// the payload is 0x05.
+		for _, addr := range node.Addresses {
+			opAddr, ok := addr.(*lnwire.OpaqueAddrs)
+			if !ok {
+				continue
+			}
+
+			if len(opAddr.Payload) < 1 {
+				continue
+			}
+
+			if opAddr.Payload[0] != 0x05 {
+				continue
+			}
+
+			log.Warnf("Skipping node %x with invalid DNS address "+
+				"in opaque addrs: %v", pub, opAddr.Payload)
+			skipped++
+
+			return nil
+		}
+
 		// Sanity check to ensure that the node has valid extra opaque
 		// data. If it does not, we'll skip it. We need to do this
 		// because previously we would just persist any TLV bytes that

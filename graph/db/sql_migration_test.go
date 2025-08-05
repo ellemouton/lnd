@@ -879,6 +879,59 @@ func TestSQLMigrationEdgeCases(t *testing.T) {
 		})
 	})
 
+	t.Run("node with bad DNS address", func(t *testing.T) {
+		t.Parallel()
+
+		// Make three nodes.
+		// 1) One with normal unknown opaque address data
+		// 2) One with invalid DNS address data embedded in the
+		// opaque data.
+		// 3) One with valid DNS address data embedded in the
+		// opaque data.
+		n1 := makeTestNode(t, func(n *models.LightningNode) {
+			n.Addresses = []net.Addr{
+				testOpaqueAddr,
+			}
+		})
+		n2 := makeTestNode(t, func(n *models.LightningNode) {
+			n.Addresses = []net.Addr{
+				testOpaqueAddrWithEmbeddedBadDNSAddr,
+			}
+		})
+		n3 := makeTestNode(t, func(n *models.LightningNode) {
+			n.Addresses = []net.Addr{
+				testOpaqueAddrWithEmbeddedDNSAddr,
+			}
+		})
+
+		populateKV := func(t *testing.T, db *KVStore) {
+			// Insert all nodes into the KV store.
+			require.NoError(t, db.AddLightningNode(ctx, n1))
+			require.NoError(t, db.AddLightningNode(ctx, n2))
+			require.NoError(t, db.AddLightningNode(ctx, n3))
+		}
+
+		expectedNode3 := *n3
+		expectedNode3.Addresses = []net.Addr{
+			&lnwire.DNSAddress{
+				Hostname: "example.com",
+				Port:     9735,
+			},
+			&lnwire.OpaqueAddrs{
+				Payload: []byte{
+					0xff, 0x02, 0x03, 0x04, 0x05, 0x06,
+				},
+			},
+		}
+
+		runTestMigration(t, populateKV, dbState{
+			// We expect only the valid nodes to be present in the
+			// SQL db.
+			nodes: []*models.LightningNode{n1, &expectedNode3},
+		})
+
+	})
+
 	// Here, we test that in the case where the KV store contains a channel
 	// with invalid TLV data, the migration will still succeed, but the
 	// channel and its policies will not end up in the SQL store.

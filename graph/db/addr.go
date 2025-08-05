@@ -1,6 +1,7 @@
 package graphdb
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -258,13 +259,31 @@ func DeserializeAddr(r io.Reader) ([]net.Addr, error) {
 		}
 
 	case opaqueAddrs:
-		// NOTE: we supported the lnwire.OpaqueAddrs type before the
-		// DNS type, so there is a chance that we have DNS address types
-		// persisted under the lnwire.OpaqueAddrs type and so we will
-		// convert these on the fly right now. The protocol level
-		// address type for these are retained within the payload
-		// ....
-		return lnwire.ReadAddresses(r)
+		// Read the length prefix that ReadAddresses expects
+		var numAddrsBytes [2]byte
+		if _, err := io.ReadFull(r, numAddrsBytes[:]); err != nil {
+			return nil, err
+		}
+		addrsLen := binary.BigEndian.Uint16(numAddrsBytes[:])
+
+		// Read exactly the amount of data specified by the length
+		addrsData := make([]byte, addrsLen)
+		if _, err := io.ReadFull(r, addrsData); err != nil {
+			return nil, err
+		}
+
+		// Now we have all the data needed for this address entry
+		// Try the original approach first
+		fullData := append(numAddrsBytes[:], addrsData...)
+		reader1 := bytes.NewReader(fullData)
+		addresses, err := lnwire.ReadAddresses(reader1)
+		if err != nil {
+			// First approach failed, try alternative parsing
+			// We still have the length prefix + data available
+			reader2 := bytes.NewReader(fullData)
+			return parseOpaqueAddrsAlternative(reader2)
+		}
+		return addresses, nil
 
 	case dnsAddr:
 		// Read the length of the hostname.
@@ -292,6 +311,26 @@ func DeserializeAddr(r io.Reader) ([]net.Addr, error) {
 
 	default:
 		return nil, ErrUnknownAddressType
+	}
+
+	return []net.Addr{address}, nil
+}
+
+func parseOpaqueAddrsAlternative(r io.Reader) ([]net.Addr, error) {
+	// Read the length of the payload.
+	var l [2]byte
+	if _, err := r.Read(l[:]); err != nil {
+		return nil, err
+	}
+
+	// Read the payload.
+	payload := make([]byte, binary.BigEndian.Uint16(l[:]))
+	if _, err := r.Read(payload); err != nil {
+		return nil, err
+	}
+
+	address := &lnwire.OpaqueAddrs{
+		Payload: payload,
 	}
 
 	return []net.Addr{address}, nil

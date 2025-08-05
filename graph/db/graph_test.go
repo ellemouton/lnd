@@ -74,6 +74,45 @@ var (
 		0x48, 0x59, 0xe6, 0x96, 0x31, 0x13, 0xa1, 0x17,
 		0x2d, 0xe7, 0x93, 0xe4,
 	}
+
+	testOpaqueAddrWithEmbeddedDNSAddr = &lnwire.OpaqueAddrs{
+		Payload: []byte{
+			/* Here we embed an actual DNS address */
+			// The protocol level type for DNS addresses.
+			0x05,
+			// Hostname length: 11.
+			0x0B,
+			// The hostname itself.
+			'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'c', 'o', 'm',
+			// port 9735 in big-endian.
+			0x26, 0x07,
+			// Now we add more opaque bytes to represent more
+			// addresses that we dont know about yet.
+			// NOTE: the 0xff is an address type that we definitely
+			// don't know about yet
+			0xff, 0x02, 0x03, 0x04, 0x05, 0x06,
+		},
+	}
+
+	testOpaqueAddrWithEmbeddedBadDNSAddr = &lnwire.OpaqueAddrs{
+		Payload: []byte{
+			/* Here we embed an actual invalid DNS address */
+			// The protocol level type for DNS addresses.
+			0x05,
+			// Hostname length: We set this to a size that is
+			// incorrect in order to simulate the bad DNS address.
+			0xAA,
+			// The hostname itself.
+			'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'c', 'o', 'm',
+			// port 9735 in big-endian.
+			0x26, 0x07,
+			// Now we add more opaque bytes to represent more
+			// addresses that we dont know about yet.
+			// NOTE: the 0xff is an address type that we definitely
+			// don't know about yet
+			0xff, 0x02, 0x03, 0x04, 0x05, 0x06,
+		},
+	}
 )
 
 func createLightningNode(priv *btcec.PrivateKey) *models.LightningNode {
@@ -267,24 +306,6 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 		t.Skipf("skipping test that is aimed at a bbolt graph DB")
 	}
 
-	testOpaqueAddrWithEmbeddedDNSAddr := &lnwire.OpaqueAddrs{
-		Payload: []byte{
-			/* Here we embed an actual DNS address */
-			// The protocol level type for DNS addresses.
-			0x05,
-			// Hostname length: 11.
-			0x0B,
-			// The hostname itself.
-			'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'c', 'o', 'm',
-			// port 9735 in big-endian.
-			0x26, 0x07,
-			// Now we add more opaque bytes to represent more
-			// addresses that we dont know about yet.
-			// NOTE: the 0xff is an address type that we definitely
-			// don't know about yet
-			0xff, 0x02, 0x03, 0x04, 0x05, 0x06,
-		},
-	}
 	expectedDNSAddr := &lnwire.DNSAddress{
 		Hostname: "example.com",
 		Port:     9735,
@@ -320,6 +341,31 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 	dbNode, err = graph.FetchLightningNode(ctx, testPub)
 	require.NoError(t, err)
 	require.Equal(t, expectedAddrs, dbNode.Addresses)
+
+	// We'll also test the case where we have already persisted an
+	// _invalid_ DNS address embedded within an opaque address. We dont want
+	// such an address to cause us to fail to fetch a node. So in that case,
+	// we expect the original opaque address with the embedded DNS address
+	// to be returned.
+
+	addrsToWrite = []net.Addr{
+		// Start with some known addresses.
+		testOnionV2Addr,
+		testAddr,
+		// Now, add an opaque address type that embeds an invalid DNS
+		// address.
+		testOpaqueAddrWithEmbeddedBadDNSAddr,
+	}
+
+	node = nodeWithAddrs(addrsToWrite)
+	require.NoError(t, graph.AddLightningNode(ctx, node))
+
+	// Fetch the node and assert the updated addresses. The same set of
+	// addresses is expected since we expect the DNS address to fail at
+	// parse time and so it wont be extracted.
+	dbNode, err = graph.FetchLightningNode(ctx, testPub)
+	require.NoError(t, err)
+	require.Equal(t, addrsToWrite, dbNode.Addresses)
 }
 
 // TestPartialNode checks that we can add and retrieve a LightningNode where
