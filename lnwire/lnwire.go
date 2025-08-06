@@ -28,6 +28,13 @@ const (
 	MaxMsgBody = 65533
 )
 
+const (
+	tcp4AddrLen    = 6
+	tcp6AddrLen    = 18
+	v2OnionAddrLen = 12
+	v3OnionAddrLen = 37
+)
+
 // PkScript is simple type definition which represents a raw serialized public
 // key script.
 type PkScript []byte
@@ -53,25 +60,6 @@ const (
 	// v3OnionAddr denotes a version 3 Tor (prop224) onion service address.
 	v3OnionAddr addressType = 4
 )
-
-// AddrLen returns the number of bytes that it takes to encode the target
-// address.
-func (a addressType) AddrLen() uint16 {
-	switch a {
-	case noAddr:
-		return 0
-	case tcp4Addr:
-		return 6
-	case tcp6Addr:
-		return 18
-	case v2OnionAddr:
-		return 12
-	case v3OnionAddr:
-		return 37
-	default:
-		return 0
-	}
-}
 
 // WriteElement is a one-stop shop to write the big endian representation of
 // any element which is to be serialized for the wire protocol.
@@ -743,7 +731,6 @@ func ReadElement(r io.Reader, element interface{}) error {
 			var address net.Addr
 			switch aType := addressType(descriptor[0]); aType {
 			case noAddr:
-				addrBytesRead += aType.AddrLen()
 				continue
 
 			case tcp4Addr:
@@ -761,7 +748,7 @@ func ReadElement(r io.Reader, element interface{}) error {
 					IP:   net.IP(ip[:]),
 					Port: int(binary.BigEndian.Uint16(port[:])),
 				}
-				addrBytesRead += aType.AddrLen()
+				addrBytesRead += tcp4AddrLen
 
 			case tcp6Addr:
 				var ip [16]byte
@@ -778,7 +765,7 @@ func ReadElement(r io.Reader, element interface{}) error {
 					IP:   net.IP(ip[:]),
 					Port: int(binary.BigEndian.Uint16(port[:])),
 				}
-				addrBytesRead += aType.AddrLen()
+				addrBytesRead += tcp6AddrLen
 
 			case v2OnionAddr:
 				var h [tor.V2DecodedLen]byte
@@ -799,7 +786,7 @@ func ReadElement(r io.Reader, element interface{}) error {
 					OnionService: onionService,
 					Port:         port,
 				}
-				addrBytesRead += aType.AddrLen()
+				addrBytesRead += v2OnionAddrLen
 
 			case v3OnionAddr:
 				var h [tor.V3DecodedLen]byte
@@ -820,7 +807,7 @@ func ReadElement(r io.Reader, element interface{}) error {
 					OnionService: onionService,
 					Port:         port,
 				}
-				addrBytesRead += aType.AddrLen()
+				addrBytesRead += v3OnionAddrLen
 
 			default:
 				// If we don't understand this address type,
