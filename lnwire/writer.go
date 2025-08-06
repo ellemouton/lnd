@@ -35,6 +35,8 @@ var (
 	// ErrNilOpaqueAddrs is returned when the supplied address is nil.
 	ErrNilOpaqueAddrs = errors.New("cannot write nil OpaqueAddrs")
 
+	ErrNilDNSAddress = errors.New("cannot write nil DNS address")
+
 	// ErrNilPublicKey is returned when a nil pubkey is used.
 	ErrNilPublicKey = errors.New("cannot write nil pubkey")
 
@@ -364,6 +366,32 @@ func WriteOnionAddr(buf *bytes.Buffer, addr *tor.OnionAddr) error {
 	return WriteUint16(buf, uint16(addr.Port))
 }
 
+func WriteDNSAddress(buf *bytes.Buffer, addr *DNSAddress) error {
+	if addr == nil {
+		return ErrNilDNSAddress
+	}
+
+	// Write the descriptor, the hostname length, and the hostname.
+	if _, err := buf.Write([]byte{byte(dnsAddr)}); err != nil {
+		return err
+	}
+
+	if len(addr.Hostname) > 255 {
+		return fmt.Errorf("DNS hostname length %d exceeds limit of "+
+			"255 bytes", len(addr.Hostname))
+	}
+
+	if err := WriteUint8(buf, uint8(len(addr.Hostname))); err != nil {
+		return err
+	}
+
+	if _, err := buf.Write([]byte(addr.Hostname)); err != nil {
+		return err
+	}
+
+	return WriteUint16(buf, addr.Port)
+}
+
 // WriteOpaqueAddrs appends the payload of the given OpaqueAddrs to buffer.
 func WriteOpaqueAddrs(buf *bytes.Buffer, addr *OpaqueAddrs) error {
 	if addr == nil {
@@ -391,6 +419,10 @@ func WriteNetAddrs(buf *bytes.Buffer, addresses []net.Addr) error {
 			}
 		case *tor.OnionAddr:
 			if err := WriteOnionAddr(addrBuf, a); err != nil {
+				return err
+			}
+		case *DNSAddress:
+			if err := WriteDNSAddress(addrBuf, a); err != nil {
 				return err
 			}
 		case *OpaqueAddrs:
