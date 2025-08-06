@@ -192,6 +192,17 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 			return nil, err
 		}
 
+		// Validate the node announcement fields before sending it. We
+		// may have added new validation rules since originally
+		// persisting the node announcement, so we want to ensure
+		// that we don't send out any invalid announcements.
+		if err := netann.ValidateNodeAnnFields(nodeUpdate); err != nil {
+			log.Errorf("Not sending invalid node "+
+				"announcement %v: %v", nodeUpdate, err)
+
+			continue
+		}
+
 		updates = append(updates, nodeUpdate)
 	}
 
@@ -296,8 +307,11 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 					return nil, err
 				}
 
-				chanAnns = append(chanAnns, nodeAnn)
-				nodePubsSent[nodePub] = struct{}{}
+				err = netann.ValidateNodeAnnFields(nodeAnn)
+				if err == nil {
+					chanAnns = append(chanAnns, nodeAnn)
+					nodePubsSent[nodePub] = struct{}{}
+				}
 			}
 		}
 		if edge2 != nil {
@@ -315,8 +329,11 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 					return nil, err
 				}
 
-				chanAnns = append(chanAnns, nodeAnn)
-				nodePubsSent[nodePub] = struct{}{}
+				err = netann.ValidateNodeAnnFields(nodeAnn)
+				if err == nil {
+					chanAnns = append(chanAnns, nodeAnn)
+					nodePubsSent[nodePub] = struct{}{}
+				}
 			}
 		}
 	}

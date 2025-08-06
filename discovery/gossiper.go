@@ -2229,7 +2229,17 @@ func (d *AuthenticatedGossiper) fetchNodeAnn(ctx context.Context,
 		return nil, err
 	}
 
-	return node.NodeAnnouncement(true)
+	ann, err := node.NodeAnnouncement(true)
+	if err != nil {
+		return nil, err
+	}
+
+	err = netann.ValidateNodeAnnFields(ann)
+	if err != nil {
+		return nil, fmt.Errorf("invalid node announcement: %w", err)
+	}
+
+	return ann, nil
 }
 
 // isMsgStale determines whether a message retrieved from the backing
