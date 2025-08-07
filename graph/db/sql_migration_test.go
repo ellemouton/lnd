@@ -1103,6 +1103,53 @@ func TestSQLMigrationEdgeCases(t *testing.T) {
 			zombies: []uint64{2},
 		})
 	})
+
+	t.Run("node with bad DNS address", func(t *testing.T) {
+		t.Parallel()
+
+		// Make three nodes.
+		// 1) One with normal unknown opaque address data. We expect
+		// this one to be migrated as is.
+		// 2) One with invalid DNS address data embedded in the
+		// opaque data. We expect this one to be skipped.
+		// 3) One with valid DNS address data embedded in the
+		// opaque data. We expect this one to be migrated and for
+		// the DNS address to be extracted from the opaque data.
+		n1 := makeTestNode(t, func(n *models.LightningNode) {
+			n.Addresses = []net.Addr{
+				testOpaqueAddr,
+			}
+		})
+		n2 := makeTestNode(t, func(n *models.LightningNode) {
+			n.Addresses = []net.Addr{
+				testOpaqueAddrWithEmbeddedBadDNSAddr,
+			}
+		})
+		n3 := makeTestNode(t, func(n *models.LightningNode) {
+			n.Addresses = []net.Addr{
+				testOpaqueAddrWithEmbeddedDNSAddrAndMore,
+			}
+		})
+
+		populateKV := func(t *testing.T, db *KVStore) {
+			// Insert all nodes into the KV store.
+			require.NoError(t, db.AddLightningNode(ctx, n1))
+			require.NoError(t, db.AddLightningNode(ctx, n2))
+			require.NoError(t, db.AddLightningNode(ctx, n3))
+		}
+
+		expectedNode3 := *n3
+		expectedNode3.Addresses = []net.Addr{
+			testDNSAddr,
+			testOpaqueAddr,
+		}
+
+		runTestMigration(t, populateKV, dbState{
+			// We expect only the valid nodes to be present in the
+			// SQL db.
+			nodes: []*models.LightningNode{n1, &expectedNode3},
+		})
+	})
 }
 
 // runTestMigration is a helper function that sets up the KVStore and SQLStore,
