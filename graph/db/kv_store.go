@@ -4280,15 +4280,17 @@ func deserializeLightningNode(r io.Reader) (models.LightningNode, error) {
 	}
 	numAddresses := int(byteOrder.Uint16(scratch[:2]))
 
-	var addresses []net.Addr
-	for i := 0; i < numAddresses; i++ {
-		address, err := DeserializeAddr(r)
+	addresses := make([]net.Addr, 0, numAddresses)
+	for range numAddresses {
+		addrs, err := DeserializeAddrs(r)
 		if err != nil {
 			return models.LightningNode{}, err
 		}
-		addresses = append(addresses, address)
+		addresses = append(addresses, addrs...)
 	}
-	node.Addresses = addresses
+	if len(addresses) > 0 {
+		node.Addresses = addresses
+	}
 
 	node.AuthSigBytes, err = wire.ReadVarBytes(r, 0, 80, "sig")
 	if err != nil {
