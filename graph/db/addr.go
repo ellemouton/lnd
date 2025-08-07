@@ -1,6 +1,7 @@
 package graphdb
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -173,10 +174,16 @@ func encodeOpaqueAddrs(w io.Writer, addr *lnwire.OpaqueAddrs) error {
 	return err
 }
 
-// DeserializeAddr reads the serialized raw representation of an address and
-// deserializes it into the actual address. This allows us to avoid address
-// resolution within the channeldb package.
-func DeserializeAddr(r io.Reader) (net.Addr, error) {
+// DeserializeAddrs reads the serialized raw representation of an address and
+// deserializes it into the actual address (or potentially a set of addresses).
+// This allows us to avoid address resolution within the channeldb package.
+//
+// NOTE: there is a chance that we previously persisted an address of type
+// lnwire.OpaqueAddrs, which is an address that we did not know how to parse
+// at the time. But perhaps now we do understand the new address type and this
+// could result in more than one address being returned in the case where the
+// opaque address was actually a set of addresses.
+func DeserializeAddrs(r io.Reader) ([]net.Addr, error) {
 	var addrType [1]byte
 	if _, err := r.Read(addrType[:]); err != nil {
 		return nil, err
@@ -293,6 +300,23 @@ func DeserializeAddr(r io.Reader) (net.Addr, error) {
 			return nil, err
 		}
 
+		// Reconstruct the original bytes because we need to create
+		// two separate readers so that we still have access to the
+		// original byte stream in the case where the first attempt
+		// at deserialization fails.
+		fullData := append(l[:], payload...)
+
+		// Attempt to extract addresses from the payload.
+		addresses, err := lnwire.ReadAddresses(
+			bytes.NewReader(fullData),
+		)
+		if err == nil {
+			return addresses, nil
+		}
+
+		// Otherwise, we fall back to the original
+		// parsing logic for lnwire.OpaqueAddrs, which does not
+		// bother to attempt to parse the payload.
 		address = &lnwire.OpaqueAddrs{
 			Payload: payload,
 		}
@@ -301,7 +325,7 @@ func DeserializeAddr(r io.Reader) (net.Addr, error) {
 		return nil, ErrUnknownAddressType
 	}
 
-	return address, nil
+	return []net.Addr{address}, nil
 }
 
 // SerializeAddr serializes an address into its raw bytes representation so that

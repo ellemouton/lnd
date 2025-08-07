@@ -314,13 +314,13 @@ func deserializeLinkNode(r io.Reader) (*LinkNode, error) {
 	}
 	numAddrs := byteOrder.Uint32(buf[:4])
 
-	node.Addresses = make([]net.Addr, numAddrs)
-	for i := uint32(0); i < numAddrs; i++ {
-		addr, err := graphdb.DeserializeAddr(r)
+	node.Addresses = make([]net.Addr, 0, numAddrs)
+	for range numAddrs {
+		addrs, err := graphdb.DeserializeAddrs(r)
 		if err != nil {
 			return nil, err
 		}
-		node.Addresses[i] = addr
+		node.Addresses = append(node.Addresses, addrs...)
 	}
 
 	return node, nil
