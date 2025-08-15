@@ -3,9 +3,9 @@ package graphdb
 import (
 	"bytes"
 	"net"
-	"strings"
 	"testing"
 
+	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/tor"
 	"github.com/stretchr/testify/require"
 )
@@ -38,33 +38,119 @@ var (
 		OnionService: "vww6ybal4bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.onion", //nolint:ll
 		Port:         80,
 	}
+
+	testOpaqueAddr = &lnwire.OpaqueAddrs{
+		// NOTE: the first byte is a protocol level address type. So
+		// for we set it to 0xff to guarantee that we do not know this
+		// type yet.
+		Payload: []byte{0xff, 0x02, 0x03, 0x04, 0x05, 0x06},
+	}
+
+	testDNSAddr = &lnwire.DNSAddress{
+		Hostname: "example.com",
+		Port:     8080,
+	}
+
+	testOpaqueAddrWithEmbeddedDNSAddr = &lnwire.OpaqueAddrs{
+		Payload: []byte{
+			/* Here we embed an actual DNS address */
+			// The protocol level type for DNS addresses.
+			0x05,
+			// Hostname length: 11.
+			0x0B,
+			// The hostname itself.
+			'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'c', 'o', 'm',
+			// port 8080 in big-endian.
+			0x1F, 0x90,
+		},
+	}
+
+	testOpaqueAddrWithEmbeddedDNSAddrAndMore = &lnwire.OpaqueAddrs{
+		Payload: []byte{
+			/* Here we embed an actual DNS address */
+			// The protocol level type for DNS addresses.
+			0x05,
+			// Hostname length: 11.
+			0x0B,
+			// The hostname itself.
+			'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'c', 'o', 'm',
+			// port 8080 in big-endian.
+			0x1F, 0x90,
+			// Now we add more opaque bytes to represent more
+			// addresses that we dont know about yet.
+			// NOTE: the 0xff is an address type that we definitely
+			// don't know about yet
+			0xff, 0x02, 0x03, 0x04, 0x05, 0x06,
+		},
+	}
+
+	testOpaqueAddrWithEmbeddedBadDNSAddr = &lnwire.OpaqueAddrs{
+		Payload: []byte{
+			/* Here we embed an actual invalid DNS address */
+			// The protocol level type for DNS addresses.
+			0x05,
+			// Hostname length: We set this to a size that is
+			// incorrect in order to simulate the bad DNS address.
+			0xAA,
+			// The hostname itself.
+			'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'c', 'o', 'm',
+			// port 9735 in big-endian.
+			0x26, 0x07,
+		},
+	}
 )
 
 var addrTests = []struct {
-	expAddr net.Addr
-	serErr  string
+	inputAddr net.Addr
+	// If expAddr is not empty, then the test will expect the deserialized
+	// addresses to match this set. Otherwise, the output is expected to
+	// contain exactly one address, which is the same as inputAddr.
+	expAddrs []net.Addr
+	serErr   string
 }{
 	// Valid addresses.
 	{
-		expAddr: testIPV4Addr,
+		inputAddr: testIPV4Addr,
 	},
 	{
-		expAddr: testIPV6Addr,
+		inputAddr: testIPV6Addr,
 	},
 	{
-		expAddr: testOnionV2Addr,
+		inputAddr: testOnionV2Addr,
 	},
 	{
-		expAddr: testOnionV3Addr,
+		inputAddr: testOnionV3Addr,
+	},
+	{
+		inputAddr: testOpaqueAddr,
+	},
+	{
+		inputAddr: testDNSAddr,
+	},
+	{
+		inputAddr: testOpaqueAddrWithEmbeddedDNSAddr,
+		expAddrs: []net.Addr{
+			testDNSAddr,
+		},
+	},
+	{
+		inputAddr: testOpaqueAddrWithEmbeddedDNSAddrAndMore,
+		expAddrs: []net.Addr{
+			testDNSAddr,
+			testOpaqueAddr,
+		},
+	},
+	{
+		inputAddr: testOpaqueAddrWithEmbeddedBadDNSAddr,
 	},
 
 	// Invalid addresses.
 	{
-		expAddr: unknownAddrType{},
-		serErr:  ErrUnknownAddressType.Error(),
+		inputAddr: unknownAddrType{},
+		serErr:    ErrUnknownAddressType.Error(),
 	},
 	{
-		expAddr: &net.TCPAddr{
+		inputAddr: &net.TCPAddr{
 			// Remove last byte of IPv4 address.
 			IP:   testIP4[:len(testIP4)-1],
 			Port: 12345,
@@ -72,7 +158,7 @@ var addrTests = []struct {
 		serErr: "unable to encode",
 	},
 	{
-		expAddr: &net.TCPAddr{
+		inputAddr: &net.TCPAddr{
 			// Add an extra byte of IPv4 address.
 			IP:   append(testIP4, 0xff),
 			Port: 12345,
@@ -80,7 +166,7 @@ var addrTests = []struct {
 		serErr: "unable to encode",
 	},
 	{
-		expAddr: &net.TCPAddr{
+		inputAddr: &net.TCPAddr{
 			// Remove last byte of IPv6 address.
 			IP:   testIP6[:len(testIP6)-1],
 			Port: 65535,
@@ -88,7 +174,7 @@ var addrTests = []struct {
 		serErr: "unable to encode",
 	},
 	{
-		expAddr: &net.TCPAddr{
+		inputAddr: &net.TCPAddr{
 			// Add an extra byte to the IPv6 address.
 			IP:   append(testIP6, 0xff),
 			Port: 65535,
@@ -96,7 +182,7 @@ var addrTests = []struct {
 		serErr: "unable to encode",
 	},
 	{
-		expAddr: &tor.OnionAddr{
+		inputAddr: &tor.OnionAddr{
 			// Invalid suffix.
 			OnionService: "vww6ybal4bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyd.inion",
 			Port:         80,
@@ -104,7 +190,7 @@ var addrTests = []struct {
 		serErr: "invalid suffix",
 	},
 	{
-		expAddr: &tor.OnionAddr{
+		inputAddr: &tor.OnionAddr{
 			// Invalid length.
 			OnionService: "vww6ybal4bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyy.onion",
 			Port:         80,
@@ -112,7 +198,7 @@ var addrTests = []struct {
 		serErr: "unknown onion service length",
 	},
 	{
-		expAddr: &tor.OnionAddr{
+		inputAddr: &tor.OnionAddr{
 			// Invalid encoding.
 			OnionService: "vww6ybal4bd7szmgncyruucpgfkqahzddi37ktceo3ah7ngmcopnpyyA.onion",
 			Port:         80,
@@ -128,30 +214,21 @@ func TestAddrSerialization(t *testing.T) {
 
 	var b bytes.Buffer
 	for _, test := range addrTests {
-		err := SerializeAddr(&b, test.expAddr)
-		switch {
-		case err == nil && test.serErr != "":
-			t.Fatalf("expected serialization err for addr %v",
-				test.expAddr)
-
-		case err != nil && test.serErr == "":
-			t.Fatalf("unexpected serialization err for addr %v: %v",
-				test.expAddr, err)
-
-		case err != nil && !strings.Contains(err.Error(), test.serErr):
-			t.Fatalf("unexpected serialization err for addr %v, "+
-				"want: %v, got %v", test.expAddr, test.serErr,
-				err)
-
-		case err != nil:
+		err := SerializeAddr(&b, test.inputAddr)
+		if test.serErr != "" {
+			require.ErrorContains(t, err, test.serErr)
 			continue
 		}
+		require.NoError(t, err)
 
-		addr, err := DeserializeAddr(&b)
-		if err != nil {
-			t.Fatalf("unable to deserialize address: %v", err)
+		addrs, err := DeserializeAddrs(&b)
+		require.NoError(t, err)
+
+		if len(test.expAddrs) != 0 {
+			require.Equal(t, test.expAddrs, addrs)
+		} else {
+			require.Len(t, addrs, 1)
+			require.Equal(t, test.inputAddr, addrs[0])
 		}
-
-		require.Equal(t, test.expAddr, addr)
 	}
 }
