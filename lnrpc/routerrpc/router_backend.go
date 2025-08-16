@@ -481,8 +481,19 @@ func parseBlindedPaymentPaths(in *lnrpc.QueryRoutesRequest) (
 			"be populated in blinded path")
 	}
 
-	paths := make([]*routing.BlindedPayment, len(in.BlindedPaymentPaths))
-	for i, paymentPath := range in.BlindedPaymentPaths {
+	paths, err := unmarshalBlindedPayments(in.BlindedPaymentPaths)
+	if err != nil {
+		return nil, err
+	}
+
+	return routing.NewBlindedPaymentPathSet(paths)
+}
+
+func unmarshalBlindedPayments(payments []*lnrpc.BlindedPaymentPath) (
+	[]*routing.BlindedPayment, error) {
+
+	paths := make([]*routing.BlindedPayment, len(payments))
+	for i, paymentPath := range payments {
 		blindedPmt, err := unmarshalBlindedPayment(paymentPath)
 		if err != nil {
 			return nil, fmt.Errorf("parse blinded payment: %w", err)
@@ -495,7 +506,7 @@ func parseBlindedPaymentPaths(in *lnrpc.QueryRoutesRequest) (
 		paths[i] = blindedPmt
 	}
 
-	return routing.NewBlindedPaymentPathSet(paths)
+	return paths, nil
 }
 
 func unmarshalBlindedPayment(rpcPayment *lnrpc.BlindedPaymentPath) (
@@ -1131,6 +1142,35 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 			return nil, err
 		}
 		payIntent.Target = target
+
+		// If there are blinded paths present, parse those and overwrite
+		// the destination node.
+		if len(rpcPayReq.BlindedPaths) != 0 {
+			paths, err := unmarshalBlindedPayments(
+				rpcPayReq.BlindedPaths,
+			)
+			if err != nil {
+				return nil, err
+			}
+
+			pathSet, err := routing.NewBlindedPaymentPathSet(paths)
+			if err != nil {
+				return nil, err
+			}
+			payIntent.BlindedPathSet = pathSet
+
+			// Replace the target node with the target public key
+			// of the blinded path set.
+			copy(
+				payIntent.Target[:],
+				pathSet.TargetPubKey().SerializeCompressed(),
+			)
+
+			pathFeatures := pathSet.Features()
+			if pathFeatures != nil && !pathFeatures.IsEmpty() {
+				payIntent.DestFeatures = pathFeatures.Clone()
+			}
+		}
 
 		// Final payment CLTV delta.
 		if rpcPayReq.FinalCltvDelta != 0 {
