@@ -8,6 +8,7 @@ import (
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/lntest"
 	"github.com/lightningnetwork/lnd/lntest/node"
+	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/sqldb"
 	"github.com/stretchr/testify/require"
@@ -144,6 +145,7 @@ func openNativeSQLGraphDB(ht *lntest.HarnessTest,
 
 	store, err := graphdb.NewSQLStore(
 		&graphdb.SQLStoreConfig{
+			Version:   lnwire.GossipVersion1,
 			ChainHash: *ht.Miner().ActiveNet.GenesisHash,
 			QueryCfg:  queryCfg,
 		},

@@ -291,6 +291,7 @@ func newSQLStore(t testing.TB, cfg *sqldb.QueryConfig,
 
 	store, err := NewSQLStore(
 		&SQLStoreConfig{
+			Version:   lnwire.GossipVersion1,
 			ChainHash: dbTestChain,
 			QueryCfg:  cfg,
 		},
@@ -551,6 +552,7 @@ func TestPopulateViaMigration(t *testing.T) {
 		ctx, sqldb.WriteTxOpt(), func(queries SQLQueries) error {
 			return MigrateGraphToSQL(
 				ctx, &SQLStoreConfig{
+					Version:   lnwire.GossipVersion1,
 					QueryCfg:  cfg,
 					ChainHash: chain,
 				}, srcKVDB, queries,

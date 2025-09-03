@@ -46,6 +46,7 @@ import (
 	"github.com/lightningnetwork/lnd/lnwallet/btcwallet"
 	"github.com/lightningnetwork/lnd/lnwallet/chancloser"
 	"github.com/lightningnetwork/lnd/lnwallet/rpcwallet"
+	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/macaroons"
 	"github.com/lightningnetwork/lnd/msgmux"
 	paymentsdb "github.com/lightningnetwork/lnd/payments/db"
@@ -1131,6 +1132,7 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 			graphMig := func(tx *sqlc.Queries) error {
 				cfg := &graphdb.SQLStoreConfig{
 					//nolint:ll
+					Version:   lnwire.GossipVersion1,
 					ChainHash: *d.cfg.ActiveNetParams.GenesisHash,
 					QueryCfg:  queryCfg,
 				}

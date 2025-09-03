@@ -42,6 +42,7 @@ func NewTestDBWithFixture(t testing.TB,
 
 	store, err := NewSQLStore(
 		&SQLStoreConfig{
+			Version:   lnwire.GossipVersion1,
 			ChainHash: *chaincfg.MainNetParams.GenesisHash,
 			QueryCfg:  sqldb.DefaultPostgresConfig(),
 		}, querier,

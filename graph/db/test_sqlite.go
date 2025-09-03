@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/sqldb"
 	"github.com/stretchr/testify/require"
 )
@@ -27,6 +28,7 @@ func NewTestDBFixture(_ *testing.T) *sqldb.TestPgFixture {
 func NewTestDBWithFixture(t testing.TB, _ *sqldb.TestPgFixture) V1Store {
 	store, err := NewSQLStore(
 		&SQLStoreConfig{
+			Version:   lnwire.GossipVersion1,
 			ChainHash: *chaincfg.MainNetParams.GenesisHash,
 			QueryCfg:  sqldb.DefaultSQLiteConfig(),
 		}, newBatchQuerier(t),

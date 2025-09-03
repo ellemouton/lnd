@@ -890,6 +890,7 @@ func TestMigrationWithChannelDB(t *testing.T) {
 	const fileName = "channel.sqlite"
 
 	cfg := &SQLStoreConfig{
+		Version:   lnwire.GossipVersion1,
 		ChainHash: chain,
 		QueryCfg:  sqldb.DefaultPostgresConfig(),
 	}

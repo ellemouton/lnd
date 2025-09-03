@@ -67,6 +67,11 @@ const (
 	GossipVersion2 GossipVersion = 2
 )
 
+// String returns a string representation of the protocol version.
+func (v GossipVersion) String() string {
+	return fmt.Sprintf("V%d", v)
+}
+
 type GossipMessage interface {
 	GossipVersion() GossipVersion
 }
