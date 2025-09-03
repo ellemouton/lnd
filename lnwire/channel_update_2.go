@@ -88,6 +88,12 @@ func (c *ChannelUpdate2) Encode(w *bytes.Buffer, _ uint32) error {
 	return EncodePureTLVMessage(c, w)
 }
 
+var _ GossipMessage = (*ChannelUpdate2)(nil)
+
+func (*ChannelUpdate2) GossipVersion() GossipVersion {
+	return GossipVersion2
+}
+
 // Decode deserializes a serialized ChannelUpdate2 stored in the passed
 // io.Reader observing the specified protocol version.
 //

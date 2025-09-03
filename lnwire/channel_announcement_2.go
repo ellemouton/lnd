@@ -66,6 +66,11 @@ type ChannelAnnouncement2 struct {
 	ExtraSignedFields
 }
 
+var _ GossipMessage = (*ChannelAnnouncement2)(nil)
+func (c *ChannelAnnouncement2) GossipVersion() GossipVersion {
+	return GossipVersion2
+}
+
 // Encode serializes the target AnnounceSignatures1 into the passed io.Writer
 // observing the protocol version specified.
 //

@@ -57,6 +57,20 @@ func (c ChanUpdateChanFlags) String() string {
 	return fmt.Sprintf("%08b", c)
 }
 
+type GossipVersion uint8
+
+const (
+	// GossipVersion1 is the original version of the gossip protocol as
+	// defined in BOLT 7.
+	GossipVersion1 GossipVersion = 1
+
+	GossipVersion2 GossipVersion = 2
+)
+
+type GossipMessage interface {
+	GossipVersion() GossipVersion
+}
+
 // ChannelUpdate1 message is used after channel has been initially announced.
 // Each side independently announces its fees and minimum expiry for HTLCs and
 // other parameters. Also this message is used to redeclare initially set
@@ -123,6 +137,12 @@ type ChannelUpdate1 struct {
 	// fill out the full maximum transport message size. These fields can
 	// be used to specify optional data such as custom TLV fields.
 	ExtraOpaqueData ExtraOpaqueData
+}
+
+var _ GossipMessage = (*ChannelUpdate1)(nil)
+
+func (a *ChannelUpdate1) GossipVersion() GossipVersion {
+	return GossipVersion1
 }
 
 // A compile time check to ensure ChannelUpdate implements the lnwire.Message

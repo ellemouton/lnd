@@ -447,3 +447,9 @@ func torV3AddrsDecoder(r io.Reader, val interface{}, _ *[8]byte,
 
 	return tlv.NewTypeForEncodingErr(val, "lnwire.TorV3Addrs")
 }
+
+var _ GossipMessage = (*NodeAnnouncement2)(nil)
+
+func (*NodeAnnouncement2) GossipVersion() GossipVersion {
+	return GossipVersion2
+}

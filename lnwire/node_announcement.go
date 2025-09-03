@@ -218,3 +218,8 @@ func (a *NodeAnnouncement) DataToSign() ([]byte, error) {
 func (a *NodeAnnouncement) SerializedSize() (uint32, error) {
 	return MessageSerializedSize(a)
 }
+
+var _ GossipMessage = (*NodeAnnouncement)(nil)
+func (*NodeAnnouncement) GossipVersion() GossipVersion {
+	return GossipVersion1
+}
