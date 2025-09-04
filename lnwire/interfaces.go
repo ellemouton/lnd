@@ -1,6 +1,8 @@
 package lnwire
 
-import "github.com/btcsuite/btcd/chaincfg/chainhash"
+import (
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+)
 
 // AnnounceSignatures is an interface that represents a message used to
 // exchange signatures of a ChannelAnnouncment message during the funding flow.
@@ -33,6 +35,7 @@ type ChannelAnnouncement interface {
 	Node2KeyBytes() [33]byte
 
 	Message
+	GossipMessage
 }
 
 // CompareResult represents the result after comparing two things.

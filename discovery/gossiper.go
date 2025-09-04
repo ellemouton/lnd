@@ -437,15 +437,19 @@ func (c *cachedNetworkMsg) Size() (uint64, error) {
 // rejectCacheKey is the cache key that we'll use to track announcements we've
 // recently rejected.
 type rejectCacheKey struct {
-	pubkey [33]byte
-	chanID uint64
+	protocol lnwire.GossipVersion
+	pubkey   [33]byte
+	chanID   uint64
 }
 
 // newRejectCacheKey returns a new cache key for the reject cache.
-func newRejectCacheKey(cid uint64, pub [33]byte) rejectCacheKey {
+func newRejectCacheKey(v lnwire.GossipVersion, cid uint64,
+	pub [33]byte) rejectCacheKey {
+
 	k := rejectCacheKey{
-		chanID: cid,
-		pubkey: pub,
+		protocol: v,
+		chanID:   cid,
+		pubkey:   pub,
 	}
 
 	return k
@@ -1689,17 +1693,25 @@ func (d *AuthenticatedGossiper) isRecentlyRejectedMsg(msg lnwire.Message,
 
 	var scid uint64
 	switch m := msg.(type) {
-	case *lnwire.ChannelUpdate1:
-		scid = m.ShortChannelID.ToUint64()
+	case lnwire.ChannelUpdate:
+		scid = m.SCID().ToUint64()
 
-	case *lnwire.ChannelAnnouncement1:
-		scid = m.ShortChannelID.ToUint64()
+	case lnwire.ChannelAnnouncement:
+		scid = m.SCID().ToUint64()
 
 	default:
 		return false
 	}
 
-	_, err := d.recentRejects.Get(newRejectCacheKey(scid, peerPub))
+	msgVersion := lnwire.GossipVersion1
+	if gmsg, ok := msg.(lnwire.GossipMessage); ok {
+		msgVersion = gmsg.GossipVersion()
+	}
+
+	_, err := d.recentRejects.Get(
+		newRejectCacheKey(msgVersion, scid, peerPub),
+	)
+
 	return err != cache.ErrElementNotFound
 }
 
@@ -1955,14 +1967,12 @@ func remotePubFromChanInfo(chanInfo *models.ChannelEdgeInfo,
 // to receive the remote peer's proof, while the remote peer is able to fully
 // assemble the proof and craft the ChannelAnnouncement.
 func (d *AuthenticatedGossiper) processRejectedEdge(_ context.Context,
-	chanAnnMsg *lnwire.ChannelAnnouncement1,
+	chanAnnMsg lnwire.ChannelAnnouncement,
 	proof *models.ChannelAuthProof) ([]networkMsg, error) {
 
 	// First, we'll fetch the state of the channel as we know if from the
 	// database.
-	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(
-		chanAnnMsg.ShortChannelID,
-	)
+	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(chanAnnMsg.SCID())
 	if err != nil {
 		return nil, err
 	}
@@ -1992,18 +2002,18 @@ func (d *AuthenticatedGossiper) processRejectedEdge(_ context.Context,
 	err = netann.ValidateChannelAnn(chanAnn, d.fetchPKScript)
 	if err != nil {
 		err := fmt.Errorf("assembled channel announcement proof "+
-			"for shortChanID=%v isn't valid: %v",
-			chanAnnMsg.ShortChannelID, err)
+			"for shortChanID=%v isn't valid: %v", chanAnnMsg.SCID(),
+			err)
 		log.Error(err)
 		return nil, err
 	}
 
 	// If everything checks out, then we'll add the fully assembled proof
 	// to the database.
-	err = d.cfg.Graph.AddProof(chanAnnMsg.ShortChannelID, proof)
+	err = d.cfg.Graph.AddProof(chanAnnMsg.SCID(), proof)
 	if err != nil {
 		err := fmt.Errorf("unable add proof to shortChanID=%v: %w",
-			chanAnnMsg.ShortChannelID, err)
+			chanAnnMsg.SCID(), err)
 		log.Error(err)
 		return nil, err
 	}
@@ -2556,7 +2566,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 	nMsg *networkMsg, ann *lnwire.ChannelAnnouncement1,
 	ops ...batch.SchedulerOption) ([]networkMsg, bool) {
 
-	scid := ann.ShortChannelID
+	scid := ann.SCID()
 	chainHash := d.cfg.ChainParams.GenesisHash
 
 	log.Debugf("Processing ChannelAnnouncement1: peer=%v, short_chan_id=%v",
@@ -2564,13 +2574,15 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 
 	// We'll ignore any channel announcements that target any chain other
 	// than the set of chains we know of.
-	if !bytes.Equal(ann.ChainHash[:], chainHash[:]) {
-		err := fmt.Errorf("ignoring ChannelAnnouncement1 from chain=%v"+
-			", gossiper on chain=%v", ann.ChainHash, chainHash)
+	annChainHash := ann.GetChainHash()
+	if !bytes.Equal(annChainHash[:], chainHash[:]) {
+		err := fmt.Errorf("ignoring %s from chain=%v"+
+			", gossiper on chain=%v", ann.MsgType(), annChainHash,
+			chainHash)
 		log.Errorf(err.Error())
 
 		key := newRejectCacheKey(
-			scid.ToUint64(),
+			ann.GossipVersion(), scid.ToUint64(),
 			sourceToPub(nMsg.source),
 		)
 		_, _ = d.recentRejects.Put(key, &cachedReject{})
@@ -2587,7 +2599,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 		log.Errorf(err.Error())
 
 		key := newRejectCacheKey(
-			scid.ToUint64(),
+			ann.GossipVersion(), scid.ToUint64(),
 			sourceToPub(nMsg.source),
 		)
 		_, _ = d.recentRejects.Put(key, &cachedReject{})
@@ -2661,7 +2673,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 				"%v", err)
 
 			key := newRejectCacheKey(
-				scid.ToUint64(),
+				ann.GossipVersion(), scid.ToUint64(),
 				sourceToPub(nMsg.source),
 			)
 			_, _ = d.recentRejects.Put(key, &cachedReject{})
@@ -2740,7 +2752,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 				errors.Is(err, ErrInvalidFundingOutput):
 
 				key := newRejectCacheKey(
-					scid.ToUint64(),
+					ann.GossipVersion(), scid.ToUint64(),
 					sourceToPub(nMsg.source),
 				)
 				_, _ = d.recentRejects.Put(
@@ -2749,7 +2761,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 
 			case errors.Is(err, ErrChannelSpent):
 				key := newRejectCacheKey(
-					scid.ToUint64(),
+					ann.GossipVersion(), scid.ToUint64(),
 					sourceToPub(nMsg.source),
 				)
 				_, _ = d.recentRejects.Put(key, &cachedReject{})
@@ -2775,7 +2787,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 				// edge. We won't increase the ban score for the
 				// remote peer.
 				key := newRejectCacheKey(
-					scid.ToUint64(),
+					ann.GossipVersion(), scid.ToUint64(),
 					sourceToPub(nMsg.source),
 				)
 				_, _ = d.recentRejects.Put(key, &cachedReject{})
@@ -2838,7 +2850,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 			anns, rErr := d.processRejectedEdge(ctx, ann, proof)
 			if rErr != nil {
 				key := newRejectCacheKey(
-					scid.ToUint64(),
+					ann.GossipVersion(), scid.ToUint64(),
 					sourceToPub(nMsg.source),
 				)
 				cr := &cachedReject{}
@@ -2865,7 +2877,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 
 		// Otherwise, this is just a regular rejected edge.
 		key := newRejectCacheKey(
-			scid.ToUint64(),
+			ann.GossipVersion(), scid.ToUint64(),
 			sourceToPub(nMsg.source),
 		)
 		_, _ = d.recentRejects.Put(key, &cachedReject{})
@@ -2997,6 +3009,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 		log.Errorf(err.Error())
 
 		key := newRejectCacheKey(
+			upd.GossipVersion(),
 			upd.ShortChannelID.ToUint64(),
 			sourceToPub(nMsg.source),
 		)
@@ -3177,6 +3190,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 		nMsg.err <- err
 
 		key := newRejectCacheKey(
+			upd.GossipVersion(),
 			upd.ShortChannelID.ToUint64(),
 			sourceToPub(nMsg.source),
 		)
@@ -3306,6 +3320,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 			// Since we know the stored SCID in the graph, we'll
 			// cache that SCID.
 			key := newRejectCacheKey(
+				upd.GossipVersion(),
 				chanInfo.ChannelID,
 				sourceToPub(nMsg.source),
 			)
