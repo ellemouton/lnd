@@ -1209,9 +1209,9 @@ func (ks *KickoffSig) RandTestMessage(t *rapid.T) Message {
 	}
 }
 
-// A compile time check to ensure NodeAnnouncement implements the
+// A compile time check to ensure NodeAnnouncement1 implements the
 // lnwire.TestMessage interface.
-var _ TestMessage = (*NodeAnnouncement)(nil)
+var _ TestMessage = (*NodeAnnouncement1)(nil)
 
 // A compile time check to ensure NodeAnnouncement2 implements the
 // lnwire.TestMessage interface.
@@ -1221,7 +1221,7 @@ var _ TestMessage = (*NodeAnnouncement2)(nil)
 // It uses the rapid testing framework to generate random values.
 //
 // This is part of the TestMessage interface.
-func (a *NodeAnnouncement) RandTestMessage(t *rapid.T) Message {
+func (a *NodeAnnouncement1) RandTestMessage(t *rapid.T) Message {
 	// Generate random compressed public key for node ID
 	pubKey := RandPubKey(t)
 	var nodeID [33]byte
@@ -1234,7 +1234,7 @@ func (a *NodeAnnouncement) RandTestMessage(t *rapid.T) Message {
 		B: uint8(rapid.IntRange(0, 255).Draw(t, "rgbB")),
 	}
 
-	return &NodeAnnouncement{
+	return &NodeAnnouncement1{
 		Signature: RandSignature(t),
 		Features:  RandFeatureVector(t),
 		Timestamp: uint32(rapid.IntRange(0, 0x7FFFFFFF).Draw(
@@ -1288,7 +1288,7 @@ func (n *NodeAnnouncement2) RandTestMessage(t *rapid.T) Message {
 		colorRecord.Val = rgbColor
 		msg.Color = tlv.SomeRecordT(colorRecord)
 	}
-	
+
 	if rapid.Bool().Draw(t, "includeAlias") {
 		alias := RandNodeAlias(t)
 		aliasBytes := []byte(alias.String())
@@ -1296,7 +1296,7 @@ func (n *NodeAnnouncement2) RandTestMessage(t *rapid.T) Message {
 		aliasRecord.Val = aliasBytes
 		msg.Alias = tlv.SomeRecordT(aliasRecord)
 	}
-	
+
 	if rapid.Bool().Draw(t, "includeIPV4Addrs") {
 		// Start with single address to isolate the issue
 		ipv4Addrs := make(IPV4Addrs, 1)
@@ -1306,20 +1306,20 @@ func (n *NodeAnnouncement2) RandTestMessage(t *rapid.T) Message {
 		ip[1] = 168
 		ip[2] = 1
 		ip[3] = uint8(rapid.IntRange(1, 254).Draw(t, "ip4_last"))
-		
+
 		ipv4Addrs[0] = &net.TCPAddr{
 			IP:   ip,
 			Port: rapid.IntRange(1000, 65535).Draw(t, "port4"), // Avoid low ports
 		}
-		
+
 		ipv4Record := tlv.ZeroRecordT[tlv.TlvType5, IPV4Addrs]()
 		ipv4Record.Val = ipv4Addrs
 		msg.IPV4Addrs = tlv.SomeRecordT(ipv4Record)
 	}
-	
+
 	if rapid.Bool().Draw(t, "includeIPV6Addrs") {
 		ipv6Addrs := make(IPV6Addrs, 1)
-		// Create a simple IPv6 address 
+		// Create a simple IPv6 address
 		ip := make(net.IP, 16)
 		ip[0] = 0x20
 		ip[1] = 0x01
@@ -1330,28 +1330,28 @@ func (n *NodeAnnouncement2) RandTestMessage(t *rapid.T) Message {
 			ip[i] = uint8(i)
 		}
 		ip[15] = uint8(rapid.IntRange(1, 254).Draw(t, "ip6_last"))
-		
+
 		ipv6Addrs[0] = &net.TCPAddr{
 			IP:   ip,
 			Port: rapid.IntRange(1000, 65535).Draw(t, "port6"),
 		}
-		
+
 		ipv6Record := tlv.ZeroRecordT[tlv.TlvType7, IPV6Addrs]()
 		ipv6Record.Val = ipv6Addrs
 		msg.IPV6Addrs = tlv.SomeRecordT(ipv6Record)
 	}
-	
+
 	if rapid.Bool().Draw(t, "includeTorV3Addrs") {
 		torV3Addrs := make(TorV3Addrs, 1)
 		// Generate a valid tor v3 address
 		onionBytes := rapid.SliceOfN(rapid.Byte(), 35, 35).Draw(t, "onion")
 		onionService := tor.Base32Encoding.EncodeToString(onionBytes) + tor.OnionSuffix
-		
+
 		torV3Addrs[0] = &tor.OnionAddr{
 			OnionService: onionService,
 			Port:         rapid.IntRange(1000, 65535).Draw(t, "torPort"),
 		}
-		
+
 		torV3Record := tlv.ZeroRecordT[tlv.TlvType9, TorV3Addrs]()
 		torV3Record.Val = torV3Addrs
 		msg.TorV3Addrs = tlv.SomeRecordT(torV3Record)
