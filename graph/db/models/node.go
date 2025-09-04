@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing/route"
 )
 
 // Node represents an individual vertex/node within the channel graph.
@@ -15,6 +17,8 @@ import (
 // from it. As the graph is directed, a node will also have an incoming edge
 // attached to it for each outgoing edge.
 type Node struct {
+	Version lnwire.GossipVersion
+
 	// PubKeyBytes is the raw bytes of the public key of the target node.
 	PubKeyBytes [33]byte
 	pubKey      *btcec.PublicKey
@@ -27,11 +31,11 @@ type Node struct {
 	Addresses []net.Addr
 
 	// Color is the selected color for the node.
-	Color color.RGBA
+	Color fn.Option[color.RGBA]
 
 	// Alias is a nick-name for the node. The alias can be used to confirm
 	// a node's identity or to serve as a short ID for an address book.
-	Alias string
+	Alias fn.Option[string]
 
 	// AuthSigBytes is the raw signature under the advertised public key
 	// which serves to authenticate the attributes announced by this node.
@@ -47,6 +51,62 @@ type Node struct {
 	// and ensure we're able to make upgrades to the network in a forwards
 	// compatible manner.
 	ExtraOpaqueData []byte
+}
+
+type NodeV1Fields struct {
+	// Address is the TCP address this node is reachable over.
+	Addresses []net.Addr
+
+	// AuthSigBytes is the raw signature under the advertised public key
+	// which serves to authenticate the attributes announced by this node.
+	AuthSigBytes []byte
+
+	// Features is the list of protocol features supported by this node.
+	Features *lnwire.RawFeatureVector
+
+	// Color is the selected color for the node.
+	Color color.RGBA
+
+	// Alias is a nick-name for the node. The alias can be used to confirm
+	// a node's identity or to serve as a short ID for an address book.
+	Alias string
+
+	// LastUpdate is the last time the vertex information for this node has
+	// been updated.
+	LastUpdate time.Time
+
+	// ExtraOpaqueData is the set of data that was appended to this
+	// message, some of which we may not actually know how to iterate or
+	// parse. By holding onto this data, we ensure that we're able to
+	// properly validate the set of signatures that cover these new fields,
+	// and ensure we're able to make upgrades to the network in a forwards
+	// compatible manner.
+	ExtraOpaqueData []byte
+}
+
+func NewV1Node(pub route.Vertex, n *NodeV1Fields) *Node {
+	return &Node{
+		Version:      lnwire.GossipVersion1,
+		PubKeyBytes:  pub,
+		Addresses:    n.Addresses,
+		AuthSigBytes: n.AuthSigBytes,
+		Features: lnwire.NewFeatureVector(
+			n.Features, lnwire.Features,
+		),
+		Color:           fn.Some(n.Color),
+		Alias:           fn.Some(n.Alias),
+		LastUpdate:      n.LastUpdate,
+		ExtraOpaqueData: n.ExtraOpaqueData,
+	}
+}
+
+func NewV1ShellNode(pubKey route.Vertex) *Node {
+	return &Node{
+		Version:     lnwire.GossipVersion1,
+		PubKeyBytes: pubKey,
+		Features:    lnwire.NewFeatureVector(nil, lnwire.Features),
+		LastUpdate:  time.Unix(0, 0),
+	}
 }
 
 func (n *Node) HaveAnnouncement() bool {
@@ -80,7 +140,7 @@ func (n *Node) NodeAnnouncement(signed bool) (*lnwire.NodeAnnouncement1,
 		return nil, fmt.Errorf("node does not have node announcement")
 	}
 
-	alias, err := lnwire.NewNodeAlias(n.Alias)
+	alias, err := lnwire.NewNodeAlias(n.Alias.UnwrapOr(""))
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +148,7 @@ func (n *Node) NodeAnnouncement(signed bool) (*lnwire.NodeAnnouncement1,
 	nodeAnn := &lnwire.NodeAnnouncement1{
 		Features:        n.Features.RawFeatureVector,
 		NodeID:          n.PubKeyBytes,
-		RGBColor:        n.Color,
+		RGBColor:        n.Color.UnwrapOr(color.RGBA{}),
 		Alias:           alias,
 		Addresses:       n.Addresses,
 		Timestamp:       uint32(n.LastUpdate.Unix()),
@@ -116,13 +176,14 @@ func NodeFromWireAnnouncement(msg *lnwire.NodeAnnouncement1) *Node {
 	features := lnwire.NewFeatureVector(msg.Features, lnwire.Features)
 
 	return &Node{
+		Version:         lnwire.GossipVersion1,
 		LastUpdate:      timestamp,
 		Addresses:       msg.Addresses,
 		PubKeyBytes:     msg.NodeID,
-		Alias:           msg.Alias.String(),
+		Alias:           fn.Some(msg.Alias.String()),
 		AuthSigBytes:    msg.Signature.ToSignatureBytes(),
 		Features:        features,
-		Color:           msg.RGBColor,
+		Color:           fn.Some(msg.RGBColor),
 		ExtraOpaqueData: msg.ExtraOpaqueData,
 	}
 }

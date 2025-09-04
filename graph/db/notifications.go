@@ -391,8 +391,8 @@ func (c *ChannelGraph) addToTopologyChange(update *TopologyChange,
 		nodeUpdate := &NetworkNodeUpdate{
 			Addresses:   m.Addresses,
 			IdentityKey: pubKey,
-			Alias:       m.Alias,
-			Color:       EncodeHexColor(m.Color),
+			Alias:       m.Alias.UnwrapOr(""),
+			Color:       EncodeHexColor(m.Color.UnwrapOr(color.RGBA{})),
 			Features:    m.Features.Clone(),
 		}
 
