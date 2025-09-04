@@ -2,6 +2,7 @@ package graph
 
 import (
 	"fmt"
+	"image/color"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -389,9 +390,11 @@ func (b *Builder) addToTopologyChange(update *TopologyChange,
 		nodeUpdate := &NetworkNodeUpdate{
 			Addresses:   m.Addresses,
 			IdentityKey: pubKey,
-			Alias:       m.Alias,
-			Color:       graphdb.EncodeHexColor(m.Color),
-			Features:    m.Features.Clone(),
+			Alias:       m.Alias.UnwrapOr(""),
+			Color: graphdb.EncodeHexColor(
+				m.Color.UnwrapOr(color.RGBA{}),
+			),
+			Features: m.Features.Clone(),
 		}
 
 		update.NodeUpdates = append(update.NodeUpdates, nodeUpdate)

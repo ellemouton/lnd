@@ -110,7 +110,7 @@ type V1Store interface { //nolint:interfacebloat
 	// by two nodes to quickly determine if they have the same set of up to
 	// date node announcements.
 	NodeUpdatesInHorizon(startTime,
-		endTime time.Time) ([]models.Node, error)
+		endTime time.Time) ([]*models.Node, error)
 
 	// FetchNode attempts to look up a target node by its identity
 	// public key. If the node isn't found in the database, then
