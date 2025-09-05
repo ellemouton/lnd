@@ -2694,37 +2694,35 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 		}
 	}
 
-	// With the proof validated (if necessary), we can now store it within
-	// the database for our path finding and syncing needs.
-	edge := &models.ChannelEdgeInfo{
-		ChannelID:        scid.ToUint64(),
-		ChainHash:        ann.ChainHash,
-		NodeKey1Bytes:    ann.NodeID1,
-		NodeKey2Bytes:    ann.NodeID2,
-		BitcoinKey1Bytes: ann.BitcoinKey1,
-		BitcoinKey2Bytes: ann.BitcoinKey2,
-		AuthProof:        proof,
-		Features: lnwire.NewFeatureVector(
-			ann.Features, lnwire.Features,
-		),
-		ExtraOpaqueData: ann.ExtraOpaqueData,
-	}
-
 	// If there were any optional message fields provided, we'll include
 	// them in its serialized disk representation now.
-	var tapscriptRoot fn.Option[chainhash.Hash]
+	var (
+		tapscriptRoot fn.Option[chainhash.Hash]
+		edgeModifiers []models.EdgeModifier
+	)
 	if nMsg.optionalMsgFields != nil {
 		if nMsg.optionalMsgFields.capacity != nil {
-			edge.Capacity = *nMsg.optionalMsgFields.capacity
+			edgeModifiers = append(
+				edgeModifiers, models.WithCapacity(
+					*nMsg.optionalMsgFields.capacity,
+				),
+			)
 		}
 		if nMsg.optionalMsgFields.channelPoint != nil {
-			cp := *nMsg.optionalMsgFields.channelPoint
-			edge.ChannelPoint = cp
+			edgeModifiers = append(
+				edgeModifiers, models.WithChannelPoint(
+					*nMsg.optionalMsgFields.channelPoint,
+				),
+			)
 		}
 
 		// Optional tapscript root for custom channels.
 		tapscriptRoot = nMsg.optionalMsgFields.tapscriptRoot
 	}
+
+	// With the proof validated (if necessary), we can now store it within
+	// the database for our path finding and syncing needs.
+	edge := models.EdgeFromWireAnnouncement(ann, proof, edgeModifiers...)
 
 	// Before we start validation or add the edge to the database, we obtain
 	// the mutex for this channel ID. We do this to ensure no other

@@ -321,7 +321,9 @@ func (r *Manager) createEdge(channel *channeldb.OpenChannel,
 		shortChanID = channel.ZeroConfRealScid()
 	}
 
+	// TODO(elle): Add V2 support.
 	info := &models.ChannelEdgeInfo{
+		Version:      lnwire.GossipVersion1,
 		ChannelID:    shortChanID.ToUint64(),
 		ChainHash:    channel.ChainHash,
 		Features:     lnwire.EmptyFeatureVector(),

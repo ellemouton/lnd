@@ -175,15 +175,16 @@ func NodeFromWireAnnouncement(msg *lnwire.NodeAnnouncement1) *Node {
 	timestamp := time.Unix(int64(msg.Timestamp), 0)
 	features := lnwire.NewFeatureVector(msg.Features, lnwire.Features)
 
-	return &Node{
-		Version:         lnwire.GossipVersion1,
-		LastUpdate:      timestamp,
-		Addresses:       msg.Addresses,
-		PubKeyBytes:     msg.NodeID,
-		Alias:           fn.Some(msg.Alias.String()),
-		AuthSigBytes:    msg.Signature.ToSignatureBytes(),
-		Features:        features,
-		Color:           fn.Some(msg.RGBColor),
-		ExtraOpaqueData: msg.ExtraOpaqueData,
-	}
+	return NewV1Node(
+		msg.NodeID,
+		&NodeV1Fields{
+			LastUpdate:      timestamp,
+			Addresses:       msg.Addresses,
+			Alias:           msg.Alias.String(),
+			AuthSigBytes:    msg.Signature.ToSignatureBytes(),
+			Features:        features.RawFeatureVector,
+			Color:           msg.RGBColor,
+			ExtraOpaqueData: msg.ExtraOpaqueData,
+		},
+	)
 }

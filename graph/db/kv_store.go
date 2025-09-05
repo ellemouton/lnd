@@ -1234,7 +1234,7 @@ func (c *KVStore) addChannelEdge(tx kvdb.RwTx,
 
 	// Mark edge policies for both sides as unknown. This is to enable
 	// efficient incoming channel lookup for a node.
-	keys := []*[33]byte{
+	keys := []*route.Vertex{
 		&edge.NodeKey1Bytes,
 		&edge.NodeKey2Bytes,
 	}
@@ -3555,6 +3555,7 @@ func (c *KVStore) FetchChannelEdgesByID(chanID uint64) (
 			// party as this is the only information we have about
 			// it and return an error signaling so.
 			edgeInfo = &models.ChannelEdgeInfo{
+				Version:       lnwire.GossipVersion1,
 				NodeKey1Bytes: pubKey1,
 				NodeKey2Bytes: pubKey2,
 			}

@@ -130,12 +130,6 @@ type DB interface {
 	// be re-added back to the graph.
 	PruneGraphNodes() error
 
-	// SourceNode returns the source node of the graph. The source node is
-	// treated as the center node within a star-graph. This method may be
-	// used to kick off a path finding algorithm in order to explore the
-	// reachability of another node based off the source node.
-	SourceNode(ctx context.Context) (*models.Node, error)
-
 	// DisabledChannelIDs returns the channel ids of disabled channels.
 	// A channel is disabled when two of the associated ChanelEdgePolicies
 	// have their disabled bit on.

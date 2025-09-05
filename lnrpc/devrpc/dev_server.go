@@ -253,9 +253,9 @@ func (s *Server) ImportGraph(ctx context.Context,
 			LastUpdate: time.Unix(
 				int64(rpcNode.LastUpdate), 0,
 			),
-			Alias:     rpcNode.Alias,
-			Features:  featureVector,
-			Color:     nodeColor,
+			Alias:    rpcNode.Alias,
+			Features: featureVector,
+			Color:    nodeColor,
 		})
 
 		if err := graphDB.AddNode(ctx, node); err != nil {
@@ -270,6 +270,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 		rpcEdge := rpcEdge
 
 		edge := &models.ChannelEdgeInfo{
+			Version:   lnwire.GossipVersion1,
 			ChannelID: rpcEdge.ChannelId,
 			ChainHash: *s.cfg.ActiveNetParams.GenesisHash,
 			Capacity:  btcutil.Amount(rpcEdge.Capacity),

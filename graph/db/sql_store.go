@@ -1761,7 +1761,9 @@ func (s *SQLStore) FetchChannelEdgesByID(chanID uint64) (
 			// populate the edge info with the public keys of each
 			// party as this is the only information we have about
 			// it.
-			edge = &models.ChannelEdgeInfo{}
+			edge = &models.ChannelEdgeInfo{
+				Version: s.cfg.Version,
+			}
 			copy(edge.NodeKey1Bytes[:], zombie.NodeKey1)
 			copy(edge.NodeKey2Bytes[:], zombie.NodeKey2)
 
@@ -4041,6 +4043,7 @@ func buildEdgeInfoWithBatchData(cfg *SQLStoreConfig, dbChan sqlc.GraphChannel,
 	copy(btcKey2[:], dbChan.BitcoinKey2)
 
 	channel := &models.ChannelEdgeInfo{
+		Version:          cfg.Version,
 		ChainHash:        cfg.ChainHash,
 		ChannelID:        byteOrder.Uint64(dbChan.Scid),
 		NodeKey1Bytes:    node1,
