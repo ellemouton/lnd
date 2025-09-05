@@ -100,6 +100,10 @@ type NodeAnnouncement1 struct {
 	ExtraOpaqueData ExtraOpaqueData
 }
 
+func (a *NodeAnnouncement1) NodePub() [33]byte {
+	return a.NodeID
+}
+
 // A compile time check to ensure NodeAnnouncement1 implements the
 // lnwire.Message interface.
 var _ Message = (*NodeAnnouncement1)(nil)
@@ -107,6 +111,8 @@ var _ Message = (*NodeAnnouncement1)(nil)
 // A compile time check to ensure NodeAnnouncement1 implements the
 // lnwire.SizeableMessage interface.
 var _ SizeableMessage = (*NodeAnnouncement1)(nil)
+
+var _ NodeAnnouncement = (*NodeAnnouncement1)(nil)
 
 // Decode deserializes a serialized NodeAnnouncement1 stored in the passed
 // io.Reader observing the specified protocol version.

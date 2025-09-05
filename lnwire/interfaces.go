@@ -16,6 +16,13 @@ type AnnounceSignatures interface {
 	Message
 }
 
+type NodeAnnouncement interface {
+	// NodePub returns the identity public key of the node.
+	NodePub() [33]byte
+
+	Message
+}
+
 // ChannelAnnouncement is an interface that must be satisfied by any message
 // used to announce and prove the existence of a channel.
 type ChannelAnnouncement interface {
