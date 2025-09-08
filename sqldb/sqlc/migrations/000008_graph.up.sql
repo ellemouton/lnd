@@ -21,6 +21,11 @@ CREATE TABLE IF NOT EXISTS graph_nodes (
     -- The unix timestamp of the last time the node was updated.
     last_update BIGINT,
 
+    -- The block height timestamp of this node's latest received node
+    -- announcement. It may be zero if we have not received a node
+    -- announcement yet.
+    block_height BIGINT,
+
     -- The color of the node.
     color VARCHAR,
 
@@ -167,7 +172,13 @@ CREATE TABLE IF NOT EXISTS graph_channels (
     -- versions may not make use of this field _and_ because for this node's
     -- own channels, the signature will only be known after the initial record
     -- creation.
-    bitcoin_2_signature BLOB
+    bitcoin_2_signature BLOB,
+
+    -- The signature of the channel announcement. If this is null, then the
+    -- channel belongs to the source node and the channel has not been
+    -- announced yet.
+    -- NOTE: v2 onwards only.
+    signature BLOB
 );
 -- We'll want to lookup all the channels owned by a node, so we create
 -- indexes on the node_id_1 and node_id_2 columns.
@@ -254,10 +265,14 @@ CREATE TABLE IF NOT EXISTS graph_channel_policies (
     -- be used instead.
     last_update BIGINT,
 
+    block_height INTEGER,
+
     -- A boolean indicating that forwards are disabled for this channel.
     -- NOTE: this is nullable since for later protocol versions, this might be
     -- split up into more fine-grained flags.
     disabled bool,
+
+    disable_flags INTEGER,
 
     -- The optional base fee in milli-satoshis that the node will charge
     -- for incoming HTLCs.

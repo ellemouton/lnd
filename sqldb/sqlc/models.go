@@ -42,6 +42,7 @@ type GraphChannel struct {
 	Node2Signature    []byte
 	Bitcoin1Signature []byte
 	Bitcoin2Signature []byte
+	Signature         []byte
 }
 
 type GraphChannelExtraType struct {
@@ -66,7 +67,9 @@ type GraphChannelPolicy struct {
 	MinHtlcMsat             int64
 	MaxHtlcMsat             sql.NullInt64
 	LastUpdate              sql.NullInt64
+	BlockHeight             sql.NullInt32
 	Disabled                sql.NullBool
+	DisableFlags            sql.NullInt32
 	InboundBaseFeeMsat      sql.NullInt64
 	InboundFeeRateMilliMsat sql.NullInt64
 	MessageFlags            sql.NullInt16
@@ -85,13 +88,14 @@ type GraphClosedScid struct {
 }
 
 type GraphNode struct {
-	ID         int64
-	Version    int16
-	PubKey     []byte
-	Alias      sql.NullString
-	LastUpdate sql.NullInt64
-	Color      sql.NullString
-	Signature  []byte
+	ID          int64
+	Version     int16
+	PubKey      []byte
+	Alias       sql.NullString
+	LastUpdate  sql.NullInt64
+	BlockHeight sql.NullInt64
+	Color       sql.NullString
+	Signature   []byte
 }
 
 type GraphNodeAddress struct {

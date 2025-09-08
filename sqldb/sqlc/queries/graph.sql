@@ -5,9 +5,9 @@
 
 -- name: UpsertNode :one
 INSERT INTO graph_nodes (
-    version, pub_key, alias, last_update, color, signature
+    version, pub_key, alias, last_update, block_height, color, signature
 ) VALUES (
-    $1, $2, $3, $4, $5, $6
+    $1, $2, $3, $4, $5, $6, $7
 )
 ON CONFLICT (pub_key, version)
     -- Update the following fields if a conflict occurs on pub_key
@@ -15,10 +15,13 @@ ON CONFLICT (pub_key, version)
     DO UPDATE SET
         alias = EXCLUDED.alias,
         last_update = EXCLUDED.last_update,
+        block_height = EXCLUDED.block_height,
         color = EXCLUDED.color,
         signature = EXCLUDED.signature
-WHERE graph_nodes.last_update IS NULL
-    OR EXCLUDED.last_update > graph_nodes.last_update
+WHERE (graph_nodes.last_update IS NULL
+    OR EXCLUDED.last_update > graph_nodes.last_update)
+AND (graph_nodes.block_height IS NULL
+    OR EXCLUDED.block_height >= graph_nodes.block_height)
 RETURNING id;
 
 -- name: GetNodesByIDs :many
@@ -67,6 +70,19 @@ SELECT EXISTS (
     -- together.
     WHERE c.version = 1
       AND c.bitcoin_1_signature IS NOT NULL
+      AND n.pub_key = $1
+);
+
+-- name: IsPublicV2Node :one
+SELECT EXISTS (
+    SELECT 1
+    FROM graph_channels c
+             JOIN graph_nodes n ON n.id = c.node_id_1 OR n.id = c.node_id_2
+    -- NOTE: we hard-code the version here since the clauses
+    -- here that determine if a node is public is specific
+    -- to the V2 gossip protocol.
+    WHERE c.version = 2
+      AND c.signature IS NOT NULL
       AND n.pub_key = $1
 );
 
@@ -227,9 +243,9 @@ INSERT INTO graph_channels (
     version, scid, node_id_1, node_id_2,
     outpoint, capacity, bitcoin_key_1, bitcoin_key_2,
     node_1_signature, node_2_signature, bitcoin_1_signature,
-    bitcoin_2_signature
+    bitcoin_2_signature, signature
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 )
 RETURNING id;
 
@@ -241,6 +257,12 @@ SET node_1_signature = $2,
     bitcoin_2_signature = $5
 WHERE scid = $1
   AND version = 1;
+
+-- name: AddV2ChannelProof :execresult
+UPDATE graph_channels
+SET signature = $2
+WHERE scid = $1
+  AND version = 2;
 
 -- name: GetChannelsBySCIDRange :many
 SELECT sqlc.embed(c),
@@ -619,6 +641,13 @@ WHERE node_1_signature IS NOT NULL
   AND scid >= @start_scid
   AND scid < @end_scid;
 
+-- name: GetPublicV2ChannelsBySCID :many
+SELECT *
+FROM graph_channels
+WHERE signature IS NOT NULL
+  AND scid >= @start_scid
+  AND scid < @end_scid;
+
 -- name: ListChannelsPaginated :many
 SELECT id, bitcoin_key_1, bitcoin_key_2, outpoint
 FROM graph_channels c
@@ -780,19 +809,21 @@ ORDER BY channel_id, type;
 
 -- name: UpsertEdgePolicy :one
 INSERT INTO graph_channel_policies (
-    version, channel_id, node_id, timelock, fee_ppm,
-    base_fee_msat, min_htlc_msat, last_update, disabled,
+    version, channel_id, node_id, timelock, block_height, fee_ppm,
+    base_fee_msat, min_htlc_msat, last_update, disabled, disable_flags,
     max_htlc_msat, inbound_base_fee_msat,
     inbound_fee_rate_milli_msat, message_flags, channel_flags,
     signature
 ) VALUES  (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
 )
 ON CONFLICT (channel_id, node_id, version)
     -- Update the following fields if a conflict occurs on channel_id,
     -- node_id, and version.
     DO UPDATE SET
         timelock = EXCLUDED.timelock,
+        block_height = EXCLUDED.block_height,
+        disable_flags = EXCLUDED.disable_flags,
         fee_ppm = EXCLUDED.fee_ppm,
         base_fee_msat = EXCLUDED.base_fee_msat,
         min_htlc_msat = EXCLUDED.min_htlc_msat,
@@ -805,6 +836,7 @@ ON CONFLICT (channel_id, node_id, version)
         channel_flags = EXCLUDED.channel_flags,
         signature = EXCLUDED.signature
 WHERE EXCLUDED.last_update > graph_channel_policies.last_update
+OR ECLUDED.block_height > graph_channel_policies.block_height
 RETURNING id;
 
 -- name: GetChannelPolicyByChannelAndNode :one
@@ -898,6 +930,16 @@ FROM graph_channels c
 -- and so the query for V2 may differ.
 WHERE cp.disabled = true
 AND c.version = 1
+GROUP BY c.scid
+HAVING COUNT(*) > 1;
+
+-- name: GetV2DisabledSCIDs :many
+SELECT c.scid
+FROM graph_channels c
+         JOIN graph_channel_policies cp ON cp.channel_id = c.id
+-- NOTE: this is V2 specific since for V2, disabled is a ...
+WHERE cp.disable_flags>0
+  AND c.version = 2
 GROUP BY c.scid
 HAVING COUNT(*) > 1;
 

@@ -27,6 +27,8 @@ type Node struct {
 	// been updated.
 	LastUpdate time.Time
 
+	LastBlockHeight uint32
+
 	// Address is the TCP address this node is reachable over.
 	Addresses []net.Addr
 

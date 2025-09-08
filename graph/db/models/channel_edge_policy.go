@@ -33,6 +33,8 @@ type ChannelEdgePolicy struct {
 	// was received.
 	LastUpdate time.Time
 
+	LastBlockHeight uint32
+
 	// MessageFlags is a bitfield which indicates the presence of optional
 	// fields (like max_htlc) in the policy.
 	MessageFlags lnwire.ChanUpdateMsgFlags
@@ -40,6 +42,8 @@ type ChannelEdgePolicy struct {
 	// ChannelFlags is a bitfield which signals the capabilities of the
 	// channel as well as the directed edge this update applies to.
 	ChannelFlags lnwire.ChanUpdateChanFlags
+
+	DisableFlags lnwire.ChanUpdateDisableFlags
 
 	// TimeLockDelta is the number of blocks this node will subtract from
 	// the expiry of an incoming HTLC. This value expresses the time buffer

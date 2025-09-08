@@ -3149,7 +3149,7 @@ func (s *SQLStore) updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 		inboundBase = sqldb.SQLInt64(fee.BaseFee)
 	})
 
-	id, err := tx.UpsertEdgePolicy(ctx, sqlc.UpsertEdgePolicyParams{
+	params := sqlc.UpsertEdgePolicyParams{
 		Version:     int16(s.cfg.Version),
 		ChannelID:   dbChan.ID,
 		NodeID:      nodeID,
@@ -3157,11 +3157,6 @@ func (s *SQLStore) updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 		FeePpm:      int64(edge.FeeProportionalMillionths),
 		BaseFeeMsat: int64(edge.FeeBaseMSat),
 		MinHtlcMsat: int64(edge.MinHTLC),
-		LastUpdate:  sqldb.SQLInt64(edge.LastUpdate.Unix()),
-		Disabled: sql.NullBool{
-			Valid: true,
-			Bool:  edge.IsDisabled(),
-		},
 		MaxHtlcMsat: sql.NullInt64{
 			Valid: edge.MessageFlags.HasMaxHtlc(),
 			Int64: int64(edge.MaxHTLC),
@@ -3171,7 +3166,21 @@ func (s *SQLStore) updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 		InboundBaseFeeMsat:      inboundBase,
 		InboundFeeRateMilliMsat: inboundRate,
 		Signature:               edge.SigBytes,
-	})
+	}
+
+	switch s.cfg.Version {
+	case lnwire.GossipVersion1:
+		params.LastUpdate = sqldb.SQLInt64(edge.LastUpdate.Unix())
+		params.Disabled = sql.NullBool{
+			Valid: true,
+			Bool:  edge.IsDisabled(),
+		}
+	case lnwire.GossipVersion2:
+		params.BlockHeight = sqldb.SQLInt32(edge.LastBlockHeight)
+		params.DisableFlags = sqldb.SQLInt32(edge.DisableFlags)
+	}
+
+	id, err := tx.UpsertEdgePolicy(ctx, params)
 	if err != nil {
 		return node1Pub, node2Pub, isNode1,
 			fmt.Errorf("unable to upsert edge policy: %w", err)
@@ -3399,6 +3408,9 @@ func (s *SQLStore) upsertNode(ctx context.Context, db SQLQueries,
 			)
 
 		case lnwire.GossipVersion2:
+			params.BlockHeight = sqldb.SQLInt64(
+				int32(node.LastBlockHeight),
+			)
 
 		default:
 			return 0, fmt.Errorf("unknown gossip version: %d",
@@ -3867,6 +3879,7 @@ func (s *SQLStore) insertChannel(ctx context.Context, db SQLQueries,
 		createParams.Node2Signature = proof.NodeSig2Bytes
 		createParams.Bitcoin1Signature = proof.BitcoinSig1Bytes
 		createParams.Bitcoin2Signature = proof.BitcoinSig2Bytes
+		createParams.Signature = proof.Signature
 	}
 
 	// Insert the new channel record.
