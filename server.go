@@ -1165,7 +1165,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		AddEdge: func(ctx context.Context,
 			edge *models.ChannelEdgeInfo) error {
 
-			return s.graph.AddEdge(ctx, edge)
+			return s.graph.AddEdge(ctx, edge, false)
 		},
 	}
 

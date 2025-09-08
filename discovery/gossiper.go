@@ -19,7 +19,6 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightninglabs/neutrino/cache"
 	"github.com/lightninglabs/neutrino/cache/lru"
-	"github.com/lightningnetwork/lnd/batch"
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/fn/v2"
@@ -1838,7 +1837,7 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
 
 		// Before broadcasting the refreshed node announcement, add it
 		// to our own graph.
-		if err := d.addNode(ctx, &newNodeAnn); err != nil {
+		if err := d.addNode(ctx, &newNodeAnn, false); err != nil {
 			log.Errorf("Unable to add refreshed node announcement "+
 				"to graph: %v", err)
 		}
@@ -2072,7 +2071,7 @@ func (d *AuthenticatedGossiper) fetchPKScript(chanID lnwire.ShortChannelID) (
 // addNode processes the given node announcement, and adds it to our channel
 // graph.
 func (d *AuthenticatedGossiper) addNode(ctx context.Context,
-	msg *lnwire.NodeAnnouncement1, op ...batch.SchedulerOption) error {
+	msg *lnwire.NodeAnnouncement1, fromRemote bool) error {
 
 	if err := netann.ValidateNodeAnn(msg); err != nil {
 		return fmt.Errorf("unable to validate node announcement: %w",
@@ -2080,7 +2079,7 @@ func (d *AuthenticatedGossiper) addNode(ctx context.Context,
 	}
 
 	return d.cfg.Graph.AddNode(
-		ctx, models.NodeFromWireAnnouncement(msg), op...,
+		ctx, models.NodeFromWireAnnouncement(msg), fromRemote,
 	)
 }
 
@@ -2152,32 +2151,25 @@ func (d *AuthenticatedGossiper) isPremature(chanID lnwire.ShortChannelID,
 func (d *AuthenticatedGossiper) processNetworkAnnouncement(ctx context.Context,
 	nMsg *networkMsg) ([]networkMsg, bool) {
 
-	// If this is a remote update, we set the scheduler option to lazily
-	// add it to the graph.
-	var schedulerOp []batch.SchedulerOption
-	if nMsg.isRemote {
-		schedulerOp = append(schedulerOp, batch.LazyAdd())
-	}
-
 	switch msg := nMsg.msg.(type) {
 	// A new node announcement has arrived which either presents new
 	// information about a node in one of the channels we know about, or a
 	// updating previously advertised information.
 	case *lnwire.NodeAnnouncement1:
-		return d.handleNodeAnnouncement(ctx, nMsg, msg, schedulerOp)
+		return d.handleNodeAnnouncement(ctx, nMsg, msg)
 
 	// A new channel announcement has arrived, this indicates the
 	// *creation* of a new channel within the network. This only advertises
 	// the existence of a channel and not yet the routing policies in
 	// either direction of the channel.
 	case *lnwire.ChannelAnnouncement1:
-		return d.handleChanAnnouncement(ctx, nMsg, msg, schedulerOp...)
+		return d.handleChanAnnouncement(ctx, nMsg, msg)
 
 	// A new authenticated channel edge update has arrived. This indicates
 	// that the directional information for an already known channel has
 	// been updated.
 	case *lnwire.ChannelUpdate1:
-		return d.handleChanUpdate(ctx, nMsg, msg, schedulerOp)
+		return d.handleChanUpdate(ctx, nMsg, msg)
 
 	// A new signature announcement has been received. This indicates
 	// willingness of nodes involved in the funding of a channel to
@@ -2378,7 +2370,7 @@ func (d *AuthenticatedGossiper) updateChannel(ctx context.Context,
 	}
 
 	// Finally, we'll write the new edge policy to disk.
-	if err := d.cfg.Graph.UpdateEdge(ctx, edge); err != nil {
+	if err := d.cfg.Graph.UpdateEdge(ctx, edge, false); err != nil {
 		return nil, nil, err
 	}
 
@@ -2488,8 +2480,8 @@ func (d *AuthenticatedGossiper) latestHeight() uint32 {
 
 // handleNodeAnnouncement processes a new node announcement.
 func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
-	nMsg *networkMsg, nodeAnn *lnwire.NodeAnnouncement1,
-	ops []batch.SchedulerOption) ([]networkMsg, bool) {
+	nMsg *networkMsg, nodeAnn *lnwire.NodeAnnouncement1) ([]networkMsg,
+	bool) {
 
 	timestamp := time.Unix(int64(nodeAnn.Timestamp), 0)
 
@@ -2505,7 +2497,7 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
 		return nil, true
 	}
 
-	if err := d.addNode(ctx, nodeAnn, ops...); err != nil {
+	if err := d.addNode(ctx, nodeAnn, nMsg.isRemote); err != nil {
 		log.Debugf("Adding node: %x got error: %v", nodeAnn.NodeID,
 			err)
 
@@ -2563,8 +2555,8 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
 //
 //nolint:funlen
 func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
-	nMsg *networkMsg, ann *lnwire.ChannelAnnouncement1,
-	ops ...batch.SchedulerOption) ([]networkMsg, bool) {
+	nMsg *networkMsg, ann *lnwire.ChannelAnnouncement1) ([]networkMsg,
+	bool) {
 
 	scid := ann.SCID()
 	chainHash := d.cfg.ChainParams.GenesisHash
@@ -2832,7 +2824,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 	// We will add the edge to the channel router. If the nodes present in
 	// this channel are not present in the database, a partial node will be
 	// added to represent each node while we wait for a node announcement.
-	err = d.cfg.Graph.AddEdge(ctx, edge, ops...)
+	err = d.cfg.Graph.AddEdge(ctx, edge, nMsg.isRemote)
 	if err != nil {
 		log.Debugf("Graph rejected edge for short_chan_id(%v): %v",
 			scid.ToUint64(), err)
@@ -2991,8 +2983,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 //
 //nolint:funlen
 func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
-	nMsg *networkMsg, upd *lnwire.ChannelUpdate1,
-	ops []batch.SchedulerOption) ([]networkMsg, bool) {
+	nMsg *networkMsg, upd *lnwire.ChannelUpdate1) ([]networkMsg, bool) {
 
 	log.Debugf("Processing ChannelUpdate: peer=%v, short_chan_id=%v, ",
 		nMsg.peer, upd.ShortChannelID.ToUint64())
@@ -3306,7 +3297,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 		ExtraOpaqueData:           upd.ExtraOpaqueData,
 	}
 
-	if err := d.cfg.Graph.UpdateEdge(ctx, update, ops...); err != nil {
+	if err := d.cfg.Graph.UpdateEdge(ctx, update, nMsg.isRemote); err != nil {
 		if graph.IsError(
 			err, graph.ErrOutdated,
 			graph.ErrIgnored,

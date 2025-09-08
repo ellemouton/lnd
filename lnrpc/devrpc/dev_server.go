@@ -258,7 +258,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 			Color:    nodeColor,
 		})
 
-		if err := graphDB.AddNode(ctx, node); err != nil {
+		if err := graphDB.AddNode(ctx, node, false); err != nil {
 			return nil, fmt.Errorf("unable to add node %v: %w",
 				rpcNode.PubKey, err)
 		}
@@ -330,7 +330,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 		if rpcEdge.Node1Policy != nil {
 			policy := makePolicy(rpcEdge.Node1Policy)
 			policy.ChannelFlags = 0
-			err := graphDB.UpdateEdge(ctx, policy)
+			err := graphDB.UpdateEdge(ctx, policy, false)
 			if err != nil {
 				return nil, fmt.Errorf(
 					"unable to update policy: %v", err)
@@ -340,7 +340,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 		if rpcEdge.Node2Policy != nil {
 			policy := makePolicy(rpcEdge.Node2Policy)
 			policy.ChannelFlags = 1
-			err := graphDB.UpdateEdge(ctx, policy)
+			err := graphDB.UpdateEdge(ctx, policy, false)
 			if err != nil {
 				return nil, fmt.Errorf(
 					"unable to update policy: %v", err)

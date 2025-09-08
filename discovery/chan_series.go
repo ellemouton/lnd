@@ -7,6 +7,7 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
+	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/netann"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -67,18 +68,44 @@ type ChannelGraphTimeSeries interface {
 		error)
 }
 
+type GraphDB interface {
+	ChanUpdatesInHorizon(startTime, endTime time.Time) (
+		[]graphdb.ChannelEdge, error)
+
+	HighestChanID(ctx context.Context) (uint64, error)
+
+	NodeUpdatesInHorizon(startTime,
+		endTime time.Time) ([]*models.Node, error)
+
+	IsPublicNode(pubKey route.Vertex) (bool, error)
+
+	FilterKnownChanIDs(chansInfo []graphdb.ChannelUpdateInfo) ([]uint64,
+		[]graphdb.ChannelUpdateInfo, error)
+
+	MarkEdgeLive(chanID uint64) error
+
+	FilterChannelRange(startHeight, endHeight uint32, withTimestamps bool) (
+		[]graphdb.BlockChannelRange, error)
+
+	FetchChanInfos(chanIDs []uint64) ([]graphdb.ChannelEdge, error)
+
+	FetchChannelEdgesByID(chanID uint64) (
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, error)
+}
+
 // ChanSeries is an implementation of the ChannelGraphTimeSeries
 // interface backed by the channeldb ChannelGraph database. We'll provide this
 // implementation to the AuthenticatedGossiper so it can properly use the
 // in-protocol channel range queries to quickly and efficiently synchronize our
 // channel state with all peers.
 type ChanSeries struct {
-	graph graphdb.V1Store
+	graph GraphDB
 }
 
 // NewChanSeries constructs a new ChanSeries backed by a channeldb.ChannelGraph.
 // The returned ChanSeries implements the ChannelGraphTimeSeries interface.
-func NewChanSeries(graph graphdb.V1Store) *ChanSeries {
+func NewChanSeries(graph GraphDB) *ChanSeries {
 	return &ChanSeries{
 		graph: graph,
 	}

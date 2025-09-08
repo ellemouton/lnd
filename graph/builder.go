@@ -1088,7 +1088,7 @@ func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 		ExtraOpaqueData:           msg.ExtraOpaqueData,
 	}
 
-	err = b.UpdateEdge(ctx, update)
+	err = b.UpdateEdge(ctx, update, false)
 	if err != nil && !IsError(err, ErrIgnored, ErrOutdated) {
 		log.Errorf("Unable to apply channel update: %v", err)
 		return false
@@ -1097,15 +1097,24 @@ func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 	return true
 }
 
+func remoteSchedulerOpts(fromRemote bool) []batch.SchedulerOption {
+	var schedulerOp []batch.SchedulerOption
+	if fromRemote {
+		schedulerOp = append(schedulerOp, batch.LazyAdd())
+	}
+
+	return schedulerOp
+}
+
 // AddNode is used to add information about a node to the router database. If
 // the node with this pubkey is not present in an existing channel, it will
 // be ignored.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (b *Builder) AddNode(ctx context.Context, node *models.Node,
-	op ...batch.SchedulerOption) error {
+	fromRemote bool) error {
 
-	err := b.addNode(ctx, node, op...)
+	err := b.addNode(ctx, node, remoteSchedulerOpts(fromRemote)...)
 	if err != nil {
 		logNetworkMsgProcessError(err)
 
@@ -1159,9 +1168,9 @@ func (b *Builder) addNode(ctx context.Context, node *models.Node,
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (b *Builder) AddEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
-	op ...batch.SchedulerOption) error {
+	fromRemote bool) error {
 
-	err := b.addEdge(ctx, edge, op...)
+	err := b.addEdge(ctx, edge, remoteSchedulerOpts(fromRemote)...)
 	if err != nil {
 		logNetworkMsgProcessError(err)
 
@@ -1266,7 +1275,7 @@ func (b *Builder) addEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (b *Builder) UpdateEdge(ctx context.Context,
-	update *models.ChannelEdgePolicy, op ...batch.SchedulerOption) error {
+	update *models.ChannelEdgePolicy, fromRemote bool) error {
 
 	err := b.validateEdgeUpdate(update)
 	if err != nil {
@@ -1277,7 +1286,9 @@ func (b *Builder) UpdateEdge(ctx context.Context,
 
 	// Now that we know this isn't a stale update, we'll apply the new edge
 	// policy to the proper directional edge within the channel graph.
-	from, to, err := b.cfg.Graph.UpdateEdgePolicy(ctx, update, op...)
+	from, to, err := b.cfg.Graph.UpdateEdgePolicy(
+		ctx, update, remoteSchedulerOpts(fromRemote)...,
+	)
 	if err != nil {
 		return err
 	}
