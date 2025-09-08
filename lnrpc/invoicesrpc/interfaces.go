@@ -2,6 +2,7 @@ package invoicesrpc
 
 import (
 	"github.com/lightningnetwork/lnd/graph/db/models"
+	"github.com/lightningnetwork/lnd/routing/route"
 )
 
 // GraphSource defines the graph interface required by the invoice rpc server.
@@ -15,5 +16,5 @@ type GraphSource interface {
 	// IsPublicNode is a helper method that determines whether the node with
 	// the given public key is seen as a public node in the graph from the
 	// graph's source node's point of view.
-	IsPublicNode(pubKey [33]byte) (bool, error)
+	IsPublicNode(pubKey route.Vertex) (bool, error)
 }

@@ -49,6 +49,7 @@ import (
 	"github.com/lightningnetwork/lnd/feature"
 	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/funding"
+	"github.com/lightningnetwork/lnd/graph"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
@@ -694,11 +695,10 @@ func (r *rpcServer) addDeps(ctx context.Context, s *server,
 	invoiceHtlcModifier *invoices.HtlcModificationInterceptor) error {
 
 	// Set up router rpc backend.
-	selfNode, err := s.graphDB.SourceNode(ctx)
+	selfNode, err := s.graph.SourceNode(ctx)
 	if err != nil {
 		return err
 	}
-	graph := s.graphDB
 
 	routerBackend := &routerrpc.RouterBackend{
 		SelfNode: selfNode.PubKeyBytes,
@@ -706,7 +706,7 @@ func (r *rpcServer) addDeps(ctx context.Context, s *server,
 		FetchChannelCapacity: func(chanID uint64) (btcutil.Amount,
 			error) {
 
-			info, _, _, err := graph.FetchChannelEdgesByID(chanID)
+			info, _, _, err := s.graph.FetchChannelEdgesByID(chanID)
 			if err != nil {
 				return 0, err
 			}
@@ -716,14 +716,14 @@ func (r *rpcServer) addDeps(ctx context.Context, s *server,
 			amount lnwire.MilliSatoshi) (btcutil.Amount, error) {
 
 			return routing.FetchAmountPairCapacity(
-				graph, selfNode.PubKeyBytes, nodeFrom, nodeTo,
+				s.graph, selfNode.PubKeyBytes, nodeFrom, nodeTo,
 				amount,
 			)
 		},
 		FetchChannelEndpoints: func(chanID uint64) (route.Vertex,
 			route.Vertex, error) {
 
-			info, _, _, err := graph.FetchChannelEdgesByID(
+			info, _, _, err := s.graph.FetchChannelEdgesByID(
 				chanID,
 			)
 			if err != nil {
@@ -800,7 +800,7 @@ func (r *rpcServer) addDeps(ctx context.Context, s *server,
 	err = subServerCgs.PopulateDependencies(
 		r.cfg, s.cc, r.cfg.networkDir, macService, atpl, invoiceRegistry,
 		s.htlcSwitch, r.cfg.ActiveNetParams.Params, s.chanRouter,
-		routerBackend, s.nodeSigner, s.graphDB, s.chanStateDB,
+		routerBackend, s.nodeSigner, s.graph, s.chanStateDB,
 		s.sweeper, tower, s.towerClientMgr, r.cfg.net.ResolveTCPAddr,
 		genInvoiceFeatures, genAmpInvoiceFeatures,
 		s.getNodeAnnouncement, s.updateAndBroadcastSelfNode, parseAddr,
@@ -1783,7 +1783,7 @@ func (r *rpcServer) VerifyMessage(ctx context.Context,
 	// channels signed the message.
 	//
 	// TODO(phlip9): Require valid nodes to have capital in active channels.
-	graph := r.server.graphDB
+	graph := r.server.graph
 	_, active, err := graph.HasNode(ctx, pub)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query graph: %w", err)
@@ -3145,7 +3145,7 @@ func createRPCCloseUpdate(
 // abandonChanFromGraph attempts to remove a channel from the channel graph. If
 // we can't find the chanID in the graph, then we assume it has already been
 // removed, and will return a nop.
-func abandonChanFromGraph(chanGraph *graphdb.ChannelGraph,
+func abandonChanFromGraph(chanGraph *graph.Builder,
 	chanPoint *wire.OutPoint) error {
 
 	// First, we'll obtain the channel ID. If we can't locate this, then
@@ -3161,7 +3161,9 @@ func abandonChanFromGraph(chanGraph *graphdb.ChannelGraph,
 
 	// If the channel ID is still in the graph, then that means the channel
 	// is still open, so we'll now move to purge it from the graph.
-	return chanGraph.DeleteChannelEdges(false, true, chanID)
+	_, err = chanGraph.DeleteChannelEdges(false, true, chanID)
+
+	return err
 }
 
 // abandonChan removes a channel from the database, graph and contract court.
@@ -3186,7 +3188,7 @@ func (r *rpcServer) abandonChan(chanPoint *wire.OutPoint,
 	if err != nil {
 		return err
 	}
-	err = abandonChanFromGraph(r.server.graphDB, chanPoint)
+	err = abandonChanFromGraph(r.server.graph, chanPoint)
 	if err != nil {
 		return err
 	}
@@ -4939,7 +4941,7 @@ func createRPCOpenChannel(ctx context.Context, r *rpcServer,
 
 	// Look up our channel peer's node alias if the caller requests it.
 	if peerAliasLookup {
-		peerAlias, err := r.server.graphDB.LookupAlias(ctx, nodePub)
+		peerAlias, err := r.server.graph.LookupAlias(ctx, nodePub)
 		if err != nil {
 			peerAlias = fmt.Sprintf("unable to lookup "+
 				"peer alias: %v", err)
@@ -6359,7 +6361,7 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 		NodeSigner:        r.server.nodeSigner,
 		DefaultCLTVExpiry: defaultDelta,
 		ChanDB:            r.server.chanStateDB,
-		Graph:             r.server.graphDB,
+		Graph:             r.server.graph,
 		GenInvoiceFeatures: func() *lnwire.FeatureVector {
 			v := r.server.featureMgr.Get(feature.SetInvoice)
 
@@ -6794,7 +6796,7 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// Obtain the pointer to the global singleton channel graph, this will
 	// provide a consistent view of the graph due to bolt db's
 	// transactional model.
-	graph := r.server.graphDB
+	graph := r.server.graph
 
 	// First iterate through all the known nodes (connected or unconnected
 	// within the graph), collating their current state into the RPC
@@ -6988,7 +6990,7 @@ func (r *rpcServer) GetNodeMetrics(ctx context.Context,
 	// Obtain the pointer to the global singleton channel graph, this will
 	// provide a consistent view of the graph due to bolt db's
 	// transactional model.
-	graph := r.server.graphDB
+	graph := r.server.graph
 
 	// Calculate betweenness centrality if requested. Note that depending on the
 	// graph size, this may take up to a few minutes.
@@ -7028,7 +7030,7 @@ func (r *rpcServer) GetNodeMetrics(ctx context.Context,
 func (r *rpcServer) GetChanInfo(_ context.Context,
 	in *lnrpc.ChanInfoRequest) (*lnrpc.ChannelEdge, error) {
 
-	graph := r.server.graphDB
+	graph := r.server.graph
 
 	var (
 		edgeInfo     *models.ChannelEdgeInfo
@@ -7082,7 +7084,7 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 			"include_channels")
 	}
 
-	graph := r.server.graphDB
+	graph := r.server.graph
 
 	// First, parse the hex-encoded public key into a full in-memory public
 	// key object we can work with for querying.
@@ -7200,7 +7202,7 @@ func (r *rpcServer) QueryRoutes(ctx context.Context,
 func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 	_ *lnrpc.NetworkInfoRequest) (*lnrpc.NetworkInfo, error) {
 
-	graph := r.server.graphDB
+	graph := r.server.graph
 
 	var (
 		numNodes             uint32
@@ -7227,7 +7229,7 @@ func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 	// below.
 	err := graph.ForEachNodeCached(ctx, false, func(ctx context.Context,
 		node route.Vertex, _ []net.Addr,
-		edges map[uint64]*graphdb.DirectedChannel) error {
+		edges map[uint64]*models.DirectedChannel) error {
 
 		// Increment the total number of nodes with each iteration.
 		numNodes++
@@ -7382,7 +7384,7 @@ func (r *rpcServer) SubscribeChannelGraph(req *lnrpc.GraphTopologySubscription,
 
 	// First, we start by subscribing to a new intent to receive
 	// notifications from the channel router.
-	client, err := r.server.graphDB.SubscribeTopology()
+	client, err := r.server.graph.SubscribeTopology()
 	if err != nil {
 		return err
 	}
@@ -7435,7 +7437,7 @@ func (r *rpcServer) SubscribeChannelGraph(req *lnrpc.GraphTopologySubscription,
 // returned by the router to the form of notifications expected by the current
 // gRPC service.
 func marshallTopologyChange(
-	topChange *graphdb.TopologyChange) *lnrpc.GraphTopologyUpdate {
+	topChange *graph.TopologyChange) *lnrpc.GraphTopologyUpdate {
 
 	// encodeKey is a simple helper function that converts a live public
 	// key into a hex-encoded version of the compressed serialization for
@@ -7846,7 +7848,7 @@ const feeBase float64 = 1000000
 func (r *rpcServer) FeeReport(ctx context.Context,
 	_ *lnrpc.FeeReportRequest) (*lnrpc.FeeReportResponse, error) {
 
-	channelGraph := r.server.graphDB
+	channelGraph := r.server.graph
 	selfNode, err := channelGraph.SourceNode(ctx)
 	if err != nil {
 		return nil, err
@@ -8235,7 +8237,7 @@ func (r *rpcServer) ForwardingHistory(ctx context.Context,
 			return "", err
 		}
 
-		peer, err := r.server.graphDB.FetchNode(ctx, vertex)
+		peer, err := r.server.graph.FetchNode(ctx, vertex)
 		if err != nil {
 			return "", err
 		}
@@ -9387,7 +9389,7 @@ func (r *rpcServer) getChainSyncInfo() (*chainSyncInfo, error) {
 	// date, we add the router's state to it. So the flag will only toggle
 	// to true once the router was also able to catch up.
 	if !r.cfg.Routing.AssumeChannelValid {
-		routerHeight := r.server.graphBuilder.SyncedHeight()
+		routerHeight := r.server.graph.SyncedHeight()
 		isSynced = uint32(bestHeight) == routerHeight
 	}
 

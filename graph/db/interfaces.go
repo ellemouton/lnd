@@ -21,7 +21,7 @@ type NodeTraverser interface {
 	// ForEachNodeDirectedChannel calls the callback for every channel of
 	// the given node.
 	ForEachNodeDirectedChannel(nodePub route.Vertex,
-		cb func(channel *DirectedChannel) error, reset func()) error
+		cb func(channel *models.DirectedChannel) error, reset func()) error
 
 	// FetchNodeFeatures returns the features of the given node.
 	FetchNodeFeatures(nodePub route.Vertex) (*lnwire.FeatureVector, error)
@@ -80,7 +80,7 @@ type V1Store interface { //nolint:interfacebloat
 	ForEachNodeCached(ctx context.Context, withAddrs bool,
 		cb func(ctx context.Context, node route.Vertex,
 			addrs []net.Addr,
-			chans map[uint64]*DirectedChannel) error,
+			chans map[uint64]*models.DirectedChannel) error,
 		reset func()) error
 
 	// ForEachNode iterates through all the stored vertices/nodes in the
@@ -128,7 +128,7 @@ type V1Store interface { //nolint:interfacebloat
 	// IsPublicNode is a helper method that determines whether the node with
 	// the given public key is seen as a public node in the graph from the
 	// graph's source node's point of view.
-	IsPublicNode(pubKey [33]byte) (bool, error)
+	IsPublicNode(pubKey route.Vertex) (bool, error)
 
 	// GraphSession will provide the call-back with access to a
 	// NodeTraverser instance which can be used to perform queries against

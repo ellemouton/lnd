@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -72,12 +73,12 @@ type ChannelGraphTimeSeries interface {
 // in-protocol channel range queries to quickly and efficiently synchronize our
 // channel state with all peers.
 type ChanSeries struct {
-	graph *graphdb.ChannelGraph
+	graph graphdb.V1Store
 }
 
 // NewChanSeries constructs a new ChanSeries backed by a channeldb.ChannelGraph.
 // The returned ChanSeries implements the ChannelGraphTimeSeries interface.
-func NewChanSeries(graph *graphdb.ChannelGraph) *ChanSeries {
+func NewChanSeries(graph graphdb.V1Store) *ChanSeries {
 	return &ChanSeries{
 		graph: graph,
 	}
@@ -254,13 +255,49 @@ func (c *ChanSeries) FilterKnownChanIDs(_ chainhash.Hash,
 	isZombieChan func(time.Time, time.Time) bool) (
 	[]lnwire.ShortChannelID, error) {
 
-	newChanIDs, err := c.graph.FilterKnownChanIDs(superSet, isZombieChan)
+	unknown, knownZombies, err := c.graph.FilterKnownChanIDs(superSet)
 	if err != nil {
 		return nil, err
 	}
 
-	filteredIDs := make([]lnwire.ShortChannelID, 0, len(newChanIDs))
-	for _, chanID := range newChanIDs {
+	for _, info := range knownZombies {
+		// TODO(ziggie): Make sure that for the strict pruning case we
+		// compare the pubkeys and whether the right timestamp is not
+		// older than the `ChannelPruneExpiry`.
+		//
+		// NOTE: The timestamp data has no verification attached to it
+		// in the `ReplyChannelRange` msg so we are trusting this data
+		// at this point. However it is not critical because we are just
+		// removing the channel from the db when the timestamps are more
+		// recent. During the querying of the gossip msg verification
+		// happens as usual. However we should start punishing peers
+		// when they don't provide us honest data ?
+		isStillZombie := isZombieChan(
+			info.Node1UpdateTimestamp, info.Node2UpdateTimestamp,
+		)
+
+		if isStillZombie {
+			continue
+		}
+
+		// If we have marked it as a zombie but the latest update
+		// timestamps could bring it back from the dead, then we mark it
+		// alive, and we let it be added to the set of IDs to query our
+		// peer for.
+		err := c.graph.MarkEdgeLive(info.ShortChannelID.ToUint64())
+		// Since there is a chance that the edge could have been marked
+		// as "live" between the FilterKnownChanIDs call and the
+		// MarkEdgeLive call, we ignore the error if the edge is already
+		// marked as live.
+		if err != nil &&
+			!errors.Is(err, graphdb.ErrZombieEdgeNotFound) {
+
+			return nil, err
+		}
+	}
+
+	filteredIDs := make([]lnwire.ShortChannelID, 0, len(unknown))
+	for _, chanID := range unknown {
 		filteredIDs = append(
 			filteredIDs, lnwire.NewShortChanIDFromInt(chanID),
 		)

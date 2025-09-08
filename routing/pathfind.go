@@ -13,7 +13,6 @@ import (
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/feature"
 	"github.com/lightningnetwork/lnd/fn/v2"
-	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnutils"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -513,7 +512,7 @@ func getOutgoingBalance(node route.Vertex, outgoingChans map[uint64]struct{},
 	g Graph) (lnwire.MilliSatoshi, lnwire.MilliSatoshi, error) {
 
 	var max, total lnwire.MilliSatoshi
-	cb := func(channel *graphdb.DirectedChannel) error {
+	cb := func(channel *models.DirectedChannel) error {
 		shortID := lnwire.NewShortChanIDFromInt(channel.ChannelID)
 
 		// This log line is needed to debug issues in case we do not
@@ -1287,7 +1286,7 @@ func findBlindedPaths(g Graph, target route.Vertex,
 		)
 		err := g.ForEachNodeDirectedChannel(
 			nextTarget,
-			func(channel *graphdb.DirectedChannel) error {
+			func(channel *models.DirectedChannel) error {
 				// This is not the right channel, continue to
 				// the node's other channels.
 				if channel.ChannelID != chanID {
@@ -1462,7 +1461,7 @@ func processNodeForBlindedPath(g Graph, node route.Vertex,
 	// node that can be used for blinded paths
 	err = g.ForEachNodeDirectedChannel(
 		node,
-		func(channel *graphdb.DirectedChannel) error {
+		func(channel *models.DirectedChannel) error {
 			// Keep track of how many incoming channels this node
 			// has. We only use a node as an introduction node if it
 			// has channels other than the one that lead us to it.

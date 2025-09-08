@@ -28,6 +28,7 @@ import (
 	"github.com/lightningnetwork/lnd/feature"
 	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/funding"
+	"github.com/lightningnetwork/lnd/graph"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
@@ -254,7 +255,7 @@ type Config struct {
 
 	// ChannelGraph is a pointer to the channel graph which is used to
 	// query information about the set of known active channels.
-	ChannelGraph *graphdb.ChannelGraph
+	ChannelGraph *graph.Builder
 
 	// ChainArb is used to subscribe to channel events, update contract signals,
 	// and force close channels.

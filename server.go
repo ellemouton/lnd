@@ -325,7 +325,7 @@ type server struct {
 
 	fundingMgr *funding.Manager
 
-	graphDB *graphdb.ChannelGraph
+	graph *graph.Builder
 
 	chanStateDB *channeldb.ChannelStateDB
 
@@ -363,8 +363,6 @@ type server struct {
 
 	missionController *routing.MissionController
 	defaultMC         *routing.MissionControl
-
-	graphBuilder *graph.Builder
 
 	chanRouter *routing.ChannelRouter
 
@@ -441,7 +439,7 @@ type server struct {
 // updatePersistentPeerAddrs subscribes to topology changes and stores
 // advertised addresses for any NodeAnnouncements from our persisted peers.
 func (s *server) updatePersistentPeerAddrs() error {
-	graphSub, err := s.graphDB.SubscribeTopology()
+	graphSub, err := s.graph.SubscribeTopology()
 	if err != nil {
 		return err
 	}
@@ -672,14 +670,10 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		HtlcInterceptor:             invoiceHtlcModifier,
 	}
 
-	addrSource := channeldb.NewMultiAddrSource(dbs.ChanStateDB, dbs.GraphDB)
-
 	s := &server{
 		cfg:            cfg,
 		implCfg:        implCfg,
-		graphDB:        dbs.GraphDB,
 		chanStateDB:    dbs.ChanStateDB.ChannelStateDB(),
-		addrSource:     addrSource,
 		miscDB:         dbs.ChanStateDB,
 		invoicesDB:     dbs.InvoiceDB,
 		paymentsDB:     dbs.PaymentsDB,
@@ -836,6 +830,42 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		s.interceptableSwitch.ForwardPacket,
 	)
 
+	strictPruning := cfg.Bitcoin.Node == "neutrino" ||
+		cfg.Routing.StrictZombiePruning
+
+	chanGraphOpts := []graph.ChanGraphOption{
+		graph.WithUseGraphCache(!cfg.DB.NoGraphCache),
+	}
+
+	// We want to pre-allocate the channel graph cache according to what we
+	// expect for mainnet to speed up memory allocation.
+	if cfg.ActiveNetParams.Name == chaincfg.MainNetParams.Name {
+		chanGraphOpts = append(
+			chanGraphOpts, graph.WithPreAllocCacheNumNodes(
+				graph.DefaultPreAllocCacheNumNodes,
+			),
+		)
+	}
+
+	nodePubKey := route.NewVertex(nodeKeyDesc.PubKey)
+
+	s.graph, err = graph.NewBuilder(&graph.Config{
+		SelfNode:            nodePubKey,
+		Graph:               dbs.GraphDB,
+		Chain:               cc.ChainIO,
+		ChainView:           cc.ChainView,
+		Notifier:            cc.ChainNotifier,
+		ChannelPruneExpiry:  graph.DefaultChannelPruneExpiry,
+		GraphPruneInterval:  time.Hour,
+		FirstTimePruneDelay: graph.DefaultFirstTimePruneDelay,
+		AssumeChannelValid:  cfg.Routing.AssumeChannelValid,
+		StrictZombiePruning: strictPruning,
+		IsAlias:             aliasmgr.IsAlias,
+	}, chanGraphOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("can't create graph builder: %w", err)
+	}
+
 	chanStatusMgrCfg := &netann.ChanStatusConfig{
 		ChanStatusSampleInterval: cfg.ChanStatusSampleInterval,
 		ChanEnableTimeout:        cfg.ChanEnableTimeout,
@@ -846,8 +876,9 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		IsChannelActive:          s.htlcSwitch.HasActiveLink,
 		ApplyChannelUpdate:       s.applyChannelUpdate,
 		DB:                       s.chanStateDB,
-		Graph:                    dbs.GraphDB,
+		Graph:                    s.graph,
 	}
+	s.addrSource = channeldb.NewMultiAddrSource(dbs.ChanStateDB, s.graph)
 
 	chanStatusMgr, err := netann.NewChanStatusManager(chanStatusMgrCfg)
 	if err != nil {
@@ -892,7 +923,6 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		}
 	}
 
-	nodePubKey := route.NewVertex(nodeKeyDesc.PubKey)
 	// Set the self node which represents our node in the graph.
 	err = s.setSelfNode(ctx, nodePubKey, listenAddrs)
 	if err != nil {
@@ -998,8 +1028,9 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	if err != nil {
 		return nil, fmt.Errorf("error getting source node: %w", err)
 	}
+
 	paymentSessionSource := &routing.SessionSource{
-		GraphSessionFactory: dbs.GraphDB,
+		GraphSessionFactory: s.graph,
 		SourceNode:          sourceNode,
 		MissionControl:      s.defaultMC,
 		GetLink:             s.htlcSwitch.GetLinkByShortID,
@@ -1007,26 +1038,6 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	}
 
 	s.controlTower = routing.NewControlTower(dbs.PaymentsDB)
-
-	strictPruning := cfg.Bitcoin.Node == "neutrino" ||
-		cfg.Routing.StrictZombiePruning
-
-	s.graphBuilder, err = graph.NewBuilder(&graph.Config{
-		SelfNode:            nodePubKey,
-		Graph:               dbs.GraphDB,
-		Chain:               cc.ChainIO,
-		ChainView:           cc.ChainView,
-		Notifier:            cc.ChainNotifier,
-		ChannelPruneExpiry:  graph.DefaultChannelPruneExpiry,
-		GraphPruneInterval:  time.Hour,
-		FirstTimePruneDelay: graph.DefaultFirstTimePruneDelay,
-		AssumeChannelValid:  cfg.Routing.AssumeChannelValid,
-		StrictZombiePruning: strictPruning,
-		IsAlias:             aliasmgr.IsAlias,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("can't create graph builder: %w", err)
-	}
 
 	s.chanRouter, err = routing.New(routing.Config{
 		SelfNode:           nodePubKey,
@@ -1040,7 +1051,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		NextPaymentID:      sequencer.NextID,
 		PathFindingConfig:  pathFindingConfig,
 		Clock:              clock.NewDefaultClock(),
-		ApplyChannelUpdate: s.graphBuilder.ApplyChannelUpdate,
+		ApplyChannelUpdate: s.graph.ApplyChannelUpdate,
 		ClosedSCIDs:        s.fetchClosedChannelSCIDs(),
 		TrafficShaper:      implCfg.TrafficShaper,
 	})
@@ -1048,7 +1059,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		return nil, fmt.Errorf("can't create router: %w", err)
 	}
 
-	chanSeries := discovery.NewChanSeries(s.graphDB)
+	chanSeries := discovery.NewChanSeries(s.graph)
 	gossipMessageStore, err := discovery.NewMessageStore(dbs.ChanStateDB)
 	if err != nil {
 		return nil, err
@@ -1058,10 +1069,10 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		return nil, err
 	}
 
-	scidCloserMan := discovery.NewScidCloserMan(s.graphDB, s.chanStateDB)
+	scidCloserMan := discovery.NewScidCloserMan(s.graph, s.chanStateDB)
 
 	s.authGossiper = discovery.New(discovery.Config{
-		Graph:                 s.graphBuilder,
+		Graph:                 s.graph,
 		ChainIO:               s.cc.ChainIO,
 		Notifier:              s.cc.ChainNotifier,
 		ChainParams:           s.cfg.ActiveNetParams.Params,
@@ -1097,7 +1108,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		FindBaseByAlias:         s.aliasMgr.FindBaseSCID,
 		GetAlias:                s.aliasMgr.GetPeerAlias,
 		FindChannel:             s.findChannel,
-		IsStillZombieChannel:    s.graphBuilder.IsZombieChannel,
+		IsStillZombieChannel:    s.graph.IsZombieChannel,
 		ScidCloser:              scidCloserMan,
 		AssumeChannelValid:      cfg.Routing.AssumeChannelValid,
 		MsgRateBytes:            cfg.Gossip.MsgRateBytes,
@@ -1137,7 +1148,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 				*models.ChannelEdgePolicy) error,
 			reset func()) error {
 
-			return s.graphDB.ForEachNodeChannel(ctx, selfVertex,
+			return s.graph.ForEachNodeChannel(ctx, selfVertex,
 				func(c *models.ChannelEdgeInfo,
 					e *models.ChannelEdgePolicy,
 					_ *models.ChannelEdgePolicy) error {
@@ -1154,7 +1165,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		AddEdge: func(ctx context.Context,
 			edge *models.ChannelEdgeInfo) error {
 
-			return s.graphBuilder.AddEdge(ctx, edge)
+			return s.graph.AddEdge(ctx, edge)
 		},
 	}
 
@@ -1393,7 +1404,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	deleteAliasEdge := func(scid lnwire.ShortChannelID) (
 		*models.ChannelEdgePolicy, error) {
 
-		info, e1, e2, err := s.graphDB.FetchChannelEdgesByID(
+		info, e1, e2, err := s.graph.FetchChannelEdgesByID(
 			scid.ToUint64(),
 		)
 		if errors.Is(err, graphdb.ErrEdgeNotFound) {
@@ -1422,9 +1433,10 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 			return nil, fmt.Errorf("we don't have an edge")
 		}
 
-		err = s.graphDB.DeleteChannelEdges(
+		_, err = s.graph.DeleteChannelEdges(
 			false, false, scid.ToUint64(),
 		)
+
 		return ourPolicy, err
 	}
 
@@ -2304,14 +2316,14 @@ func (s *server) Start(ctx context.Context) error {
 			return
 		}
 
-		cleanup = cleanup.add(s.graphDB.Stop)
-		if err := s.graphDB.Start(); err != nil {
+		cleanup = cleanup.add(s.graph.Stop)
+		if err := s.graph.Start(); err != nil {
 			startErr = err
 			return
 		}
 
-		cleanup = cleanup.add(s.graphBuilder.Stop)
-		if err := s.graphBuilder.Start(); err != nil {
+		cleanup = cleanup.add(s.graph.Stop)
+		if err := s.graph.Start(); err != nil {
 			startErr = err
 			return
 		}
@@ -2633,11 +2645,8 @@ func (s *server) Stop() error {
 		if err := s.chanRouter.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop chanRouter: %v", err)
 		}
-		if err := s.graphBuilder.Stop(); err != nil {
-			srvrLog.Warnf("failed to stop graphBuilder %v", err)
-		}
-		if err := s.graphDB.Stop(); err != nil {
-			srvrLog.Warnf("failed to stop graphDB %v", err)
+		if err := s.graph.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop graph %v", err)
 		}
 		if err := s.chainArb.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop chainArb: %v", err)
@@ -2947,7 +2956,7 @@ func initNetworkBootstrappers(s *server) ([]discovery.NetworkPeerBootstrapper, e
 	// First, we'll create an instance of the ChannelGraphBootstrapper as
 	// this can be used by default if we've already partially seeded the
 	// network.
-	chanGraph := autopilot.ChannelGraphFromDatabase(s.graphDB)
+	chanGraph := autopilot.ChannelGraphFromDatabase(s.graph)
 	graphBootstrapper, err := discovery.NewGraphBootstrapper(
 		chanGraph, s.cfg.Bitcoin.IsLocalNetwork(),
 	)
@@ -3330,7 +3339,7 @@ func (s *server) createNewHiddenService(ctx context.Context) error {
 		},
 	)
 
-	if err := s.graphDB.SetSourceNode(ctx, selfNode); err != nil {
+	if err := s.graph.SetSourceNode(ctx, selfNode); err != nil {
 		return fmt.Errorf("can't set self node: %w", err)
 	}
 
@@ -3438,7 +3447,7 @@ func (s *server) updateAndBroadcastSelfNode(ctx context.Context,
 	// Update the on-disk version of our announcement.
 	// Load and modify self node istead of creating anew instance so we
 	// don't risk overwriting any existing values.
-	selfNode, err := s.graphDB.SourceNode(ctx)
+	selfNode, err := s.graph.SourceNode(ctx)
 	if err != nil {
 		return fmt.Errorf("unable to get current source node: %w", err)
 	}
@@ -3452,7 +3461,7 @@ func (s *server) updateAndBroadcastSelfNode(ctx context.Context,
 
 	copy(selfNode.PubKeyBytes[:], s.identityECDH.PubKey().SerializeCompressed())
 
-	if err := s.graphDB.SetSourceNode(ctx, selfNode); err != nil {
+	if err := s.graph.SetSourceNode(ctx, selfNode); err != nil {
 		return fmt.Errorf("can't set self node: %w", err)
 	}
 
@@ -3573,7 +3582,7 @@ func (s *server) establishPersistentConnections(ctx context.Context) error {
 		graphAddrs[pubStr] = n
 		return nil
 	}
-	err = s.graphDB.ForEachSourceNodeChannel(
+	err = s.graph.ForEachSourceNodeChannel(
 		ctx, forEachSrcNodeChan, func() {
 			clear(graphAddrs)
 		},
@@ -4374,7 +4383,7 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 		Switch:                  s.htlcSwitch,
 		InterceptSwitch:         s.interceptableSwitch,
 		ChannelDB:               s.chanStateDB,
-		ChannelGraph:            s.graphDB,
+		ChannelGraph:            s.graph,
 		ChainArb:                s.chainArb,
 		AuthGossiper:            s.authGossiper,
 		ChanStatusMgr:           s.chanStatusMgr,
@@ -5209,7 +5218,7 @@ func (s *server) fetchNodeAdvertisedAddrs(ctx context.Context,
 		return nil, err
 	}
 
-	node, err := s.graphDB.FetchNode(ctx, vertex)
+	node, err := s.graph.FetchNode(ctx, vertex)
 	if err != nil {
 		return nil, err
 	}
@@ -5228,7 +5237,7 @@ func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
 
 	ourPubKey := s.identityECDH.PubKey().SerializeCompressed()
 	return func(cid lnwire.ShortChannelID) (*lnwire.ChannelUpdate1, error) {
-		info, edge1, edge2, err := s.graphBuilder.GetChannelByID(cid)
+		info, edge1, edge2, err := s.graph.GetChannelByID(cid)
 		if err != nil {
 			return nil, err
 		}
@@ -5582,7 +5591,7 @@ func (s *server) setSelfNode(ctx context.Context, nodePub route.Vertex,
 		nodeLastUpdate = time.Now()
 	)
 
-	srcNode, err := s.graphDB.SourceNode(ctx)
+	srcNode, err := s.graph.SourceNode(ctx)
 	switch {
 	case err == nil:
 		// If we have a source node persisted in the DB already, then we
@@ -5683,7 +5692,7 @@ func (s *server) setSelfNode(ctx context.Context, nodePub route.Vertex,
 
 	// Finally, we'll update the representation on disk, and update our
 	// cached in-memory version as well.
-	if err := s.graphDB.SetSourceNode(ctx, selfNode); err != nil {
+	if err := s.graph.SetSourceNode(ctx, selfNode); err != nil {
 		return fmt.Errorf("can't set self node: %w", err)
 	}
 

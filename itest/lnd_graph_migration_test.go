@@ -6,6 +6,7 @@ import (
 	"net"
 
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
+	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lntest"
 	"github.com/lightningnetwork/lnd/lntest/node"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -68,7 +69,7 @@ func testGraphMigration(ht *lntest.HarnessTest) {
 		)
 		err := db.ForEachNodeCached(ctx, false, func(_ context.Context,
 			_ route.Vertex, _ []net.Addr,
-			chans map[uint64]*graphdb.DirectedChannel) error {
+			chans map[uint64]*models.DirectedChannel) error {
 
 			numNodes++
 

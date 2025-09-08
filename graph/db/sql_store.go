@@ -842,7 +842,7 @@ func (s *SQLStore) ForEachNode(ctx context.Context,
 //
 // NOTE: this is part of the graphdb.NodeTraverser interface.
 func (s *SQLStore) ForEachNodeDirectedChannel(nodePub route.Vertex,
-	cb func(channel *DirectedChannel) error, reset func()) error {
+	cb func(channel *models.DirectedChannel) error, reset func()) error {
 
 	var ctx = context.TODO()
 
@@ -1025,7 +1025,7 @@ func (s *SQLStore) ChanUpdatesInHorizon(startTime,
 // NOTE: part of the V1Store interface.
 func (s *SQLStore) ForEachNodeCached(ctx context.Context, withAddrs bool,
 	cb func(ctx context.Context, node route.Vertex, addrs []net.Addr,
-		chans map[uint64]*DirectedChannel) error, reset func()) error {
+		chans map[uint64]*models.DirectedChannel) error, reset func()) error {
 
 	type nodeCachedBatchData struct {
 		features      map[int64][]int
@@ -1193,7 +1193,7 @@ func (s *SQLStore) ForEachNodeCached(ctx context.Context, withAddrs bool,
 			}
 
 			// Build cached channels map for this node.
-			channels := make(map[uint64]*DirectedChannel)
+			channels := make(map[uint64]*models.DirectedChannel)
 			for _, channelRow := range nodeChannels {
 				directedChan, err := s.buildDirectedChannel(
 					nodeData.ID, nodePub,
@@ -2043,7 +2043,7 @@ func (s *SQLStore) ChannelID(chanPoint *wire.OutPoint) (uint64, error) {
 // source node's point of view.
 //
 // NOTE: part of the V1Store interface.
-func (s *SQLStore) IsPublicNode(pubKey [33]byte) (bool, error) {
+func (s *SQLStore) IsPublicNode(pubKey route.Vertex) (bool, error) {
 	ctx := context.TODO()
 
 	var isPublic bool
@@ -2817,7 +2817,7 @@ func newSQLNodeTraverser(version lnwire.GossipVersion, db SQLQueries,
 //
 // NOTE: Part of the NodeTraverser interface.
 func (s *sqlNodeTraverser) ForEachNodeDirectedChannel(nodePub route.Vertex,
-	cb func(channel *DirectedChannel) error, _ func()) error {
+	cb func(channel *models.DirectedChannel) error, _ func()) error {
 
 	ctx := context.TODO()
 
@@ -2842,7 +2842,7 @@ func (s *sqlNodeTraverser) FetchNodeFeatures(nodePub route.Vertex) (
 // returned.
 func forEachNodeDirectedChannel(ctx context.Context,
 	version lnwire.GossipVersion, db SQLQueries,
-	nodePub route.Vertex, cb func(channel *DirectedChannel) error) error {
+	nodePub route.Vertex, cb func(channel *models.DirectedChannel) error) error {
 
 	toNodeCallback := func() route.Vertex {
 		return nodePub
@@ -2923,7 +2923,7 @@ func forEachNodeDirectedChannel(ctx context.Context,
 			cachedInPolicy.ToNodeFeatures = features
 		}
 
-		directedChannel := &DirectedChannel{
+		directedChannel := &models.DirectedChannel{
 			ChannelID:    edge.ChannelID,
 			IsNode1:      nodePub == edge.NodeKey1Bytes,
 			OtherNode:    edge.NodeKey2Bytes,
@@ -5251,7 +5251,7 @@ func (s *SQLStore) forEachChannelWithPolicies(ctx context.Context,
 func (s *SQLStore) buildDirectedChannel(nodeID int64,
 	nodePub route.Vertex, channelRow sqlc.ListChannelsForNodeIDsRow,
 	channelBatchData *batchChannelData, features *lnwire.FeatureVector,
-	toNodeCallback func() route.Vertex) (*DirectedChannel, error) {
+	toNodeCallback func() route.Vertex) (*models.DirectedChannel, error) {
 
 	node1, node2, err := buildNodeVertices(
 		channelRow.Node1Pubkey, channelRow.Node2Pubkey,
@@ -5309,7 +5309,7 @@ func (s *SQLStore) buildDirectedChannel(nodeID int64,
 	}
 
 	// Build directed channel.
-	directedChannel := &DirectedChannel{
+	directedChannel := &models.DirectedChannel{
 		ChannelID:    edge.ChannelID,
 		IsNode1:      nodePub == edge.NodeKey1Bytes,
 		OtherNode:    edge.NodeKey2Bytes,
@@ -5532,4 +5532,42 @@ func (s *SQLStore) handleZombieMarking(ctx context.Context, db SQLQueries,
 			NodeKey2: nodeKey2[:],
 		},
 	)
+}
+
+// EncodeHexColor takes a color and returns it in hex code format.
+func EncodeHexColor(color color.RGBA) string {
+	return fmt.Sprintf("#%02x%02x%02x", color.R, color.G, color.B)
+}
+
+// DecodeHexColor takes a hex color string like "#rrggbb" and returns a
+// color.RGBA.
+func DecodeHexColor(hex string) (color.RGBA, error) {
+	if len(hex) != 7 || hex[0] != '#' {
+		return color.RGBA{}, fmt.Errorf("invalid hex color string: %s",
+			hex)
+	}
+
+	r, err := strconv.ParseUint(hex[1:3], 16, 8)
+	if err != nil {
+		return color.RGBA{}, fmt.Errorf("invalid red component: %w",
+			err)
+	}
+
+	g, err := strconv.ParseUint(hex[3:5], 16, 8)
+	if err != nil {
+		return color.RGBA{}, fmt.Errorf("invalid green component: %w",
+			err)
+	}
+
+	b, err := strconv.ParseUint(hex[5:7], 16, 8)
+	if err != nil {
+		return color.RGBA{}, fmt.Errorf("invalid blue component: %w",
+			err)
+	}
+
+	return color.RGBA{
+		R: uint8(r),
+		G: uint8(g),
+		B: uint8(b),
+	}, nil
 }

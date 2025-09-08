@@ -2699,7 +2699,7 @@ func TestStressTestChannelGraphAPI(t *testing.T) {
 			},
 		},
 		{
-			name: "PruneGraph",
+			name: "pruneGraph",
 			fn: func() error {
 				chanSet := getRandChanSet()
 				var spentOutpoints []*wire.OutPoint

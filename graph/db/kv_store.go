@@ -576,7 +576,7 @@ func (c *KVStore) ForEachChannelCacheable(cb func(*models.CachedEdgeInfo,
 // not nil, the caller is expected to have passed in a reset to the parent
 // function's View/Update call which will then apply to the whole transaction.
 func (c *KVStore) forEachNodeDirectedChannel(tx kvdb.RTx,
-	node route.Vertex, cb func(channel *DirectedChannel) error,
+	node route.Vertex, cb func(channel *models.DirectedChannel) error,
 	reset func()) error {
 
 	// Fallback that uses the database.
@@ -598,7 +598,7 @@ func (c *KVStore) forEachNodeDirectedChannel(tx kvdb.RTx,
 			cachedInPolicy.ToNodeFeatures = toNodeFeatures
 		}
 
-		directedChannel := &DirectedChannel{
+		directedChannel := &models.DirectedChannel{
 			ChannelID:    e.ChannelID,
 			IsNode1:      node == e.NodeKey1Bytes,
 			OtherNode:    e.NodeKey2Bytes,
@@ -656,7 +656,7 @@ func (c *KVStore) fetchNodeFeatures(tx kvdb.RTx,
 //
 // NOTE: this is part of the graphdb.NodeTraverser interface.
 func (c *KVStore) ForEachNodeDirectedChannel(nodePub route.Vertex,
-	cb func(channel *DirectedChannel) error, reset func()) error {
+	cb func(channel *models.DirectedChannel) error, reset func()) error {
 
 	return c.forEachNodeDirectedChannel(nil, nodePub, cb, reset)
 }
@@ -677,7 +677,7 @@ func (c *KVStore) FetchNodeFeatures(nodePub route.Vertex) (
 // NOTE: The callback contents MUST not be modified.
 func (c *KVStore) ForEachNodeCached(ctx context.Context, withAddrs bool,
 	cb func(ctx context.Context, node route.Vertex, addrs []net.Addr,
-		chans map[uint64]*DirectedChannel) error, reset func()) error {
+		chans map[uint64]*models.DirectedChannel) error, reset func()) error {
 
 	// Otherwise call back to a version that uses the database directly.
 	// We'll iterate over each node, then the set of channels for each
@@ -686,7 +686,7 @@ func (c *KVStore) ForEachNodeCached(ctx context.Context, withAddrs bool,
 	return forEachNode(c.db, func(tx kvdb.RTx,
 		node *models.Node) error {
 
-		channels := make(map[uint64]*DirectedChannel)
+		channels := make(map[uint64]*models.DirectedChannel)
 
 		err := c.forEachNodeChannelTx(tx, node.PubKeyBytes,
 			func(tx kvdb.RTx, e *models.ChannelEdgeInfo,
@@ -713,7 +713,7 @@ func (c *KVStore) ForEachNodeCached(ctx context.Context, withAddrs bool,
 						toNodeFeatures
 				}
 
-				directedChannel := &DirectedChannel{
+				directedChannel := &models.DirectedChannel{
 					ChannelID: e.ChannelID,
 					IsNode1: node.PubKeyBytes ==
 						e.NodeKey1Bytes,
@@ -3601,7 +3601,7 @@ func (c *KVStore) FetchChannelEdgesByID(chanID uint64) (
 // IsPublicNode is a helper method that determines whether the node with the
 // given public key is seen as a public node in the graph from the graph's
 // source node's point of view.
-func (c *KVStore) IsPublicNode(pubKey [33]byte) (bool, error) {
+func (c *KVStore) IsPublicNode(pubKey route.Vertex) (bool, error) {
 	var nodeIsPublic bool
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		nodes := tx.ReadBucket(nodeBucket)
@@ -3996,7 +3996,7 @@ type nodeTraverserSession struct {
 //
 // NOTE: Part of the NodeTraverser interface.
 func (c *nodeTraverserSession) ForEachNodeDirectedChannel(nodePub route.Vertex,
-	cb func(channel *DirectedChannel) error, _ func()) error {
+	cb func(channel *models.DirectedChannel) error, _ func()) error {
 
 	return c.db.forEachNodeDirectedChannel(c.tx, nodePub, cb, func() {})
 }

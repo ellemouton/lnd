@@ -330,7 +330,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 		if rpcEdge.Node1Policy != nil {
 			policy := makePolicy(rpcEdge.Node1Policy)
 			policy.ChannelFlags = 0
-			err := graphDB.UpdateEdgePolicy(ctx, policy)
+			err := graphDB.UpdateEdge(ctx, policy)
 			if err != nil {
 				return nil, fmt.Errorf(
 					"unable to update policy: %v", err)
@@ -340,7 +340,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 		if rpcEdge.Node2Policy != nil {
 			policy := makePolicy(rpcEdge.Node2Policy)
 			policy.ChannelFlags = 1
-			err := graphDB.UpdateEdgePolicy(ctx, policy)
+			err := graphDB.UpdateEdge(ctx, policy)
 			if err != nil {
 				return nil, fmt.Errorf(
 					"unable to update policy: %v", err)

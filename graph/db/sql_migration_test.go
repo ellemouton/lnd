@@ -381,7 +381,7 @@ func TestMigrateGraphToSQL(t *testing.T) {
 				require.NoError(t, err)
 			},
 			objects: []any{
-				// The PruneGraph call requires that the source
+				// The pruneGraph call requires that the source
 				// node be set. So that is the first object
 				// we will write.
 				models.NewV1ShellNode(testPub),

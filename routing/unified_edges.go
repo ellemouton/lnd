@@ -4,7 +4,6 @@ import (
 	"math"
 
 	"github.com/btcsuite/btcd/btcutil"
-	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -97,8 +96,8 @@ func (u *nodeEdgeUnifier) addPolicy(fromNode route.Vertex,
 // addGraphPolicies adds all policies that are known for the toNode in the
 // graph.
 func (u *nodeEdgeUnifier) addGraphPolicies(g Graph) error {
-	var channels []*graphdb.DirectedChannel
-	cb := func(channel *graphdb.DirectedChannel) error {
+	var channels []*models.DirectedChannel
+	cb := func(channel *models.DirectedChannel) error {
 		// If there is no edge policy for this candidate node, skip.
 		// Note that we are searching backwards so this node would have
 		// come prior to the pivot node in the route.

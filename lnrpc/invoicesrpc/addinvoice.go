@@ -759,7 +759,7 @@ type SelectHopHintsCfg struct {
 	// IsPublicNode is returns a bool indicating whether the node with the
 	// given public key is seen as a public node in the graph from the
 	// graph's source node's point of view.
-	IsPublicNode func(pubKey [33]byte) (bool, error)
+	IsPublicNode func(pubKey route.Vertex) (bool, error)
 
 	// FetchChannelEdgesByID attempts to lookup the two directed edges for
 	// the channel identified by the channel ID.
