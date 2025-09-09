@@ -1201,7 +1201,9 @@ func (c *KVStore) addChannelEdge(tx kvdb.RwTx,
 	switch {
 	case errors.Is(node1Err, ErrGraphNodeNotFound):
 		err := addLightningNode(
-			tx, models.NewV1ShellNode(edge.NodeKey1Bytes),
+			tx, models.NewShellNode(
+				lnwire.GossipVersion1, edge.NodeKey1Bytes,
+			),
 		)
 		if err != nil {
 			return fmt.Errorf("unable to create shell node "+
@@ -1215,7 +1217,9 @@ func (c *KVStore) addChannelEdge(tx kvdb.RwTx,
 	switch {
 	case errors.Is(node2Err, ErrGraphNodeNotFound):
 		err := addLightningNode(
-			tx, models.NewV1ShellNode(edge.NodeKey2Bytes),
+			tx, models.NewShellNode(
+				lnwire.GossipVersion1, edge.NodeKey2Bytes,
+			),
 		)
 		if err != nil {
 			return fmt.Errorf("unable to create shell node "+
@@ -4228,7 +4232,7 @@ func deserializeLightningNode(r io.Reader) (*models.Node, error) {
 		return nil, err
 	}
 
-	node := models.NewV1ShellNode(pubKey)
+	node := models.NewShellNode(lnwire.GossipVersion1, pubKey)
 	node.LastUpdate = lastUpdate
 
 	if _, err := r.Read(scratch[:2]); err != nil {

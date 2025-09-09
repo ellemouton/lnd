@@ -53,6 +53,8 @@ type Node struct {
 	// and ensure we're able to make upgrades to the network in a forwards
 	// compatible manner.
 	ExtraOpaqueData []byte
+
+	ExtraSignedFields map[uint64][]byte
 }
 
 type NodeV1Fields struct {
@@ -86,6 +88,29 @@ type NodeV1Fields struct {
 	ExtraOpaqueData []byte
 }
 
+type NodeV2Fields struct {
+	// PubKeyBytes is the raw bytes of the public key of the target node.
+	PubKeyBytes [33]byte
+
+	LastBlockHeight uint32
+
+	// Address is the TCP address this node is reachable over.
+	Addresses []net.Addr
+
+	Color fn.Option[color.RGBA]
+
+	// Alias is a nick-name for the node. The alias can be used to confirm
+	// a node's identity or to serve as a short ID for an address book.
+	Alias fn.Option[string]
+
+	Signature []byte
+
+	// Features is the list of protocol features supported by this node.
+	Features *lnwire.RawFeatureVector
+
+	ExtraSignedFields map[uint64][]byte
+}
+
 func NewV1Node(pub route.Vertex, n *NodeV1Fields) *Node {
 	return &Node{
 		Version:      lnwire.GossipVersion1,
@@ -102,12 +127,29 @@ func NewV1Node(pub route.Vertex, n *NodeV1Fields) *Node {
 	}
 }
 
-func NewV1ShellNode(pubKey route.Vertex) *Node {
+func NewShellNode(v lnwire.GossipVersion, pubKey route.Vertex) *Node {
 	return &Node{
-		Version:     lnwire.GossipVersion1,
+		Version:     v,
 		PubKeyBytes: pubKey,
 		Features:    lnwire.NewFeatureVector(nil, lnwire.Features),
 		LastUpdate:  time.Unix(0, 0),
+	}
+}
+
+func NewV2Node(pub route.Vertex, n *NodeV2Fields) *Node {
+	return &Node{
+		Version:      lnwire.GossipVersion2,
+		PubKeyBytes:  pub,
+		Addresses:    n.Addresses,
+		AuthSigBytes: n.Signature,
+		Features: lnwire.NewFeatureVector(
+			n.Features, lnwire.Features,
+		),
+		LastBlockHeight:   n.LastBlockHeight,
+		Color:             n.Color,
+		Alias:             n.Alias,
+		LastUpdate:        time.Unix(0, 0),
+		ExtraSignedFields: n.ExtraSignedFields,
 	}
 }
 

@@ -29,6 +29,8 @@ type ChannelAuthProof struct {
 
 // IsEmpty check is the authentication proof is empty Proof is empty if at
 // least one of the signatures are equal to nil.
+//
+// TODO(elle): update for v2 sig or remove since only used in kv store.
 func (c *ChannelAuthProof) IsEmpty() bool {
 	return len(c.NodeSig1Bytes) == 0 ||
 		len(c.NodeSig2Bytes) == 0 ||

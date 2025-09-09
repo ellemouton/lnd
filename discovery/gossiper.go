@@ -3283,6 +3283,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 	// signs a different SCID than the database SCID, but since there will
 	// only be a difference if AuthProof == nil, this is fine.
 	update := &models.ChannelEdgePolicy{
+		Version:                   lnwire.GossipVersion1,
 		SigBytes:                  upd.Signature.ToSignatureBytes(),
 		ChannelID:                 chanInfo.ChannelID,
 		LastUpdate:                timestamp,

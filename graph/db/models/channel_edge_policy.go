@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
@@ -15,14 +14,13 @@ import (
 // information concerning fees, and minimum time-lock information which is
 // utilized during path finding.
 type ChannelEdgePolicy struct {
+	Version lnwire.GossipVersion
+
 	// SigBytes is the raw bytes of the signature of the channel edge
 	// policy. We'll only parse these if the caller needs to access the
 	// signature for validation purposes. Do not set SigBytes directly, but
 	// use SetSigBytes instead to make sure that the cache is invalidated.
 	SigBytes []byte
-
-	// sig is a cached fully parsed signature.
-	sig *ecdsa.Signature
 
 	// ChannelID is the unique channel ID for the channel. The first 3
 	// bytes are the block height, the next 3 the index within the block,
@@ -34,6 +32,7 @@ type ChannelEdgePolicy struct {
 	LastUpdate time.Time
 
 	LastBlockHeight uint32
+	SecondPeer      bool
 
 	// MessageFlags is a bitfield which indicates the presence of optional
 	// fields (like max_htlc) in the policy.
@@ -86,38 +85,23 @@ type ChannelEdgePolicy struct {
 	// and ensure we're able to make upgrades to the network in a forwards
 	// compatible manner.
 	ExtraOpaqueData lnwire.ExtraOpaqueData
-}
 
-// Signature is a channel announcement signature, which is needed for proper
-// edge policy announcement.
-//
-// NOTE: By having this method to access an attribute, we ensure we only need
-// to fully deserialize the signature if absolutely necessary.
-func (c *ChannelEdgePolicy) Signature() (*ecdsa.Signature, error) {
-	if c.sig != nil {
-		return c.sig, nil
-	}
-
-	sig, err := ecdsa.ParseSignature(c.SigBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	c.sig = sig
-
-	return sig, nil
+	ExtraSignedFields map[uint64][]byte
 }
 
 // SetSigBytes updates the signature and invalidates the cached parsed
 // signature.
 func (c *ChannelEdgePolicy) SetSigBytes(sig []byte) {
 	c.SigBytes = sig
-	c.sig = nil
 }
 
 // IsDisabled determines whether the edge has the disabled bit set.
 func (c *ChannelEdgePolicy) IsDisabled() bool {
-	return c.ChannelFlags.IsDisabled()
+	if c.Version == lnwire.GossipVersion1 {
+		return c.ChannelFlags.IsDisabled()
+	}
+
+	return !c.DisableFlags.IsEnabled()
 }
 
 // ComputeFee computes the fee to forward an HTLC of `amt` milli-satoshis over
@@ -131,7 +115,13 @@ func (c *ChannelEdgePolicy) ComputeFee(
 
 // String returns a human-readable version of the channel edge policy.
 func (c *ChannelEdgePolicy) String() string {
-	return fmt.Sprintf("ChannelID=%v, MessageFlags=%v, ChannelFlags=%v, "+
-		"LastUpdate=%v", c.ChannelID, c.MessageFlags, c.ChannelFlags,
-		c.LastUpdate)
+	if c.Version == lnwire.GossipVersion1 {
+		return fmt.Sprintf("ChannelID=%v, MessageFlags=%v, ChannelFlags=%v, "+
+			"LastUpdate=%v", c.ChannelID, c.MessageFlags, c.ChannelFlags,
+			c.LastUpdate)
+	}
+
+	return fmt.Sprintf("ChannelID=%v, Node1=%v, DisableFlags=%v, "+
+		"BlockHeight=%v", c.ChannelID, !c.SecondPeer,
+		c.DisableFlags, c.LastBlockHeight)
 }

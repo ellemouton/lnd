@@ -75,6 +75,8 @@ type ChannelEdgeInfo struct {
 	// and ensure we're able to make upgrades to the network in a forwards
 	// compatible manner.
 	ExtraOpaqueData []byte
+
+	ExtraSignedFields map[uint64][]byte
 }
 
 type EdgeModifier func(*ChannelEdgeInfo)
