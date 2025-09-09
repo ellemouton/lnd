@@ -2661,8 +2661,8 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 	scid := ann.SCID()
 	chainHash := d.cfg.ChainParams.GenesisHash
 
-	log.Debugf("Processing ChannelAnnouncement1: peer=%v, short_chan_id=%v",
-		nMsg.peer, scid.ToUint64())
+	log.Debugf("Processing %s: peer=%v, short_chan_id=%v",
+		nMsg.msg.MsgType(), nMsg.peer, scid.ToUint64())
 
 	// We'll ignore any channel announcements that target any chain other
 	// than the set of chains we know of.
@@ -3121,7 +3121,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 	nMsg *networkMsg, upd lnwire.ChannelUpdate) ([]networkMsg, bool) {
 
 	log.Debugf("Processing %s: peer=%v, short_chan_id=%v, ",
-		nMsg.peer, upd.MsgType(), upd.SCID().ToUint64())
+		upd.MsgType(), nMsg.peer, upd.SCID().ToUint64())
 
 	chainHash := d.cfg.ChainParams.GenesisHash
 	updChainHash := upd.GetChainHash()

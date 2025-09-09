@@ -710,7 +710,7 @@ func (s *SQLStore) UpdateEdgePolicy(ctx context.Context,
 				ctx, tx, edge,
 			)
 			if err != nil {
-				log.Errorf("UpdateEdgePolicy faild: %v", err)
+				log.Errorf("UpdateEdgePolicy failed: %v", err)
 			}
 
 			// Silence ErrEdgeNotFound so that the batch can
@@ -3284,7 +3284,9 @@ func (s *SQLStore) updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 	copy(node2Pub[:], dbChan.Node2PubKey)
 
 	// Figure out which node this edge is from.
-	isNode1 = edge.ChannelFlags&lnwire.ChanUpdateDirection == 0
+	isNode1 = edge.ChannelFlags&lnwire.ChanUpdateDirection == 0 ||
+		!edge.SecondPeer
+
 	nodeID := dbChan.NodeID1
 	if !isNode1 {
 		nodeID = dbChan.NodeID2

@@ -2883,7 +2883,7 @@ func (c *KVStore) UpdateEdgePolicy(ctx context.Context,
 
 			from, to, isUpdate1, err = updateEdgePolicy(tx, edge)
 			if err != nil {
-				log.Errorf("UpdateEdgePolicy faild: %v", err)
+				log.Errorf("UpdateEdgePolicy failed: %v", err)
 			}
 
 			// Silence ErrEdgeNotFound so that the batch can

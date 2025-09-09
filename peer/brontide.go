@@ -2204,10 +2204,10 @@ out:
 					nextMsg.MsgType())
 			}
 
-		case *lnwire.ChannelUpdate1,
-			*lnwire.ChannelAnnouncement1,
-			*lnwire.NodeAnnouncement1,
-			*lnwire.AnnounceSignatures1,
+		case lnwire.ChannelUpdate,
+			lnwire.ChannelAnnouncement,
+			lnwire.NodeAnnouncement,
+			lnwire.AnnounceSignatures,
 			*lnwire.GossipTimestampRange,
 			*lnwire.QueryShortChanIDs,
 			*lnwire.QueryChannelRange,

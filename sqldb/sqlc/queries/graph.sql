@@ -836,7 +836,7 @@ ON CONFLICT (channel_id, node_id, version)
         channel_flags = EXCLUDED.channel_flags,
         signature = EXCLUDED.signature
 WHERE EXCLUDED.last_update > graph_channel_policies.last_update
-OR ECLUDED.block_height > graph_channel_policies.block_height
+OR EXCLUDED.block_height > graph_channel_policies.block_height
 RETURNING id;
 
 -- name: GetChannelPolicyByChannelAndNode :one

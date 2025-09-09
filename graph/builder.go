@@ -1247,7 +1247,7 @@ func (b *Builder) addEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 		return nil
 	}
 
-	log.Debugf("New channel discovered! Link connects %x and %x with "+
+	log.Debugf("New channel discovered! Link connects %s and %s with "+
 		"ChannelPoint(%v): chan_id=%v, capacity=%v", edge.NodeKey1Bytes,
 		edge.NodeKey2Bytes, edge.ChannelPoint, edge.ChannelID,
 		edge.Capacity)
@@ -1286,6 +1286,12 @@ func (b *Builder) addEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (b *Builder) UpdateEdge(ctx context.Context,
 	update *models.ChannelEdgePolicy, fromRemote bool) error {
+
+	// We make sure to hold the mutex for this channel ID, such that no
+	// other goroutine is concurrently doing database accesses for the same
+	// channel ID.
+	b.channelEdgeMtx.Lock(update.ChannelID)
+	defer b.channelEdgeMtx.Unlock(update.ChannelID)
 
 	err := b.validateEdgeUpdate(update)
 	if err != nil {
@@ -1327,16 +1333,24 @@ func (b *Builder) UpdateEdge(ctx context.Context,
 // considered fresh enough and if we actually have a channel persisted for the
 // given update.
 func (b *Builder) validateEdgeUpdate(policy *models.ChannelEdgePolicy) error {
-
 	log.Debugf("Received ChannelEdgePolicy for channel %v",
 		policy.ChannelID)
 
-	// We make sure to hold the mutex for this channel ID, such that no
-	// other goroutine is concurrently doing database accesses for the same
-	// channel ID.
-	b.channelEdgeMtx.Lock(policy.ChannelID)
-	defer b.channelEdgeMtx.Unlock(policy.ChannelID)
+	switch policy.Version {
+	case lnwire.GossipVersion1:
+		return b.validateV1EdgeUpdate(policy)
 
+	default:
+	}
+
+	return b.validateV2EdgeUpdate(policy)
+}
+
+// validateEdgeUpdate validates the new edge policy against what we currently have
+// persisted in the graph, and then applies it to the graph if the update is
+// considered fresh enough and if we actually have a channel persisted for the
+// given update.
+func (b *Builder) validateV1EdgeUpdate(policy *models.ChannelEdgePolicy) error {
 	edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
 		b.cfg.Graph.HasV1ChannelEdge(policy.ChannelID)
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
@@ -1393,6 +1407,76 @@ func (b *Builder) validateEdgeUpdate(policy *models.ChannelEdgePolicy) error {
 				"outdated update (flags=%v|%v) for "+
 				"known chan_id=%v", policy.MessageFlags,
 				policy.ChannelFlags, policy.ChannelID)
+		}
+	}
+
+	return nil
+}
+
+func (b *Builder) validateV2EdgeUpdate(policy *models.ChannelEdgePolicy) error {
+	edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
+		b.cfg.Graph2.HasV2ChannelEdge(policy.ChannelID)
+	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
+		return fmt.Errorf("unable to check for edge existence: %w", err)
+	}
+
+	currentBlock, err := b.CurrentBlockHeight()
+	if err != nil {
+		return err
+	}
+
+	blocksSince := currentBlock - policy.LastBlockHeight
+
+	// Otherwise, we'll fall back to our usual ChannelPruneExpiry.
+	isStaleUpdate := blocksSince > b.cfg.ChannelPruneExpiryBlocks
+
+	// If the channel is marked as a zombie in our database, and
+	// we consider this a stale update, then we should not apply the
+	// policy.
+	if isZombie && isStaleUpdate {
+		return NewErrf(ErrIgnored, "ignoring stale update "+
+			"(flags=%v|%v) for zombie chan_id=%v",
+			policy.MessageFlags, policy.ChannelFlags,
+			policy.ChannelID)
+	}
+
+	// If the channel doesn't exist in our database, we cannot apply the
+	// updated policy.
+	if !exists {
+		return NewErrf(ErrIgnored, "ignoring update (flags=%v|%v) for "+
+			"unknown chan_id=%v", policy.MessageFlags,
+			policy.ChannelFlags, policy.ChannelID)
+	}
+
+	log.Debugf("Found edge1Timestamp=%v, edge2Timestamp=%v",
+		edge1Timestamp, edge2Timestamp)
+
+	blockHeight := policy.LastBlockHeight
+
+	// As edges are directional edge node has a unique policy for the
+	// direction of the edge they control. Therefore, we first check if we
+	// already have the most up-to-date information for that edge. If this
+	// message has a timestamp not strictly newer than what we already know
+	// of we can exit early.
+	switch {
+	// A flag set of 0 indicates this is an announcement for the "first"
+	// node in the channel.
+	case !policy.SecondPeer:
+		// Ignore outdated message.
+		if edge1Timestamp > blockHeight {
+			return NewErrf(ErrOutdated, "Ignoring "+
+				"outdated update for "+
+				"known chan_id=%v", policy.ChannelID)
+		}
+
+	// Similarly, a flag set of 1 indicates this is an announcement
+	// for the "second" node in the channel.
+	case policy.SecondPeer:
+		// Ignore outdated message.
+		if edge2Timestamp > blockHeight {
+			return NewErrf(ErrOutdated, "Ignoring "+
+				"outdated update for "+
+				"known chan_id=%v", policy.ChannelID)
 		}
 	}
 
@@ -1967,11 +2051,38 @@ func (b *Builder) ChanUpdatesInHorizon(startTime, endTime time.Time) (
 	return b.cfg.Graph.ChanUpdatesInHorizon(startTime, endTime)
 }
 
+func (b *Builder) FetchChannelEdgesByID(chanID uint64) (
+	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy, error) {
+
+	// Check v2 db first.
+	i, p1, p2, err := b.graph(lnwire.GossipVersion2).FetchChannelEdgesByID(chanID)
+	if err != nil && !errors.Is(err, graphdb.ErrEdgeNotFound) {
+		return nil, nil, nil, err
+	}
+	if i != nil {
+		return i, p1, p2, nil
+	}
+
+	// Fallback to v1 db.
+	return b.graph(lnwire.GossipVersion1).FetchChannelEdgesByID(chanID)
+}
+
 func (b *Builder) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
-	return b.cfg.Graph.FetchChannelEdgesByOutpoint(op)
+	// Check v2 db first.
+	i, p1, p2, err := b.graph(lnwire.GossipVersion2).FetchChannelEdgesByOutpoint(op)
+	if err != nil && !errors.Is(err, graphdb.ErrEdgeNotFound) {
+		return nil, nil, nil, err
+	}
+	if i != nil {
+		return i, p1, p2, nil
+	}
+
+	// Fallback to v1 db.
+	return b.graph(lnwire.GossipVersion1).FetchChannelEdgesByOutpoint(op)
 }
 
 // MakeTestGraph creates a new instance of the ChannelGraph for testing

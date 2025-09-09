@@ -410,7 +410,7 @@ func (b *Builder) addToTopologyChange(update *TopologyChange,
 		// We'll need to fetch the edge's information from the database
 		// in order to get the information concerning which nodes are
 		// being connected.
-		edgeInfo, _, _, err := b.cfg.Graph.FetchChannelEdgesByID(m.ChannelID)
+		edgeInfo, _, _, err := b.graph(m.Version).FetchChannelEdgesByID(m.ChannelID)
 		if err != nil {
 			return fmt.Errorf("unable fetch channel edge: %w", err)
 		}
@@ -419,7 +419,7 @@ func (b *Builder) addToTopologyChange(update *TopologyChange,
 		// the second node.
 		sourceNode := edgeInfo.NodeKey1
 		connectingNode := edgeInfo.NodeKey2
-		if m.ChannelFlags&lnwire.ChanUpdateDirection == 1 {
+		if m.ChannelFlags&lnwire.ChanUpdateDirection == 1 || m.SecondPeer {
 			sourceNode = edgeInfo.NodeKey2
 			connectingNode = edgeInfo.NodeKey1
 		}
@@ -433,6 +433,7 @@ func (b *Builder) addToTopologyChange(update *TopologyChange,
 			return err
 		}
 
+		// TODO(elle): update for V2
 		edgeUpdate := &ChannelEdgeUpdate{
 			ChanID:          m.ChannelID,
 			ChanPoint:       edgeInfo.ChannelPoint,
