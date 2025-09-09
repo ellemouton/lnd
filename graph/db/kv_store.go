@@ -1259,10 +1259,15 @@ func (c *KVStore) addChannelEdge(tx kvdb.RwTx,
 	return chanIndex.Put(b.Bytes(), chanKey[:])
 }
 
-func (c *KVStore) HasChannelEdge(chanID uint64) (uint32, uint32, bool, bool,
+func (c *KVStore) HasV2ChannelEdge(chanID uint64) (uint32, uint32, bool, bool,
 	error) {
 
 	return 0, 0, false, false, fmt.Errorf("not implemented")
+}
+
+func (c *KVStore) HasChannelEdge(chanID uint64) (bool, bool, error) {
+	_, _, exists, isZombie, err := c.HasV1ChannelEdge(chanID)
+	return exists, isZombie, err
 }
 
 // HasChannelEdge returns true if the database knows of a channel edge with the

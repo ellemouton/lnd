@@ -1219,16 +1219,13 @@ func (b *Builder) addEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 	var (
 		exists, isZombie bool
 		err              error
+		graph            = b.cfg.Graph
 	)
-	if edge.Version == lnwire.GossipVersion1 {
-		_, _, exists, isZombie, err = b.cfg.Graph.HasV1ChannelEdge(
-			edge.ChannelID,
-		)
-	} else {
-		_, _, exists, isZombie, err = b.cfg.Graph2.HasChannelEdge(
-			edge.ChannelID,
-		)
+	if edge.Version == lnwire.GossipVersion2 {
+		graph = b.cfg.Graph2
 	}
+
+	exists, isZombie, err = graph.HasChannelEdge(edge.ChannelID)
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
 		return fmt.Errorf("unable to check for edge existence: %w",
 			err)
@@ -1242,14 +1239,8 @@ func (b *Builder) addEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 			edge.ChannelID)
 	}
 
-	if edge.Version == lnwire.GossipVersion1 {
-		if err := b.cfg.Graph.AddChannelEdge(ctx, edge, op...); err != nil {
-			return fmt.Errorf("unable to add edge: %w", err)
-		}
-	} else {
-		if err := b.cfg.Graph2.AddChannelEdge(ctx, edge, op...); err != nil {
-			return fmt.Errorf("unable to add edge: %w", err)
-		}
+	if err := graph.AddChannelEdge(ctx, edge, op...); err != nil {
+		return fmt.Errorf("unable to add edge: %w", err)
 	}
 
 	b.stats.incNumEdgesDiscovered()
@@ -1536,20 +1527,13 @@ func (b *Builder) IsKnownEdge(ann lnwire.ChannelAnnouncement) (bool, error) {
 		exists   bool
 		isZombie bool
 		err      error
+		graph    = b.cfg.Graph
 	)
-	switch ann.(type) {
-	case *lnwire.ChannelAnnouncement1:
-		_, _, exists, isZombie, err = b.cfg.Graph.HasV1ChannelEdge(
-			ann.SCID().ToUint64(),
-		)
-
-	case *lnwire.ChannelAnnouncement2:
-		_, _, exists, isZombie, err = b.cfg.Graph2.HasChannelEdge(
-			ann.SCID().ToUint64(),
-		)
-	default:
-		return false, fmt.Errorf("unknown channel ann version: %T", ann)
+	if ann.GossipVersion() == lnwire.GossipVersion2 {
+		graph = b.cfg.Graph2
 	}
+
+	exists, isZombie, err = graph.HasChannelEdge(ann.SCID().ToUint64())
 	if err != nil {
 		return false, fmt.Errorf("unable to check for edge "+
 			"existence: %w", err)

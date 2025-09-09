@@ -2026,7 +2026,17 @@ func (s *SQLStore) HasV1ChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 	return node1LastUpdate, node2LastUpdate, exists, isZombie, nil
 }
 
-func (s *SQLStore) HasChannelEdge(chanID uint64) (uint32, uint32, bool,
+func (s *SQLStore) HasChannelEdge(chanID uint64) (bool, bool, error) {
+	if s.cfg.Version == lnwire.GossipVersion1 {
+		_, _, exists, isZombie, err := s.HasV1ChannelEdge(chanID)
+		return exists, isZombie, err
+	}
+
+	_, _, exists, isZombie, err := s.HasV2ChannelEdge(chanID)
+	return exists, isZombie, err
+}
+
+func (s *SQLStore) HasV2ChannelEdge(chanID uint64) (uint32, uint32, bool,
 	bool, error) {
 
 	if s.cfg.Version == lnwire.GossipVersion1 {

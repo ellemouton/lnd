@@ -188,7 +188,9 @@ type V1Store interface { //nolint:interfacebloat
 	HasV1ChannelEdge(chanID uint64) (time.Time, time.Time, bool, bool,
 		error)
 
-	HasChannelEdge(chanID uint64) (uint32, uint32, bool, bool, error)
+	HasV2ChannelEdge(chanID uint64) (uint32, uint32, bool, bool, error)
+
+	HasChannelEdge(chanID uint64) (bool, bool, error)
 
 	// DeleteChannelEdges removes edges with the given channel IDs from the
 	// database and marks them as zombies. This ensures that we're unable to
