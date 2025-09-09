@@ -1908,8 +1908,15 @@ func (s *SQLStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 // as the second boolean.
 //
 // NOTE: part of the V1Store interface.
-func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
+func (s *SQLStore) HasV1ChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 	bool, error) {
+
+	if s.cfg.Version != lnwire.GossipVersion1 {
+		return time.Time{}, time.Time{}, false, false,
+			fmt.Errorf("HasV1ChannelEdge only supported for "+
+				"gossip v1, current version: %d",
+				s.cfg.Version)
+	}
 
 	ctx := context.TODO()
 
@@ -2013,6 +2020,123 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 	s.rejectCache.insert(chanID, rejectCacheEntry{
 		upd1Time: node1LastUpdate.Unix(),
 		upd2Time: node2LastUpdate.Unix(),
+		flags:    packRejectFlags(exists, isZombie),
+	})
+
+	return node1LastUpdate, node2LastUpdate, exists, isZombie, nil
+}
+
+func (s *SQLStore) HasChannelEdge(chanID uint64) (uint32, uint32, bool,
+	bool, error) {
+
+	if s.cfg.Version == lnwire.GossipVersion1 {
+		return 0, 0, false, false,
+			fmt.Errorf("HasChannelEdge only supported for "+
+				"gossip v2 and above, current version: %d",
+				s.cfg.Version)
+	}
+
+	ctx := context.TODO()
+
+	var (
+		exists          bool
+		isZombie        bool
+		node1LastUpdate uint32
+		node2LastUpdate uint32
+	)
+
+	// We'll query the cache with the shared lock held to allow multiple
+	// readers to access values in the cache concurrently if they exist.
+	s.cacheMu.RLock()
+	if entry, ok := s.rejectCache.get(chanID); ok {
+		s.cacheMu.RUnlock()
+		node1LastUpdate = uint32(entry.upd1Time)
+		node2LastUpdate = uint32(entry.upd2Time)
+		exists, isZombie = entry.flags.unpack()
+
+		return node1LastUpdate, node2LastUpdate, exists, isZombie, nil
+	}
+	s.cacheMu.RUnlock()
+
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+
+	// The item was not found with the shared lock, so we'll acquire the
+	// exclusive lock and check the cache again in case another method added
+	// the entry to the cache while no lock was held.
+	if entry, ok := s.rejectCache.get(chanID); ok {
+		node1LastUpdate = uint32(entry.upd1Time)
+		node2LastUpdate = uint32(entry.upd2Time)
+		exists, isZombie = entry.flags.unpack()
+
+		return node1LastUpdate, node2LastUpdate, exists, isZombie, nil
+	}
+
+	chanIDB := channelIDToBytes(chanID)
+	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+		channel, err := db.GetChannelBySCID(
+			ctx, sqlc.GetChannelBySCIDParams{
+				Scid:    chanIDB,
+				Version: int16(s.cfg.Version),
+			},
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			// Check if it is a zombie channel.
+			isZombie, err = db.IsZombieChannel(
+				ctx, sqlc.IsZombieChannelParams{
+					Scid:    chanIDB,
+					Version: int16(s.cfg.Version),
+				},
+			)
+			if err != nil {
+				return fmt.Errorf("could not check if channel "+
+					"is zombie: %w", err)
+			}
+
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("unable to fetch channel: %w", err)
+		}
+
+		exists = true
+
+		policy1, err := db.GetChannelPolicyByChannelAndNode(
+			ctx, sqlc.GetChannelPolicyByChannelAndNodeParams{
+				Version:   int16(s.cfg.Version),
+				ChannelID: channel.ID,
+				NodeID:    channel.NodeID1,
+			},
+		)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("unable to fetch channel policy: %w",
+				err)
+		} else if err == nil {
+			node1LastUpdate = uint32(policy1.LastUpdate.Int64)
+		}
+
+		policy2, err := db.GetChannelPolicyByChannelAndNode(
+			ctx, sqlc.GetChannelPolicyByChannelAndNodeParams{
+				Version:   int16(s.cfg.Version),
+				ChannelID: channel.ID,
+				NodeID:    channel.NodeID2,
+			},
+		)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("unable to fetch channel policy: %w",
+				err)
+		} else if err == nil {
+			node2LastUpdate = uint32(policy2.LastUpdate.Int64)
+		}
+
+		return nil
+	}, sqldb.NoOpReset)
+	if err != nil {
+		return 0, 0, false, false, fmt.Errorf("unable to fetch channel: %w", err)
+	}
+
+	s.rejectCache.insert(chanID, rejectCacheEntry{
+		upd1Time: int64(node1LastUpdate),
+		upd2Time: int64(node2LastUpdate),
 		flags:    packRejectFlags(exists, isZombie),
 	})
 
@@ -3891,15 +4015,26 @@ func (s *SQLStore) insertChannel(ctx context.Context, db SQLQueries,
 	}
 
 	createParams := sqlc.CreateChannelParams{
-		Version:     int16(s.cfg.Version),
-		Scid:        channelIDToBytes(edge.ChannelID),
-		NodeID1:     node1DBID,
-		NodeID2:     node2DBID,
-		Outpoint:    edge.ChannelPoint.String(),
-		Capacity:    capacity,
-		BitcoinKey1: edge.BitcoinKey1Bytes[:],
-		BitcoinKey2: edge.BitcoinKey2Bytes[:],
+		Version:  int16(s.cfg.Version),
+		Scid:     channelIDToBytes(edge.ChannelID),
+		NodeID1:  node1DBID,
+		NodeID2:  node2DBID,
+		Outpoint: edge.ChannelPoint.String(),
+		Capacity: capacity,
 	}
+	edge.BitcoinKey1Bytes.WhenSome(func(vertex route.Vertex) {
+		createParams.BitcoinKey1 = vertex[:]
+	})
+	edge.BitcoinKey2Bytes.WhenSome(func(vertex route.Vertex) {
+		createParams.BitcoinKey2 = vertex[:]
+	})
+
+	edge.FundingScript.WhenSome(func(script []byte) {
+		createParams.FundingPkScript = script
+	})
+	edge.MerkleRootHash.WhenSome(func(hash chainhash.Hash) {
+		createParams.MerkleRootHash = hash[:]
+	})
 
 	if edge.AuthProof != nil {
 		proof := edge.AuthProof
@@ -4074,21 +4209,34 @@ func buildEdgeInfoWithBatchData(cfg *SQLStoreConfig, dbChan sqlc.GraphChannel,
 		return nil, err
 	}
 
-	var btcKey1, btcKey2 route.Vertex
-	copy(btcKey1[:], dbChan.BitcoinKey1)
-	copy(btcKey2[:], dbChan.BitcoinKey2)
-
 	channel := &models.ChannelEdgeInfo{
-		Version:          cfg.Version,
-		ChainHash:        cfg.ChainHash,
-		ChannelID:        byteOrder.Uint64(dbChan.Scid),
-		NodeKey1Bytes:    node1,
-		NodeKey2Bytes:    node2,
-		BitcoinKey1Bytes: btcKey1,
-		BitcoinKey2Bytes: btcKey2,
-		ChannelPoint:     *op,
-		Capacity:         btcutil.Amount(dbChan.Capacity.Int64),
-		Features:         fv,
+		Version:       cfg.Version,
+		ChainHash:     cfg.ChainHash,
+		ChannelID:     byteOrder.Uint64(dbChan.Scid),
+		NodeKey1Bytes: node1,
+		NodeKey2Bytes: node2,
+		ChannelPoint:  *op,
+		Capacity:      btcutil.Amount(dbChan.Capacity.Int64),
+		Features:      fv,
+	}
+
+	if len(dbChan.BitcoinKey1) > 0 {
+		var btcKey1 route.Vertex
+		copy(btcKey1[:], dbChan.BitcoinKey1)
+		channel.BitcoinKey1Bytes = fn.Some(btcKey1)
+	}
+	if len(dbChan.BitcoinKey2) > 0 {
+		var btcKey2 route.Vertex
+		copy(btcKey2[:], dbChan.BitcoinKey2)
+		channel.BitcoinKey2Bytes = fn.Some(btcKey2)
+	}
+	if len(dbChan.MerkleRootHash) > 0 {
+		var merkleRoot chainhash.Hash
+		copy(merkleRoot[:], dbChan.MerkleRootHash)
+		channel.MerkleRootHash = fn.Some(merkleRoot)
+	}
+	if len(dbChan.FundingPkScript) > 0 {
+		channel.FundingScript = fn.Some(dbChan.FundingPkScript)
 	}
 
 	if cfg.Version == lnwire.GossipVersion1 {
@@ -4115,6 +4263,10 @@ func buildEdgeInfoWithBatchData(cfg *SQLStoreConfig, dbChan sqlc.GraphChannel,
 			NodeSig2Bytes:    dbChan.Node2Signature,
 			BitcoinSig1Bytes: dbChan.Bitcoin1Signature,
 			BitcoinSig2Bytes: dbChan.Bitcoin2Signature,
+		}
+	} else if len(dbChan.Signature) > 0 {
+		channel.AuthProof = &models.ChannelAuthProof{
+			Signature: dbChan.Signature,
 		}
 	}
 

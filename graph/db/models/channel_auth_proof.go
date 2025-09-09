@@ -1,5 +1,11 @@
 package models
 
+import (
+	"fmt"
+
+	"github.com/lightningnetwork/lnd/lnwire"
+)
+
 // ChannelAuthProof is the authentication proof (the signature portion) for a
 // channel. Using the four signatures contained in the struct, and some
 // auxiliary knowledge (the funding script, node identities, and outpoint) nodes
@@ -25,6 +31,27 @@ type ChannelAuthProof struct {
 	BitcoinSig2Bytes []byte
 
 	Signature []byte
+}
+
+func ProofFromWireMsg(ann lnwire.ChannelAnnouncement) (*ChannelAuthProof,
+	error) {
+
+	switch msg := ann.(type) {
+	case *lnwire.ChannelAnnouncement1:
+		return &ChannelAuthProof{
+			NodeSig1Bytes:    msg.NodeSig1.ToSignatureBytes()[:],
+			NodeSig2Bytes:    msg.NodeSig2.ToSignatureBytes()[:],
+			BitcoinSig1Bytes: msg.BitcoinSig1.ToSignatureBytes()[:],
+			BitcoinSig2Bytes: msg.BitcoinSig2.ToSignatureBytes()[:],
+		}, nil
+	case *lnwire.ChannelAnnouncement2:
+		return &ChannelAuthProof{
+			Signature: msg.Signature.Val.ToSignatureBytes(),
+		}, nil
+	default:
+		return nil, fmt.Errorf("unknown lnwire.ChannelAnnouncement type: %T",
+			ann)
+	}
 }
 
 // IsEmpty check is the authentication proof is empty Proof is empty if at

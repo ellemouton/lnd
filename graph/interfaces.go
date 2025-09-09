@@ -50,7 +50,7 @@ type ChannelGraphSource interface {
 
 	// IsKnownEdge returns true if the graph source already knows of the
 	// passed channel ID either as a live or zombie edge.
-	IsKnownEdge(chanID lnwire.ShortChannelID) bool
+	IsKnownEdge(chanAnn lnwire.ChannelAnnouncement) (bool, error)
 
 	// IsStaleEdgePolicy returns true if the graph source has a channel
 	// edge for the passed channel ID (and flags) that have a more recent
@@ -84,5 +84,5 @@ type ChannelGraphSource interface {
 	FetchNode(context.Context, route.Vertex) (*models.Node, error)
 
 	// MarkZombieEdge marks the channel with the given ID as a zombie edge.
-	MarkZombieEdge(chanID uint64) error
+	MarkZombieEdge(protocol lnwire.GossipVersion, chanID uint64) error
 }

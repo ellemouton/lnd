@@ -17,6 +17,7 @@ import (
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing"
+	"github.com/lightningnetwork/lnd/routing/route"
 )
 
 // Manager manages the node's local channels. The only operation that is
@@ -333,8 +334,13 @@ func (r *Manager) createEdge(channel *channeldb.OpenChannel,
 
 	copy(info.NodeKey1Bytes[:], nodeKey1Bytes)
 	copy(info.NodeKey2Bytes[:], nodeKey2Bytes)
-	copy(info.BitcoinKey1Bytes[:], bitcoinKey1Bytes)
-	copy(info.BitcoinKey2Bytes[:], bitcoinKey2Bytes)
+	var (
+		btc1, btc2 route.Vertex
+	)
+	copy(btc1[:], bitcoinKey1Bytes)
+	copy(btc2[:], bitcoinKey2Bytes)
+	info.BitcoinKey1Bytes = fn.Some(btc1)
+	info.BitcoinKey2Bytes = fn.Some(btc2)
 
 	// Construct a dummy channel edge policy with default values that will
 	// be updated with the new values in the call to processChan below.

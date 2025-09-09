@@ -917,7 +917,8 @@ func (d *RPCSignerWalletImpl) BuildChainControl(
 type DatabaseInstances struct {
 	// GraphDB is the database that stores the channel graph used for path
 	// finding.
-	GraphDB graphdb.V1Store
+	GraphDB  graphdb.V1Store
+	GraphDB2 graphdb.V1Store
 
 	// ChanStateDB is the database that stores all of our node's channel
 	// state.
@@ -1075,7 +1076,10 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 
 	// The graph store implementation we will use depends on whether
 	// native SQL is enabled or not.
-	var graphStore graphdb.V1Store
+	var (
+		graphStore   graphdb.V1Store
+		graphStoreV2 graphdb.V1Store
+	)
 
 	// Instantiate a native SQL store if the flag is set.
 	if d.cfg.DB.UseNativeSQL {
@@ -1196,6 +1200,7 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 
 		graphStore, err = graphdb.NewSQLStore(
 			&graphdb.SQLStoreConfig{
+				Version:   lnwire.GossipVersion1,
 				ChainHash: *d.cfg.ActiveNetParams.GenesisHash,
 				QueryCfg:  queryCfg,
 			},
@@ -1203,6 +1208,21 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		)
 		if err != nil {
 			err = fmt.Errorf("unable to get graph store: %w", err)
+			d.logger.Error(err)
+
+			return nil, nil, err
+		}
+
+		graphStoreV2, err = graphdb.NewSQLStore(
+			&graphdb.SQLStoreConfig{
+				Version:   lnwire.GossipVersion2,
+				ChainHash: *d.cfg.ActiveNetParams.GenesisHash,
+				QueryCfg:  queryCfg,
+			},
+			graphExecutor, graphDBOptions...,
+		)
+		if err != nil {
+			err = fmt.Errorf("unable to get graph store2: %w", err)
 			d.logger.Error(err)
 
 			return nil, nil, err
@@ -1235,9 +1255,13 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		if err != nil {
 			return nil, nil, err
 		}
+
+		return nil, nil, fmt.Errorf("cant use v2 graph db without " +
+			"native SQL")
 	}
 
 	dbs.GraphDB = graphStore
+	dbs.GraphDB2 = graphStoreV2
 
 	// Mount the payments DB which is only KV for now.
 	//

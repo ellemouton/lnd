@@ -852,6 +852,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	s.graph, err = graph.NewBuilder(&graph.Config{
 		SelfNode:            nodePubKey,
 		Graph:               dbs.GraphDB,
+		Graph2:              dbs.GraphDB2,
 		Chain:               cc.ChainIO,
 		ChainView:           cc.ChainView,
 		Notifier:            cc.ChainNotifier,

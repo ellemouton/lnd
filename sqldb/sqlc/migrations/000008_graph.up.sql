@@ -178,7 +178,14 @@ CREATE TABLE IF NOT EXISTS graph_channels (
     -- channel belongs to the source node and the channel has not been
     -- announced yet.
     -- NOTE: v2 onwards only.
-    signature BLOB
+    signature BLOB,
+
+    -- For v2 channels onwards, we cant necessarily derive the funding pk script
+    -- from the other fields in the announcement, so we store it here so that
+    -- we have easy access to it when we want to subscribe to channel closures.
+    funding_pk_script BLOB,
+
+    merkle_root_hash BLOB
 );
 -- We'll want to lookup all the channels owned by a node, so we create
 -- indexes on the node_id_1 and node_id_2 columns.

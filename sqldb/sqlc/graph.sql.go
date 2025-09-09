@@ -94,9 +94,9 @@ INSERT INTO graph_channels (
     version, scid, node_id_1, node_id_2,
     outpoint, capacity, bitcoin_key_1, bitcoin_key_2,
     node_1_signature, node_2_signature, bitcoin_1_signature,
-    bitcoin_2_signature, signature
+    bitcoin_2_signature, signature, funding_pk_script, merkle_root_hash
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 )
 RETURNING id
 `
@@ -115,6 +115,8 @@ type CreateChannelParams struct {
 	Bitcoin1Signature []byte
 	Bitcoin2Signature []byte
 	Signature         []byte
+	FundingPkScript   []byte
+	MerkleRootHash    []byte
 }
 
 func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (int64, error) {
@@ -132,6 +134,8 @@ func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (i
 		arg.Bitcoin1Signature,
 		arg.Bitcoin2Signature,
 		arg.Signature,
+		arg.FundingPkScript,
+		arg.MerkleRootHash,
 	)
 	var id int64
 	err := row.Scan(&id)
@@ -308,7 +312,7 @@ func (q *Queries) DeleteZombieChannel(ctx context.Context, arg DeleteZombieChann
 
 const getChannelAndNodesBySCID = `-- name: GetChannelAndNodesBySCID :one
 SELECT
-    c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature,
+    c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature, c.funding_pk_script, c.merkle_root_hash,
     n1.pub_key AS node1_pub_key,
     n2.pub_key AS node2_pub_key
 FROM graph_channels c
@@ -338,6 +342,8 @@ type GetChannelAndNodesBySCIDRow struct {
 	Bitcoin1Signature []byte
 	Bitcoin2Signature []byte
 	Signature         []byte
+	FundingPkScript   []byte
+	MerkleRootHash    []byte
 	Node1PubKey       []byte
 	Node2PubKey       []byte
 }
@@ -360,6 +366,8 @@ func (q *Queries) GetChannelAndNodesBySCID(ctx context.Context, arg GetChannelAn
 		&i.Bitcoin1Signature,
 		&i.Bitcoin2Signature,
 		&i.Signature,
+		&i.FundingPkScript,
+		&i.MerkleRootHash,
 		&i.Node1PubKey,
 		&i.Node2PubKey,
 	)
@@ -368,7 +376,7 @@ func (q *Queries) GetChannelAndNodesBySCID(ctx context.Context, arg GetChannelAn
 
 const getChannelByOutpointWithPolicies = `-- name: GetChannelByOutpointWithPolicies :one
 SELECT
-    c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature,
+    c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature, c.funding_pk_script, c.merkle_root_hash,
 
     n1.pub_key AS node1_pubkey,
     n2.pub_key AS node2_pubkey,
@@ -475,6 +483,8 @@ func (q *Queries) GetChannelByOutpointWithPolicies(ctx context.Context, arg GetC
 		&i.GraphChannel.Bitcoin1Signature,
 		&i.GraphChannel.Bitcoin2Signature,
 		&i.GraphChannel.Signature,
+		&i.GraphChannel.FundingPkScript,
+		&i.GraphChannel.MerkleRootHash,
 		&i.Node1Pubkey,
 		&i.Node2Pubkey,
 		&i.Policy1ID,
@@ -512,7 +522,7 @@ func (q *Queries) GetChannelByOutpointWithPolicies(ctx context.Context, arg GetC
 }
 
 const getChannelBySCID = `-- name: GetChannelBySCID :one
-SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity, bitcoin_key_1, bitcoin_key_2, node_1_signature, node_2_signature, bitcoin_1_signature, bitcoin_2_signature, signature FROM graph_channels
+SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity, bitcoin_key_1, bitcoin_key_2, node_1_signature, node_2_signature, bitcoin_1_signature, bitcoin_2_signature, signature, funding_pk_script, merkle_root_hash FROM graph_channels
 WHERE scid = $1 AND version = $2
 `
 
@@ -539,13 +549,15 @@ func (q *Queries) GetChannelBySCID(ctx context.Context, arg GetChannelBySCIDPara
 		&i.Bitcoin1Signature,
 		&i.Bitcoin2Signature,
 		&i.Signature,
+		&i.FundingPkScript,
+		&i.MerkleRootHash,
 	)
 	return i, err
 }
 
 const getChannelBySCIDWithPolicies = `-- name: GetChannelBySCIDWithPolicies :one
 SELECT
-    c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature,
+    c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature, c.funding_pk_script, c.merkle_root_hash,
     n1.id, n1.version, n1.pub_key, n1.alias, n1.last_update, n1.block_height, n1.color, n1.signature,
     n2.id, n2.version, n2.pub_key, n2.alias, n2.last_update, n2.block_height, n2.color, n2.signature,
 
@@ -653,6 +665,8 @@ func (q *Queries) GetChannelBySCIDWithPolicies(ctx context.Context, arg GetChann
 		&i.GraphChannel.Bitcoin1Signature,
 		&i.GraphChannel.Bitcoin2Signature,
 		&i.GraphChannel.Signature,
+		&i.GraphChannel.FundingPkScript,
+		&i.GraphChannel.MerkleRootHash,
 		&i.GraphNode.ID,
 		&i.GraphNode.Version,
 		&i.GraphNode.PubKey,
@@ -879,7 +893,7 @@ func (q *Queries) GetChannelPolicyExtraTypesBatch(ctx context.Context, policyIds
 
 const getChannelsByIDs = `-- name: GetChannelsByIDs :many
 SELECT
-    c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature,
+    c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature, c.funding_pk_script, c.merkle_root_hash,
 
     -- Minimal node data.
     n1.id AS node1_id,
@@ -1003,6 +1017,8 @@ func (q *Queries) GetChannelsByIDs(ctx context.Context, ids []int64) ([]GetChann
 			&i.GraphChannel.Bitcoin1Signature,
 			&i.GraphChannel.Bitcoin2Signature,
 			&i.GraphChannel.Signature,
+			&i.GraphChannel.FundingPkScript,
+			&i.GraphChannel.MerkleRootHash,
 			&i.Node1ID,
 			&i.Node1PubKey,
 			&i.Node2ID,
@@ -1053,7 +1069,7 @@ func (q *Queries) GetChannelsByIDs(ctx context.Context, ids []int64) ([]GetChann
 
 const getChannelsByOutpoints = `-- name: GetChannelsByOutpoints :many
 SELECT
-    c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature,
+    c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature, c.funding_pk_script, c.merkle_root_hash,
     n1.pub_key AS node1_pubkey,
     n2.pub_key AS node2_pubkey
 FROM graph_channels c
@@ -1103,6 +1119,8 @@ func (q *Queries) GetChannelsByOutpoints(ctx context.Context, outpoints []string
 			&i.GraphChannel.Bitcoin1Signature,
 			&i.GraphChannel.Bitcoin2Signature,
 			&i.GraphChannel.Signature,
+			&i.GraphChannel.FundingPkScript,
+			&i.GraphChannel.MerkleRootHash,
 			&i.Node1Pubkey,
 			&i.Node2Pubkey,
 		); err != nil {
@@ -1121,7 +1139,7 @@ func (q *Queries) GetChannelsByOutpoints(ctx context.Context, outpoints []string
 
 const getChannelsByPolicyLastUpdateRange = `-- name: GetChannelsByPolicyLastUpdateRange :many
 SELECT
-    c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature,
+    c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature, c.funding_pk_script, c.merkle_root_hash,
     n1.id, n1.version, n1.pub_key, n1.alias, n1.last_update, n1.block_height, n1.color, n1.signature,
     n2.id, n2.version, n2.pub_key, n2.alias, n2.last_update, n2.block_height, n2.color, n2.signature,
 
@@ -1246,6 +1264,8 @@ func (q *Queries) GetChannelsByPolicyLastUpdateRange(ctx context.Context, arg Ge
 			&i.GraphChannel.Bitcoin1Signature,
 			&i.GraphChannel.Bitcoin2Signature,
 			&i.GraphChannel.Signature,
+			&i.GraphChannel.FundingPkScript,
+			&i.GraphChannel.MerkleRootHash,
 			&i.GraphNode.ID,
 			&i.GraphNode.Version,
 			&i.GraphNode.PubKey,
@@ -1307,7 +1327,7 @@ func (q *Queries) GetChannelsByPolicyLastUpdateRange(ctx context.Context, arg Ge
 }
 
 const getChannelsBySCIDRange = `-- name: GetChannelsBySCIDRange :many
-SELECT c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature,
+SELECT c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature, c.funding_pk_script, c.merkle_root_hash,
     n1.pub_key AS node1_pub_key,
     n2.pub_key AS node2_pub_key
 FROM graph_channels c
@@ -1352,6 +1372,8 @@ func (q *Queries) GetChannelsBySCIDRange(ctx context.Context, arg GetChannelsByS
 			&i.GraphChannel.Bitcoin1Signature,
 			&i.GraphChannel.Bitcoin2Signature,
 			&i.GraphChannel.Signature,
+			&i.GraphChannel.FundingPkScript,
+			&i.GraphChannel.MerkleRootHash,
 			&i.Node1PubKey,
 			&i.Node2PubKey,
 		); err != nil {
@@ -1370,7 +1392,7 @@ func (q *Queries) GetChannelsBySCIDRange(ctx context.Context, arg GetChannelsByS
 
 const getChannelsBySCIDWithPolicies = `-- name: GetChannelsBySCIDWithPolicies :many
 SELECT
-    c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature,
+    c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature, c.funding_pk_script, c.merkle_root_hash,
     n1.id, n1.version, n1.pub_key, n1.alias, n1.last_update, n1.block_height, n1.color, n1.signature,
     n2.id, n2.version, n2.pub_key, n2.alias, n2.last_update, n2.block_height, n2.color, n2.signature,
 
@@ -1496,6 +1518,8 @@ func (q *Queries) GetChannelsBySCIDWithPolicies(ctx context.Context, arg GetChan
 			&i.GraphChannel.Bitcoin1Signature,
 			&i.GraphChannel.Bitcoin2Signature,
 			&i.GraphChannel.Signature,
+			&i.GraphChannel.FundingPkScript,
+			&i.GraphChannel.MerkleRootHash,
 			&i.GraphNode.ID,
 			&i.GraphNode.Version,
 			&i.GraphNode.PubKey,
@@ -1557,7 +1581,7 @@ func (q *Queries) GetChannelsBySCIDWithPolicies(ctx context.Context, arg GetChan
 }
 
 const getChannelsBySCIDs = `-- name: GetChannelsBySCIDs :many
-SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity, bitcoin_key_1, bitcoin_key_2, node_1_signature, node_2_signature, bitcoin_1_signature, bitcoin_2_signature, signature FROM graph_channels
+SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity, bitcoin_key_1, bitcoin_key_2, node_1_signature, node_2_signature, bitcoin_1_signature, bitcoin_2_signature, signature, funding_pk_script, merkle_root_hash FROM graph_channels
 WHERE version = $1
   AND scid IN (/*SLICE:scids*/?)
 `
@@ -1602,6 +1626,8 @@ func (q *Queries) GetChannelsBySCIDs(ctx context.Context, arg GetChannelsBySCIDs
 			&i.Bitcoin1Signature,
 			&i.Bitcoin2Signature,
 			&i.Signature,
+			&i.FundingPkScript,
+			&i.MerkleRootHash,
 		); err != nil {
 			return nil, err
 		}
@@ -2116,7 +2142,7 @@ func (q *Queries) GetPruneTip(ctx context.Context) (GraphPruneLog, error) {
 }
 
 const getPublicV1ChannelsBySCID = `-- name: GetPublicV1ChannelsBySCID :many
-SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity, bitcoin_key_1, bitcoin_key_2, node_1_signature, node_2_signature, bitcoin_1_signature, bitcoin_2_signature, signature
+SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity, bitcoin_key_1, bitcoin_key_2, node_1_signature, node_2_signature, bitcoin_1_signature, bitcoin_2_signature, signature, funding_pk_script, merkle_root_hash
 FROM graph_channels
 WHERE node_1_signature IS NOT NULL
   AND scid >= $1
@@ -2152,6 +2178,8 @@ func (q *Queries) GetPublicV1ChannelsBySCID(ctx context.Context, arg GetPublicV1
 			&i.Bitcoin1Signature,
 			&i.Bitcoin2Signature,
 			&i.Signature,
+			&i.FundingPkScript,
+			&i.MerkleRootHash,
 		); err != nil {
 			return nil, err
 		}
@@ -2167,7 +2195,7 @@ func (q *Queries) GetPublicV1ChannelsBySCID(ctx context.Context, arg GetPublicV1
 }
 
 const getPublicV2ChannelsBySCID = `-- name: GetPublicV2ChannelsBySCID :many
-SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity, bitcoin_key_1, bitcoin_key_2, node_1_signature, node_2_signature, bitcoin_1_signature, bitcoin_2_signature, signature
+SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity, bitcoin_key_1, bitcoin_key_2, node_1_signature, node_2_signature, bitcoin_1_signature, bitcoin_2_signature, signature, funding_pk_script, merkle_root_hash
 FROM graph_channels
 WHERE signature IS NOT NULL
   AND scid >= $1
@@ -2203,6 +2231,8 @@ func (q *Queries) GetPublicV2ChannelsBySCID(ctx context.Context, arg GetPublicV2
 			&i.Bitcoin1Signature,
 			&i.Bitcoin2Signature,
 			&i.Signature,
+			&i.FundingPkScript,
+			&i.MerkleRootHash,
 		); err != nil {
 			return nil, err
 		}
@@ -2777,7 +2807,7 @@ func (q *Queries) IsZombieChannel(ctx context.Context, arg IsZombieChannelParams
 }
 
 const listChannelsByNodeID = `-- name: ListChannelsByNodeID :many
-SELECT c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature,
+SELECT c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature, c.funding_pk_script, c.merkle_root_hash,
     n1.pub_key AS node1_pubkey,
     n2.pub_key AS node2_pubkey,
 
@@ -2894,6 +2924,8 @@ func (q *Queries) ListChannelsByNodeID(ctx context.Context, arg ListChannelsByNo
 			&i.GraphChannel.Bitcoin1Signature,
 			&i.GraphChannel.Bitcoin2Signature,
 			&i.GraphChannel.Signature,
+			&i.GraphChannel.FundingPkScript,
+			&i.GraphChannel.MerkleRootHash,
 			&i.Node1Pubkey,
 			&i.Node2Pubkey,
 			&i.Policy1ID,
@@ -2941,7 +2973,7 @@ func (q *Queries) ListChannelsByNodeID(ctx context.Context, arg ListChannelsByNo
 }
 
 const listChannelsForNodeIDs = `-- name: ListChannelsForNodeIDs :many
-SELECT c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature,
+SELECT c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature, c.funding_pk_script, c.merkle_root_hash,
        n1.pub_key AS node1_pubkey,
        n2.pub_key AS node2_pubkey,
 
@@ -3079,6 +3111,8 @@ func (q *Queries) ListChannelsForNodeIDs(ctx context.Context, arg ListChannelsFo
 			&i.GraphChannel.Bitcoin1Signature,
 			&i.GraphChannel.Bitcoin2Signature,
 			&i.GraphChannel.Signature,
+			&i.GraphChannel.FundingPkScript,
+			&i.GraphChannel.MerkleRootHash,
 			&i.Node1Pubkey,
 			&i.Node2Pubkey,
 			&i.Policy1ID,
@@ -3305,7 +3339,7 @@ func (q *Queries) ListChannelsWithPoliciesForCachePaginated(ctx context.Context,
 
 const listChannelsWithPoliciesPaginated = `-- name: ListChannelsWithPoliciesPaginated :many
 SELECT
-    c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature,
+    c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature, c.funding_pk_script, c.merkle_root_hash,
 
     -- Join node pubkeys
     n1.pub_key AS node1_pubkey,
@@ -3423,6 +3457,8 @@ func (q *Queries) ListChannelsWithPoliciesPaginated(ctx context.Context, arg Lis
 			&i.GraphChannel.Bitcoin1Signature,
 			&i.GraphChannel.Bitcoin2Signature,
 			&i.GraphChannel.Signature,
+			&i.GraphChannel.FundingPkScript,
+			&i.GraphChannel.MerkleRootHash,
 			&i.Node1Pubkey,
 			&i.Node2Pubkey,
 			&i.Policy1ID,

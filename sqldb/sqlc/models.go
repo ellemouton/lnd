@@ -43,6 +43,8 @@ type GraphChannel struct {
 	Bitcoin1Signature []byte
 	Bitcoin2Signature []byte
 	Signature         []byte
+	FundingPkScript   []byte
+	MerkleRootHash    []byte
 }
 
 type GraphChannelExtraType struct {

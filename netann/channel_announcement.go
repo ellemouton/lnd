@@ -12,6 +12,7 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/tlv"
 )
 
@@ -39,6 +40,11 @@ func CreateChanAnnouncement(chanProof *models.ChannelAuthProof,
 	e1, e2 *models.ChannelEdgePolicy) (*lnwire.ChannelAnnouncement1,
 	*lnwire.ChannelUpdate1, *lnwire.ChannelUpdate1, error) {
 
+	if chanInfo.Version != lnwire.GossipVersion1 {
+		return nil, nil, nil, fmt.Errorf("unsupported channel "+
+			"version: %d", chanInfo.Version)
+	}
+
 	// First, using the parameters of the channel, along with the channel
 	// authentication chanProof, we'll create re-create the original
 	// authenticated channel announcement.
@@ -48,11 +54,15 @@ func CreateChanAnnouncement(chanProof *models.ChannelAuthProof,
 		NodeID1:         chanInfo.NodeKey1Bytes,
 		NodeID2:         chanInfo.NodeKey2Bytes,
 		ChainHash:       chanInfo.ChainHash,
-		BitcoinKey1:     chanInfo.BitcoinKey1Bytes,
-		BitcoinKey2:     chanInfo.BitcoinKey2Bytes,
 		Features:        chanInfo.Features.RawFeatureVector,
 		ExtraOpaqueData: chanInfo.ExtraOpaqueData,
 	}
+	chanInfo.BitcoinKey1Bytes.WhenSome(func(vertex route.Vertex) {
+		chanAnn.BitcoinKey1 = vertex
+	})
+	chanInfo.BitcoinKey2Bytes.WhenSome(func(vertex route.Vertex) {
+		chanAnn.BitcoinKey2 = vertex
+	})
 
 	var err error
 	chanAnn.BitcoinSig1, err = lnwire.NewSigFromECDSARawSignature(

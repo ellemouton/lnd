@@ -3697,6 +3697,8 @@ func (f *Manager) addToGraph(completeChan *channeldb.OpenChannel,
 		ann.chanAnn, discovery.ChannelCapacity(completeChan.Capacity),
 		discovery.ChannelPoint(completeChan.FundingOutpoint),
 		discovery.TapscriptRoot(completeChan.TapscriptRoot),
+		// TODO(elle): fill in for taproot chans.
+		// discovery.FundingPKScript(// TODO(elle): fill in))
 	)
 	select {
 	case err := <-errChan:

@@ -59,7 +59,8 @@ type Config struct {
 
 	// Graph is the channel graph that the ChannelRouter will use to gather
 	// metrics from and also to carry out path finding queries.
-	Graph graphdb.V1Store
+	Graph  graphdb.V1Store
+	Graph2 graphdb.V1Store
 
 	// Chain is the router's source to the most up-to-date blockchain data.
 	// All incoming advertised channels will be checked against the chain
@@ -116,6 +117,8 @@ type Builder struct {
 	bestHeight atomic.Uint32
 
 	cfg *Config
+
+	// TODO(elle): get rid of temp V1 fallback.
 	graphdb.V1Store
 
 	// newBlocks is a channel in which new blocks connected to the end of
@@ -1025,12 +1028,22 @@ func (b *Builder) assertNodeAnnFreshness(ctx context.Context, node route.Vertex,
 
 // MarkZombieEdge adds a channel that failed complete validation into the zombie
 // index so we can avoid having to re-validate it in the future.
-func (b *Builder) MarkZombieEdge(chanID uint64) error {
+func (b *Builder) MarkZombieEdge(version lnwire.GossipVersion,
+	chanID uint64) error {
+
 	// If the edge fails validation we'll mark the edge itself as a zombie
 	// so we don't continue to request it. We use the "zero key" for both
 	// node pubkeys so this edge can't be resurrected.
-	var zeroKey [33]byte
-	err := b.cfg.Graph.MarkEdgeZombie(chanID, zeroKey, zeroKey)
+	var (
+		zeroKey [33]byte
+		err     error
+	)
+	switch version {
+	case lnwire.GossipVersion1:
+		err = b.cfg.Graph.MarkEdgeZombie(chanID, zeroKey, zeroKey)
+	default:
+		err = b.cfg.Graph2.MarkEdgeZombie(chanID, zeroKey, zeroKey)
+	}
 	if err != nil {
 		return fmt.Errorf("unable to mark spent chan(id=%v) as a "+
 			"zombie: %w", chanID, err)
@@ -1203,9 +1216,19 @@ func (b *Builder) addEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 
 	// Prior to processing the announcement we first check if we
 	// already know of this channel, if so, then we can exit early.
-	_, _, exists, isZombie, err := b.cfg.Graph.HasChannelEdge(
-		edge.ChannelID,
+	var (
+		exists, isZombie bool
+		err              error
 	)
+	if edge.Version == lnwire.GossipVersion1 {
+		_, _, exists, isZombie, err = b.cfg.Graph.HasV1ChannelEdge(
+			edge.ChannelID,
+		)
+	} else {
+		_, _, exists, isZombie, err = b.cfg.Graph2.HasChannelEdge(
+			edge.ChannelID,
+		)
+	}
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
 		return fmt.Errorf("unable to check for edge existence: %w",
 			err)
@@ -1219,8 +1242,14 @@ func (b *Builder) addEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 			edge.ChannelID)
 	}
 
-	if err := b.cfg.Graph.AddChannelEdge(ctx, edge, op...); err != nil {
-		return fmt.Errorf("unable to add edge: %w", err)
+	if edge.Version == lnwire.GossipVersion1 {
+		if err := b.cfg.Graph.AddChannelEdge(ctx, edge, op...); err != nil {
+			return fmt.Errorf("unable to add edge: %w", err)
+		}
+	} else {
+		if err := b.cfg.Graph2.AddChannelEdge(ctx, edge, op...); err != nil {
+			return fmt.Errorf("unable to add edge: %w", err)
+		}
 	}
 
 	b.stats.incNumEdgesDiscovered()
@@ -1329,7 +1358,7 @@ func (b *Builder) validateEdgeUpdate(policy *models.ChannelEdgePolicy) error {
 	defer b.channelEdgeMtx.Unlock(policy.ChannelID)
 
 	edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
-		b.cfg.Graph.HasChannelEdge(policy.ChannelID)
+		b.cfg.Graph.HasV1ChannelEdge(policy.ChannelID)
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
 		return fmt.Errorf("unable to check for edge existence: %w", err)
 	}
@@ -1502,12 +1531,31 @@ func (b *Builder) IsPublicNode(node route.Vertex) (bool, error) {
 // channel ID either as a live or zombie edge.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsKnownEdge(chanID lnwire.ShortChannelID) bool {
-	_, _, exists, isZombie, _ := b.cfg.Graph.HasChannelEdge(
-		chanID.ToUint64(),
+func (b *Builder) IsKnownEdge(ann lnwire.ChannelAnnouncement) (bool, error) {
+	var (
+		exists   bool
+		isZombie bool
+		err      error
 	)
+	switch ann.(type) {
+	case *lnwire.ChannelAnnouncement1:
+		_, _, exists, isZombie, err = b.cfg.Graph.HasV1ChannelEdge(
+			ann.SCID().ToUint64(),
+		)
 
-	return exists || isZombie
+	case *lnwire.ChannelAnnouncement2:
+		_, _, exists, isZombie, err = b.cfg.Graph2.HasChannelEdge(
+			ann.SCID().ToUint64(),
+		)
+	default:
+		return false, fmt.Errorf("unknown channel ann version: %T", ann)
+	}
+	if err != nil {
+		return false, fmt.Errorf("unable to check for edge "+
+			"existence: %w", err)
+	}
+
+	return exists || isZombie, nil
 }
 
 // IsStaleEdgePolicy returns true if the graph source has a channel edge for
@@ -1518,7 +1566,7 @@ func (b *Builder) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 	timestamp time.Time, flags lnwire.ChanUpdateChanFlags) bool {
 
 	edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
-		b.cfg.Graph.HasChannelEdge(chanID.ToUint64())
+		b.cfg.Graph.HasV1ChannelEdge(chanID.ToUint64())
 	if err != nil {
 		log.Debugf("Check stale edge policy got error: %v", err)
 		return false
@@ -1824,10 +1872,16 @@ func (b *Builder) pruneGraphNodes() error {
 // MarkEdgeZombie attempts to mark a channel identified by its channel ID as a
 // zombie. This method is used on an ad-hoc basis, when channels need to be
 // marked as zombies outside the normal pruning cycle.
-func (b *Builder) MarkEdgeZombie(chanID uint64,
+func (b *Builder) MarkEdgeZombie(v lnwire.GossipVersion, chanID uint64,
 	pubKey1, pubKey2 [33]byte) error {
 
-	err := b.cfg.Graph.MarkEdgeZombie(chanID, pubKey1, pubKey2)
+	var err error
+	switch v {
+	case lnwire.GossipVersion1:
+		err = b.cfg.Graph.MarkEdgeZombie(chanID, pubKey1, pubKey2)
+	default:
+		err = b.cfg.Graph2.MarkEdgeZombie(chanID, pubKey1, pubKey2)
+	}
 	if err != nil {
 		return err
 	}
