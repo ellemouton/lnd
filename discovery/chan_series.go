@@ -82,7 +82,7 @@ type GraphDB interface {
 	FilterKnownChanIDs(chansInfo []graphdb.ChannelUpdateInfo) ([]uint64,
 		[]graphdb.ChannelUpdateInfo, error)
 
-	MarkEdgeLive(chanID uint64) error
+	MarkEdgeLive(v lnwire.GossipVersion, chanID uint64) error
 
 	FilterChannelRange(startHeight, endHeight uint32, withTimestamps bool) (
 		[]graphdb.BlockChannelRange, error)
@@ -311,7 +311,10 @@ func (c *ChanSeries) FilterKnownChanIDs(_ chainhash.Hash,
 		// timestamps could bring it back from the dead, then we mark it
 		// alive, and we let it be added to the set of IDs to query our
 		// peer for.
-		err := c.graph.MarkEdgeLive(info.ShortChannelID.ToUint64())
+		// TODO(elle): update for v2.
+		err := c.graph.MarkEdgeLive(
+			lnwire.GossipVersion1, info.ShortChannelID.ToUint64(),
+		)
 		// Since there is a chance that the edge could have been marked
 		// as "live" between the FilterKnownChanIDs call and the
 		// MarkEdgeLive call, we ignore the error if the edge is already

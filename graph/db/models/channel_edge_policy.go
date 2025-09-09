@@ -89,6 +89,49 @@ type ChannelEdgePolicy struct {
 	ExtraSignedFields map[uint64][]byte
 }
 
+func ChanEdgePolicyFromWire(scid uint64,
+	update lnwire.ChannelUpdate) (*ChannelEdgePolicy, error) {
+
+	switch upd := update.(type) {
+	case *lnwire.ChannelUpdate1:
+		return &ChannelEdgePolicy{
+			Version:                   lnwire.GossipVersion1,
+			SigBytes:                  upd.Signature.ToSignatureBytes(),
+			ChannelID:                 scid,
+			LastUpdate:                time.Unix(int64(upd.Timestamp), 0),
+			MessageFlags:              upd.MessageFlags,
+			ChannelFlags:              upd.ChannelFlags,
+			TimeLockDelta:             upd.TimeLockDelta,
+			MinHTLC:                   upd.HtlcMinimumMsat,
+			MaxHTLC:                   upd.HtlcMaximumMsat,
+			FeeBaseMSat:               lnwire.MilliSatoshi(upd.BaseFee),
+			FeeProportionalMillionths: lnwire.MilliSatoshi(upd.FeeRate),
+			InboundFee:                upd.InboundFee.ValOpt(),
+			ExtraOpaqueData:           upd.ExtraOpaqueData,
+		}, nil
+
+	case *lnwire.ChannelUpdate2:
+		return &ChannelEdgePolicy{
+			Version:                   lnwire.GossipVersion2,
+			SigBytes:                  upd.Signature.Val.ToSignatureBytes(),
+			ChannelID:                 upd.ShortChannelID.Val.ToUint64(),
+			LastBlockHeight:           upd.BlockHeight.Val,
+			SecondPeer:                upd.SecondPeer.IsSome(),
+			DisableFlags:              upd.DisabledFlags.Val,
+			TimeLockDelta:             upd.CLTVExpiryDelta.Val,
+			MinHTLC:                   upd.HTLCMinimumMsat.Val,
+			MaxHTLC:                   upd.HTLCMaximumMsat.Val,
+			FeeBaseMSat:               lnwire.MilliSatoshi(upd.FeeBaseMsat.Val),
+			FeeProportionalMillionths: lnwire.MilliSatoshi(upd.FeeProportionalMillionths.Val),
+			InboundFee:                upd.InboundFee.ValOpt(),
+			ExtraSignedFields:         upd.ExtraSignedFields,
+		}, nil
+	}
+
+	return nil, fmt.Errorf("unknown channel update version: %v",
+		update.MsgType())
+}
+
 // SetSigBytes updates the signature and invalidates the cached parsed
 // signature.
 func (c *ChannelEdgePolicy) SetSigBytes(sig []byte) {

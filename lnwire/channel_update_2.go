@@ -74,10 +74,19 @@ type ChannelUpdate2 struct {
 	// ownership of node id.
 	Signature tlv.RecordT[tlv.TlvType160, Sig]
 
+	// InboundFee is an optional TLV record that contains the fee
+	// information for incoming HTLCs.
+	// TODO(elle): assign normal tlv type?
+	InboundFee tlv.OptionalRecordT[tlv.TlvType55555, Fee]
+
 	// Any extra fields in the signed range that we do not yet know about,
 	// but we need to keep them for signature validation and to produce a
 	// valid message.
 	ExtraSignedFields
+}
+
+func (c *ChannelUpdate2) TimestampDesc() string {
+	return fmt.Sprintf("block_height=%d", c.BlockHeight.Val)
 }
 
 // Encode serializes the target ChannelUpdate2 into the passed io.Writer

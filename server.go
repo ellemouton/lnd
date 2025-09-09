@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -850,18 +849,19 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	nodePubKey := route.NewVertex(nodeKeyDesc.PubKey)
 
 	s.graph, err = graph.NewBuilder(&graph.Config{
-		SelfNode:            nodePubKey,
-		Graph:               dbs.GraphDB,
-		Graph2:              dbs.GraphDB2,
-		Chain:               cc.ChainIO,
-		ChainView:           cc.ChainView,
-		Notifier:            cc.ChainNotifier,
-		ChannelPruneExpiry:  graph.DefaultChannelPruneExpiry,
-		GraphPruneInterval:  time.Hour,
-		FirstTimePruneDelay: graph.DefaultFirstTimePruneDelay,
-		AssumeChannelValid:  cfg.Routing.AssumeChannelValid,
-		StrictZombiePruning: strictPruning,
-		IsAlias:             aliasmgr.IsAlias,
+		SelfNode:                 nodePubKey,
+		Graph:                    dbs.GraphDB,
+		Graph2:                   dbs.GraphDB2,
+		Chain:                    cc.ChainIO,
+		ChainView:                cc.ChainView,
+		Notifier:                 cc.ChainNotifier,
+		ChannelPruneExpiry:       graph.DefaultChannelPruneExpiry,
+		ChannelPruneExpiryBlocks: graph.DefaultChanPruneExpiryBlocks,
+		GraphPruneInterval:       time.Hour,
+		FirstTimePruneDelay:      graph.DefaultFirstTimePruneDelay,
+		AssumeChannelValid:       cfg.Routing.AssumeChannelValid,
+		StrictZombiePruning:      strictPruning,
+		IsAlias:                  aliasmgr.IsAlias,
 	}, chanGraphOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("can't create graph builder: %w", err)
@@ -874,6 +874,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		OurPubKey:                nodeKeyDesc.PubKey,
 		OurKeyLoc:                nodeKeyDesc.KeyLocator,
 		MessageSigner:            s.nodeSigner,
+		BestBlockView:            s.cc.BestBlockTracker,
 		IsChannelActive:          s.htlcSwitch.HasActiveLink,
 		ApplyChannelUpdate:       s.applyChannelUpdate,
 		DB:                       s.chanStateDB,
@@ -1916,15 +1917,8 @@ func (s *server) registerBlockConsumers() {
 // signAliasUpdate takes a ChannelUpdate and returns the signature. This is
 // used for option_scid_alias channels where the ChannelUpdate to be sent back
 // may differ from what is on disk.
-func (s *server) signAliasUpdate(u *lnwire.ChannelUpdate1) (*ecdsa.Signature,
-	error) {
-
-	data, err := u.DataToSign()
-	if err != nil {
-		return nil, err
-	}
-
-	return s.cc.MsgSigner.SignMessage(s.identityKeyLoc, data, true)
+func (s *server) signAliasUpdate(u lnwire.ChannelUpdate) error {
+	return netann.SignChannelUpdate(s.cc.KeyRing, s.identityKeyLoc, u)
 }
 
 // createLivenessMonitor creates a set of health checks using our configured
@@ -5239,7 +5233,9 @@ func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
 
 	ourPubKey := s.identityECDH.PubKey().SerializeCompressed()
 	return func(cid lnwire.ShortChannelID) (*lnwire.ChannelUpdate1, error) {
-		info, edge1, edge2, err := s.graph.GetChannelByID(cid)
+
+		// TODO(elle): update for v2
+		info, edge1, edge2, err := s.graph.GetChannelByID(lnwire.GossipVersion1, cid)
 		if err != nil {
 			return nil, err
 		}

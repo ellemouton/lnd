@@ -7,10 +7,10 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/keychain"
-	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
 
@@ -50,7 +50,9 @@ type ChanStatusConfig struct {
 	OurKeyLoc keychain.KeyLocator
 
 	// MessageSigner signs messages that validate under OurPubKey.
-	MessageSigner lnwallet.MessageSigner
+	MessageSigner keychain.MessageSignerRing
+
+	BestBlockView chainntnfs.BestBlockView
 
 	// IsChannelActive checks whether the channel identified by the provided
 	// ChannelID is considered active. This should only return true if the
@@ -635,9 +637,14 @@ func (m *ChanStatusManager) signAndSendNextUpdate(outpoint wire.OutPoint,
 		return err
 	}
 
+	height, err := m.cfg.BestBlockView.BestHeight()
+	if err != nil {
+		return err
+	}
+
 	err = SignChannelUpdate(
 		m.cfg.MessageSigner, m.cfg.OurKeyLoc, chanUpdate,
-		ChanUpdSetDisable(disabled), ChanUpdSetTimestamp,
+		ChanUpdSetDisable(disabled), ChanUpdSetTimestamp(height),
 	)
 	if err != nil {
 		return err

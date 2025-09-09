@@ -144,6 +144,10 @@ type ChannelUpdate1 struct {
 	ExtraOpaqueData ExtraOpaqueData
 }
 
+func (a *ChannelUpdate1) TimestampDesc() string {
+	return fmt.Sprintf("timestamp: %v", a.Timestamp)
+}
+
 var _ GossipMessage = (*ChannelUpdate1)(nil)
 
 func (a *ChannelUpdate1) GossipVersion() GossipVersion {

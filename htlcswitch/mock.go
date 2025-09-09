@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/wire"
 	sphinx "github.com/lightningnetwork/lightning-onion"
@@ -168,10 +167,8 @@ type mockServer struct {
 var _ lnpeer.Peer = (*mockServer)(nil)
 
 func initSwitchWithDB(startingHeight uint32, db *channeldb.DB) (*Switch, error) {
-	signAliasUpdate := func(u *lnwire.ChannelUpdate1) (*ecdsa.Signature,
-		error) {
-
-		return testSig, nil
+	signAliasUpdate := func(u lnwire.ChannelUpdate) error {
+		return nil
 	}
 
 	cfg := Config{

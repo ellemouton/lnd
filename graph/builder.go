@@ -31,7 +31,8 @@ import (
 const (
 	// DefaultChannelPruneExpiry is the default duration used to determine
 	// if a channel should be pruned or not.
-	DefaultChannelPruneExpiry = time.Hour * 24 * 14
+	DefaultChannelPruneExpiry    = time.Hour * 24 * 14
+	DefaultChanPruneExpiryBlocks = 2016 // ~2 weeks
 
 	// DefaultFirstTimePruneDelay is the time we'll wait after startup
 	// before attempting to prune the graph for zombie channels. We don't
@@ -80,7 +81,8 @@ type Config struct {
 	// should be pruned or not. If the delta between now and when the
 	// channel was last updated is greater than ChannelPruneExpiry, then
 	// the channel is marked as a zombie channel eligible for pruning.
-	ChannelPruneExpiry time.Duration
+	ChannelPruneExpiry       time.Duration
+	ChannelPruneExpiryBlocks uint32
 
 	// GraphPruneInterval is used as an interval to determine how often we
 	// should examine the channel graph to garbage collect zombie channels.
@@ -1028,22 +1030,14 @@ func (b *Builder) assertNodeAnnFreshness(ctx context.Context, node route.Vertex,
 
 // MarkZombieEdge adds a channel that failed complete validation into the zombie
 // index so we can avoid having to re-validate it in the future.
-func (b *Builder) MarkZombieEdge(version lnwire.GossipVersion,
+func (b *Builder) MarkZombieEdge(v lnwire.GossipVersion,
 	chanID uint64) error {
 
 	// If the edge fails validation we'll mark the edge itself as a zombie
 	// so we don't continue to request it. We use the "zero key" for both
 	// node pubkeys so this edge can't be resurrected.
-	var (
-		zeroKey [33]byte
-		err     error
-	)
-	switch version {
-	case lnwire.GossipVersion1:
-		err = b.cfg.Graph.MarkEdgeZombie(chanID, zeroKey, zeroKey)
-	default:
-		err = b.cfg.Graph2.MarkEdgeZombie(chanID, zeroKey, zeroKey)
-	}
+	var zeroKey [33]byte
+	err := b.graph(v).MarkEdgeZombie(chanID, zeroKey, zeroKey)
 	if err != nil {
 		return fmt.Errorf("unable to mark spent chan(id=%v) as a "+
 			"zombie: %w", chanID, err)
@@ -1057,7 +1051,9 @@ func (b *Builder) MarkZombieEdge(version lnwire.GossipVersion,
 func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 	ctx := context.TODO()
 
-	ch, _, _, err := b.GetChannelByID(msg.ShortChannelID)
+	ch, _, _, err := b.GetChannelByID(
+		msg.GossipVersion(), msg.ShortChannelID,
+	)
 	if err != nil {
 		log.Errorf("Unable to retrieve channel by id: %v", err)
 		return false
@@ -1214,18 +1210,11 @@ func (b *Builder) addEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 
 	log.Debugf("Received ChannelEdgeInfo for channel %v", edge.ChannelID)
 
+	graph := b.graph(edge.Version)
+
 	// Prior to processing the announcement we first check if we
 	// already know of this channel, if so, then we can exit early.
-	var (
-		exists, isZombie bool
-		err              error
-		graph            = b.cfg.Graph
-	)
-	if edge.Version == lnwire.GossipVersion2 {
-		graph = b.cfg.Graph2
-	}
-
-	exists, isZombie, err = graph.HasChannelEdge(edge.ChannelID)
+	exists, isZombie, err := graph.HasChannelEdge(edge.ChannelID)
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
 		return fmt.Errorf("unable to check for edge existence: %w",
 			err)
@@ -1307,7 +1296,7 @@ func (b *Builder) UpdateEdge(ctx context.Context,
 
 	// Now that we know this isn't a stale update, we'll apply the new edge
 	// policy to the proper directional edge within the channel graph.
-	from, to, err := b.cfg.Graph.UpdateEdgePolicy(
+	from, to, err := b.graph(update.Version).UpdateEdgePolicy(
 		ctx, update, remoteSchedulerOpts(fromRemote)...,
 	)
 	if err != nil {
@@ -1440,12 +1429,12 @@ func (b *Builder) SyncedHeight() uint32 {
 // GetChannelByID return the channel by the channel id.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) GetChannelByID(chanID lnwire.ShortChannelID) (
-	*models.ChannelEdgeInfo,
+func (b *Builder) GetChannelByID(v lnwire.GossipVersion,
+	chanID lnwire.ShortChannelID) (*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
-	return b.cfg.Graph.FetchChannelEdgesByID(chanID.ToUint64())
+	return b.graph(v).FetchChannelEdgesByID(chanID.ToUint64())
 }
 
 // FetchNode attempts to look up a target node by its identity public
@@ -1527,11 +1516,8 @@ func (b *Builder) IsKnownEdge(ann lnwire.ChannelAnnouncement) (bool, error) {
 		exists   bool
 		isZombie bool
 		err      error
-		graph    = b.cfg.Graph
+		graph    = b.graph(ann.GossipVersion())
 	)
-	if ann.GossipVersion() == lnwire.GossipVersion2 {
-		graph = b.cfg.Graph2
-	}
 
 	exists, isZombie, err = graph.HasChannelEdge(ann.SCID().ToUint64())
 	if err != nil {
@@ -1542,61 +1528,149 @@ func (b *Builder) IsKnownEdge(ann lnwire.ChannelAnnouncement) (bool, error) {
 	return exists || isZombie, nil
 }
 
+func (b *Builder) IsSkewedEdgePolicy(a lnwire.ChannelUpdate) (bool, error) {
+	switch ann := a.(type) {
+	case *lnwire.ChannelUpdate1:
+		timestamp := time.Unix(int64(ann.Timestamp), 0)
+
+		return time.Until(timestamp) > DefaultChannelPruneExpiry, nil
+	case *lnwire.ChannelUpdate2:
+		currentBlock, err := b.CurrentBlockHeight()
+		if err != nil {
+			return false, err
+		}
+
+		blocksUntil := ann.BlockHeight.Val - currentBlock
+
+		return blocksUntil > DefaultChanPruneExpiryBlocks, nil
+
+	default:
+		return false, fmt.Errorf("unknown channel update type: %T", a)
+	}
+}
+
 // IsStaleEdgePolicy returns true if the graph source has a channel edge for
 // the passed channel ID (and flags) that have a more recent timestamp.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (b *Builder) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
-	timestamp time.Time, flags lnwire.ChanUpdateChanFlags) bool {
+	a lnwire.ChannelUpdate) (bool, error) {
 
-	edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
-		b.cfg.Graph.HasV1ChannelEdge(chanID.ToUint64())
-	if err != nil {
-		log.Debugf("Check stale edge policy got error: %v", err)
-		return false
-	}
-
-	// If we know of the edge as a zombie, then we'll make some additional
-	// checks to determine if the new policy is fresh.
-	if isZombie {
-		// When running with AssumeChannelValid, we also prune channels
-		// if both of their edges are disabled. We'll mark the new
-		// policy as stale if it remains disabled.
-		if b.cfg.AssumeChannelValid {
-			isDisabled := flags&lnwire.ChanUpdateDisabled ==
-				lnwire.ChanUpdateDisabled
-			if isDisabled {
-				return true
-			}
+	switch ann := a.(type) {
+	case *lnwire.ChannelUpdate1:
+		edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
+			b.cfg.Graph.HasV1ChannelEdge(chanID.ToUint64())
+		if err != nil {
+			return false, err
 		}
 
-		// Otherwise, we'll fall back to our usual ChannelPruneExpiry.
-		return time.Since(timestamp) > b.cfg.ChannelPruneExpiry
+		// Before we perform any of the expensive checks below, we'll check
+		// whether this update is stale or is for a zombie channel in order to
+		// quickly reject it.
+		timestamp := time.Unix(int64(ann.Timestamp), 0)
+
+		// If we know of the edge as a zombie, then we'll make some additional
+		// checks to determine if the new policy is fresh.
+		if isZombie {
+			// When running with AssumeChannelValid, we also prune channels
+			// if both of their edges are disabled. We'll mark the new
+			// policy as stale if it remains disabled.
+			if b.cfg.AssumeChannelValid {
+				if ann.IsDisabled() {
+					return true, nil
+				}
+			}
+
+			// Otherwise, we'll fall back to our usual ChannelPruneExpiry.
+			return time.Since(timestamp) > b.cfg.ChannelPruneExpiry, nil
+		}
+
+		// If we don't know of the edge, then it means it's fresh (thus not
+		// stale).
+		if !exists {
+			return false, nil
+		}
+
+		// As edges are directional edge node has a unique policy for the
+		// direction of the edge they control. Therefore, we first check if we
+		// already have the most up-to-date information for that edge. If so,
+		// then we can exit early.
+		switch {
+		// A flag set of 0 indicates this is an announcement for the "first"
+		// node in the channel.
+		case ann.IsNode1():
+			return !edge1Timestamp.Before(timestamp), nil
+
+		// Similarly, a flag set of 1 indicates this is an announcement for the
+		// "second" node in the channel.
+		case !ann.IsNode1():
+			return !edge2Timestamp.Before(timestamp), nil
+		}
+
+		return false, nil
+
+	case *lnwire.ChannelUpdate2:
+		edge1Timestamp, edge2Timestamp, exists, isZombie, err :=
+			b.cfg.Graph2.HasV2ChannelEdge(chanID.ToUint64())
+		if err != nil {
+			return false, err
+		}
+
+		// Before we perform any of the expensive checks below, we'll check
+		// whether this update is stale or is for a zombie channel in order to
+		// quickly reject it.
+		blockHeight := ann.BlockHeight.Val
+
+		// If we know of the edge as a zombie, then we'll make some additional
+		// checks to determine if the new policy is fresh.
+		if isZombie {
+			// When running with AssumeChannelValid, we also prune channels
+			// if both of their edges are disabled. We'll mark the new
+			// policy as stale if it remains disabled.
+			if b.cfg.AssumeChannelValid {
+				if ann.IsDisabled() {
+					return true, nil
+				}
+			}
+
+			currentBlock, err := b.CurrentBlockHeight()
+			if err != nil {
+				return false, err
+			}
+
+			blocksSince := currentBlock - blockHeight
+
+			// Otherwise, we'll fall back to our usual ChannelPruneExpiry.
+			return blocksSince > b.cfg.ChannelPruneExpiryBlocks, nil
+		}
+
+		// If we don't know of the edge, then it means it's fresh (thus not
+		// stale).
+		if !exists {
+			return false, nil
+		}
+
+		// As edges are directional edge node has a unique policy for the
+		// direction of the edge they control. Therefore, we first check if we
+		// already have the most up-to-date information for that edge. If so,
+		// then we can exit early.
+		switch {
+		// A flag set of 0 indicates this is an announcement for the "first"
+		// node in the channel.
+		case ann.IsNode1():
+			return edge1Timestamp > blockHeight, nil
+
+		// Similarly, a flag set of 1 indicates this is an announcement for the
+		// "second" node in the channel.
+		case !ann.IsNode1():
+			return edge2Timestamp > blockHeight, nil
+		}
+
+		return false, nil
+
+	default:
+		return false, fmt.Errorf("unknown channel update type: %T", a)
 	}
-
-	// If we don't know of the edge, then it means it's fresh (thus not
-	// stale).
-	if !exists {
-		return false
-	}
-
-	// As edges are directional edge node has a unique policy for the
-	// direction of the edge they control. Therefore, we first check if we
-	// already have the most up-to-date information for that edge. If so,
-	// then we can exit early.
-	switch {
-	// A flag set of 0 indicates this is an announcement for the "first"
-	// node in the channel.
-	case flags&lnwire.ChanUpdateDirection == 0:
-		return !edge1Timestamp.Before(timestamp)
-
-	// Similarly, a flag set of 1 indicates this is an announcement for the
-	// "second" node in the channel.
-	case flags&lnwire.ChanUpdateDirection == 1:
-		return !edge2Timestamp.Before(timestamp)
-	}
-
-	return false
 }
 
 // ForEachNodeDirectedChannel iterates through all channels of a given node,
@@ -1687,11 +1761,19 @@ func (b *Builder) DeleteNode(ctx context.Context,
 	return nil
 }
 
+func (b *Builder) graph(v lnwire.GossipVersion) graphdb.V1Store {
+	if v == lnwire.GossipVersion2 {
+		return b.cfg.Graph2
+	}
+
+	return b.cfg.Graph
+}
+
 // MarkEdgeLive clears an edge from our zombie index, deeming it as live.
 // If the cache is enabled, the edge will be added back to the graph cache if
 // we still have a record of this channel in the DB.
-func (b *Builder) MarkEdgeLive(chanID uint64) error {
-	err := b.cfg.Graph.MarkEdgeLive(chanID)
+func (b *Builder) MarkEdgeLive(v lnwire.GossipVersion, chanID uint64) error {
+	err := b.graph(v).MarkEdgeLive(chanID)
 	if err != nil {
 		return err
 	}
@@ -1859,13 +1941,7 @@ func (b *Builder) pruneGraphNodes() error {
 func (b *Builder) MarkEdgeZombie(v lnwire.GossipVersion, chanID uint64,
 	pubKey1, pubKey2 [33]byte) error {
 
-	var err error
-	switch v {
-	case lnwire.GossipVersion1:
-		err = b.cfg.Graph.MarkEdgeZombie(chanID, pubKey1, pubKey2)
-	default:
-		err = b.cfg.Graph2.MarkEdgeZombie(chanID, pubKey1, pubKey2)
-	}
+	err := b.graph(v).MarkEdgeZombie(chanID, pubKey1, pubKey2)
 	if err != nil {
 		return err
 	}

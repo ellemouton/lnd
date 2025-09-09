@@ -55,12 +55,14 @@ type ChannelGraphSource interface {
 	// IsStaleEdgePolicy returns true if the graph source has a channel
 	// edge for the passed channel ID (and flags) that have a more recent
 	// timestamp.
-	IsStaleEdgePolicy(chanID lnwire.ShortChannelID, timestamp time.Time,
-		flags lnwire.ChanUpdateChanFlags) bool
+	IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
+		upd lnwire.ChannelUpdate) (bool, error)
+
+	IsSkewedEdgePolicy(a lnwire.ChannelUpdate) (bool, error)
 
 	// MarkEdgeLive clears an edge from our zombie index, deeming it as
 	// live.
-	MarkEdgeLive(chanID uint64) error
+	MarkEdgeLive(v lnwire.GossipVersion, chanID uint64) error
 
 	// ForAllOutgoingChannels is used to iterate over all channels
 	// emanating from the "source" node which is the center of the
@@ -74,7 +76,7 @@ type ChannelGraphSource interface {
 	CurrentBlockHeight() (uint32, error)
 
 	// GetChannelByID return the channel by the channel id.
-	GetChannelByID(chanID lnwire.ShortChannelID) (
+	GetChannelByID(v lnwire.GossipVersion, chanID lnwire.ShortChannelID) (
 		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy, error)
 

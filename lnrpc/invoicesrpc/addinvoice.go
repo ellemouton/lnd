@@ -572,7 +572,7 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 			// key is used to sign the invoice so that the sender
 			// can derive the true pub key of the recipient.
 			if !blind {
-				return cfg.NodeSigner.SignMessageCompact(
+				return cfg.NodeSigner.SignMessageCompactNoKeyLoc(
 					msg, false,
 				)
 			}

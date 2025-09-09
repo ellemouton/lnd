@@ -98,7 +98,10 @@ type ChannelUpdate interface {
 	// SetSCID can be used to overwrite the SCID of the update.
 	SetSCID(scid ShortChannelID)
 
+	TimestampDesc() string
+
 	Message
+	GossipMessage
 }
 
 // ForwardingPolicy defines the set of forwarding constraints advertised in a
