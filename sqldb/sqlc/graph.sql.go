@@ -3679,8 +3679,10 @@ ON CONFLICT (channel_id, node_id, version)
         message_flags = EXCLUDED.message_flags,
         channel_flags = EXCLUDED.channel_flags,
         signature = EXCLUDED.signature
-WHERE EXCLUDED.last_update > graph_channel_policies.last_update
-OR EXCLUDED.block_height > graph_channel_policies.block_height
+WHERE (graph_channel_policies.last_update IS NULL
+    OR EXCLUDED.last_update > graph_channel_policies.last_update)
+AND (graph_channel_policies.block_height IS NULL
+    OR EXCLUDED.block_height >= graph_channel_policies.block_height)
 RETURNING id
 `
 

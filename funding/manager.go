@@ -3763,11 +3763,16 @@ func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
 			return err
 		}
 
-		// TODO(elle): pick appropriate node ann.
-		nodeAnn, _, err := f.cfg.CurrentNodeAnnouncements()
+		nodeAnn1, nodeAnn2, err := f.cfg.CurrentNodeAnnouncements()
 		if err != nil {
 			return fmt.Errorf("unable to retrieve current node "+
 				"announcement: %v", err)
+		}
+
+		var nodeAnn lnwire.NodeAnnouncement
+		nodeAnn = nodeAnn1
+		if completeChan.ChanType.IsTaproot() {
+			nodeAnn = nodeAnn2
 		}
 
 		chanID := lnwire.NewChanIDFromOutPoint(

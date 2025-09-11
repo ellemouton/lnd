@@ -6881,9 +6881,7 @@ func marshalDBEdge(edgeInfo *models.ChannelEdgeInfo,
 
 	// Make sure the policies match the node they belong to. c1 should point
 	// to the policy for NodeKey1, and c2 for NodeKey2.
-	if c1 != nil && c1.ChannelFlags&lnwire.ChanUpdateDirection == 1 ||
-		c2 != nil && c2.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
-
+	if c1 != nil && !c1.IsNode1() || c2 != nil && c2.IsNode1() {
 		c2, c1 = c1, c2
 	}
 
@@ -6945,8 +6943,6 @@ func marshalPolicyExtraOpaqueData(data []byte) map[uint64][]byte {
 func marshalDBRoutingPolicy(
 	policy *models.ChannelEdgePolicy) *lnrpc.RoutingPolicy {
 
-	disabled := policy.ChannelFlags&lnwire.ChanUpdateDisabled != 0
-
 	customRecords := marshalPolicyExtraOpaqueData(policy.ExtraOpaqueData)
 	inboundFee := policy.InboundFee.UnwrapOr(lnwire.Fee{})
 
@@ -6956,7 +6952,7 @@ func marshalDBRoutingPolicy(
 		MaxHtlcMsat:      uint64(policy.MaxHTLC),
 		FeeBaseMsat:      int64(policy.FeeBaseMSat),
 		FeeRateMilliMsat: int64(policy.FeeProportionalMillionths),
-		Disabled:         disabled,
+		Disabled:         policy.IsDisabled(),
 		LastUpdate:       uint32(policy.LastUpdate.Unix()),
 		CustomRecords:    customRecords,
 
@@ -7063,6 +7059,7 @@ func (r *rpcServer) GetChanInfo(_ context.Context,
 	case err != nil:
 		return nil, err
 	}
+	rpcsLog.Infof("ELLE: GetChanInfo: %v, %v", edge1 == nil, edge2 == nil)
 
 	// Convert the database's edge format into the network/RPC edge format
 	// which couples the edge itself along with the directional node

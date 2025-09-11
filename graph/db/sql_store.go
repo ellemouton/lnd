@@ -3303,7 +3303,6 @@ func (s *SQLStore) updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 
 	var (
 		node1Pub, node2Pub route.Vertex
-		isNode1            bool
 		chanIDB            = channelIDToBytes(edge.ChannelID)
 	)
 
@@ -3328,9 +3327,7 @@ func (s *SQLStore) updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 	copy(node2Pub[:], dbChan.Node2PubKey)
 
 	// Figure out which node this edge is from.
-	isNode1 = edge.ChannelFlags&lnwire.ChanUpdateDirection == 0 ||
-		!edge.SecondPeer
-
+	isNode1 := edge.IsNode1()
 	nodeID := dbChan.NodeID1
 	if !isNode1 {
 		nodeID = dbChan.NodeID2
@@ -3363,6 +3360,9 @@ func (s *SQLStore) updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 		InboundFeeRateMilliMsat: inboundRate,
 		Signature:               edge.SigBytes,
 	}
+
+	log.Infof("ELLE: Updating edge policy for channel %v: %+v",
+		edge.ChannelID, params)
 
 	switch s.cfg.Version {
 	case lnwire.GossipVersion1:

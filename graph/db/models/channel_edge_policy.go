@@ -138,6 +138,14 @@ func (c *ChannelEdgePolicy) SetSigBytes(sig []byte) {
 	c.SigBytes = sig
 }
 
+func (c *ChannelEdgePolicy) IsNode1() bool {
+	if c.Version == lnwire.GossipVersion1 {
+		return c.ChannelFlags&lnwire.ChanUpdateDirection == 0
+	}
+
+	return !c.SecondPeer
+}
+
 // IsDisabled determines whether the edge has the disabled bit set.
 func (c *ChannelEdgePolicy) IsDisabled() bool {
 	if c.Version == lnwire.GossipVersion1 {

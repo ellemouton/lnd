@@ -2684,8 +2684,9 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
 	nMsg.err <- nil
 	// TODO(roasbeef): get rid of the above
 
-	log.Debugf("Processed NodeAnnouncement1: peer=%v, %s, "+
-		"node=%x, source=%x", nMsg.peer, nodeAnn.TimestampDesc(),
+	log.Debugf("Processed %s: peer=%v, %s, "+
+		"node=%x, source=%x", nMsg.msg.MsgType(), nMsg.peer,
+		nodeAnn.TimestampDesc(),
 		nodeID, nMsg.source.SerializeCompressed())
 
 	return announcements, true
@@ -3148,8 +3149,8 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 
 	nMsg.err <- nil
 
-	log.Debugf("Processed ChannelAnnouncement1: peer=%v, short_chan_id=%v",
-		nMsg.peer, scid.ToUint64())
+	log.Debugf("Processed %s: peer=%v, short_chan_id=%v",
+		nMsg.msg.MsgType(), nMsg.peer, scid.ToUint64())
 
 	return announcements, true
 }
@@ -3494,6 +3495,9 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 		return nil, false
 	}
 
+	log.Infof("ELLE: Updating edge for short_chan_id=%v, is_remote=%v",
+		shortChanID, nMsg.isRemote)
+
 	if err := d.cfg.Graph.UpdateEdge(ctx, update, nMsg.isRemote); err != nil {
 		if graph.IsError(
 			err, graph.ErrOutdated,
@@ -3584,8 +3588,9 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 
 	nMsg.err <- nil
 
-	log.Debugf("Processed ChannelUpdate: peer=%v, short_chan_id=%v, "+
-		"%s", nMsg.peer, upd.SCID().ToUint64(), upd.TimestampDesc())
+	log.Debugf("Processed %s: peer=%v, short_chan_id=%v, "+
+		"%s", nMsg.msg.MsgType(), nMsg.peer, upd.SCID().ToUint64(),
+		upd.TimestampDesc())
 
 	return announcements, true
 }

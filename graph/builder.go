@@ -1217,7 +1217,7 @@ func (b *Builder) addNode(ctx context.Context, node *models.Node,
 		return err
 	}
 
-	if err := b.cfg.Graph.AddNode(ctx, node, op...); err != nil {
+	if err := b.graph(node.Version).AddNode(ctx, node, op...); err != nil {
 		return fmt.Errorf("unable to add node %x to the "+
 			"graph: %w", node.PubKeyBytes, err)
 	}
@@ -1584,6 +1584,14 @@ func (b *Builder) GetChannelByID(v lnwire.GossipVersion,
 // NOTE: This method is part of the ChannelGraphSource interface.
 func (b *Builder) FetchNode(ctx context.Context,
 	node route.Vertex) (*models.Node, error) {
+
+	n, err := b.cfg.Graph2.FetchNode(ctx, node)
+	if err != nil && !errors.Is(err, graphdb.ErrGraphNodeNotFound) {
+		return nil, err
+	}
+	if err == nil {
+		return n, nil
+	}
 
 	return b.cfg.Graph.FetchNode(ctx, node)
 }
