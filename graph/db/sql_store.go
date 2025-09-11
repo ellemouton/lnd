@@ -879,6 +879,10 @@ func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
 // early.
 //
 // NOTE: part of the V1Store interface.
+// NOTE: this will return all nodes across gossip versions. Callers should
+// take this into account.
+// TODO(elle): ensure all callers (like autopilot) are not double counting nodes
+// if they appear on both protocols.
 func (s *SQLStore) ForEachNode(ctx context.Context,
 	cb func(node *models.Node) error, reset func()) error {
 
@@ -1379,6 +1383,10 @@ func (s *SQLStore) ForEachChannelCacheable(cb func(*models.CachedEdgeInfo,
 // callback.
 //
 // NOTE: part of the V1Store interface.
+// NOTE: returns all channels across gossip versions. Callers should take this
+// into account.
+// TODO(elle): ensure all callers are not double counting channels if they
+// appear on both protocols.
 func (s *SQLStore) ForEachChannel(ctx context.Context,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error, reset func()) error {
@@ -3255,7 +3263,7 @@ func (s *SQLStore) forEachNodeChannel(ctx context.Context, db SQLQueries,
 		}
 
 		edge, err := buildEdgeInfoWithBatchData(
-			s.cfg, row.GraphChannel, node1, node2, batchData,
+			s.cfg.ChainHash, row.GraphChannel, node1, node2, batchData,
 		)
 		if err != nil {
 			return fmt.Errorf("unable to build channel info: %w",
@@ -3454,23 +3462,20 @@ func (s *SQLStore) buildNode(ctx context.Context, db SQLQueries,
 			err)
 	}
 
-	return buildNodeWithBatchData(s.cfg.Version, dbNode, data)
+	return buildNodeWithBatchData(dbNode, data)
 }
 
 // buildNodeWithBatchData builds a models.Node instance
 // from the provided sqlc.GraphNode and batchNodeData. If the node does have
 // features/addresses/extra fields, then the corresponding fields are expected
 // to be present in the batchNodeData.
-func buildNodeWithBatchData(version lnwire.GossipVersion, dbNode sqlc.GraphNode,
+func buildNodeWithBatchData(dbNode sqlc.GraphNode,
 	batchData *batchNodeData) (*models.Node, error) {
-
-	if dbNode.Version != int16(version) {
-		return nil, fmt.Errorf("unexpected db node version found in "+
-			"the %d database: %d", version, dbNode.Version)
-	}
 
 	var pub [33]byte
 	copy(pub[:], dbNode.PubKey)
+
+	version := lnwire.GossipVersion(dbNode.Version)
 
 	node := models.NewShellNode(version, pub)
 
@@ -3558,9 +3563,7 @@ func (s *SQLStore) forEachNodeInBatch(ctx context.Context,
 	}
 
 	for _, dbNode := range nodes {
-		node, err := buildNodeWithBatchData(
-			s.cfg.Version, dbNode, batchData,
-		)
+		node, err := buildNodeWithBatchData(dbNode, batchData)
 		if err != nil {
 			return fmt.Errorf("unable to build node(id=%d): %w",
 				dbNode.ID, err)
@@ -4231,18 +4234,15 @@ func (s *SQLStore) getAndBuildEdgeInfo(ctx context.Context,
 			err)
 	}
 
-	return buildEdgeInfoWithBatchData(s.cfg, dbChan, node1, node2, data)
+	return buildEdgeInfoWithBatchData(s.cfg.ChainHash, dbChan, node1, node2, data)
 }
 
 // buildEdgeInfoWithBatchData builds edge info using pre-loaded batch data.
-func buildEdgeInfoWithBatchData(cfg *SQLStoreConfig, dbChan sqlc.GraphChannel,
+func buildEdgeInfoWithBatchData(chain chainhash.Hash, dbChan sqlc.GraphChannel,
 	node1, node2 route.Vertex,
 	batchData *batchChannelData) (*models.ChannelEdgeInfo, error) {
 
-	if dbChan.Version != int16(cfg.Version) {
-		return nil, fmt.Errorf("unsupported channel version: %d",
-			dbChan.Version)
-	}
+	version := lnwire.GossipVersion(dbChan.Version)
 
 	// Use pre-loaded features and extras types.
 	fv := lnwire.EmptyFeatureVector()
@@ -4266,8 +4266,8 @@ func buildEdgeInfoWithBatchData(cfg *SQLStoreConfig, dbChan sqlc.GraphChannel,
 	}
 
 	channel := &models.ChannelEdgeInfo{
-		Version:       cfg.Version,
-		ChainHash:     cfg.ChainHash,
+		Version:       version,
+		ChainHash:     chain,
 		ChannelID:     byteOrder.Uint64(dbChan.Scid),
 		NodeKey1Bytes: node1,
 		NodeKey2Bytes: node2,
@@ -4295,7 +4295,7 @@ func buildEdgeInfoWithBatchData(cfg *SQLStoreConfig, dbChan sqlc.GraphChannel,
 		channel.FundingScript = fn.Some(dbChan.FundingPkScript)
 	}
 
-	if cfg.Version == lnwire.GossipVersion1 {
+	if version == lnwire.GossipVersion1 {
 		recs, err := lnwire.CustomRecords(extras).Serialize()
 		if err != nil {
 			return nil, fmt.Errorf("unable to serialize extra "+
@@ -5359,9 +5359,8 @@ func (s *SQLStore) forEachNodePaginated(ctx context.Context, db SQLQueries,
 
 		return db.ListNodesPaginated(
 			ctx, sqlc.ListNodesPaginatedParams{
-				Version: int16(s.cfg.Version),
-				ID:      lastID,
-				Limit:   limit,
+				ID:    lastID,
+				Limit: limit,
 			},
 		)
 	}
@@ -5383,9 +5382,7 @@ func (s *SQLStore) forEachNodePaginated(ctx context.Context, db SQLQueries,
 	processItem := func(ctx context.Context, dbNode sqlc.GraphNode,
 		batchData *batchNodeData) error {
 
-		node, err := buildNodeWithBatchData(
-			s.cfg.Version, dbNode, batchData,
-		)
+		node, err := buildNodeWithBatchData(dbNode, batchData)
 		if err != nil {
 			return fmt.Errorf("unable to build "+
 				"node(id=%d): %w", dbNode.ID, err)
@@ -5418,9 +5415,8 @@ func (s *SQLStore) forEachChannelWithPolicies(ctx context.Context,
 
 		return db.ListChannelsWithPoliciesPaginated(
 			ctx, sqlc.ListChannelsWithPoliciesPaginatedParams{
-				Version: int16(s.cfg.Version),
-				ID:      lastID,
-				Limit:   limit,
+				ID:    lastID,
+				Limit: limit,
 			},
 		)
 	}
@@ -5485,7 +5481,7 @@ func (s *SQLStore) forEachChannelWithPolicies(ctx context.Context,
 		}
 
 		edge, err := buildEdgeInfoWithBatchData(
-			s.cfg, row.GraphChannel, node1, node2, batchData,
+			s.cfg.ChainHash, row.GraphChannel, node1, node2, batchData,
 		)
 		if err != nil {
 			return fmt.Errorf("unable to build channel info: %w",
@@ -5528,7 +5524,7 @@ func (s *SQLStore) buildDirectedChannel(nodeID int64,
 	}
 
 	edge, err := buildEdgeInfoWithBatchData(
-		s.cfg, channelRow.GraphChannel, node1, node2, channelBatchData,
+		s.cfg.ChainHash, channelRow.GraphChannel, node1, node2, channelBatchData,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to build channel info: %w", err)
@@ -5663,23 +5659,19 @@ func batchBuildChannelEdges[T sqlc.ChannelAndNodes](ctx context.Context,
 	// Build all channel edges using batch data.
 	for _, row := range rows {
 		// Build nodes using batch data.
-		node1, err := buildNodeWithBatchData(
-			cfg.Version, row.Node1(), nodeBatchData,
-		)
+		node1, err := buildNodeWithBatchData(row.Node1(), nodeBatchData)
 		if err != nil {
 			return nil, fmt.Errorf("unable to build node1: %w", err)
 		}
 
-		node2, err := buildNodeWithBatchData(
-			cfg.Version, row.Node2(), nodeBatchData,
-		)
+		node2, err := buildNodeWithBatchData(row.Node2(), nodeBatchData)
 		if err != nil {
 			return nil, fmt.Errorf("unable to build node2: %w", err)
 		}
 
 		// Build channel info using batch data.
 		channel, err := buildEdgeInfoWithBatchData(
-			cfg, row.Channel(), node1.PubKeyBytes,
+			cfg.ChainHash, row.Channel(), node1.PubKeyBytes,
 			node2.PubKeyBytes, channelBatchData,
 		)
 		if err != nil {
@@ -5752,7 +5744,7 @@ func batchBuildChannelInfo[T sqlc.ChannelAndNodeIDs](ctx context.Context,
 
 		// Build channel info using batch data
 		info, err := buildEdgeInfoWithBatchData(
-			cfg, row.Channel(), node1, node2, channelBatchData,
+			cfg.ChainHash, row.Channel(), node1, node2, channelBatchData,
 		)
 		if err != nil {
 			return nil, nil, err

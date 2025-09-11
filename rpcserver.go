@@ -6896,8 +6896,9 @@ func marshalDBEdge(edgeInfo *models.ChannelEdgeInfo,
 	customRecords := marshalExtraOpaqueData(edgeInfo.ExtraOpaqueData)
 
 	edge := &lnrpc.ChannelEdge{
-		ChannelId: edgeInfo.ChannelID,
-		ChanPoint: edgeInfo.ChannelPoint.String(),
+		GossipVersion: marshalGossipVersion(edgeInfo.Version),
+		ChannelId:     edgeInfo.ChannelID,
+		ChanPoint:     edgeInfo.ChannelPoint.String(),
 		// TODO(roasbeef): update should be on edge info itself
 		LastUpdate:    uint32(lastUpdate),
 		Node1Pub:      hex.EncodeToString(edgeInfo.NodeKey1Bytes[:]),
@@ -7169,6 +7170,7 @@ func marshalNode(node *models.Node) *lnrpc.LightningNode {
 	customRecords := marshalExtraOpaqueData(node.ExtraOpaqueData)
 
 	return &lnrpc.LightningNode{
+		GossipVersion: marshalGossipVersion(node.Version),
 		LastUpdate:    uint32(node.LastUpdate.Unix()),
 		PubKey:        hex.EncodeToString(node.PubKeyBytes[:]),
 		Addresses:     nodeAddrs,
@@ -7176,6 +7178,15 @@ func marshalNode(node *models.Node) *lnrpc.LightningNode {
 		Color:         graphdb.EncodeHexColor(node.Color.UnwrapOr(color.RGBA{})),
 		Features:      features,
 		CustomRecords: customRecords,
+	}
+}
+
+func marshalGossipVersion(version lnwire.GossipVersion) lnrpc.GossipVersion {
+	switch version {
+	case lnwire.GossipVersion2:
+		return lnrpc.GossipVersion_V2
+	default:
+		return lnrpc.GossipVersion_V1
 	}
 }
 

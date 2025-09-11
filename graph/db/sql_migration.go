@@ -187,7 +187,7 @@ func migrateNodes(ctx context.Context, cfg *sqldb.QueryConfig,
 			// Build the migrated node from the DB node and the
 			// batch node data.
 			migNode, err := buildNodeWithBatchData(
-				lnwire.GossipVersion1, dbNode, batchData,
+				dbNode, batchData,
 			)
 			if err != nil {
 				return fmt.Errorf("could not build migrated "+
@@ -800,7 +800,7 @@ func validateMigratedChannelWithBatchData(cfg *SQLStoreConfig,
 
 	// Build channel info using batch data.
 	migChan, err := buildEdgeInfoWithBatchData(
-		cfg, row.GraphChannel, node1, node2, batchData,
+		cfg.ChainHash, row.GraphChannel, node1, node2, batchData,
 	)
 	if err != nil {
 		return fmt.Errorf("could not build migrated channel info: %w",
