@@ -821,12 +821,6 @@ func fundChannel(t *testing.T, alice, bob *testNode, localFundingAmt,
 		Err:             errChan,
 	}
 
-	// If this is a taproot channel, then we want to force it to be a
-	// private channel, as that's the only channel type supported for now.
-	if isTaprootChanType(chanType) {
-		initReq.Private = true
-	}
-
 	alice.fundingMgr.InitFundingWorkflow(initReq)
 
 	// Alice should have sent the OpenChannel message to Bob.
