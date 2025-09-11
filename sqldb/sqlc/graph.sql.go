@@ -2042,6 +2042,40 @@ func (q *Queries) GetNodeIDByPubKey(ctx context.Context, arg GetNodeIDByPubKeyPa
 	return id, err
 }
 
+const getNodeIDsByPubKey = `-- name: GetNodeIDsByPubKey :many
+SELECT id, version
+FROM graph_nodes
+WHERE pub_key = $1
+`
+
+type GetNodeIDsByPubKeyRow struct {
+	ID      int64
+	Version int16
+}
+
+func (q *Queries) GetNodeIDsByPubKey(ctx context.Context, pubKey []byte) ([]GetNodeIDsByPubKeyRow, error) {
+	rows, err := q.db.QueryContext(ctx, getNodeIDsByPubKey, pubKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetNodeIDsByPubKeyRow
+	for rows.Next() {
+		var i GetNodeIDsByPubKeyRow
+		if err := rows.Scan(&i.ID, &i.Version); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getNodesByIDs = `-- name: GetNodesByIDs :many
 SELECT id, version, pub_key, alias, last_update, block_height, color, signature
 FROM graph_nodes

@@ -44,6 +44,7 @@ type SQLQueries interface {
 	GetNodeByPubKey(ctx context.Context, arg sqlc.GetNodeByPubKeyParams) (sqlc.GraphNode, error)
 	GetNodesByIDs(ctx context.Context, ids []int64) ([]sqlc.GraphNode, error)
 	GetNodeIDByPubKey(ctx context.Context, arg sqlc.GetNodeIDByPubKeyParams) (int64, error)
+	GetNodeIDsByPubKey(ctx context.Context, pubKey []byte) ([]sqlc.GetNodeIDsByPubKeyRow, error)
 	GetNodesByLastUpdateRange(ctx context.Context, arg sqlc.GetNodesByLastUpdateRangeParams) ([]sqlc.GraphNode, error)
 	ListNodesPaginated(ctx context.Context, arg sqlc.ListNodesPaginatedParams) ([]sqlc.GraphNode, error)
 	ListNodeIDsAndPubKeys(ctx context.Context, arg sqlc.ListNodeIDsAndPubKeysParams) ([]sqlc.ListNodeIDsAndPubKeysRow, error)
@@ -951,24 +952,29 @@ func (s *SQLStore) ForEachNodeCacheable(ctx context.Context,
 // Unknown policies are passed into the callback as nil values.
 //
 // NOTE: part of the V1Store interface.
+// NOTE: this will return all channels across gossip versions. Callers should
+// take this into account.
+// TODO(elle): ensure all callers are not double counting.
 func (s *SQLStore) ForEachNodeChannel(ctx context.Context, nodePub route.Vertex,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error, reset func()) error {
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		dbNode, err := db.GetNodeByPubKey(
-			ctx, sqlc.GetNodeByPubKeyParams{
-				Version: int16(s.cfg.Version),
-				PubKey:  nodePub[:],
-			},
-		)
+		dbNodes, err := db.GetNodeIDsByPubKey(ctx, nodePub[:])
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		} else if err != nil {
 			return fmt.Errorf("unable to fetch node: %w", err)
 		}
 
-		return s.forEachNodeChannel(ctx, db, dbNode.ID, cb)
+		for _, dbNode := range dbNodes {
+			err := s.forEachNodeChannel(ctx, db, dbNode.ID, cb)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
 	}, reset)
 }
 

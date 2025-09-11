@@ -250,7 +250,6 @@ func testLocalClaimOutgoingHTLCSimpleTaproot(ht *lntest.HarnessTest) {
 	openChannelParams := lntest.OpenChannelParams{
 		Amt:            chanAmt,
 		CommitmentType: c,
-		Private:        true,
 	}
 
 	cfg := node.CfgSimpleTaproot
@@ -572,7 +571,6 @@ func testMultiHopReceiverPreimageClaimSimpleTaproot(ht *lntest.HarnessTest) {
 	openChannelParams := lntest.OpenChannelParams{
 		Amt:            chanAmt,
 		CommitmentType: c,
-		Private:        true,
 	}
 
 	cfg := node.CfgSimpleTaproot
@@ -918,7 +916,6 @@ func testLocalForceCloseBeforeTimeoutSimpleTaproot(ht *lntest.HarnessTest) {
 	params := lntest.OpenChannelParams{
 		Amt:            chanAmt,
 		CommitmentType: c,
-		Private:        true,
 	}
 
 	cfg := node.CfgSimpleTaproot
@@ -943,7 +940,6 @@ func testLocalForceCloseBeforeTimeoutSimpleTaprootZeroConf(
 		Amt:            chanAmt,
 		ZeroConf:       true,
 		CommitmentType: c,
-		Private:        true,
 	}
 
 	// Prepare Carol's node config to enable zero-conf and leased channel.
@@ -1276,7 +1272,6 @@ func testRemoteForceCloseBeforeTimeoutSimpleTaproot(ht *lntest.HarnessTest) {
 	params := lntest.OpenChannelParams{
 		Amt:            chanAmt,
 		CommitmentType: c,
-		Private:        true,
 	}
 
 	cfg := node.CfgSimpleTaproot
@@ -1566,7 +1561,6 @@ func testLocalClaimIncomingHTLCSimpleTaproot(ht *lntest.HarnessTest) {
 	params := lntest.OpenChannelParams{
 		Amt:            chanAmt,
 		CommitmentType: c,
-		Private:        true,
 	}
 
 	cfg := node.CfgSimpleTaproot
@@ -2186,7 +2180,6 @@ func testLocalPreimageClaimSimpleTaproot(ht *lntest.HarnessTest) {
 	params := lntest.OpenChannelParams{
 		Amt:            chanAmt,
 		CommitmentType: c,
-		Private:        true,
 	}
 
 	cfg := node.CfgSimpleTaproot
@@ -2750,7 +2743,6 @@ func testHtlcAggregaitonSimpleTaproot(ht *lntest.HarnessTest) {
 	params := lntest.OpenChannelParams{
 		Amt:            chanAmt,
 		CommitmentType: c,
-		Private:        true,
 	}
 
 	cfg := node.CfgSimpleTaproot

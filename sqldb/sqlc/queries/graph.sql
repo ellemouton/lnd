@@ -41,6 +41,11 @@ FROM graph_nodes
 WHERE pub_key = $1
   AND version = $2;
 
+-- name: GetNodeIDsByPubKey :many
+SELECT id, version
+FROM graph_nodes
+WHERE pub_key = $1;
+
 -- name: ListNodesPaginated :many
 SELECT *
 FROM graph_nodes

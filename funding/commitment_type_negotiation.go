@@ -84,6 +84,13 @@ func explicitNegotiateCommitmentType(channelType lnwire.ChannelType, local,
 
 	channelFeatures := lnwire.RawFeatureVector(channelType)
 
+	log.Infof("ELLE Funding: explicitNegotiateCommitmentType: channelType: %v", channelType)
+	log.Infof("ELLE Funding: explicitNegotiateCommitmentType: local: %v", local.Features())
+	log.Infof("ELLE Funding: explicitNegotiateCommitmentType: remote: %v", remote.Features())
+	log.Infof("ELLE: Funding: %v", channelFeatures.OnlyContains(
+		lnwire.SimpleTaprootChannelsRequiredStaging,
+	))
+
 	switch {
 	// Lease script enforcement + anchors zero fee + static remote key +
 	// zero conf + scid alias features only.
@@ -244,6 +251,10 @@ func explicitNegotiateCommitmentType(channelType lnwire.ChannelType, local,
 	case channelFeatures.OnlyContains(
 		lnwire.SimpleTaprootChannelsRequiredStaging,
 	):
+
+		log.Infof("ELLE: Funding: simple taproot channel only")
+		log.Infof("ELLE: %v", local.HasFeature(lnwire.SimpleTaprootChannelsOptionalStaging))
+		log.Infof("ELLE: %v", remote.HasFeature(lnwire.SimpleTaprootChannelsOptionalStaging))
 
 		if !hasFeatures(
 			local, remote,

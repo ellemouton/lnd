@@ -18,8 +18,8 @@ func testMultiHopPayments(ht *lntest.HarnessTest) {
 	// channel with Alice, and Carol with Dave. After this setup, the
 	// network topology should now look like:
 	//     Carol -> Dave -> Alice -> Bob
-	alice := ht.NewNodeWithCoins("Alice", nil)
-	bob := ht.NewNode("Bob", nil)
+	alice := ht.NewNodeWithCoins("Alice", node.CfgSimpleTaproot)
+	bob := ht.NewNode("Bob", node.CfgSimpleTaproot)
 
 	daveArgs := []string{"--protocol.legacy.onion"}
 	dave := ht.NewNode("Dave", daveArgs)
@@ -45,7 +45,10 @@ func testMultiHopPayments(ht *lntest.HarnessTest) {
 	// Open a channel with 100k satoshis between Alice and Bob with Alice
 	// being the sole funder of the channel.
 	chanPointAlice := ht.OpenChannel(
-		alice, bob, lntest.OpenChannelParams{Amt: chanAmt},
+		alice, bob, lntest.OpenChannelParams{
+			Amt:            chanAmt,
+			CommitmentType: lnrpc.CommitmentType_SIMPLE_TAPROOT,
+		},
 	)
 
 	// We'll create Dave and establish a channel to Alice. Dave will be
