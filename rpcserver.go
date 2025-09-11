@@ -695,7 +695,7 @@ func (r *rpcServer) addDeps(ctx context.Context, s *server,
 	invoiceHtlcModifier *invoices.HtlcModificationInterceptor) error {
 
 	// Set up router rpc backend.
-	selfNode, err := s.graph.SourceNode(ctx)
+	selfNode, err := s.graph.SourceNode(ctx, lnwire.GossipVersion1)
 	if err != nil {
 		return err
 	}
@@ -803,7 +803,7 @@ func (r *rpcServer) addDeps(ctx context.Context, s *server,
 		routerBackend, s.nodeSigner, s.graph, s.chanStateDB,
 		s.sweeper, tower, s.towerClientMgr, r.cfg.net.ResolveTCPAddr,
 		genInvoiceFeatures, genAmpInvoiceFeatures,
-		s.getNodeAnnouncement, s.updateAndBroadcastSelfNode, parseAddr,
+		s.getNodeAnnouncements, s.updateAndBroadcastSelfNode, parseAddr,
 		rpcsLog, s.aliasMgr, r.implCfg.AuxDataParser,
 		invoiceHtlcModifier,
 	)
@@ -3350,9 +3350,9 @@ func (r *rpcServer) GetInfo(_ context.Context,
 
 	// Check if external IP addresses were provided to lnd and use them
 	// to set the URIs.
-	nodeAnn := r.server.getNodeAnnouncement()
+	nodeAnn, _ := r.server.getNodeAnnouncements()
 
-	addrs := nodeAnn.Addresses
+	addrs := nodeAnn.NodeAddrs()
 	uris := make([]string, len(addrs))
 	for i, addr := range addrs {
 		uris[i] = fmt.Sprintf("%s@%s", encodedIDPub, addr.String())
@@ -3377,7 +3377,7 @@ func (r *rpcServer) GetInfo(_ context.Context,
 	// TODO(roasbeef): add synced height n stuff
 
 	isTestNet := chainreg.IsTestnet(&r.cfg.ActiveNetParams)
-	nodeColor := graphdb.EncodeHexColor(nodeAnn.RGBColor)
+	nodeColor := graphdb.EncodeHexColor(nodeAnn.NodeColor())
 	version := build.Version() + " commit=" + build.Commit
 
 	return &lnrpc.GetInfoResponse{
@@ -3392,7 +3392,7 @@ func (r *rpcServer) GetInfo(_ context.Context,
 		Testnet:                   isTestNet,
 		Chains:                    activeChains,
 		Uris:                      uris,
-		Alias:                     nodeAnn.Alias.String(),
+		Alias:                     nodeAnn.NodeAlias(),
 		Color:                     nodeColor,
 		BestHeaderTimestamp:       syncInfo.timestamp,
 		Version:                   version,
@@ -7849,7 +7849,7 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 	_ *lnrpc.FeeReportRequest) (*lnrpc.FeeReportResponse, error) {
 
 	channelGraph := r.server.graph
-	selfNode, err := channelGraph.SourceNode(ctx)
+	selfNode, err := channelGraph.SourceNode(ctx, lnwire.GossipVersion1)
 	if err != nil {
 		return nil, err
 	}

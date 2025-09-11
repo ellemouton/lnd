@@ -100,8 +100,30 @@ type NodeAnnouncement1 struct {
 	ExtraOpaqueData ExtraOpaqueData
 }
 
+func (a *NodeAnnouncement1) SigBytes() []byte {
+	return a.Signature.ToSignatureBytes()
+}
+
+func (a *NodeAnnouncement1) NodeAddrs() []net.Addr {
+	return a.Addresses
+}
+
+func (a *NodeAnnouncement1) NodeAlias() string {
+	return a.Alias.String()
+}
+
+func (a *NodeAnnouncement1) NodeColor() color.RGBA{
+	return a.RGBColor
+}
+
 func (a *NodeAnnouncement1) NodePub() [33]byte {
 	return a.NodeID
+}
+
+func (a *NodeAnnouncement1) SetAddrs(addrs []net.Addr) error{
+	a.Addresses = addrs
+
+	return nil
 }
 
 // A compile time check to ensure NodeAnnouncement1 implements the

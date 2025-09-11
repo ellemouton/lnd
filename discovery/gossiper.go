@@ -248,11 +248,13 @@ type Config struct {
 	// FetchSelfAnnouncement retrieves our current node announcement, for
 	// use when determining whether we should update our peers about our
 	// presence in the network.
-	FetchSelfAnnouncement func() lnwire.NodeAnnouncement1
+	FetchSelfAnnouncement func() (*lnwire.NodeAnnouncement1,
+		*lnwire.NodeAnnouncement2)
 
 	// UpdateSelfAnnouncement produces a new announcement for our node with
 	// an updated timestamp which can be broadcast to our peers.
-	UpdateSelfAnnouncement func() (lnwire.NodeAnnouncement1, error)
+	UpdateSelfAnnouncements func() (*lnwire.NodeAnnouncement1,
+		*lnwire.NodeAnnouncement2, error)
 
 	// ProofMatureDelta the number of confirmations which is needed before
 	// exchange the channel announcement proofs.
@@ -1736,8 +1738,9 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
 	}
 
 	var (
-		havePublicChannels bool
-		edgesToUpdate      []updateTuple
+		havePublicV1Channels bool
+		havePublicV2Channels bool
+		edgesToUpdate        []updateTuple
 	)
 	err := d.cfg.Graph.ForAllOutgoingChannels(ctx, func(
 		info *models.ChannelEdgeInfo,
@@ -1757,7 +1760,11 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
 		// We make a note that we have at least one public channel. We
 		// use this to determine whether we should send a node
 		// announcement below.
-		havePublicChannels = true
+		if info.Version == lnwire.GossipVersion1 {
+			havePublicV1Channels = true
+		} else {
+			havePublicV2Channels = true
+		}
 
 		// If this edge has a ChannelUpdate that was created before the
 		// introduction of the MaxHTLC field, then we'll update this
@@ -1789,7 +1796,8 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
 
 		return nil
 	}, func() {
-		havePublicChannels = false
+		havePublicV1Channels = false
+		havePublicV2Channels = false
 		edgesToUpdate = nil
 	})
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
@@ -1819,33 +1827,61 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
 
 	// If we don't have any public channels, we return as we don't want to
 	// broadcast anything that would reveal our existence.
-	if !havePublicChannels {
+	if !havePublicV1Channels && !havePublicV2Channels {
 		return nil
 	}
 
-	// We'll also check that our NodeAnnouncement1 is not too old.
-	currentNodeAnn := d.cfg.FetchSelfAnnouncement()
-	timestamp := time.Unix(int64(currentNodeAnn.Timestamp), 0)
-	timeElapsed := now.Sub(timestamp)
+	currNodeAnn1, currNodeAnn2 := d.cfg.FetchSelfAnnouncement()
 
-	// If it's been a full day since we've re-broadcasted the
-	// node announcement, refresh it and resend it.
 	nodeAnnStr := ""
-	if timeElapsed >= d.cfg.RebroadcastInterval {
-		newNodeAnn, err := d.cfg.UpdateSelfAnnouncement()
-		if err != nil {
-			return fmt.Errorf("unable to get refreshed node "+
-				"announcement: %v", err)
+	if havePublicV1Channels {
+		// We'll also check that our NodeAnnouncement1 is not too old.
+		timestamp := time.Unix(int64(currNodeAnn1.Timestamp), 0)
+		timeElapsed := now.Sub(timestamp)
+
+		// If it's been a full day since we've re-broadcasted the
+		// node announcement, refresh it and resend it.
+		if timeElapsed >= d.cfg.RebroadcastInterval {
+			newNodeAnn, _, err := d.cfg.UpdateSelfAnnouncements()
+			if err != nil {
+				return fmt.Errorf("unable to get refreshed node "+
+					"announcement: %v", err)
+			}
+
+			signedUpdates = append(signedUpdates, newNodeAnn)
+			nodeAnnStr = " and our refreshed node announcement"
+
+			// Before broadcasting the refreshed node announcement, add it
+			// to our own graph.
+			if err := d.addNode(ctx, newNodeAnn, false); err != nil {
+				log.Errorf("Unable to add refreshed node announcement "+
+					"to graph: %v", err)
+			}
 		}
+	}
 
-		signedUpdates = append(signedUpdates, &newNodeAnn)
-		nodeAnnStr = " and our refreshed node announcement"
+	if havePublicV2Channels {
+		blockHeight := currNodeAnn2.BlockHeight.Val
+		blocksSince := d.latestHeight() - blockHeight
 
-		// Before broadcasting the refreshed node announcement, add it
-		// to our own graph.
-		if err := d.addNode(ctx, &newNodeAnn, false); err != nil {
-			log.Errorf("Unable to add refreshed node announcement "+
-				"to graph: %v", err)
+		// If it's been a full day since we've re-broadcasted the
+		// node announcement, refresh it and resend it.
+		if blocksSince >= uint32(d.cfg.RebroadcastInterval.Hours()*6) {
+			_, newNodeAnn, err := d.cfg.UpdateSelfAnnouncements()
+			if err != nil {
+				return fmt.Errorf("unable to get refreshed node "+
+					"announcement: %v", err)
+			}
+
+			signedUpdates = append(signedUpdates, newNodeAnn)
+			nodeAnnStr = " and our refreshed node announcement"
+
+			// Before broadcasting the refreshed node announcement, add it
+			// to our own graph.
+			if err := d.addNode(ctx, newNodeAnn, false); err != nil {
+				log.Errorf("Unable to add refreshed node announcement "+
+					"to graph: %v", err)
+			}
 		}
 	}
 
@@ -2078,16 +2114,20 @@ func (d *AuthenticatedGossiper) fetchPKScriptWrap(chanID lnwire.ShortChannelID) 
 // addNode processes the given node announcement, and adds it to our channel
 // graph.
 func (d *AuthenticatedGossiper) addNode(ctx context.Context,
-	msg *lnwire.NodeAnnouncement1, fromRemote bool) error {
+	msg lnwire.NodeAnnouncement, fromRemote bool) error {
 
 	if err := netann.ValidateNodeAnn(msg); err != nil {
 		return fmt.Errorf("unable to validate node announcement: %w",
 			err)
 	}
 
-	return d.cfg.Graph.AddNode(
-		ctx, models.NodeFromWireAnnouncement(msg), fromRemote,
-	)
+	node, err := models.NodeFromWireAnnouncement(msg)
+	if err != nil {
+		return fmt.Errorf("unable to parse node announcement: %w",
+			err)
+	}
+
+	return d.cfg.Graph.AddNode(ctx, node, fromRemote)
 }
 
 // isPremature decides whether a given network message has a block height+delta
@@ -2256,7 +2296,7 @@ func (d *AuthenticatedGossiper) processZombieUpdate(_ context.Context,
 // announcement fields and returns an error if they are invalid to prevent
 // forwarding invalid node announcements to our peers.
 func (d *AuthenticatedGossiper) fetchNodeAnn(ctx context.Context,
-	pubKey [33]byte) (*lnwire.NodeAnnouncement1, error) {
+	pubKey [33]byte) (lnwire.NodeAnnouncement, error) {
 
 	node, err := d.cfg.Graph.FetchNode(ctx, pubKey)
 	if err != nil {
@@ -3350,8 +3390,8 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 		direction = 1
 	}
 
-	log.Debugf("Validating ChannelUpdate: channel=%v, for node=%x, has "+
-		"edge policy=%v", chanInfo.ChannelID,
+	log.Debugf("Validating %x: channel=%v, for node=%x, has "+
+		"edge policy=%v", upd.MsgType(), chanInfo.ChannelID,
 		pubKey.SerializeCompressed(), edgeToUpdate != nil)
 
 	// Validate the channel announcement with the expected public key and

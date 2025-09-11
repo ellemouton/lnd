@@ -1116,6 +1116,18 @@ func remoteSchedulerOpts(fromRemote bool) []batch.SchedulerOption {
 	return schedulerOp
 }
 
+func (b *Builder) SourceNode(ctx context.Context,
+	v lnwire.GossipVersion) (*models.Node, error) {
+
+	return b.graph(v).SourceNode(ctx)
+}
+
+func (b *Builder) SetSourceNode(ctx context.Context,
+	node *models.Node) error {
+
+	return b.graph(node.Version).SetSourceNode(ctx, node)
+}
+
 // AddNode is used to add information about a node to the router database. If
 // the node with this pubkey is not present in an existing channel, it will
 // be ignored.

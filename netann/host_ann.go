@@ -170,8 +170,7 @@ func (h *HostAnnouncer) hostWatcher() {
 // NodeAnnUpdater describes a function that's able to update our current node
 // announcement on disk. It returns the updated node announcement given a set
 // of updates to be applied to the current node announcement.
-type NodeAnnUpdater func(modifier ...NodeAnnModifier,
-) (lnwire.NodeAnnouncement1, error)
+type NodeAnnUpdater func(modifier ...NodeAnnModifier) error
 
 // IPAnnouncer is a factory function that generates a new function that uses
 // the passed annUpdater function to to announce new IP changes for a given
@@ -180,25 +179,26 @@ func IPAnnouncer(annUpdater NodeAnnUpdater) func([]net.Addr,
 	map[string]struct{}) error {
 
 	return func(newAddrs []net.Addr, oldAddrs map[string]struct{}) error {
-		_, err := annUpdater(func(
-			currentNodeAnn *lnwire.NodeAnnouncement1) {
-			// To ensure we don't duplicate any addresses, we'll
-			// filter out the same of addresses we should no longer
-			// advertise.
-			filteredAddrs := make(
-				[]net.Addr, 0, len(currentNodeAnn.Addresses),
-			)
-			for _, addr := range currentNodeAnn.Addresses {
-				if _, ok := oldAddrs[addr.String()]; ok {
-					continue
+		return annUpdater(NodeAnnModifierFunc(
+			func(currentNodeAnn lnwire.NodeAnnouncement) error {
+				// To ensure we don't duplicate any addresses, we'll
+				// filter out the same of addresses we should no longer
+				// advertise.
+				filteredAddrs := make(
+					[]net.Addr, 0, len(currentNodeAnn.NodeAddrs()),
+				)
+				for _, addr := range currentNodeAnn.NodeAddrs() {
+					if _, ok := oldAddrs[addr.String()]; ok {
+						continue
+					}
+
+					filteredAddrs = append(filteredAddrs, addr)
 				}
 
-				filteredAddrs = append(filteredAddrs, addr)
-			}
+				filteredAddrs = append(filteredAddrs, newAddrs...)
 
-			filteredAddrs = append(filteredAddrs, newAddrs...)
-			currentNodeAnn.Addresses = filteredAddrs
-		})
-		return err
+				return currentNodeAnn.SetAddrs(filteredAddrs)
+			},
+		))
 	}
 }

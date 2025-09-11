@@ -57,6 +57,93 @@ type NodeAnnouncement2 struct {
 	ExtraSignedFields
 }
 
+func (n *NodeAnnouncement2) SigBytes() []byte {
+	return n.Signature.Val.ToSignatureBytes()
+}
+
+func (n *NodeAnnouncement2) NodeAddrs() []net.Addr {
+	var addrs []net.Addr
+
+	n.IPV4Addrs.WhenSome(func(r tlv.RecordT[tlv.TlvType5, IPV4Addrs]) {
+		for _, a := range r.Val {
+			addrs = append(addrs, a)
+		}
+	})
+
+	n.IPV6Addrs.WhenSome(func(r tlv.RecordT[tlv.TlvType7, IPV6Addrs]) {
+		for _, a := range r.Val {
+			addrs = append(addrs, a)
+		}
+	})
+
+	n.TorV3Addrs.WhenSome(func(r tlv.RecordT[tlv.TlvType9, TorV3Addrs]) {
+		for _, a := range r.Val {
+			addrs = append(addrs, a)
+		}
+	})
+
+	return addrs
+}
+
+func (n *NodeAnnouncement2) NodeAlias() string {
+	var alias []byte
+	n.Alias.WhenSome(func(r tlv.RecordT[tlv.TlvType3, []byte]) {
+		alias = r.Val
+	})
+	return string(bytes.Trim(alias[:], "\x00"))
+}
+
+func (n *NodeAnnouncement2) NodeColor() color.RGBA {
+	var c color.RGBA
+	n.Color.WhenSome(func(r tlv.RecordT[tlv.TlvType1, Color]) {
+		c = color.RGBA(r.Val)
+	})
+	return c
+}
+
+func (n *NodeAnnouncement2) NodePub() [33]byte {
+	return n.NodeID.Val
+}
+
+func (n *NodeAnnouncement2) SetAddrs(addrs []net.Addr) error {
+	var (
+		ipv4Addrs  IPV4Addrs
+		ipv6Addrs  IPV6Addrs
+		torV3Addrs TorV3Addrs
+	)
+
+	for _, address := range addrs {
+		switch addr := address.(type) {
+		case *net.TCPAddr:
+			if addr.IP.To4() != nil {
+				ipv4Addrs = append(ipv4Addrs, addr)
+			} else {
+				ipv6Addrs = append(ipv6Addrs, addr)
+			}
+		case *tor.OnionAddr:
+			torV3Addrs = append(torV3Addrs, addr)
+
+		default:
+			return fmt.Errorf("unknown address type: %T", addr)
+		}
+
+	}
+
+	ipv4Record := tlv.ZeroRecordT[tlv.TlvType5, IPV4Addrs]()
+	ipv4Record.Val = ipv4Addrs
+	n.IPV4Addrs = tlv.SomeRecordT(ipv4Record)
+
+	ipv6Record := tlv.ZeroRecordT[tlv.TlvType7, IPV6Addrs]()
+	ipv6Record.Val = ipv6Addrs
+	n.IPV6Addrs = tlv.SomeRecordT(ipv6Record)
+
+	torV3Record := tlv.ZeroRecordT[tlv.TlvType9, TorV3Addrs]()
+	torV3Record.Val = torV3Addrs
+	n.TorV3Addrs = tlv.SomeRecordT(torV3Record)
+
+	return nil
+}
+
 // AllRecords returns all the TLV records for the message. This will include all
 // the records we know about along with any that we don't know about but that
 // fall in the signed TLV range.
@@ -447,6 +534,8 @@ func torV3AddrsDecoder(r io.Reader, val interface{}, _ *[8]byte,
 
 	return tlv.NewTypeForEncodingErr(val, "lnwire.TorV3Addrs")
 }
+
+var _ NodeAnnouncement = (*NodeAnnouncement2)(nil)
 
 var _ GossipMessage = (*NodeAnnouncement2)(nil)
 

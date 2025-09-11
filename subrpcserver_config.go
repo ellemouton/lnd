@@ -122,7 +122,7 @@ func (s *subRPCServerConfigs) PopulateDependencies(cfg *Config,
 	tcpResolver lncfg.TCPResolver,
 	genInvoiceFeatures func() *lnwire.FeatureVector,
 	genAmpInvoiceFeatures func() *lnwire.FeatureVector,
-	getNodeAnnouncement func() lnwire.NodeAnnouncement1,
+	getNodeAnnouncements func() (*lnwire.NodeAnnouncement1, *lnwire.NodeAnnouncement2),
 	updateNodeAnnouncement func(ctx context.Context,
 		features *lnwire.RawFeatureVector,
 		modifiers ...netann.NodeAnnModifier) error,
@@ -356,8 +356,8 @@ func (s *subRPCServerConfigs) PopulateDependencies(cfg *Config,
 		case *peersrpc.Config:
 			subCfgValue := extractReflectValue(subCfg)
 
-			subCfgValue.FieldByName("GetNodeAnnouncement").Set(
-				reflect.ValueOf(getNodeAnnouncement),
+			subCfgValue.FieldByName("GetNodeAnnouncements").Set(
+				reflect.ValueOf(getNodeAnnouncements),
 			)
 
 			subCfgValue.FieldByName("ParseAddr").Set(

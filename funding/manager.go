@@ -391,7 +391,8 @@ type Config struct {
 	// CurrentNodeAnnouncement should return the latest, fully signed node
 	// announcement from the backing Lightning Network node with a fresh
 	// timestamp.
-	CurrentNodeAnnouncement func() (lnwire.NodeAnnouncement1, error)
+	CurrentNodeAnnouncements func() (*lnwire.NodeAnnouncement1,
+		*lnwire.NodeAnnouncement2, error)
 
 	// SendAnnouncement is used by the FundingManager to send announcement
 	// messages to the Gossiper to possibly broadcast to the greater
@@ -3762,7 +3763,8 @@ func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
 			return err
 		}
 
-		nodeAnn, err := f.cfg.CurrentNodeAnnouncement()
+		// TODO(elle): pick appropriate node ann.
+		nodeAnn, _, err := f.cfg.CurrentNodeAnnouncements()
 		if err != nil {
 			return fmt.Errorf("unable to retrieve current node "+
 				"announcement: %v", err)
@@ -3778,7 +3780,7 @@ func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
 		// TODO(halseth): make reliable. If the peer is not online this
 		// will fail, and the opening process will stop. Should instead
 		// block here, waiting for the peer to come online.
-		if err := peer.SendMessage(true, &nodeAnn); err != nil {
+		if err := peer.SendMessage(true, nodeAnn); err != nil {
 			return fmt.Errorf("unable to send node announcement "+
 				"to peer %x: %v", pubKey, err)
 		}
@@ -4878,13 +4880,14 @@ func (f *Manager) announceChannel(localIDKey, remoteIDKey *btcec.PublicKey,
 	// obtain and send a node announcement. This is done since a node
 	// announcement is only accepted after a channel is known for that
 	// particular node, and this might be our first channel.
-	nodeAnn, err := f.cfg.CurrentNodeAnnouncement()
+	// TODO(elle): pick appropriate node ann here.
+	nodeAnn, _, err := f.cfg.CurrentNodeAnnouncements()
 	if err != nil {
 		log.Errorf("can't generate node announcement: %v", err)
 		return err
 	}
 
-	errChan = f.cfg.SendAnnouncement(&nodeAnn)
+	errChan = f.cfg.SendAnnouncement(nodeAnn)
 	select {
 	case err := <-errChan:
 		if err != nil {

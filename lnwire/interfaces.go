@@ -1,6 +1,9 @@
 package lnwire
 
 import (
+	"image/color"
+	"net"
+
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 )
 
@@ -19,6 +22,12 @@ type AnnounceSignatures interface {
 type NodeAnnouncement interface {
 	// NodePub returns the identity public key of the node.
 	NodePub() [33]byte
+
+	NodeAddrs() []net.Addr
+	NodeAlias() string
+	NodeColor() color.RGBA
+	SetAddrs(addrs []net.Addr) error
+	SigBytes() []byte
 
 	Message
 }

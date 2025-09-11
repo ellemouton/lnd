@@ -414,7 +414,8 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 				if err != nil {
 					log.Debugf("Skipping forwarding "+
 						"invalid node announcement "+
-						"%x: %v", nodeAnn.NodeID, err)
+						"%x: %v", nodeAnn.NodePub(),
+						err)
 				} else {
 					chanAnns = append(chanAnns, nodeAnn)
 					nodePubsSent[nodePub] = struct{}{}
@@ -440,7 +441,8 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 				if err != nil {
 					log.Debugf("Skipping forwarding "+
 						"invalid node announcement "+
-						"%x: %v", nodeAnn.NodeID, err)
+						"%x: %v", nodeAnn.NodePub(),
+						err)
 				} else {
 					chanAnns = append(chanAnns, nodeAnn)
 					nodePubsSent[nodePub] = struct{}{}
