@@ -100,6 +100,14 @@ type NodeAnnouncement1 struct {
 	ExtraOpaqueData ExtraOpaqueData
 }
 
+func (a *NodeAnnouncement1) NodeFeatures() *FeatureVector {
+	return NewFeatureVector(a.Features, Features)
+}
+
+func (a *NodeAnnouncement1) TimestampDesc() string {
+	return fmt.Sprintf("timestamp=%d", a.Timestamp)
+}
+
 func (a *NodeAnnouncement1) SigBytes() []byte {
 	return a.Signature.ToSignatureBytes()
 }
@@ -112,7 +120,7 @@ func (a *NodeAnnouncement1) NodeAlias() string {
 	return a.Alias.String()
 }
 
-func (a *NodeAnnouncement1) NodeColor() color.RGBA{
+func (a *NodeAnnouncement1) NodeColor() color.RGBA {
 	return a.RGBColor
 }
 
@@ -120,7 +128,7 @@ func (a *NodeAnnouncement1) NodePub() [33]byte {
 	return a.NodeID
 }
 
-func (a *NodeAnnouncement1) SetAddrs(addrs []net.Addr) error{
+func (a *NodeAnnouncement1) SetAddrs(addrs []net.Addr) error {
 	a.Addresses = addrs
 
 	return nil

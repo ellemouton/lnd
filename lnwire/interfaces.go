@@ -24,11 +24,14 @@ type NodeAnnouncement interface {
 	NodePub() [33]byte
 
 	NodeAddrs() []net.Addr
+	NodeFeatures() *FeatureVector
 	NodeAlias() string
 	NodeColor() color.RGBA
 	SetAddrs(addrs []net.Addr) error
 	SigBytes() []byte
+	TimestampDesc() string
 
+	GossipMessage
 	Message
 }
 

@@ -61,6 +61,10 @@ func (n *NodeAnnouncement2) SigBytes() []byte {
 	return n.Signature.Val.ToSignatureBytes()
 }
 
+func (n *NodeAnnouncement2) NodeFeatures() *FeatureVector {
+	return NewFeatureVector(&n.Features.Val, Features)
+}
+
 func (n *NodeAnnouncement2) NodeAddrs() []net.Addr {
 	var addrs []net.Addr
 
@@ -83,6 +87,10 @@ func (n *NodeAnnouncement2) NodeAddrs() []net.Addr {
 	})
 
 	return addrs
+}
+
+func (n *NodeAnnouncement2) TimestampDesc() string {
+	return fmt.Sprintf("block_height=%d", n.BlockHeight.Val)
 }
 
 func (n *NodeAnnouncement2) NodeAlias() string {

@@ -123,7 +123,9 @@ type V1Store interface { //nolint:interfacebloat
 	// database, a timestamp of when the data for the node was lasted
 	// updated is returned along with a true boolean. Otherwise, an empty
 	// time.Time is returned with a false boolean.
-	HasNode(ctx context.Context, nodePub [33]byte) (time.Time, bool, error)
+	HasV1Node(ctx context.Context, nodePub [33]byte) (time.Time, bool, error)
+
+	HasV2Node(ctx context.Context, nodePub [33]byte) (uint32, bool, error)
 
 	// IsPublicNode is a helper method that determines whether the node with
 	// the given public key is seen as a public node in the graph from the

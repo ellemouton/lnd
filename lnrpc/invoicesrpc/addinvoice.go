@@ -787,9 +787,23 @@ func newSelectHopHintsCfg(invoicesCfg *AddInvoiceConfig,
 	maxHopHints int) *SelectHopHintsCfg {
 
 	return &SelectHopHintsCfg{
-		FetchAllChannels:      invoicesCfg.ChanDB.FetchAllChannels,
-		IsChannelActive:       invoicesCfg.IsChannelActive,
-		IsPublicNode:          invoicesCfg.Graph.IsPublicNode,
+		FetchAllChannels: invoicesCfg.ChanDB.FetchAllChannels,
+		IsChannelActive:  invoicesCfg.IsChannelActive,
+		IsPublicNode: func(pubKey route.Vertex) (bool, error) {
+			pub, err := invoicesCfg.Graph.IsPublicNode(
+				lnwire.GossipVersion1, pubKey,
+			)
+			if err != nil {
+				return false, err
+			}
+			if pub {
+				return true, nil
+			}
+
+			return invoicesCfg.Graph.IsPublicNode(
+				lnwire.GossipVersion2, pubKey,
+			)
+		},
 		FetchChannelEdgesByID: invoicesCfg.Graph.FetchChannelEdgesByID,
 		GetAlias:              invoicesCfg.GetAlias,
 		MaxHopHints:           maxHopHints,

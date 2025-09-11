@@ -2,6 +2,7 @@ package invoicesrpc
 
 import (
 	"github.com/lightningnetwork/lnd/graph/db/models"
+	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
 
@@ -16,5 +17,5 @@ type GraphSource interface {
 	// IsPublicNode is a helper method that determines whether the node with
 	// the given public key is seen as a public node in the graph from the
 	// graph's source node's point of view.
-	IsPublicNode(pubKey route.Vertex) (bool, error)
+	IsPublicNode(v lnwire.GossipVersion, pubKey route.Vertex) (bool, error)
 }

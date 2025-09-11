@@ -2123,8 +2123,7 @@ func (d *AuthenticatedGossiper) addNode(ctx context.Context,
 
 	node, err := models.NodeFromWireAnnouncement(msg)
 	if err != nil {
-		return fmt.Errorf("unable to parse node announcement: %w",
-			err)
+		return err
 	}
 
 	return d.cfg.Graph.AddNode(ctx, node, fromRemote)
@@ -2202,7 +2201,7 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(ctx context.Context,
 	// A new node announcement has arrived which either presents new
 	// information about a node in one of the channels we know about, or a
 	// updating previously advertised information.
-	case *lnwire.NodeAnnouncement1:
+	case lnwire.NodeAnnouncement:
 		return d.handleNodeAnnouncement(ctx, nMsg, msg)
 
 	// A new channel announcement has arrived, this indicates the
@@ -2620,33 +2619,34 @@ func (d *AuthenticatedGossiper) latestHeight() uint32 {
 
 // handleNodeAnnouncement processes a new node announcement.
 func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
-	nMsg *networkMsg, nodeAnn *lnwire.NodeAnnouncement1) ([]networkMsg,
+	nMsg *networkMsg, nodeAnn lnwire.NodeAnnouncement) ([]networkMsg,
 	bool) {
 
-	timestamp := time.Unix(int64(nodeAnn.Timestamp), 0)
+	nodeID := nodeAnn.NodePub()
 
-	log.Debugf("Processing NodeAnnouncement1: peer=%v, timestamp=%v, "+
-		"node=%x, source=%x", nMsg.peer, timestamp, nodeAnn.NodeID,
-		nMsg.source.SerializeCompressed())
+	log.Debugf("Processing %s: peer=%v, %s, "+
+		"node=%x, source=%x", nMsg.msg.MsgType(), nMsg.peer,
+		nodeAnn.TimestampDesc(),
+		nodeID, nMsg.source.SerializeCompressed())
 
 	// We'll quickly ask the router if it already has a newer update for
 	// this node so we can skip validating signatures if not required.
-	if d.cfg.Graph.IsStaleNode(ctx, nodeAnn.NodeID, timestamp) {
-		log.Debugf("Skipped processing stale node: %x", nodeAnn.NodeID)
+	stale, err := d.cfg.Graph.IsStaleNode(ctx, nodeAnn)
+	if err != nil {
+		log.Errorf("Error checking stale node %x: %v", nodeID, err)
+		nMsg.err <- err
+		return nil, false
+	}
+	if stale {
+		log.Debugf("Skipped processing stale node: %x", nodeID)
 		nMsg.err <- nil
 		return nil, true
 	}
 
 	if err := d.addNode(ctx, nodeAnn, nMsg.isRemote); err != nil {
-		log.Debugf("Adding node: %x got error: %v", nodeAnn.NodeID,
-			err)
+		log.Debugf("Adding node: %x got error: %v", nodeID, err)
 
-		if !graph.IsError(
-			err,
-			graph.ErrOutdated,
-			graph.ErrIgnored,
-		) {
-
+		if !graph.IsError(err, graph.ErrOutdated, graph.ErrIgnored) {
 			log.Error(err)
 		}
 
@@ -2657,10 +2657,10 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
 	// In order to ensure we don't leak unadvertised nodes, we'll make a
 	// quick check to ensure this node intends to publicly advertise itself
 	// to the network.
-	isPublic, err := d.cfg.Graph.IsPublicNode(nodeAnn.NodeID)
+	isPublic, err := d.cfg.Graph.IsPublicNode(nodeAnn.GossipVersion(), nodeID)
 	if err != nil {
 		log.Errorf("Unable to determine if node %x is advertised: %v",
-			nodeAnn.NodeID, err)
+			nodeID, err)
 		nMsg.err <- err
 		return nil, false
 	}
@@ -2678,15 +2678,15 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
 		})
 	} else {
 		log.Tracef("Skipping broadcasting node announcement for %x "+
-			"due to being unadvertised", nodeAnn.NodeID)
+			"due to being unadvertised", nodeID)
 	}
 
 	nMsg.err <- nil
 	// TODO(roasbeef): get rid of the above
 
-	log.Debugf("Processed NodeAnnouncement1: peer=%v, timestamp=%v, "+
-		"node=%x, source=%x", nMsg.peer, timestamp, nodeAnn.NodeID,
-		nMsg.source.SerializeCompressed())
+	log.Debugf("Processed NodeAnnouncement1: peer=%v, %s, "+
+		"node=%x, source=%x", nMsg.peer, nodeAnn.TimestampDesc(),
+		nodeID, nMsg.source.SerializeCompressed())
 
 	return announcements, true
 }

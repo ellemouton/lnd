@@ -997,32 +997,62 @@ func (b *Builder) updateGraphWithClosedChannels(
 // timestamp. ErrIgnored will be returned if we already have the node, and
 // ErrOutdated will be returned if we have a timestamp that's after the new
 // timestamp.
-func (b *Builder) assertNodeAnnFreshness(ctx context.Context, node route.Vertex,
-	msgTimestamp time.Time) error {
+func (b *Builder) assertNodeAnnFreshness(ctx context.Context,
+	node *models.Node) error {
 
-	// If we are not already aware of this node, it means that we don't
-	// know about any channel using this node. To avoid a DoS attack by
-	// node announcements, we will ignore such nodes. If we do know about
-	// this node, check that this update brings info newer than what we
-	// already have.
-	lastUpdate, exists, err := b.cfg.Graph.HasNode(ctx, node)
-	if err != nil {
-		return fmt.Errorf("unable to query for the "+
-			"existence of node: %w", err)
-	}
-	if !exists {
-		return NewErrf(ErrIgnored, "Ignoring node announcement"+
-			" for node not found in channel graph (%x)",
-			node[:])
-	}
+	switch node.Version {
+	case lnwire.GossipVersion1:
+		// If we are not already aware of this node, it means that we don't
+		// know about any channel using this node. To avoid a DoS attack by
+		// node announcements, we will ignore such nodes. If we do know about
+		// this node, check that this update brings info newer than what we
+		// already have.
+		lastUpdate, exists, err := b.cfg.Graph.HasV1Node(ctx, node.PubKeyBytes)
+		if err != nil {
+			return fmt.Errorf("unable to query for the "+
+				"existence of node: %w", err)
+		}
+		if !exists {
+			return NewErrf(ErrIgnored, "Ignoring node announcement"+
+				" for node not found in channel graph (%x)",
+				node.PubKeyBytes)
+		}
 
-	// If we've reached this point then we're aware of the vertex being
-	// advertised. So we now check if the new message has a new time stamp,
-	// if not then we won't accept the new data as it would override newer
-	// data.
-	if !lastUpdate.Before(msgTimestamp) {
-		return NewErrf(ErrOutdated, "Ignoring outdated "+
-			"announcement for %x", node[:])
+		// If we've reached this point then we're aware of the vertex being
+		// advertised. So we now check if the new message has a new time stamp,
+		// if not then we won't accept the new data as it would override newer
+		// data.
+		if !lastUpdate.Before(node.LastUpdate) {
+			return NewErrf(ErrOutdated, "Ignoring outdated "+
+				"announcement for %x", node.PubKeyBytes)
+		}
+
+	case lnwire.GossipVersion2:
+		// If we are not already aware of this node, it means that we don't
+		// know about any channel using this node. To avoid a DoS attack by
+		// node announcements, we will ignore such nodes. If we do know about
+		// this node, check that this update brings info newer than what we
+		// already have.
+		lastUpdate, exists, err := b.cfg.Graph2.HasV2Node(ctx, node.PubKeyBytes)
+		if err != nil {
+			return fmt.Errorf("unable to query for the "+
+				"existence of node: %w", err)
+		}
+		if !exists {
+			return NewErrf(ErrIgnored, "Ignoring node announcement"+
+				" for node not found in channel graph (%x)",
+				node.PubKeyBytes)
+		}
+
+		// If we've reached this point then we're aware of the vertex being
+		// advertised. So we now check if the new message has a new time stamp,
+		// if not then we won't accept the new data as it would override newer
+		// data.
+		if node.LastBlockHeight <= lastUpdate {
+			return NewErrf(ErrOutdated, "Ignoring outdated "+
+				"announcement for %x", node.PubKeyBytes)
+		}
+
 	}
 
 	return nil
@@ -1044,6 +1074,20 @@ func (b *Builder) MarkZombieEdge(v lnwire.GossipVersion,
 	}
 
 	return nil
+}
+
+func (b *Builder) HasNode(ctx context.Context, pub route.Vertex) (bool, error) {
+	_, has, err := b.graph(lnwire.GossipVersion1).HasV1Node(ctx, pub)
+	if err != nil {
+		return false, err
+	}
+	if has {
+		return true, nil
+	}
+
+	_, has, err = b.graph(lnwire.GossipVersion2).HasV2Node(ctx, pub)
+
+	return has, err
 }
 
 // ApplyChannelUpdate validates a channel update and if valid, applies it to the
@@ -1168,7 +1212,7 @@ func (b *Builder) addNode(ctx context.Context, node *models.Node,
 	// Before we add the node to the database, we'll check to see if the
 	// announcement is "fresh" or not. If it isn't, then we'll return an
 	// error.
-	err := b.assertNodeAnnFreshness(ctx, node.PubKeyBytes, node.LastUpdate)
+	err := b.assertNodeAnnFreshness(ctx, node)
 	if err != nil {
 		return err
 	}
@@ -1581,26 +1625,33 @@ func (b *Builder) AddProof(chanID lnwire.ShortChannelID,
 // target node with a more recent timestamp.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsStaleNode(ctx context.Context, node route.Vertex,
-	timestamp time.Time) bool {
+func (b *Builder) IsStaleNode(ctx context.Context,
+	node lnwire.NodeAnnouncement) (bool, error) {
+
+	n, err := models.NodeFromWireAnnouncement(node)
+	if err != nil {
+		return false, err
+	}
 
 	// If our attempt to assert that the node announcement is fresh fails,
 	// then we know that this is actually a stale announcement.
-	err := b.assertNodeAnnFreshness(ctx, node, timestamp)
+	err = b.assertNodeAnnFreshness(ctx, n)
 	if err != nil {
-		log.Debugf("Checking stale node %x got %v", node, err)
-		return true
+		return true, fmt.Errorf("checking stale node %x got %v", node,
+			err)
 	}
 
-	return false
+	return false, nil
 }
 
 // IsPublicNode determines whether the given vertex is seen as a public node in
 // the graph from the graph's source node's point of view.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsPublicNode(node route.Vertex) (bool, error) {
-	return b.cfg.Graph.IsPublicNode(node)
+func (b *Builder) IsPublicNode(v lnwire.GossipVersion,
+	node route.Vertex) (bool, error) {
+
+	return b.graph(v).IsPublicNode(node)
 }
 
 // IsKnownEdge returns true if the graph source already knows of the passed

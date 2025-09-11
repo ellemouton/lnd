@@ -2,7 +2,6 @@ package graph
 
 import (
 	"context"
-	"time"
 
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -19,7 +18,8 @@ type ChannelGraphSource interface {
 	// AddNode is used to add information about a node to the router
 	// database. If the node with this pubkey is not present in an existing
 	// channel, it will be ignored.
-	AddNode(ctx context.Context, node *models.Node, fromRemote bool) error
+	AddNode(ctx context.Context, node *models.Node,
+		fromRemote bool) error
 
 	// AddEdge is used to add edge/channel to the topology of the router,
 	// after all information about channel will be gathered this
@@ -41,12 +41,11 @@ type ChannelGraphSource interface {
 	// for the target node with a more recent timestamp. This method will
 	// also return true if we don't have an active channel announcement for
 	// the target node.
-	IsStaleNode(ctx context.Context, node route.Vertex,
-		timestamp time.Time) bool
+	IsStaleNode(ctx context.Context, n lnwire.NodeAnnouncement) (bool, error)
 
 	// IsPublicNode determines whether the given vertex is seen as a public
 	// node in the graph from the graph's source node's point of view.
-	IsPublicNode(node route.Vertex) (bool, error)
+	IsPublicNode(v lnwire.GossipVersion, node route.Vertex) (bool, error)
 
 	// IsKnownEdge returns true if the graph source already knows of the
 	// passed channel ID either as a live or zombie edge.

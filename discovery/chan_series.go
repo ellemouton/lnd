@@ -77,7 +77,7 @@ type GraphDB interface {
 	NodeUpdatesInHorizon(startTime,
 		endTime time.Time) ([]*models.Node, error)
 
-	IsPublicNode(pubKey route.Vertex) (bool, error)
+	IsPublicNode(v lnwire.GossipVersion, pubKey route.Vertex) (bool, error)
 
 	FilterKnownChanIDs(chansInfo []graphdb.ChannelUpdateInfo) ([]uint64,
 		[]graphdb.ChannelUpdateInfo, error)
@@ -240,7 +240,8 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 
 		// Ensure we only forward nodes that are publicly advertised to
 		// prevent leaking information about nodes.
-		isNodePublic, err := c.graph.IsPublicNode(nodeAnn.PubKeyBytes)
+		// TODO(elle): update for v2
+		isNodePublic, err := c.graph.IsPublicNode(lnwire.GossipVersion1, nodeAnn.PubKeyBytes)
 		if err != nil {
 			log.Errorf("Unable to determine if node %x is "+
 				"advertised: %v", nodeAnn.PubKeyBytes, err)

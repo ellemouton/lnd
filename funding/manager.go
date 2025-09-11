@@ -3774,8 +3774,9 @@ func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
 			completeChan.FundingOutpoint,
 		)
 		pubKey := peer.PubKey()
-		log.Debugf("Sending our NodeAnnouncement1 for "+
-			"ChannelID(%v) to %x", chanID, pubKey)
+		log.Debugf("Sending our %s for "+
+			"ChannelID(%v) to %x", nodeAnn.MsgType(), chanID,
+			pubKey)
 
 		// TODO(halseth): make reliable. If the peer is not online this
 		// will fail, and the opening process will stop. Should instead
