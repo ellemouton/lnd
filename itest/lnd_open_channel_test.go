@@ -1128,7 +1128,6 @@ func testSimpleTaprootChannelActivation(ht *lntest.HarnessTest) {
 	params := lntest.OpenChannelParams{
 		FundMax:        true,
 		CommitmentType: lnrpc.CommitmentType_SIMPLE_TAPROOT,
-		Private:        true,
 	}
 
 	// Alice opens the channel to Bob.

@@ -190,13 +190,6 @@ func newChanRestoreScenario(ht *lntest.HarnessTest, ct lnrpc.CommitmentType,
 	// with a portion pushed.
 	ht.ConnectNodes(dave, carol)
 
-	// If the commitment type is taproot, then the channel must also be
-	// private.
-	var privateChan bool
-	if ct == lnrpc.CommitmentType_SIMPLE_TAPROOT {
-		privateChan = true
-	}
-
 	return &chanRestoreScenario{
 		carol:    carol,
 		dave:     dave,
@@ -207,7 +200,6 @@ func newChanRestoreScenario(ht *lntest.HarnessTest, ct lnrpc.CommitmentType,
 			PushAmt:        pushAmt,
 			ZeroConf:       zeroConf,
 			CommitmentType: ct,
-			Private:        privateChan,
 		},
 	}
 }

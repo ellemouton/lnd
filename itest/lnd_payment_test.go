@@ -424,7 +424,6 @@ func testSendDirectPaymentSimpleTaproot(ht *lntest.HarnessTest) {
 	params := lntest.OpenChannelParams{
 		Amt:            chanAmt,
 		CommitmentType: c,
-		Private:        true,
 	}
 
 	cfg := node.CfgSimpleTaproot
@@ -681,10 +680,6 @@ func runAsyncPayments(ht *lntest.HarnessTest, alice, bob *node.HarnessNode,
 
 	if commitType != nil {
 		chanArgs.CommitmentType = *commitType
-
-		if *commitType == lnrpc.CommitmentType_SIMPLE_TAPROOT {
-			chanArgs.Private = true
-		}
 	}
 
 	// First establish a channel with a capacity equals to the overall

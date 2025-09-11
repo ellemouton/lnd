@@ -70,14 +70,9 @@ func testChannelForceClosureSimpleTaproot(ht *lntest.HarnessTest) {
 	//
 	// Prepare params.
 	openChannelParams := lntest.OpenChannelParams{
-		Amt:     chanAmt,
-		PushAmt: pushAmt,
-		// If the channel is a taproot channel, then we'll need to
-		// create a private channel.
-		//
-		// TODO(roasbeef): lift after G175
+		Amt:            chanAmt,
+		PushAmt:        pushAmt,
 		CommitmentType: lnrpc.CommitmentType_SIMPLE_TAPROOT,
-		Private:        true,
 	}
 
 	cfg := node.CfgSimpleTaproot
