@@ -1,6 +1,7 @@
 package netann
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btclog/v2"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -100,6 +102,9 @@ func CreateChanAnnouncement(chanProof *models.ChannelAuthProof,
 			ChainHash: tlv.NewPrimitiveRecord[tlv.TlvType0](chanInfo.ChainHash),
 			Features: tlv.NewRecordT[tlv.TlvType2](
 				*chanInfo.Features.RawFeatureVector,
+			),
+			Capacity: tlv.NewPrimitiveRecord[tlv.TlvType6](
+				uint64(chanInfo.Capacity),
 			),
 			ShortChannelID: tlv.NewRecordT[tlv.TlvType4](chanID),
 			NodeID1:        tlv.NewPrimitiveRecord[tlv.TlvType8, [33]byte](chanInfo.NodeKey1Bytes),
@@ -299,6 +304,12 @@ func validateChannelAnn2(a *lnwire.ChannelAnnouncement2,
 	if err != nil {
 		return err
 	}
+	log.Infof("ELLE: chan ann to verify: %+v", a)
+	log.InfoS(context.TODO(),
+		"ELLE: validateChannelAnn2",
+		btclog.Hex6("data_hash", dataHash.CloneBytes()),
+		btclog.Hex6("agg_key", aggKey.FinalKey.SerializeCompressed()),
+	)
 
 	// Obtain the signature.
 	sig, err := a.Signature.Val.ToSignature()

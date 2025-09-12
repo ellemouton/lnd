@@ -959,13 +959,15 @@ func (d *AuthenticatedGossiper) ProcessRemoteAnnouncement(ctx context.Context,
 	// To avoid inserting edges in the graph for our own channels that we
 	// have already closed, we ignore such channel announcements coming
 	// from the remote.
-	case *lnwire.ChannelAnnouncement1:
+	case lnwire.ChannelAnnouncement:
 		ownKey := d.selfKey.SerializeCompressed()
 		ownErr := fmt.Errorf("ignoring remote ChannelAnnouncement1 " +
 			"for own channel")
 
-		if bytes.Equal(m.NodeID1[:], ownKey) ||
-			bytes.Equal(m.NodeID2[:], ownKey) {
+		node1 := m.Node1KeyBytes()
+		node2 := m.Node2KeyBytes()
+		if bytes.Equal(node1[:], ownKey) ||
+			bytes.Equal(node2[:], ownKey) {
 
 			log.Warn(ownErr)
 			errChan <- ownErr
@@ -4010,7 +4012,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	// our channel counterparty through the gossiper's reliable sender.
 	node1Ann, err := d.fetchNodeAnn(ctx, chanInfo.NodeKey1Bytes)
 	if err != nil {
-		log.Debugf("Unable to fetch node announcement for %x: %v",
+		log.Debugf("Unable to fetch node announcement for %s: %v",
 			chanInfo.NodeKey1Bytes, err)
 	} else {
 		if nodeKey1, err := chanInfo.NodeKey1(); err == nil {
@@ -4024,7 +4026,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 
 	node2Ann, err := d.fetchNodeAnn(ctx, chanInfo.NodeKey2Bytes)
 	if err != nil {
-		log.Debugf("Unable to fetch node announcement for %x: %v",
+		log.Debugf("Unable to fetch node announcement for %s: %v",
 			chanInfo.NodeKey2Bytes, err)
 	} else {
 		if nodeKey2, err := chanInfo.NodeKey2(); err == nil {

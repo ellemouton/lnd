@@ -80,6 +80,7 @@ type SQLQueries interface {
 	*/
 	CreateChannel(ctx context.Context, arg sqlc.CreateChannelParams) (int64, error)
 	AddV1ChannelProof(ctx context.Context, arg sqlc.AddV1ChannelProofParams) (sql.Result, error)
+	AddV2ChannelProof(ctx context.Context, arg sqlc.AddV2ChannelProofParams) (sql.Result, error)
 	GetChannelBySCID(ctx context.Context, arg sqlc.GetChannelBySCIDParams) (sqlc.GraphChannel, error)
 	GetChannelsBySCIDs(ctx context.Context, arg sqlc.GetChannelsBySCIDsParams) ([]sqlc.GraphChannel, error)
 	GetChannelsByOutpoints(ctx context.Context, outpoints []string) ([]sqlc.GetChannelsByOutpointsRow, error)
@@ -2900,16 +2901,35 @@ func (s *SQLStore) AddEdgeProof(scid lnwire.ShortChannelID,
 		scidBytes = channelIDToBytes(scid.ToUint64())
 	)
 
+	// TODO(elle): rather add version to models.ChannelAuthProof.
+	v := lnwire.GossipVersion1
+	if len(proof.Signature) != 0 {
+		v = lnwire.GossipVersion2
+	}
+
 	err := s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
-		res, err := db.AddV1ChannelProof(
-			ctx, sqlc.AddV1ChannelProofParams{
-				Scid:              scidBytes,
-				Node1Signature:    proof.NodeSig1Bytes,
-				Node2Signature:    proof.NodeSig2Bytes,
-				Bitcoin1Signature: proof.BitcoinSig1Bytes,
-				Bitcoin2Signature: proof.BitcoinSig2Bytes,
-			},
+		var (
+			res sql.Result
+			err error
 		)
+		if v == lnwire.GossipVersion1 {
+			res, err = db.AddV1ChannelProof(
+				ctx, sqlc.AddV1ChannelProofParams{
+					Scid:              scidBytes,
+					Node1Signature:    proof.NodeSig1Bytes,
+					Node2Signature:    proof.NodeSig2Bytes,
+					Bitcoin1Signature: proof.BitcoinSig1Bytes,
+					Bitcoin2Signature: proof.BitcoinSig2Bytes,
+				},
+			)
+		} else {
+			res, err = db.AddV2ChannelProof(
+				ctx, sqlc.AddV2ChannelProofParams{
+					Scid:      scidBytes,
+					Signature: proof.Signature,
+				},
+			)
+		}
 		if err != nil {
 			return fmt.Errorf("unable to add edge proof: %w", err)
 		}
