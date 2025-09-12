@@ -1035,6 +1035,7 @@ func (d *AuthenticatedGossiper) ProcessLocalAnnouncement(msg lnwire.Message,
 // channel updates can be identified by the (ShortChannelID, ChannelFlags)
 // tuple.
 type channelUpdateID struct {
+	v lnwire.GossipVersion
 	// channelID represents the set of data which is needed to
 	// retrieve all necessary data to validate the channel existence.
 	channelID lnwire.ShortChannelID
@@ -1042,7 +1043,17 @@ type channelUpdateID struct {
 	// Flags least-significant bit must be set to 0 if the creating node
 	// corresponds to the first node in the previously sent channel
 	// announcement and 1 otherwise.
-	flags lnwire.ChanUpdateChanFlags
+	isNode1 bool
+}
+
+type chanAnnID struct {
+	v         lnwire.GossipVersion
+	channelID lnwire.ShortChannelID
+}
+
+type nodeUpdateID struct {
+	v    lnwire.GossipVersion
+	node route.Vertex
 }
 
 // msgWithSenders is a wrapper struct around a message, and the set of peers
@@ -1081,13 +1092,13 @@ func (m *msgWithSenders) mergeSyncerMap(syncers map[route.Vertex]*GossipSyncer) 
 // finally node announcements when it's time to broadcast them.
 type deDupedAnnouncements struct {
 	// channelAnnouncements are identified by the short channel id field.
-	channelAnnouncements map[lnwire.ShortChannelID]msgWithSenders
+	channelAnnouncements map[chanAnnID]msgWithSenders
 
 	// channelUpdates are identified by the channel update id field.
 	channelUpdates map[channelUpdateID]msgWithSenders
 
 	// nodeAnnouncements are identified by the Vertex field.
-	nodeAnnouncements map[route.Vertex]msgWithSenders
+	nodeAnnouncements map[nodeUpdateID]msgWithSenders
 
 	sync.Mutex
 }
@@ -1107,9 +1118,9 @@ func (d *deDupedAnnouncements) reset() {
 	// Storage of each type of announcement (channel announcements, channel
 	// updates, node announcements) is set to an empty map where the
 	// appropriate key points to the corresponding lnwire.Message.
-	d.channelAnnouncements = make(map[lnwire.ShortChannelID]msgWithSenders)
+	d.channelAnnouncements = make(map[chanAnnID]msgWithSenders)
 	d.channelUpdates = make(map[channelUpdateID]msgWithSenders)
-	d.nodeAnnouncements = make(map[route.Vertex]msgWithSenders)
+	d.nodeAnnouncements = make(map[nodeUpdateID]msgWithSenders)
 }
 
 // addMsg adds a new message to the current batch. If the message is already
@@ -1127,8 +1138,11 @@ func (d *deDupedAnnouncements) addMsg(message networkMsg) {
 	switch msg := message.msg.(type) {
 
 	// Channel announcements are identified by the short channel id field.
-	case *lnwire.ChannelAnnouncement1:
-		deDupKey := msg.ShortChannelID
+	case lnwire.ChannelAnnouncement:
+		deDupKey := chanAnnID{
+			v:         msg.GossipVersion(),
+			channelID: msg.SCID(),
+		}
 		sender := route.NewVertex(message.source)
 
 		mws, ok := d.channelAnnouncements[deDupKey]
@@ -1154,8 +1168,9 @@ func (d *deDupedAnnouncements) addMsg(message networkMsg) {
 	case *lnwire.ChannelUpdate1:
 		sender := route.NewVertex(message.source)
 		deDupKey := channelUpdateID{
+			msg.GossipVersion(),
 			msg.ShortChannelID,
-			msg.ChannelFlags,
+			msg.IsNode1(),
 		}
 
 		oldTimestamp := uint32(0)
@@ -1209,11 +1224,74 @@ func (d *deDupedAnnouncements) addMsg(message networkMsg) {
 		mws.senders[sender] = struct{}{}
 		d.channelUpdates[deDupKey] = mws
 
+	case *lnwire.ChannelUpdate2:
+		sender := route.NewVertex(message.source)
+		deDupKey := channelUpdateID{
+			msg.GossipVersion(),
+			msg.SCID(),
+			msg.IsNode1(),
+		}
+
+		oldHeight := uint32(0)
+		mws, ok := d.channelUpdates[deDupKey]
+		if ok {
+			// If we already have seen this message, record its
+			// timestamp.
+			update, ok := mws.msg.(*lnwire.ChannelUpdate2)
+			if !ok {
+				log.Errorf("Expected *lnwire.ChannelUpdate2, "+
+					"got: %T", mws.msg)
+
+				return
+			}
+
+			oldHeight = update.BlockHeight.Val
+		}
+
+		// If we already had this message with a strictly newer
+		// timestamp, then we'll just discard the message we got.
+		if oldHeight > msg.BlockHeight.Val {
+			log.Debugf("Ignored outdated network message: "+
+				"peer=%v, msg=%s", message.peer, msg.MsgType())
+			return
+		}
+
+		// If the message we just got is newer than what we previously
+		// have seen, or this is the first time we see it, then we'll
+		// add it to our map of announcements.
+		if oldHeight < msg.BlockHeight.Val {
+			mws = msgWithSenders{
+				msg:     msg,
+				isLocal: !message.isRemote,
+				senders: make(map[route.Vertex]struct{}),
+			}
+
+			// We'll mark the sender of the message in the
+			// senders map.
+			mws.senders[sender] = struct{}{}
+
+			d.channelUpdates[deDupKey] = mws
+
+			return
+		}
+
+		// Lastly, if we had seen this exact message from before, with
+		// the same timestamp, we'll add the sender to the map of
+		// senders, such that we can skip sending this message back in
+		// the next batch.
+		mws.msg = msg
+		mws.senders[sender] = struct{}{}
+		d.channelUpdates[deDupKey] = mws
+
 	// Node announcements are identified by the Vertex field.  Use the
 	// NodeID to create the corresponding Vertex.
 	case *lnwire.NodeAnnouncement1:
 		sender := route.NewVertex(message.source)
-		deDupKey := route.Vertex(msg.NodeID)
+
+		deDupKey := nodeUpdateID{
+			v:    msg.GossipVersion(),
+			node: route.Vertex(msg.NodeID),
+		}
 
 		// We do the same for node announcements as we did for channel
 		// updates, as they also carry a timestamp.
@@ -1230,6 +1308,49 @@ func (d *deDupedAnnouncements) addMsg(message networkMsg) {
 
 		// Replace if it's newer.
 		if oldTimestamp < msg.Timestamp {
+			mws = msgWithSenders{
+				msg:     msg,
+				isLocal: !message.isRemote,
+				senders: make(map[route.Vertex]struct{}),
+			}
+
+			mws.senders[sender] = struct{}{}
+
+			d.nodeAnnouncements[deDupKey] = mws
+
+			return
+		}
+
+		// Add to senders map if it's the same as we had.
+		mws.msg = msg
+		mws.senders[sender] = struct{}{}
+		d.nodeAnnouncements[deDupKey] = mws
+
+	case *lnwire.NodeAnnouncement2:
+		sender := route.NewVertex(message.source)
+
+		deDupKey := nodeUpdateID{
+			v:    msg.GossipVersion(),
+			node: msg.NodeID.Val,
+		}
+
+		// We do the same for node announcements as we did for channel
+		// updates, as they also carry a timestamp.
+		oldHeight := uint32(0)
+		mws, ok := d.nodeAnnouncements[deDupKey]
+		if ok {
+			oldHeight = mws.msg.(*lnwire.NodeAnnouncement2).BlockHeight.Val
+		}
+
+		// Discard the message if it's old.
+		if oldHeight > msg.BlockHeight.Val {
+			return
+		}
+
+		log.Infof("ELLE: Blockheight: %d, %d", oldHeight, msg.BlockHeight.Val)
+
+		// Replace if it's newer.
+		if oldHeight < msg.BlockHeight.Val {
 			mws = msgWithSenders{
 				msg:     msg,
 				isLocal: !message.isRemote,
@@ -3886,7 +4007,6 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 		}
 
 	case *channeldb.TaprootWaitingProof:
-		log.InfoS(ctx, "ELLE: tap chans waiting proof")
 		a, ok := ann.(*lnwire.AnnounceSignatures2)
 		if !ok {
 			err := fmt.Errorf("expected "+
@@ -3896,7 +4016,6 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 
 			return nil, false
 		}
-		log.InfoS(ctx, "ELLE: parsed ann sigs")
 
 		// First, combine the two partial sigs to get the final sig. At
 		// least one of proofs should have an agg nonce.
@@ -3909,7 +4028,6 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 
 			return nil, false
 		}
-		log.InfoS(ctx, "ELLE: parsing partial sigs")
 
 		ps1 := musig2.NewPartialSignature(
 			&a.PartialSignature.Val.Sig, aggNonce,
@@ -3926,7 +4044,6 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 
 		dbProof.Signature = s.Serialize()
 	}
-	log.InfoS(ctx, "ELLE: creating chan announcement")
 
 	chanAnn, e1Ann, e2Ann, err := netann.CreateChanAnnouncement(
 		&dbProof, chanInfo, e1, e2,
@@ -3936,7 +4053,6 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 		nMsg.err <- err
 		return nil, false
 	}
-	log.InfoS(ctx, "ELLE: validating chan announcement")
 
 	// With all the necessary components assembled validate the full
 	// channel announcement proof.
@@ -3949,7 +4065,6 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 		nMsg.err <- err
 		return nil, false
 	}
-	log.InfoS(ctx, "ELLE: adding proof to graph")
 
 	// If the channel was returned by the router it means that existence of
 	// funding point and inclusion of nodes bitcoin keys in it already
@@ -4016,6 +4131,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 			chanInfo.NodeKey1Bytes, err)
 	} else {
 		if nodeKey1, err := chanInfo.NodeKey1(); err == nil {
+			log.Infof("ELLE: adding N1 ann: %+v", node1Ann)
 			announcements = append(announcements, networkMsg{
 				peer:   nMsg.peer,
 				source: nodeKey1,
@@ -4030,6 +4146,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 			chanInfo.NodeKey2Bytes, err)
 	} else {
 		if nodeKey2, err := chanInfo.NodeKey2(); err == nil {
+			log.Infof("ELLE: adding N2 ann: %+v", node2Ann)
 			announcements = append(announcements, networkMsg{
 				peer:   nMsg.peer,
 				source: nodeKey2,

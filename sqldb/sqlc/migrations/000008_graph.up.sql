@@ -279,7 +279,7 @@ CREATE TABLE IF NOT EXISTS graph_channel_policies (
     -- split up into more fine-grained flags.
     disabled bool,
 
-    disable_flags INTEGER,
+    disable_flags SMALLINT CHECK (message_flags >= 0 AND message_flags <= 255),
 
     -- The optional base fee in milli-satoshis that the node will charge
     -- for incoming HTLCs.

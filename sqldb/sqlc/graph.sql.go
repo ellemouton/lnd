@@ -440,7 +440,7 @@ type GetChannelByOutpointWithPoliciesRow struct {
 	Policy1ID                      sql.NullInt64
 	Policy1NodeID                  sql.NullInt64
 	Policy1BlockHeight             sql.NullInt32
-	Policy1DisableFlags            sql.NullInt32
+	Policy1DisableFlags            sql.NullInt16
 	Policy1Version                 sql.NullInt16
 	Policy1Timelock                sql.NullInt32
 	Policy1FeePpm                  sql.NullInt64
@@ -458,7 +458,7 @@ type GetChannelByOutpointWithPoliciesRow struct {
 	Policy2NodeID                  sql.NullInt64
 	Policy2Version                 sql.NullInt16
 	Policy2BlockHeight             sql.NullInt32
-	Policy2DisableFlags            sql.NullInt32
+	Policy2DisableFlags            sql.NullInt16
 	Policy2Timelock                sql.NullInt32
 	Policy2FeePpm                  sql.NullInt64
 	Policy2BaseFeeMsat             sql.NullInt64
@@ -635,7 +635,7 @@ type GetChannelBySCIDWithPoliciesRow struct {
 	Policy1NodeID                  sql.NullInt64
 	Policy1Version                 sql.NullInt16
 	Policy1BlockHeight             sql.NullInt32
-	Policy1DisableFlags            sql.NullInt32
+	Policy1DisableFlags            sql.NullInt16
 	Policy1Timelock                sql.NullInt32
 	Policy1FeePpm                  sql.NullInt64
 	Policy1BaseFeeMsat             sql.NullInt64
@@ -653,7 +653,7 @@ type GetChannelBySCIDWithPoliciesRow struct {
 	Policy2Version                 sql.NullInt16
 	Policy2Timelock                sql.NullInt32
 	Policy2BlockHeight             sql.NullInt32
-	Policy2DisableFlags            sql.NullInt32
+	Policy2DisableFlags            sql.NullInt16
 	Policy2FeePpm                  sql.NullInt64
 	Policy2BaseFeeMsat             sql.NullInt64
 	Policy2MinHtlcMsat             sql.NullInt64
@@ -982,7 +982,7 @@ type GetChannelsByIDsRow struct {
 	Policy1ID                      sql.NullInt64
 	Policy1NodeID                  sql.NullInt64
 	Policy1BlockHeight             sql.NullInt32
-	Policy1DisableFlags            sql.NullInt32
+	Policy1DisableFlags            sql.NullInt16
 	Policy1Version                 sql.NullInt16
 	Policy1Timelock                sql.NullInt32
 	Policy1FeePpm                  sql.NullInt64
@@ -1000,7 +1000,7 @@ type GetChannelsByIDsRow struct {
 	Policy2NodeID                  sql.NullInt64
 	Policy2Version                 sql.NullInt16
 	Policy2BlockHeight             sql.NullInt32
-	Policy2DisableFlags            sql.NullInt32
+	Policy2DisableFlags            sql.NullInt16
 	Policy2Timelock                sql.NullInt32
 	Policy2FeePpm                  sql.NullInt64
 	Policy2BaseFeeMsat             sql.NullInt64
@@ -1251,7 +1251,7 @@ type GetChannelsByPolicyLastUpdateRangeRow struct {
 	Policy1ID                      sql.NullInt64
 	Policy1NodeID                  sql.NullInt64
 	Policy1BlockHeight             sql.NullInt32
-	Policy1DisableFlags            sql.NullInt32
+	Policy1DisableFlags            sql.NullInt16
 	Policy1Version                 sql.NullInt16
 	Policy1Timelock                sql.NullInt32
 	Policy1FeePpm                  sql.NullInt64
@@ -1269,7 +1269,7 @@ type GetChannelsByPolicyLastUpdateRangeRow struct {
 	Policy2NodeID                  sql.NullInt64
 	Policy2Version                 sql.NullInt16
 	Policy2BlockHeight             sql.NullInt32
-	Policy2DisableFlags            sql.NullInt32
+	Policy2DisableFlags            sql.NullInt16
 	Policy2Timelock                sql.NullInt32
 	Policy2FeePpm                  sql.NullInt64
 	Policy2BaseFeeMsat             sql.NullInt64
@@ -1508,7 +1508,7 @@ type GetChannelsBySCIDWithPoliciesRow struct {
 	Policy1Version                 sql.NullInt16
 	Policy1Timelock                sql.NullInt32
 	Policy1BlockHeight             sql.NullInt32
-	Policy1DisableFlags            sql.NullInt32
+	Policy1DisableFlags            sql.NullInt16
 	Policy1FeePpm                  sql.NullInt64
 	Policy1BaseFeeMsat             sql.NullInt64
 	Policy1MinHtlcMsat             sql.NullInt64
@@ -1525,7 +1525,7 @@ type GetChannelsBySCIDWithPoliciesRow struct {
 	Policy2Version                 sql.NullInt16
 	Policy2Timelock                sql.NullInt32
 	Policy2BlockHeight             sql.NullInt32
-	Policy2DisableFlags            sql.NullInt32
+	Policy2DisableFlags            sql.NullInt16
 	Policy2FeePpm                  sql.NullInt64
 	Policy2BaseFeeMsat             sql.NullInt64
 	Policy2MinHtlcMsat             sql.NullInt64
@@ -2969,7 +2969,7 @@ type ListChannelsByNodeIDRow struct {
 	Policy1ID                      sql.NullInt64
 	Policy1NodeID                  sql.NullInt64
 	Policy1BlockHeight             sql.NullInt32
-	Policy1DisableFlags            sql.NullInt32
+	Policy1DisableFlags            sql.NullInt16
 	Policy1Version                 sql.NullInt16
 	Policy1Timelock                sql.NullInt32
 	Policy1FeePpm                  sql.NullInt64
@@ -2987,7 +2987,7 @@ type ListChannelsByNodeIDRow struct {
 	Policy2NodeID                  sql.NullInt64
 	Policy2Version                 sql.NullInt16
 	Policy2BlockHeight             sql.NullInt32
-	Policy2DisableFlags            sql.NullInt32
+	Policy2DisableFlags            sql.NullInt16
 	Policy2Timelock                sql.NullInt32
 	Policy2FeePpm                  sql.NullInt64
 	Policy2BaseFeeMsat             sql.NullInt64
@@ -3149,7 +3149,7 @@ type ListChannelsForNodeIDsRow struct {
 	Policy1ID                      sql.NullInt64
 	Policy1NodeID                  sql.NullInt64
 	Policy1BlockHeight             sql.NullInt32
-	Policy1DisableFlags            sql.NullInt32
+	Policy1DisableFlags            sql.NullInt16
 	Policy1Version                 sql.NullInt16
 	Policy1Timelock                sql.NullInt32
 	Policy1FeePpm                  sql.NullInt64
@@ -3167,7 +3167,7 @@ type ListChannelsForNodeIDsRow struct {
 	Policy2NodeID                  sql.NullInt64
 	Policy2Version                 sql.NullInt16
 	Policy2BlockHeight             sql.NullInt32
-	Policy2DisableFlags            sql.NullInt32
+	Policy2DisableFlags            sql.NullInt16
 	Policy2Timelock                sql.NullInt32
 	Policy2FeePpm                  sql.NullInt64
 	Policy2BaseFeeMsat             sql.NullInt64
@@ -3527,7 +3527,7 @@ type ListChannelsWithPoliciesPaginatedRow struct {
 	Policy1Version                 sql.NullInt16
 	Policy1Timelock                sql.NullInt32
 	Policy1BlockHeight             sql.NullInt32
-	Policy1DisableFlags            sql.NullInt32
+	Policy1DisableFlags            sql.NullInt16
 	Policy1FeePpm                  sql.NullInt64
 	Policy1BaseFeeMsat             sql.NullInt64
 	Policy1MinHtlcMsat             sql.NullInt64
@@ -3544,7 +3544,7 @@ type ListChannelsWithPoliciesPaginatedRow struct {
 	Policy2Version                 sql.NullInt16
 	Policy2Timelock                sql.NullInt32
 	Policy2BlockHeight             sql.NullInt32
-	Policy2DisableFlags            sql.NullInt32
+	Policy2DisableFlags            sql.NullInt16
 	Policy2FeePpm                  sql.NullInt64
 	Policy2BaseFeeMsat             sql.NullInt64
 	Policy2MinHtlcMsat             sql.NullInt64
@@ -3825,7 +3825,7 @@ type UpsertEdgePolicyParams struct {
 	MinHtlcMsat             int64
 	LastUpdate              sql.NullInt64
 	Disabled                sql.NullBool
-	DisableFlags            sql.NullInt32
+	DisableFlags            sql.NullInt16
 	MaxHtlcMsat             sql.NullInt64
 	InboundBaseFeeMsat      sql.NullInt64
 	InboundFeeRateMilliMsat sql.NullInt64

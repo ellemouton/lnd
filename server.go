@@ -5774,7 +5774,7 @@ func (s *server) setSelfNode(ctx context.Context, nodePub route.Vertex,
 	//	return fmt.Errorf("unable to get best height: %w", err)
 	//}
 	// TODO(elle): hmmm.
-	var height uint32
+	height := uint32(1)
 
 	// Update our v1 message.
 	srcNode2, err := s.graph.SourceNode(ctx, lnwire.GossipVersion2)

@@ -71,7 +71,7 @@ type GraphChannelPolicy struct {
 	LastUpdate              sql.NullInt64
 	BlockHeight             sql.NullInt32
 	Disabled                sql.NullBool
-	DisableFlags            sql.NullInt32
+	DisableFlags            sql.NullInt16
 	InboundBaseFeeMsat      sql.NullInt64
 	InboundFeeRateMilliMsat sql.NullInt64
 	MessageFlags            sql.NullInt16

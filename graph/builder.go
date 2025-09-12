@@ -1676,7 +1676,7 @@ func (b *Builder) IsSkewedEdgePolicy(a lnwire.ChannelUpdate) (bool, error) {
 			return false, err
 		}
 
-		blocksUntil := ann.BlockHeight.Val - currentBlock
+		blocksUntil := int64(ann.BlockHeight.Val) - int64(currentBlock)
 
 		return blocksUntil > DefaultChanPruneExpiryBlocks, nil
 
