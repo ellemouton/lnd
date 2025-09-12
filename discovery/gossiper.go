@@ -17,6 +17,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btclog/v2"
 	"github.com/lightninglabs/neutrino/cache"
 	"github.com/lightninglabs/neutrino/cache/lru"
 	"github.com/lightningnetwork/lnd/chainntnfs"
@@ -3736,6 +3737,13 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 		}
 	}
 
+	ctx = btclog.WithCtx(ctx,
+		"short_chan_id", scid,
+		"chan_id", chanID,
+		"is_remote", nMsg.isRemote)
+
+	log.InfoS(ctx, "ELLE: h1")
+
 	// Check if we already have the full proof for this channel.
 	if chanInfo.AuthProof != nil {
 		// If we already have the fully assembled proof, then the peer
@@ -3780,6 +3788,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 		nMsg.err <- nil
 		return nil, true
 	}
+	log.InfoS(ctx, "ELLE: check opposite proof")
 
 	// Check that we received the opposite proof. If so, then we're now
 	// able to construct the full proof, and create the channel
@@ -3830,11 +3839,13 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 		nMsg.err <- nil
 		return nil, false
 	}
+	log.InfoS(ctx, "ELLE: h3")
 
 	var dbProof models.ChannelAuthProof
 
 	switch oppProof := oppositeProof.WaitingProofInterface.(type) {
 	case *channeldb.LegacyWaitingProof:
+		log.InfoS(ctx, "ELLE: legacy waiting proof")
 		a, ok := ann.(*lnwire.AnnounceSignatures1)
 		if !ok {
 			err := fmt.Errorf("expected "+
@@ -3865,6 +3876,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 		}
 
 	case *channeldb.TaprootWaitingProof:
+		log.InfoS(ctx, "ELLE: tap chans waiting proof")
 		a, ok := ann.(*lnwire.AnnounceSignatures2)
 		if !ok {
 			err := fmt.Errorf("expected "+
@@ -3874,6 +3886,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 
 			return nil, false
 		}
+		log.InfoS(ctx, "ELLE: parsed ann sigs")
 
 		// First, combine the two partial sigs to get the final sig. At
 		// least one of proofs should have an agg nonce.
@@ -3886,6 +3899,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 
 			return nil, false
 		}
+		log.InfoS(ctx, "ELLE: parsing partial sigs")
 
 		ps1 := musig2.NewPartialSignature(
 			&a.PartialSignature.Val.Sig, aggNonce,
@@ -3902,6 +3916,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 
 		dbProof.Signature = s.Serialize()
 	}
+	log.InfoS(ctx, "ELLE: creating chan announcement")
 
 	chanAnn, e1Ann, e2Ann, err := netann.CreateChanAnnouncement(
 		&dbProof, chanInfo, e1, e2,
@@ -3911,6 +3926,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 		nMsg.err <- err
 		return nil, false
 	}
+	log.InfoS(ctx, "ELLE: validating chan announcement")
 
 	// With all the necessary components assembled validate the full
 	// channel announcement proof.
@@ -3923,6 +3939,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 		nMsg.err <- err
 		return nil, false
 	}
+	log.InfoS(ctx, "ELLE: adding proof to graph")
 
 	// If the channel was returned by the router it means that existence of
 	// funding point and inclusion of nodes bitcoin keys in it already

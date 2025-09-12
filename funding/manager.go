@@ -5092,7 +5092,7 @@ func (f *Manager) announceChannel(localIDKey, remoteIDKey *btcec.PublicKey,
 	// because addToGraph previously sent the ChannelAnnouncement and
 	// the ChannelUpdate announcement messages. The channel proof and node
 	// announcements are broadcast to the greater network.
-	errChan := f.cfg.SendAnnouncement(ann.chanProof)
+	errChan := f.cfg.SendAnnouncement(ann.chanProof, ann.opts...)
 	select {
 	case err := <-errChan:
 		if err != nil {
