@@ -10,6 +10,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func testBasicPubTapChan(ht *lntest.HarnessTest) {
+	// Create network: Alice -> Bob -> Carol where the Alice-Bob channel
+	// is a normal segwit channel and the Bob-Carol channel is a
+	// simple-taproot channel. All are public.
+	// Assert that Alice can pay Carol.
+	_, nodes := ht.CreateSimpleNetwork(
+		[][]string{
+			node.CfgSimpleTaproot,
+			node.CfgSimpleTaproot,
+			node.CfgSimpleTaproot,
+		}, lntest.OpenChannelParams{
+			Amt:            chanAmt,
+			CommitmentType: lnrpc.CommitmentType_SIMPLE_TAPROOT,
+		},
+	)
+
+	alice, carol := nodes[0], nodes[2]
+
+	// Create an invoice for Carol which expects a payment of 1000
+	const paymentAmt = 1000
+	payReqs, _, _ := ht.CreatePayReqs(carol, paymentAmt, 1)
+
+	// Using Alice as the source, pay to the invoice from Carol created
+	ht.CompletePaymentRequests(alice, payReqs)
+}
+
 func testMultiHopPayments(ht *lntest.HarnessTest) {
 	const chanAmt = btcutil.Amount(100000)
 

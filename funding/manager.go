@@ -5116,11 +5116,15 @@ func (f *Manager) announceChannel(localIDKey, remoteIDKey *btcec.PublicKey,
 	// obtain and send a node announcement. This is done since a node
 	// announcement is only accepted after a channel is known for that
 	// particular node, and this might be our first channel.
-	// TODO(elle): pick appropriate node ann here.
-	nodeAnn, _, err := f.cfg.CurrentNodeAnnouncements()
+	nodeAnn1, nodeAnn2, err := f.cfg.CurrentNodeAnnouncements()
 	if err != nil {
 		log.Errorf("can't generate node announcement: %v", err)
 		return err
+	}
+
+	nodeAnn := lnwire.NodeAnnouncement(nodeAnn1)
+	if channel.ChanType.IsTaproot() {
+		nodeAnn = nodeAnn2
 	}
 
 	errChan = f.cfg.SendAnnouncement(nodeAnn)

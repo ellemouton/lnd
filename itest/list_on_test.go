@@ -267,6 +267,10 @@ var allTestCases = []*lntest.TestCase{
 		TestFunc: testHtlcErrorPropagation,
 	},
 	{
+		Name:     "public taproot channel",
+		TestFunc: testBasicPubTapChan,
+	},
+	{
 		Name:     "multi-hop payments",
 		TestFunc: testMultiHopPayments,
 	},
