@@ -17,7 +17,6 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btclog/v2"
 	"github.com/lightninglabs/neutrino/cache"
 	"github.com/lightninglabs/neutrino/cache/lru"
 	"github.com/lightningnetwork/lnd/chainntnfs"
@@ -1346,8 +1345,6 @@ func (d *deDupedAnnouncements) addMsg(message networkMsg) {
 		if oldHeight > msg.BlockHeight.Val {
 			return
 		}
-
-		log.Infof("ELLE: Blockheight: %d, %d", oldHeight, msg.BlockHeight.Val)
 
 		// Replace if it's newer.
 		if oldHeight < msg.BlockHeight.Val {
@@ -3639,9 +3636,6 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 		return nil, false
 	}
 
-	log.Infof("ELLE: Updating edge for short_chan_id=%v, is_remote=%v",
-		shortChanID, nMsg.isRemote)
-
 	if err := d.cfg.Graph.UpdateEdge(ctx, update, nMsg.isRemote); err != nil {
 		if graph.IsError(
 			err, graph.ErrOutdated,
@@ -3868,13 +3862,6 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 		}
 	}
 
-	ctx = btclog.WithCtx(ctx,
-		"short_chan_id", scid,
-		"chan_id", chanID,
-		"is_remote", nMsg.isRemote)
-
-	log.InfoS(ctx, "ELLE: h1")
-
 	// Check if we already have the full proof for this channel.
 	if chanInfo.AuthProof != nil {
 		// If we already have the fully assembled proof, then the peer
@@ -3919,7 +3906,6 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 		nMsg.err <- nil
 		return nil, true
 	}
-	log.InfoS(ctx, "ELLE: check opposite proof")
 
 	// Check that we received the opposite proof. If so, then we're now
 	// able to construct the full proof, and create the channel
@@ -3970,13 +3956,11 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 		nMsg.err <- nil
 		return nil, false
 	}
-	log.InfoS(ctx, "ELLE: h3")
 
 	var dbProof models.ChannelAuthProof
 
 	switch oppProof := oppositeProof.WaitingProofInterface.(type) {
 	case *channeldb.LegacyWaitingProof:
-		log.InfoS(ctx, "ELLE: legacy waiting proof")
 		a, ok := ann.(*lnwire.AnnounceSignatures1)
 		if !ok {
 			err := fmt.Errorf("expected "+
@@ -4131,7 +4115,6 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 			chanInfo.NodeKey1Bytes, err)
 	} else {
 		if nodeKey1, err := chanInfo.NodeKey1(); err == nil {
-			log.Infof("ELLE: adding N1 ann: %+v", node1Ann)
 			announcements = append(announcements, networkMsg{
 				peer:   nMsg.peer,
 				source: nodeKey1,
@@ -4146,7 +4129,6 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 			chanInfo.NodeKey2Bytes, err)
 	} else {
 		if nodeKey2, err := chanInfo.NodeKey2(); err == nil {
-			log.Infof("ELLE: adding N2 ann: %+v", node2Ann)
 			announcements = append(announcements, networkMsg{
 				peer:   nMsg.peer,
 				source: nodeKey2,

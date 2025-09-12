@@ -34,6 +34,15 @@ func testBasicPubTapChan(ht *lntest.HarnessTest) {
 
 	// Using Alice as the source, pay to the invoice from Carol created
 	ht.CompletePaymentRequests(alice, payReqs)
+
+	// Make sure that Alice has seen Carol's node announcement.
+	nodeInfo, err := alice.RPC.LN.GetNodeInfo(
+		ht.Context(), &lnrpc.NodeInfoRequest{
+			PubKey: carol.PubKeyStr,
+		},
+	)
+	require.NoError(ht, err)
+	require.Equal(ht, lnrpc.GossipVersion_V2, nodeInfo.Node.GossipVersion)
 }
 
 func testMultiHopPayments(ht *lntest.HarnessTest) {

@@ -3391,9 +3391,6 @@ func (s *SQLStore) updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 		Signature:               edge.SigBytes,
 	}
 
-	log.Infof("ELLE: Updating edge policy for channel %v: %+v",
-		edge.ChannelID, params)
-
 	switch s.cfg.Version {
 	case lnwire.GossipVersion1:
 		params.LastUpdate = sqldb.SQLInt64(edge.LastUpdate.Unix())
@@ -3519,7 +3516,6 @@ func buildNodeWithBatchData(dbNode sqlc.GraphNode,
 		node.LastUpdate = time.Unix(dbNode.LastUpdate.Int64, 0)
 	}
 
-	log.Info("ELLE: building node with block height", dbNode.BlockHeight)
 	if dbNode.BlockHeight.Valid {
 		node.LastBlockHeight = uint32(dbNode.BlockHeight.Int64)
 	}
@@ -3665,7 +3661,6 @@ func (s *SQLStore) upsertNode(ctx context.Context, db SQLQueries,
 		params.Signature = node.AuthSigBytes
 	}
 
-	log.Info("ELLE: upserting node with block height", params.BlockHeight)
 	nodeID, err := db.UpsertNode(ctx, params)
 	if err != nil {
 		return 0, fmt.Errorf("upserting node(%x): %w", node.PubKeyBytes,

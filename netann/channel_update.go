@@ -202,7 +202,6 @@ func UnsignedChannelUpdateFromEdge(info *models.ChannelEdgeInfo,
 		return update, nil
 
 	case lnwire.GossipVersion2:
-		log.Info("ELLE: stored policy blockheight was: %d", policy.LastBlockHeight)
 		update := &lnwire.ChannelUpdate2{
 			ChainHash: tlv.NewPrimitiveRecord[tlv.TlvType0](info.ChainHash),
 			ShortChannelID: tlv.NewRecordT[tlv.TlvType2](

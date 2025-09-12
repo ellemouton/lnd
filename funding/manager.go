@@ -2,7 +2,6 @@ package funding
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -18,7 +17,6 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btclog/v2"
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/chanacceptor"
 	"github.com/lightningnetwork/lnd/channeldb"
@@ -5005,14 +5003,6 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 	if err != nil {
 		return nil, err
 	}
-
-	log.Infof("ELLE: chan ann to sign: %+v", chanAnn)
-
-	log.InfoS(context.TODO(),
-		"ELLE: computing digest to sign",
-		btclog.Hex6("data_hash", chanAnnMsg.CloneBytes()),
-		btclog.Hex6("agg_key", musigBtcSess.CombinedKey.SerializeCompressed()),
-	)
 
 	bitcoinPartialSig, err := f.cfg.MuSig2Signer.MuSig2Sign(
 		musigBtcSess.SessionID, *chanAnnMsg, true,

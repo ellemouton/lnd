@@ -7053,7 +7053,6 @@ func (r *rpcServer) GetChanInfo(_ context.Context,
 	case err != nil:
 		return nil, err
 	}
-	rpcsLog.Infof("ELLE: GetChanInfo: %v, %v", edge1 == nil, edge2 == nil)
 
 	// Convert the database's edge format into the network/RPC edge format
 	// which couples the edge itself along with the directional node
