@@ -37,13 +37,8 @@ const (
 // peer's initial routing table upon connect.
 func CreateChanAnnouncement(chanProof *models.ChannelAuthProof,
 	chanInfo *models.ChannelEdgeInfo,
-	e1, e2 *models.ChannelEdgePolicy) (*lnwire.ChannelAnnouncement1,
-	*lnwire.ChannelUpdate1, *lnwire.ChannelUpdate1, error) {
-
-	if chanInfo.Version != lnwire.GossipVersion1 {
-		return nil, nil, nil, fmt.Errorf("unsupported channel "+
-			"version: %d", chanInfo.Version)
-	}
+	e1, e2 *models.ChannelEdgePolicy) (lnwire.ChannelAnnouncement,
+	lnwire.ChannelUpdate, lnwire.ChannelUpdate, error) {
 
 	// First, using the parameters of the channel, along with the channel
 	// authentication chanProof, we'll create re-create the original
@@ -97,7 +92,7 @@ func CreateChanAnnouncement(chanProof *models.ChannelAuthProof,
 	// Since it's up to a node's policy as to whether they advertise the
 	// edge in a direction, we don't create an advertisement if the edge is
 	// nil.
-	var edge1Ann, edge2Ann *lnwire.ChannelUpdate1
+	var edge1Ann, edge2Ann lnwire.ChannelUpdate
 	if e1 != nil {
 		edge1Ann, err = ChannelUpdateFromEdge(chanInfo, e1)
 		if err != nil {

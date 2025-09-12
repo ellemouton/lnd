@@ -144,7 +144,7 @@ func SignChannelUpdate(signer keychain.MessageSignerRing,
 func ExtractChannelUpdate(ownerPubKey []byte,
 	info *models.ChannelEdgeInfo,
 	policies ...*models.ChannelEdgePolicy) (
-	*lnwire.ChannelUpdate1, error) {
+	lnwire.ChannelUpdate, error) {
 
 	// Helper function to extract the owner of the given policy.
 	owner := func(edge *models.ChannelEdgePolicy) []byte {
@@ -203,7 +203,7 @@ func UnsignedChannelUpdateFromEdge(info *models.ChannelEdgeInfo,
 // ChannelUpdateFromEdge reconstructs a signed ChannelUpdate from the given edge
 // info and policy.
 func ChannelUpdateFromEdge(info *models.ChannelEdgeInfo,
-	policy *models.ChannelEdgePolicy) (*lnwire.ChannelUpdate1, error) {
+	policy *models.ChannelEdgePolicy) (lnwire.ChannelUpdate, error) {
 
 	update := UnsignedChannelUpdateFromEdge(info, policy)
 

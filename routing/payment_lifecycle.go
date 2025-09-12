@@ -971,7 +971,7 @@ func (p *paymentLifecycle) handleFailureMessage(rt *route.Route,
 	// SendToRoute where there's no payment lifecycle.
 	if p.paySession != nil {
 		policy = p.paySession.GetAdditionalEdgePolicy(
-			errSource, update.ShortChannelID.ToUint64(),
+			errSource, update.SCID().ToUint64(),
 		)
 		if policy != nil {
 			isAdditionalEdge = true

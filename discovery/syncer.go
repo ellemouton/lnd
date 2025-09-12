@@ -1531,7 +1531,7 @@ func (g *GossipSyncer) FilterGossipMsgs(ctx context.Context,
 	// to quickly check if we should forward a chan ann, based on the known
 	// channel updates for a channel.
 	chanUpdateIndex := make(
-		map[lnwire.ShortChannelID][]*lnwire.ChannelUpdate1,
+		map[lnwire.ShortChannelID][]lnwire.ChannelUpdate,
 	)
 	for _, msg := range msgs {
 		chanUpdate, ok := msg.msg.(*lnwire.ChannelUpdate1)
@@ -1592,7 +1592,12 @@ func (g *GossipSyncer) FilterGossipMsgs(ctx context.Context,
 			}
 
 			for _, chanUpdate := range chanUpdates {
-				if passesFilter(chanUpdate.Timestamp) {
+				upd, ok := chanUpdate.(*lnwire.ChannelUpdate1)
+				if !ok {
+					log.Errorf("TODO(elle): handle v2 udpates")
+					continue
+				}
+				if passesFilter(upd.Timestamp) {
 					msgsToSend = append(msgsToSend, msg)
 					break
 				}

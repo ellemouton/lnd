@@ -1606,6 +1606,7 @@ func marshallError(sendError error) (*lnrpc.Failure, error) {
 func marshallWireError(msg lnwire.FailureMessage,
 	response *lnrpc.Failure) error {
 
+	var err error
 	switch onionErr := msg.(type) {
 	case *lnwire.FailIncorrectDetails:
 		response.Code = lnrpc.Failure_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS
@@ -1630,7 +1631,10 @@ func marshallWireError(msg lnwire.FailureMessage,
 
 	case *lnwire.FailExpiryTooSoon:
 		response.Code = lnrpc.Failure_EXPIRY_TOO_SOON
-		response.ChannelUpdate = marshallChannelUpdate(&onionErr.Update)
+		response.ChannelUpdate, err = marshallChannelUpdate(onionErr.Update)
+		if err != nil {
+			return err
+		}
 
 	case *lnwire.FailExpiryTooFar:
 		response.Code = lnrpc.Failure_EXPIRY_TOO_FAR
@@ -1649,27 +1653,42 @@ func marshallWireError(msg lnwire.FailureMessage,
 
 	case *lnwire.FailAmountBelowMinimum:
 		response.Code = lnrpc.Failure_AMOUNT_BELOW_MINIMUM
-		response.ChannelUpdate = marshallChannelUpdate(&onionErr.Update)
+		response.ChannelUpdate, err = marshallChannelUpdate(onionErr.Update)
+		if err != nil {
+			return err
+		}
 		response.HtlcMsat = uint64(onionErr.HtlcMsat)
 
 	case *lnwire.FailFeeInsufficient:
 		response.Code = lnrpc.Failure_FEE_INSUFFICIENT
-		response.ChannelUpdate = marshallChannelUpdate(&onionErr.Update)
+		response.ChannelUpdate, err = marshallChannelUpdate(onionErr.Update)
+		if err != nil {
+			return err
+		}
 		response.HtlcMsat = uint64(onionErr.HtlcMsat)
 
 	case *lnwire.FailIncorrectCltvExpiry:
 		response.Code = lnrpc.Failure_INCORRECT_CLTV_EXPIRY
-		response.ChannelUpdate = marshallChannelUpdate(&onionErr.Update)
+		response.ChannelUpdate, err = marshallChannelUpdate(onionErr.Update)
+		if err != nil {
+			return err
+		}
 		response.CltvExpiry = onionErr.CltvExpiry
 
 	case *lnwire.FailChannelDisabled:
 		response.Code = lnrpc.Failure_CHANNEL_DISABLED
-		response.ChannelUpdate = marshallChannelUpdate(&onionErr.Update)
+		response.ChannelUpdate, err = marshallChannelUpdate(onionErr.Update)
+		if err != nil {
+			return err
+		}
 		response.Flags = uint32(onionErr.Flags)
 
 	case *lnwire.FailTemporaryChannelFailure:
 		response.Code = lnrpc.Failure_TEMPORARY_CHANNEL_FAILURE
-		response.ChannelUpdate = marshallChannelUpdate(onionErr.Update)
+		response.ChannelUpdate, err = marshallChannelUpdate(onionErr.Update)
+		if err != nil {
+			return err
+		}
 
 	case *lnwire.FailRequiredNodeFeatureMissing:
 		response.Code = lnrpc.Failure_REQUIRED_NODE_FEATURE_MISSING
@@ -1711,24 +1730,49 @@ func marshallWireError(msg lnwire.FailureMessage,
 
 // marshallChannelUpdate marshalls a channel update as received over the wire to
 // the router rpc format.
-func marshallChannelUpdate(update *lnwire.ChannelUpdate1) *lnrpc.ChannelUpdate {
-	if update == nil {
-		return nil
+func marshallChannelUpdate(msg lnwire.ChannelUpdate) (*lnrpc.ChannelUpdate,
+	error) {
+
+	if msg == nil {
+		return nil, nil
 	}
 
-	return &lnrpc.ChannelUpdate{
-		Signature:       update.Signature.RawBytes(),
-		ChainHash:       update.ChainHash[:],
-		ChanId:          update.ShortChannelID.ToUint64(),
-		Timestamp:       update.Timestamp,
-		MessageFlags:    uint32(update.MessageFlags),
-		ChannelFlags:    uint32(update.ChannelFlags),
-		TimeLockDelta:   uint32(update.TimeLockDelta),
-		HtlcMinimumMsat: uint64(update.HtlcMinimumMsat),
-		BaseFee:         update.BaseFee,
-		FeeRate:         update.FeeRate,
-		HtlcMaximumMsat: uint64(update.HtlcMaximumMsat),
-		ExtraOpaqueData: update.ExtraOpaqueData,
+	switch update := msg.(type) {
+	case *lnwire.ChannelUpdate1:
+		return &lnrpc.ChannelUpdate{
+			GossipVersion:   lnrpc.GossipVersion_V1,
+			Signature:       update.Signature.RawBytes(),
+			ChainHash:       update.ChainHash[:],
+			ChanId:          update.ShortChannelID.ToUint64(),
+			Timestamp:       update.Timestamp,
+			MessageFlags:    uint32(update.MessageFlags),
+			ChannelFlags:    uint32(update.ChannelFlags),
+			TimeLockDelta:   uint32(update.TimeLockDelta),
+			HtlcMinimumMsat: uint64(update.HtlcMinimumMsat),
+			BaseFee:         update.BaseFee,
+			FeeRate:         update.FeeRate,
+			HtlcMaximumMsat: uint64(update.HtlcMaximumMsat),
+			ExtraOpaqueData: update.ExtraOpaqueData,
+		}, nil
+
+	case *lnwire.ChannelUpdate2:
+		return &lnrpc.ChannelUpdate{
+			GossipVersion:    lnrpc.GossipVersion_V2,
+			Signature:        update.Signature.Val.ToSignatureBytes(),
+			ChainHash:        update.ChainHash.Val[:],
+			ChanId:           update.ShortChannelID.Val.ToUint64(),
+			DisableFlags:     uint32(update.DisabledFlags.Val),
+			TimeLockDelta:    uint32(update.CLTVExpiryDelta.Val),
+			HtlcMinimumMsat:  uint64(update.HTLCMinimumMsat.Val),
+			HtlcMaximumMsat:  uint64(update.HTLCMaximumMsat.Val),
+			BaseFee:          update.FeeBaseMsat.Val,
+			FeeRate:          update.FeeProportionalMillionths.Val,
+			BlockHeight:      update.BlockHeight.Val,
+			ExtraSignedTypes: update.ExtraSignedFields,
+		}, nil
+
+	default:
+		return nil, fmt.Errorf("unknown channel update type %T", msg)
 	}
 }
 

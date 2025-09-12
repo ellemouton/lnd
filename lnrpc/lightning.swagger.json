@@ -4702,6 +4702,24 @@
           "type": "string",
           "format": "byte",
           "description": "The set of data that was appended to this message, some of which we may\nnot actually know how to iterate or parse. By holding onto this data, we\nensure that we're able to properly validate the set of signatures that\ncover these new fields, and ensure we're able to make upgrades to the\nnetwork in a forwards compatible manner."
+        },
+        "gossip_version": {
+          "$ref": "#/definitions/lnrpcGossipVersion"
+        },
+        "disable_flags": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "block_height": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "extra_signed_types": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "format": "byte"
+          }
         }
       }
     },

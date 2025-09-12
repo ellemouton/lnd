@@ -5139,6 +5139,11 @@ message ChannelUpdate {
     network in a forwards compatible manner.
     */
     bytes extra_opaque_data = 12;
+
+    GossipVersion gossip_version = 13;
+    uint32 disable_flags = 14;
+    uint32 block_height = 15;
+    map<uint64, bytes> extra_signed_types = 16;
 }
 
 message MacaroonId {
