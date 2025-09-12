@@ -2408,16 +2408,24 @@ func (d *AuthenticatedGossiper) updateChannel(ctx context.Context,
 	}
 
 	// Parse the unsigned edge into a channel update.
-	chanUpdate := netann.UnsignedChannelUpdateFromEdge(info, edge)
+	update, err := netann.UnsignedChannelUpdateFromEdge(info, edge)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	// We'll generate a new signature over a digest of the channel
 	// announcement itself and update the timestamp to ensure it propagate.
-	err := netann.SignChannelUpdate(
-		d.cfg.AnnSigner, d.selfKeyLoc, chanUpdate,
+	err = netann.SignChannelUpdate(
+		d.cfg.AnnSigner, d.selfKeyLoc, update,
 		netann.ChanUpdSetTimestamp(d.latestHeight()),
 	)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	chanUpdate, ok := update.(*lnwire.ChannelUpdate1)
+	if !ok {
+		return nil, nil, fmt.Errorf("TODO(elle): update for v2")
 	}
 
 	// Next, we'll set the new signature in place, and update the reference

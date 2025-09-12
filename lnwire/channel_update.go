@@ -392,6 +392,13 @@ func (a *ChannelUpdate1) ForwardingPolicy() *ForwardingPolicy {
 	}
 }
 
+func (a *ChannelUpdate1) SetSig(b []byte) error {
+	var err error
+	a.Signature, err = NewSigFromECDSARawSignature(b)
+
+	return err
+}
+
 // CmpAge can be used to determine if the update is older or newer than the
 // passed update. It returns 1 if this update is newer, -1 if it is older, and
 // 0 if they are the same age.

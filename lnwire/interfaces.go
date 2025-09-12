@@ -111,6 +111,8 @@ type ChannelUpdate interface {
 	// SetSCID can be used to overwrite the SCID of the update.
 	SetSCID(scid ShortChannelID)
 
+	SetSig(b []byte) error
+
 	TimestampDesc() string
 
 	Message

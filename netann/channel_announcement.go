@@ -44,45 +44,100 @@ func CreateChanAnnouncement(chanProof *models.ChannelAuthProof,
 	// authentication chanProof, we'll create re-create the original
 	// authenticated channel announcement.
 	chanID := lnwire.NewShortChanIDFromInt(chanInfo.ChannelID)
-	chanAnn := &lnwire.ChannelAnnouncement1{
-		ShortChannelID:  chanID,
-		NodeID1:         chanInfo.NodeKey1Bytes,
-		NodeID2:         chanInfo.NodeKey2Bytes,
-		ChainHash:       chanInfo.ChainHash,
-		Features:        chanInfo.Features.RawFeatureVector,
-		ExtraOpaqueData: chanInfo.ExtraOpaqueData,
-	}
-	chanInfo.BitcoinKey1Bytes.WhenSome(func(vertex route.Vertex) {
-		chanAnn.BitcoinKey1 = vertex
-	})
-	chanInfo.BitcoinKey2Bytes.WhenSome(func(vertex route.Vertex) {
-		chanAnn.BitcoinKey2 = vertex
-	})
 
-	var err error
-	chanAnn.BitcoinSig1, err = lnwire.NewSigFromECDSARawSignature(
-		chanProof.BitcoinSig1Bytes,
+	var (
+		chanAnn lnwire.ChannelAnnouncement
+		err     error
 	)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	chanAnn.BitcoinSig2, err = lnwire.NewSigFromECDSARawSignature(
-		chanProof.BitcoinSig2Bytes,
-	)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	chanAnn.NodeSig1, err = lnwire.NewSigFromECDSARawSignature(
-		chanProof.NodeSig1Bytes,
-	)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	chanAnn.NodeSig2, err = lnwire.NewSigFromECDSARawSignature(
-		chanProof.NodeSig2Bytes,
-	)
-	if err != nil {
-		return nil, nil, nil, err
+
+	switch chanInfo.Version {
+	case lnwire.GossipVersion1:
+		chanAnn1 := &lnwire.ChannelAnnouncement1{
+			ShortChannelID:  chanID,
+			NodeID1:         chanInfo.NodeKey1Bytes,
+			NodeID2:         chanInfo.NodeKey2Bytes,
+			ChainHash:       chanInfo.ChainHash,
+			Features:        chanInfo.Features.RawFeatureVector,
+			ExtraOpaqueData: chanInfo.ExtraOpaqueData,
+		}
+		chanInfo.BitcoinKey1Bytes.WhenSome(func(vertex route.Vertex) {
+			chanAnn1.BitcoinKey1 = vertex
+		})
+		chanInfo.BitcoinKey2Bytes.WhenSome(func(vertex route.Vertex) {
+			chanAnn1.BitcoinKey2 = vertex
+		})
+
+		var err error
+		chanAnn1.BitcoinSig1, err = lnwire.NewSigFromECDSARawSignature(
+			chanProof.BitcoinSig1Bytes,
+		)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		chanAnn1.BitcoinSig2, err = lnwire.NewSigFromECDSARawSignature(
+			chanProof.BitcoinSig2Bytes,
+		)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		chanAnn1.NodeSig1, err = lnwire.NewSigFromECDSARawSignature(
+			chanProof.NodeSig1Bytes,
+		)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		chanAnn1.NodeSig2, err = lnwire.NewSigFromECDSARawSignature(
+			chanProof.NodeSig2Bytes,
+		)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		chanAnn = chanAnn1
+
+	case lnwire.GossipVersion2:
+		chanAnn2 := &lnwire.ChannelAnnouncement2{
+			ChainHash: tlv.NewPrimitiveRecord[tlv.TlvType0](chanInfo.ChainHash),
+			Features: tlv.NewRecordT[tlv.TlvType2](
+				*chanInfo.Features.RawFeatureVector,
+			),
+			ShortChannelID: tlv.NewRecordT[tlv.TlvType4](chanID),
+			NodeID1:        tlv.NewPrimitiveRecord[tlv.TlvType8, [33]byte](chanInfo.NodeKey1Bytes),
+			NodeID2:        tlv.NewPrimitiveRecord[tlv.TlvType10, [33]byte](chanInfo.NodeKey2Bytes),
+			Outpoint: tlv.NewRecordT[tlv.TlvType18](
+				lnwire.OutPoint(chanInfo.ChannelPoint),
+			),
+			ExtraSignedFields: chanInfo.ExtraSignedFields,
+		}
+		chanInfo.BitcoinKey1Bytes.WhenSome(func(vertex route.Vertex) {
+			chanAnn2.BitcoinKey1 = tlv.SomeRecordT(
+				tlv.NewPrimitiveRecord[tlv.TlvType12, [33]byte](
+					vertex,
+				),
+			)
+		})
+		chanInfo.BitcoinKey2Bytes.WhenSome(func(vertex route.Vertex) {
+			chanAnn2.BitcoinKey2 = tlv.SomeRecordT(
+				tlv.NewPrimitiveRecord[tlv.TlvType14, [33]byte](
+					vertex,
+				),
+			)
+		})
+		chanInfo.MerkleRootHash.WhenSome(func(hash chainhash.Hash) {
+			chanAnn2.MerkleRootHash = tlv.SomeRecordT(
+				tlv.NewPrimitiveRecord[tlv.TlvType16, [32]byte](hash),
+			)
+		})
+
+		var err error
+		chanAnn2.Signature.Val, err = lnwire.NewSigFromSchnorrRawSignature(
+			chanProof.Signature,
+		)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		chanAnn = chanAnn2
 	}
 
 	// We'll unconditionally queue the channel's existence chanProof as it

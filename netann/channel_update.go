@@ -176,28 +176,78 @@ func ExtractChannelUpdate(ownerPubKey []byte,
 // UnsignedChannelUpdateFromEdge reconstructs an unsigned ChannelUpdate from the
 // given edge info and policy.
 func UnsignedChannelUpdateFromEdge(info *models.ChannelEdgeInfo,
-	policy *models.ChannelEdgePolicy) *lnwire.ChannelUpdate1 {
+	policy *models.ChannelEdgePolicy) (lnwire.ChannelUpdate, error) {
 
-	update := &lnwire.ChannelUpdate1{
-		ChainHash:       info.ChainHash,
-		ShortChannelID:  lnwire.NewShortChanIDFromInt(policy.ChannelID),
-		Timestamp:       uint32(policy.LastUpdate.Unix()),
-		ChannelFlags:    policy.ChannelFlags,
-		MessageFlags:    policy.MessageFlags,
-		TimeLockDelta:   policy.TimeLockDelta,
-		HtlcMinimumMsat: policy.MinHTLC,
-		HtlcMaximumMsat: policy.MaxHTLC,
-		BaseFee:         uint32(policy.FeeBaseMSat),
-		FeeRate:         uint32(policy.FeeProportionalMillionths),
-		ExtraOpaqueData: policy.ExtraOpaqueData,
+	switch info.Version {
+	case lnwire.GossipVersion1:
+		update := &lnwire.ChannelUpdate1{
+			ChainHash:       info.ChainHash,
+			ShortChannelID:  lnwire.NewShortChanIDFromInt(policy.ChannelID),
+			Timestamp:       uint32(policy.LastUpdate.Unix()),
+			ChannelFlags:    policy.ChannelFlags,
+			MessageFlags:    policy.MessageFlags,
+			TimeLockDelta:   policy.TimeLockDelta,
+			HtlcMinimumMsat: policy.MinHTLC,
+			HtlcMaximumMsat: policy.MaxHTLC,
+			BaseFee:         uint32(policy.FeeBaseMSat),
+			FeeRate:         uint32(policy.FeeProportionalMillionths),
+			ExtraOpaqueData: policy.ExtraOpaqueData,
+		}
+		policy.InboundFee.WhenSome(func(fee lnwire.Fee) {
+			update.InboundFee = tlv.SomeRecordT(
+				tlv.NewRecordT[tlv.TlvType55555, lnwire.Fee](fee),
+			)
+		})
+
+		return update, nil
+
+	case lnwire.GossipVersion2:
+		update := &lnwire.ChannelUpdate2{
+			ChainHash: tlv.NewPrimitiveRecord[tlv.TlvType0](info.ChainHash),
+			ShortChannelID: tlv.NewRecordT[tlv.TlvType2](
+				lnwire.NewShortChanIDFromInt(policy.ChannelID),
+			),
+			BlockHeight: tlv.NewPrimitiveRecord[tlv.TlvType4](
+				policy.LastBlockHeight,
+			),
+			DisabledFlags: tlv.NewPrimitiveRecord[tlv.TlvType6](
+				policy.DisableFlags,
+			),
+			CLTVExpiryDelta: tlv.NewPrimitiveRecord[tlv.TlvType10](
+				policy.TimeLockDelta,
+			),
+			HTLCMinimumMsat: tlv.NewPrimitiveRecord[tlv.TlvType12](
+				policy.MinHTLC,
+			),
+			HTLCMaximumMsat: tlv.NewPrimitiveRecord[tlv.TlvType14](
+				policy.MaxHTLC,
+			),
+			FeeBaseMsat: tlv.NewPrimitiveRecord[tlv.TlvType16](
+				uint32(policy.FeeBaseMSat),
+			),
+			FeeProportionalMillionths: tlv.NewPrimitiveRecord[tlv.TlvType18](
+				uint32(policy.FeeProportionalMillionths),
+			),
+			ExtraSignedFields: policy.ExtraSignedFields,
+		}
+
+		if policy.SecondPeer {
+			update.SecondPeer = tlv.SomeRecordT(
+				tlv.RecordT[tlv.TlvType8, lnwire.TrueBoolean]{},
+			)
+		}
+
+		policy.InboundFee.WhenSome(func(fee lnwire.Fee) {
+			update.InboundFee = tlv.SomeRecordT(
+				tlv.NewRecordT[tlv.TlvType55555, lnwire.Fee](fee),
+			)
+		})
+
+		return update, nil
 	}
-	policy.InboundFee.WhenSome(func(fee lnwire.Fee) {
-		update.InboundFee = tlv.SomeRecordT(
-			tlv.NewRecordT[tlv.TlvType55555, lnwire.Fee](fee),
-		)
-	})
 
-	return update
+	return nil, fmt.Errorf("unhandled implementation of "+
+		"ChannelUpdate for version %d", info.Version)
 }
 
 // ChannelUpdateFromEdge reconstructs a signed ChannelUpdate from the given edge
@@ -205,17 +255,12 @@ func UnsignedChannelUpdateFromEdge(info *models.ChannelEdgeInfo,
 func ChannelUpdateFromEdge(info *models.ChannelEdgeInfo,
 	policy *models.ChannelEdgePolicy) (lnwire.ChannelUpdate, error) {
 
-	update := UnsignedChannelUpdateFromEdge(info, policy)
-
-	var err error
-	update.Signature, err = lnwire.NewSigFromECDSARawSignature(
-		policy.SigBytes,
-	)
+	update, err := UnsignedChannelUpdateFromEdge(info, policy)
 	if err != nil {
 		return nil, err
 	}
 
-	return update, nil
+	return update, update.SetSig(policy.SigBytes)
 }
 
 // ValidateChannelUpdateAnn validates the channel update announcement by

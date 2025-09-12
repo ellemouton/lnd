@@ -97,6 +97,13 @@ func (c *ChannelUpdate2) Encode(w *bytes.Buffer, _ uint32) error {
 	return EncodePureTLVMessage(c, w)
 }
 
+func (c *ChannelUpdate2) SetSig(b []byte) error {
+	var err error
+	c.Signature.Val, err = NewSigFromSchnorrRawSignature(b)
+
+	return err
+}
+
 var _ GossipMessage = (*ChannelUpdate2)(nil)
 
 func (*ChannelUpdate2) GossipVersion() GossipVersion {
