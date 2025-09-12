@@ -1487,6 +1487,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		ChannelDB:     s.chanStateDB,
 		FeeEstimator:  cc.FeeEstimator,
 		MessageSigner: cc.KeyRing,
+		MuSig2Signer:  cc.Signer,
 		CurrentNodeAnnouncements: func() (*lnwire.NodeAnnouncement1,
 			*lnwire.NodeAnnouncement2, error) {
 

@@ -388,6 +388,9 @@ type Config struct {
 
 	MessageSigner keychain.MessageSignerRing
 
+	//  MuSig2Signer is a musig2 capable signer.
+	MuSig2Signer input.MuSig2Signer
+
 	// CurrentNodeAnnouncement should return the latest, fully signed node
 	// announcement from the backing Lightning Network node with a fresh
 	// timestamp.
@@ -4571,8 +4574,8 @@ type chanAnnouncement struct {
 	chanAnn       lnwire.ChannelAnnouncement
 	chanUpdateAnn lnwire.ChannelUpdate
 
-	// TODO(elle): update for public V2 chans.
-	chanProof *lnwire.AnnounceSignatures1
+	chanProof lnwire.AnnounceSignatures
+	opts      []discovery.OptionalMsgField
 }
 
 // newChanAnnouncement creates the authenticated channel announcement messages
@@ -4961,8 +4964,99 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 		}, nil
 	}
 
-	// TODO(elle): add support for channel proofs for taproot channels.
-	return nil, fmt.Errorf("public taproot channels are not yet supported")
+	chanAnnMsg, err := netann.ChanAnn2DigestToSign(&chanAnn)
+	if err != nil {
+		return nil, err
+	}
+
+	pubKeys := []*btcec.PublicKey{
+		localPubKey,
+		remotePubKey,
+		localFundingKey.PubKey,
+		remoteFundingKey,
+	}
+
+	rBtc, rNode, haveReceivedNonces := f.nonceMgr.getReceivedNonces(chanID)
+	if err != nil {
+		return nil, err
+	}
+
+	if !haveReceivedNonces {
+		return nil, fmt.Errorf("havent received all the necessary " +
+			"nonces yet")
+	}
+
+	sBtc, sNode, err := f.nonceMgr.getNoncesToSend(
+		chanID, channel.RevocationProducer,
+		channel.LocalChanCfg.MultiSigKey.PubKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	musigBtcSess, err := f.cfg.MuSig2Signer.MuSig2CreateSession(
+		input.MuSig2Version100RC2, localFundingKey.KeyLocator,
+		pubKeys, &input.MuSig2Tweaks{},
+		[][66]byte{sNode.PubNonce, rBtc, rNode}, sBtc,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	bitcoinPartialSig, err := f.cfg.MuSig2Signer.MuSig2Sign(
+		musigBtcSess.SessionID, *chanAnnMsg, true,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	musigNodeSess, err := f.cfg.MuSig2Signer.MuSig2CreateSession(
+		input.MuSig2Version100RC2, f.cfg.IDKeyLoc, pubKeys,
+		&input.MuSig2Tweaks{},
+		[][66]byte{sBtc.PubNonce, rBtc, rNode}, sNode,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	nodePartialSig, err := f.cfg.MuSig2Signer.MuSig2Sign(
+		musigNodeSess.SessionID, *chanAnnMsg, true,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to generate node "+
+			"partial signature for channel announcement: %v", err)
+	}
+
+	// Combine the two partial signatures.
+	ps := musig2.NewPartialSignature(
+		bitcoinPartialSig.S.Add(nodePartialSig.S), bitcoinPartialSig.R,
+	)
+
+	// Finally, we'll generate the announcement proof which we'll use to
+	// provide the other side with the necessary signatures required to
+	// allow them to reconstruct the full channel announcement.
+	proof := &lnwire.AnnounceSignatures2{
+		ChannelID:      tlv.NewRecordT[tlv.TlvType0](chanID),
+		ShortChannelID: tlv.NewRecordT[tlv.TlvType2](shortChanID),
+		PartialSignature: tlv.NewRecordT[tlv.TlvType4](
+			lnwire.NewPartialSig(*ps.S),
+		),
+	}
+
+	fundingScript, err := makeFundingScript(channel)
+	if err != nil {
+		return nil, err
+	}
+
+	return &chanAnnouncement{
+		chanAnn:       &chanAnn,
+		chanUpdateAnn: &chanUpdateAnn,
+		chanProof:     proof,
+		opts: []discovery.OptionalMsgField{
+			discovery.AggregateNonce(ps.R),
+			discovery.FundingPKScript(fundingScript),
+		},
+	}, nil
 }
 
 // announceChannel announces a newly created channel to the rest of the network

@@ -16,6 +16,7 @@ type AnnounceSignatures interface {
 	// ChanID returns the ChannelID identifying the channel.
 	ChanID() ChannelID
 
+	GossipMessage
 	Message
 }
 
