@@ -440,7 +440,7 @@ type server struct {
 // updatePersistentPeerAddrs subscribes to topology changes and stores
 // advertised addresses for any NodeAnnouncements from our persisted peers.
 func (s *server) updatePersistentPeerAddrs() error {
-	graphSub, err := s.graphDB.SubscribeTopology()
+	graphSub, err := s.graphBuilder.SubscribeTopology()
 	if err != nil {
 		return err
 	}

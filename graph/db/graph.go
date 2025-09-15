@@ -19,10 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ErrChanGraphShuttingDown indicates that the ChannelGraph has shutdown or is
-// busy shutting down.
-var ErrChanGraphShuttingDown = fmt.Errorf("ChannelGraph shutting down")
-
 // ChannelGraph is a layer above the graph's CRUD layer.
 type ChannelGraph struct {
 	started atomic.Bool
@@ -31,7 +27,6 @@ type ChannelGraph struct {
 	graphCache *GraphCache
 
 	V1Store
-	*topologyManager
 
 	quit chan struct{}
 	wg   sync.WaitGroup
@@ -47,9 +42,8 @@ func NewChannelGraph(v1Store V1Store,
 	}
 
 	g := &ChannelGraph{
-		V1Store:         v1Store,
-		topologyManager: newTopologyManager(),
-		quit:            make(chan struct{}),
+		V1Store: v1Store,
+		quit:    make(chan struct{}),
 	}
 
 	// The graph cache can be turned off (e.g. for mobile users) for a
@@ -78,9 +72,6 @@ func (c *ChannelGraph) Start() error {
 		}
 	}
 
-	c.wg.Add(1)
-	go c.handleTopologySubscriptions()
-
 	return nil
 }
 
@@ -97,60 +88,6 @@ func (c *ChannelGraph) Stop() error {
 	c.wg.Wait()
 
 	return nil
-}
-
-// handleTopologySubscriptions ensures that topology client subscriptions,
-// subscription cancellations and topology notifications are handled
-// synchronously.
-//
-// NOTE: this MUST be run in a goroutine.
-func (c *ChannelGraph) handleTopologySubscriptions() {
-	defer c.wg.Done()
-
-	for {
-		select {
-		// A new fully validated topology update has just arrived.
-		// We'll notify any registered clients.
-		case update := <-c.topologyUpdate:
-			// TODO(elle): change topology handling to be handled
-			// synchronously so that we can guarantee the order of
-			// notification delivery.
-			c.wg.Add(1)
-			go c.handleTopologyUpdate(update)
-
-			// TODO(roasbeef): remove all unconnected vertexes
-			// after N blocks pass with no corresponding
-			// announcements.
-
-		// A new notification client update has arrived. We're either
-		// gaining a new client, or cancelling notifications for an
-		// existing client.
-		case ntfnUpdate := <-c.ntfnClientUpdates:
-			clientID := ntfnUpdate.clientID
-
-			if ntfnUpdate.cancel {
-				client, ok := c.topologyClients.LoadAndDelete(
-					clientID,
-				)
-				if ok {
-					close(client.exit)
-					client.wg.Wait()
-
-					close(client.ntfnChan)
-				}
-
-				continue
-			}
-
-			c.topologyClients.Store(clientID, &topologyClient{
-				ntfnChan: ntfnUpdate.ntfnChan,
-				exit:     make(chan struct{}),
-			})
-
-		case <-c.quit:
-			return
-		}
-	}
 }
 
 // populateCache loads the entire channel graph into the in-memory graph cache.
@@ -282,12 +219,6 @@ func (c *ChannelGraph) AddNode(ctx context.Context,
 		)
 	}
 
-	select {
-	case c.topologyUpdate <- node:
-	case <-c.quit:
-		return ErrChanGraphShuttingDown
-	}
-
 	return nil
 }
 
@@ -324,12 +255,6 @@ func (c *ChannelGraph) AddChannelEdge(ctx context.Context,
 
 	if c.graphCache != nil {
 		c.graphCache.AddChannel(models.NewCachedEdge(edge), nil, nil)
-	}
-
-	select {
-	case c.topologyUpdate <- edge:
-	case <-c.quit:
-		return ErrChanGraphShuttingDown
 	}
 
 	return nil
@@ -465,20 +390,6 @@ func (c *ChannelGraph) PruneGraph(spentOutputs []*wire.OutPoint,
 			c.graphCache.Stats())
 	}
 
-	if len(edges) != 0 {
-		// Notify all currently registered clients of the newly closed
-		// channels.
-		closeSummaries := createCloseSummaries(
-			blockHeight, edges...,
-		)
-
-		select {
-		case c.topologyUpdate <- closeSummaries:
-		case <-c.quit:
-			return nil, ErrChanGraphShuttingDown
-		}
-	}
-
 	return edges, nil
 }
 
@@ -590,12 +501,6 @@ func (c *ChannelGraph) UpdateEdgePolicy(ctx context.Context,
 		c.graphCache.UpdatePolicy(
 			models.NewCachedPolicy(edge), from, to,
 		)
-	}
-
-	select {
-	case c.topologyUpdate <- edge:
-	case <-c.quit:
-		return ErrChanGraphShuttingDown
 	}
 
 	return nil

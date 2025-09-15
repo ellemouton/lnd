@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/batch"
 	"github.com/lightningnetwork/lnd/chainntnfs"
@@ -113,6 +114,8 @@ type Builder struct {
 
 	cfg *Config
 
+	*topologyManager
+
 	// newBlocks is a channel in which new blocks connected to the end of
 	// the main chain are sent over, and blocks updated after a call to
 	// UpdateFilter.
@@ -146,11 +149,12 @@ var _ ChannelGraphSource = (*Builder)(nil)
 // NewBuilder constructs a new Builder.
 func NewBuilder(cfg *Config) (*Builder, error) {
 	return &Builder{
-		cfg:            cfg,
-		channelEdgeMtx: multimutex.NewMutex[uint64](),
-		statTicker:     ticker.New(defaultStatInterval),
-		stats:          new(builderStats),
-		quit:           make(chan struct{}),
+		cfg:             cfg,
+		channelEdgeMtx:  multimutex.NewMutex[uint64](),
+		statTicker:      ticker.New(defaultStatInterval),
+		stats:           new(builderStats),
+		topologyManager: newTopologyManager(),
+		quit:            make(chan struct{}),
 	}, nil
 }
 
@@ -168,6 +172,11 @@ func (b *Builder) Start() error {
 		return err
 	}
 
+	// We have to start the topology manager before we prune the graph,
+	// since we might send notifications of closed channels to clients.
+	b.wg.Add(1)
+	go b.handleTopologySubscriptions()
+
 	// If the graph has never been pruned, or hasn't fully been created yet,
 	// then we don't treat this as an explicit error.
 	if _, _, err := b.cfg.Graph.PruneTip(); err != nil {
@@ -179,7 +188,7 @@ func (b *Builder) Start() error {
 			// If the graph has never been pruned, then we'll set
 			// the prune height to the current best height of the
 			// chain backend.
-			_, err = b.cfg.Graph.PruneGraph(
+			_, err = b.pruneGraph(
 				nil, bestHash, uint32(bestHeight),
 			)
 			if err != nil {
@@ -303,6 +312,41 @@ func (b *Builder) Stop() error {
 	log.Debug("Builder shutdown complete")
 
 	return nil
+}
+
+// pruneGraph prunes newly closed channels from the channel graph in response
+// to a new block being solved on the network. Any transactions which spend the
+// funding output of any known channels within he graph will be deleted.
+// Additionally, the "prune tip", or the last block which has been used to
+// prune the graph is stored so callers can ensure the graph is fully in sync
+// with the current UTXO state. A slice of channels that have been closed by
+// the target block are returned if the function succeeds without error.
+func (b *Builder) pruneGraph(spentOutputs []*wire.OutPoint,
+	blockHash *chainhash.Hash, blockHeight uint32) (
+	[]*models.ChannelEdgeInfo, error) {
+
+	edges, err := b.cfg.Graph.PruneGraph(
+		spentOutputs, blockHash, blockHeight,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(edges) != 0 {
+		// Notify all currently registered clients of the newly closed
+		// channels.
+		closeSummaries := createCloseSummaries(
+			blockHeight, edges...,
+		)
+
+		select {
+		case b.topologyUpdate <- closeSummaries:
+		case <-b.quit:
+			return nil, ErrGraphBuilderShuttingDown
+		}
+	}
+
+	return edges, nil
 }
 
 // syncGraphWithChain attempts to synchronize the current channel graph with
@@ -437,7 +481,7 @@ func (b *Builder) syncGraphWithChain() error {
 
 	// With the spent outputs gathered, attempt to prune the channel graph,
 	// also passing in the best hash+height so the prune tip can be updated.
-	closedChans, err := b.cfg.Graph.PruneGraph(
+	closedChans, err := b.pruneGraph(
 		spentOutputs, bestHash, uint32(bestHeight),
 	)
 	if err != nil {
@@ -448,6 +492,60 @@ func (b *Builder) syncGraphWithChain() error {
 		"height %v", len(closedChans), pruneHeight)
 
 	return nil
+}
+
+// handleTopologySubscriptions ensures that topology client subscriptions,
+// subscription cancellations and topology notifications are handled
+// synchronously.
+//
+// NOTE: this MUST be run in a goroutine.
+func (b *Builder) handleTopologySubscriptions() {
+	defer b.wg.Done()
+
+	for {
+		select {
+		// A new fully validated topology update has just arrived.
+		// We'll notify any registered clients.
+		case update := <-b.topologyUpdate:
+			// TODO(elle): change topology handling to be handled
+			// synchronously so that we can guarantee the order of
+			// notification delivery.
+			b.wg.Add(1)
+			go b.handleTopologyUpdate(update)
+
+			// TODO(roasbeef): remove all unconnected vertexes
+			// after N blocks pass with no corresponding
+			// announcements.
+
+		// A new notification client update has arrived. We're either
+		// gaining a new client, or cancelling notifications for an
+		// existing client.
+		case ntfnUpdate := <-b.ntfnClientUpdates:
+			clientID := ntfnUpdate.clientID
+
+			if ntfnUpdate.cancel {
+				client, ok := b.topologyClients.LoadAndDelete(
+					clientID,
+				)
+				if ok {
+					close(client.exit)
+					client.wg.Wait()
+
+					close(client.ntfnChan)
+				}
+
+				continue
+			}
+
+			b.topologyClients.Store(clientID, &topologyClient{
+				ntfnChan: ntfnUpdate.ntfnChan,
+				exit:     make(chan struct{}),
+			})
+
+		case <-b.quit:
+			return
+		}
+	}
 }
 
 // isZombieChannel takes two edge policy updates and determines if the
@@ -847,8 +945,9 @@ func (b *Builder) updateGraphWithClosedChannels(
 	// With the spent outputs gathered, attempt to prune the channel graph,
 	// also passing in the hash+height of the block being pruned so the
 	// prune tip can be updated.
-	chansClosed, err := b.cfg.Graph.PruneGraph(spentOutputs,
-		&chainUpdate.Hash, chainUpdate.Height)
+	chansClosed, err := b.pruneGraph(
+		spentOutputs, &chainUpdate.Hash, chainUpdate.Height,
+	)
 	if err != nil {
 		log.Errorf("unable to prune routing table: %v", err)
 		return err
@@ -1008,6 +1107,12 @@ func (b *Builder) addNode(ctx context.Context, node *models.Node,
 			"graph: %w", node.PubKeyBytes, err)
 	}
 
+	select {
+	case b.topologyUpdate <- node:
+	case <-b.quit:
+		return ErrGraphBuilderShuttingDown
+	}
+
 	log.Tracef("Updated vertex data for node=%x", node.PubKeyBytes)
 	b.stats.incNumNodeUpdates()
 
@@ -1062,6 +1167,12 @@ func (b *Builder) addEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 
 	if err := b.cfg.Graph.AddChannelEdge(ctx, edge, op...); err != nil {
 		return fmt.Errorf("unable to add edge: %w", err)
+	}
+
+	select {
+	case b.topologyUpdate <- edge:
+	case <-b.quit:
+		return ErrGraphBuilderShuttingDown
 	}
 
 	b.stats.incNumEdgesDiscovered()
@@ -1210,6 +1321,12 @@ func (b *Builder) updateEdge(ctx context.Context,
 		err := fmt.Errorf("unable to add channel: %w", err)
 		log.Error(err)
 		return err
+	}
+
+	select {
+	case b.topologyUpdate <- policy:
+	case <-b.quit:
+		return ErrGraphBuilderShuttingDown
 	}
 
 	log.Tracef("New channel update applied: %v",

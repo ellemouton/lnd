@@ -1,11 +1,8 @@
-package graphdb
+package graph
 
 import (
-	"errors"
 	"fmt"
-	"image/color"
 	"net"
-	"strconv"
 	"sync"
 	"sync/atomic"
 
@@ -13,6 +10,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/fn/v2"
+	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnutils"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -91,16 +89,16 @@ type topologyClientUpdate struct {
 // topology occurs. Changes that will be sent at notifications include: new
 // nodes appearing, node updating their attributes, new channels, channels
 // closing, and updates in the routing policies of a channel's directed edges.
-func (c *ChannelGraph) SubscribeTopology() (*TopologyClient, error) {
+func (b *Builder) SubscribeTopology() (*TopologyClient, error) {
 	// If the router is not yet started, return an error to avoid a
 	// deadlock waiting for it to handle the subscription request.
-	if !c.started.Load() {
+	if !b.started.Load() {
 		return nil, fmt.Errorf("router not started")
 	}
 
 	// We'll first atomically obtain the next ID for this client from the
 	// incrementing client ID counter.
-	clientID := c.ntfnClientCounter.Add(1)
+	clientID := b.ntfnClientCounter.Add(1)
 
 	log.Debugf("New graph topology client subscription, client %v",
 		clientID)
@@ -108,24 +106,24 @@ func (c *ChannelGraph) SubscribeTopology() (*TopologyClient, error) {
 	ntfnChan := make(chan *TopologyChange, 10)
 
 	select {
-	case c.ntfnClientUpdates <- &topologyClientUpdate{
+	case b.ntfnClientUpdates <- &topologyClientUpdate{
 		cancel:   false,
 		clientID: clientID,
 		ntfnChan: ntfnChan,
 	}:
-	case <-c.quit:
-		return nil, errors.New("ChannelRouter shutting down")
+	case <-b.quit:
+		return nil, ErrGraphBuilderShuttingDown
 	}
 
 	return &TopologyClient{
 		TopologyChanges: ntfnChan,
 		Cancel: func() {
 			select {
-			case c.ntfnClientUpdates <- &topologyClientUpdate{
+			case b.ntfnClientUpdates <- &topologyClientUpdate{
 				cancel:   true,
 				clientID: clientID,
 			}:
-			case <-c.quit:
+			case <-b.quit:
 				return
 			}
 		},
@@ -154,7 +152,7 @@ type topologyClient struct {
 //
 // NOTE: this should only ever be called from a call-stack originating from the
 // handleTopologySubscriptions handler.
-func (c *ChannelGraph) notifyTopologyChange(topologyDiff *TopologyChange) {
+func (b *Builder) notifyTopologyChange(topologyDiff *TopologyChange) {
 	// notifyClient is a helper closure that will send topology updates to
 	// the given client.
 	notifyClient := func(clientID uint64, client *topologyClient) bool {
@@ -182,7 +180,7 @@ func (c *ChannelGraph) notifyTopologyChange(topologyDiff *TopologyChange) {
 
 			// Similarly, if the ChannelRouter itself exists early,
 			// then we'll also exit ourselves.
-			case <-c.quit:
+			case <-b.quit:
 			}
 		}(client)
 
@@ -193,7 +191,7 @@ func (c *ChannelGraph) notifyTopologyChange(topologyDiff *TopologyChange) {
 
 	// Range over the set of active clients, and attempt to send the
 	// topology updates.
-	c.topologyClients.Range(notifyClient)
+	b.topologyClients.Range(notifyClient)
 }
 
 // handleTopologyUpdate is responsible for sending any topology changes
@@ -201,11 +199,11 @@ func (c *ChannelGraph) notifyTopologyChange(topologyDiff *TopologyChange) {
 //
 // NOTE: must be run inside goroutine and must only ever be called from within
 // handleTopologySubscriptions.
-func (c *ChannelGraph) handleTopologyUpdate(update any) {
-	defer c.wg.Done()
+func (b *Builder) handleTopologyUpdate(update any) {
+	defer b.wg.Done()
 
 	topChange := &TopologyChange{}
-	err := c.addToTopologyChange(topChange, update)
+	err := b.addToTopologyChange(topChange, update)
 	if err != nil {
 		log.Errorf("unable to update topology change notification: %v",
 			err)
@@ -216,7 +214,7 @@ func (c *ChannelGraph) handleTopologyUpdate(update any) {
 		return
 	}
 
-	c.notifyTopologyChange(topChange)
+	b.notifyTopologyChange(topChange)
 }
 
 // TopologyChange represents a new set of modifications to the channel graph.
@@ -375,7 +373,7 @@ type ChannelEdgeUpdate struct {
 // constitutes. This function will also fetch any required auxiliary
 // information required to create the topology change update from the graph
 // database.
-func (c *ChannelGraph) addToTopologyChange(update *TopologyChange,
+func (b *Builder) addToTopologyChange(update *TopologyChange,
 	msg any) error {
 
 	switch m := msg.(type) {
@@ -392,7 +390,7 @@ func (c *ChannelGraph) addToTopologyChange(update *TopologyChange,
 			Addresses:   m.Addresses,
 			IdentityKey: pubKey,
 			Alias:       m.Alias,
-			Color:       EncodeHexColor(m.Color),
+			Color:       graphdb.EncodeHexColor(m.Color),
 			Features:    m.Features.Clone(),
 		}
 
@@ -410,7 +408,9 @@ func (c *ChannelGraph) addToTopologyChange(update *TopologyChange,
 		// We'll need to fetch the edge's information from the database
 		// in order to get the information concerning which nodes are
 		// being connected.
-		edgeInfo, _, _, err := c.FetchChannelEdgesByID(m.ChannelID)
+		edgeInfo, _, _, err := b.cfg.Graph.FetchChannelEdgesByID(
+			m.ChannelID,
+		)
 		if err != nil {
 			return fmt.Errorf("unable fetch channel edge: %w", err)
 		}
@@ -462,42 +462,4 @@ func (c *ChannelGraph) addToTopologyChange(update *TopologyChange,
 		return fmt.Errorf("unable to add to topology change, "+
 			"unknown message type %T", msg)
 	}
-}
-
-// EncodeHexColor takes a color and returns it in hex code format.
-func EncodeHexColor(color color.RGBA) string {
-	return fmt.Sprintf("#%02x%02x%02x", color.R, color.G, color.B)
-}
-
-// DecodeHexColor takes a hex color string like "#rrggbb" and returns a
-// color.RGBA.
-func DecodeHexColor(hex string) (color.RGBA, error) {
-	if len(hex) != 7 || hex[0] != '#' {
-		return color.RGBA{}, fmt.Errorf("invalid hex color string: %s",
-			hex)
-	}
-
-	r, err := strconv.ParseUint(hex[1:3], 16, 8)
-	if err != nil {
-		return color.RGBA{}, fmt.Errorf("invalid red component: %w",
-			err)
-	}
-
-	g, err := strconv.ParseUint(hex[3:5], 16, 8)
-	if err != nil {
-		return color.RGBA{}, fmt.Errorf("invalid green component: %w",
-			err)
-	}
-
-	b, err := strconv.ParseUint(hex[5:7], 16, 8)
-	if err != nil {
-		return color.RGBA{}, fmt.Errorf("invalid blue component: %w",
-			err)
-	}
-
-	return color.RGBA{
-		R: uint8(r),
-		G: uint8(g),
-		B: uint8(b),
-	}, nil
 }
