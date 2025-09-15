@@ -437,15 +437,19 @@ func (c *cachedNetworkMsg) Size() (uint64, error) {
 // rejectCacheKey is the cache key that we'll use to track announcements we've
 // recently rejected.
 type rejectCacheKey struct {
-	pubkey [33]byte
-	chanID uint64
+	gossipVersion lnwire.GossipVersion
+	pubkey        [33]byte
+	chanID        uint64
 }
 
 // newRejectCacheKey returns a new cache key for the reject cache.
-func newRejectCacheKey(cid uint64, pub [33]byte) rejectCacheKey {
+func newRejectCacheKey(v lnwire.GossipVersion, cid uint64,
+	pub [33]byte) rejectCacheKey {
+
 	k := rejectCacheKey{
-		chanID: cid,
-		pubkey: pub,
+		gossipVersion: v,
+		chanID:        cid,
+		pubkey:        pub,
 	}
 
 	return k
@@ -1687,8 +1691,15 @@ func (d *AuthenticatedGossiper) PruneSyncState(peer route.Vertex) {
 func (d *AuthenticatedGossiper) isRecentlyRejectedMsg(msg lnwire.Message,
 	peerPub [33]byte) bool {
 
+	// We only cache rejections for gossip messages. So if it is not
+	// a gossip message, we return false.
+	gMsg, ok := msg.(lnwire.GossipMessage)
+	if !ok {
+		return false
+	}
+
 	var scid uint64
-	switch m := msg.(type) {
+	switch m := gMsg.(type) {
 	case *lnwire.ChannelUpdate1:
 		scid = m.ShortChannelID.ToUint64()
 
@@ -1699,8 +1710,11 @@ func (d *AuthenticatedGossiper) isRecentlyRejectedMsg(msg lnwire.Message,
 		return false
 	}
 
-	_, err := d.recentRejects.Get(newRejectCacheKey(scid, peerPub))
-	return err != cache.ErrElementNotFound
+	_, err := d.recentRejects.Get(newRejectCacheKey(
+		gMsg.GossipVersion(), scid, peerPub,
+	))
+
+	return !errors.Is(err, cache.ErrElementNotFound)
 }
 
 // retransmitStaleAnns examines all outgoing channels that the source node is
@@ -2570,6 +2584,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 		log.Errorf(err.Error())
 
 		key := newRejectCacheKey(
+			ann.GossipVersion(),
 			scid.ToUint64(),
 			sourceToPub(nMsg.source),
 		)
@@ -2587,6 +2602,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 		log.Errorf(err.Error())
 
 		key := newRejectCacheKey(
+			ann.GossipVersion(),
 			scid.ToUint64(),
 			sourceToPub(nMsg.source),
 		)
@@ -2661,6 +2677,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 				"%v", err)
 
 			key := newRejectCacheKey(
+				ann.GossipVersion(),
 				scid.ToUint64(),
 				sourceToPub(nMsg.source),
 			)
@@ -2740,6 +2757,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 				errors.Is(err, ErrInvalidFundingOutput):
 
 				key := newRejectCacheKey(
+					ann.GossipVersion(),
 					scid.ToUint64(),
 					sourceToPub(nMsg.source),
 				)
@@ -2749,6 +2767,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 
 			case errors.Is(err, ErrChannelSpent):
 				key := newRejectCacheKey(
+					ann.GossipVersion(),
 					scid.ToUint64(),
 					sourceToPub(nMsg.source),
 				)
@@ -2775,6 +2794,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 				// edge. We won't increase the ban score for the
 				// remote peer.
 				key := newRejectCacheKey(
+					ann.GossipVersion(),
 					scid.ToUint64(),
 					sourceToPub(nMsg.source),
 				)
@@ -2838,6 +2858,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 			anns, rErr := d.processRejectedEdge(ctx, ann, proof)
 			if rErr != nil {
 				key := newRejectCacheKey(
+					ann.GossipVersion(),
 					scid.ToUint64(),
 					sourceToPub(nMsg.source),
 				)
@@ -2865,6 +2886,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 
 		// Otherwise, this is just a regular rejected edge.
 		key := newRejectCacheKey(
+			ann.GossipVersion(),
 			scid.ToUint64(),
 			sourceToPub(nMsg.source),
 		)
@@ -2997,6 +3019,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 		log.Errorf(err.Error())
 
 		key := newRejectCacheKey(
+			upd.GossipVersion(),
 			upd.ShortChannelID.ToUint64(),
 			sourceToPub(nMsg.source),
 		)
@@ -3177,6 +3200,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 		nMsg.err <- err
 
 		key := newRejectCacheKey(
+			upd.GossipVersion(),
 			upd.ShortChannelID.ToUint64(),
 			sourceToPub(nMsg.source),
 		)
@@ -3306,6 +3330,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 			// Since we know the stored SCID in the graph, we'll
 			// cache that SCID.
 			key := newRejectCacheKey(
+				upd.GossipVersion(),
 				chanInfo.ChannelID,
 				sourceToPub(nMsg.source),
 			)
