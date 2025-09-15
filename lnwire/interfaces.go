@@ -1,6 +1,8 @@
 package lnwire
 
-import "github.com/btcsuite/btcd/chaincfg/chainhash"
+import (
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+)
 
 // AnnounceSignatures is an interface that represents a message used to
 // exchange signatures of a ChannelAnnouncment message during the funding flow.
@@ -87,6 +89,22 @@ type ChannelUpdate interface {
 
 	// SetSCID can be used to overwrite the SCID of the update.
 	SetSCID(scid ShortChannelID)
+
+	Message
+}
+
+// NodeAnnouncement is an interface that must be satisfied by any message used
+// to announce the existence of a node.
+type NodeAnnouncement interface {
+	// NodePub returns the identity public key of the node.
+	NodePub() [33]byte
+
+	// NodeFeatures returns the set of features supported by the node.
+	NodeFeatures() *FeatureVector
+
+	// TimestampDesc returns a human-readable description of the
+	// timestamp of the announcement.
+	TimestampDesc() string
 
 	Message
 }
