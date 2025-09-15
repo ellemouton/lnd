@@ -5,6 +5,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcutil"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
+	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -15,7 +16,7 @@ type Graph interface {
 	// ForEachNodeDirectedChannel calls the callback for every channel of
 	// the given node.
 	ForEachNodeDirectedChannel(nodePub route.Vertex,
-		cb func(channel *graphdb.DirectedChannel) error,
+		cb func(channel *models.DirectedChannel) error,
 		reset func()) error
 
 	// FetchNodeFeatures returns the features of the given node.

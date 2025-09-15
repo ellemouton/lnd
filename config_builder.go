@@ -15,7 +15,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btclog/v2"
@@ -46,6 +45,7 @@ import (
 	"github.com/lightningnetwork/lnd/lnwallet/btcwallet"
 	"github.com/lightningnetwork/lnd/lnwallet/chancloser"
 	"github.com/lightningnetwork/lnd/lnwallet/rpcwallet"
+	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/macaroons"
 	"github.com/lightningnetwork/lnd/msgmux"
 	paymentsdb "github.com/lightningnetwork/lnd/payments/db"
@@ -917,7 +917,8 @@ func (d *RPCSignerWalletImpl) BuildChainControl(
 type DatabaseInstances struct {
 	// GraphDB is the database that stores the channel graph used for path
 	// finding.
-	GraphDB *graphdb.ChannelGraph
+	GraphDB  graphdb.V1Store
+	GraphDB2 graphdb.V1Store
 
 	// ChanStateDB is the database that stores all of our node's channel
 	// state.
@@ -1041,20 +1042,6 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		graphdb.WithBatchCommitInterval(cfg.DB.BatchCommitInterval),
 	}
 
-	chanGraphOpts := []graphdb.ChanGraphOption{
-		graphdb.WithUseGraphCache(!cfg.DB.NoGraphCache),
-	}
-
-	// We want to pre-allocate the channel graph cache according to what we
-	// expect for mainnet to speed up memory allocation.
-	if cfg.ActiveNetParams.Name == chaincfg.MainNetParams.Name {
-		chanGraphOpts = append(
-			chanGraphOpts, graphdb.WithPreAllocCacheNumNodes(
-				graphdb.DefaultPreAllocCacheNumNodes,
-			),
-		)
-	}
-
 	dbOptions := []channeldb.OptionModifier{
 		channeldb.OptionDryRunMigration(cfg.DryRunMigration),
 		channeldb.OptionStoreFinalHtlcResolutions(
@@ -1089,7 +1076,10 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 
 	// The graph store implementation we will use depends on whether
 	// native SQL is enabled or not.
-	var graphStore graphdb.V1Store
+	var (
+		graphStore   graphdb.V1Store
+		graphStoreV2 graphdb.V1Store
+	)
 
 	// Instantiate a native SQL store if the flag is set.
 	if d.cfg.DB.UseNativeSQL {
@@ -1131,6 +1121,7 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 			graphMig := func(tx *sqlc.Queries) error {
 				cfg := &graphdb.SQLStoreConfig{
 					//nolint:ll
+					Version:   lnwire.GossipVersion1,
 					ChainHash: *d.cfg.ActiveNetParams.GenesisHash,
 					QueryCfg:  queryCfg,
 				}
@@ -1209,6 +1200,7 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 
 		graphStore, err = graphdb.NewSQLStore(
 			&graphdb.SQLStoreConfig{
+				Version:   lnwire.GossipVersion1,
 				ChainHash: *d.cfg.ActiveNetParams.GenesisHash,
 				QueryCfg:  queryCfg,
 			},
@@ -1216,6 +1208,21 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		)
 		if err != nil {
 			err = fmt.Errorf("unable to get graph store: %w", err)
+			d.logger.Error(err)
+
+			return nil, nil, err
+		}
+
+		graphStoreV2, err = graphdb.NewSQLStore(
+			&graphdb.SQLStoreConfig{
+				Version:   lnwire.GossipVersion2,
+				ChainHash: *d.cfg.ActiveNetParams.GenesisHash,
+				QueryCfg:  queryCfg,
+			},
+			graphExecutor, graphDBOptions...,
+		)
+		if err != nil {
+			err = fmt.Errorf("unable to get graph store2: %w", err)
 			d.logger.Error(err)
 
 			return nil, nil, err
@@ -1248,17 +1255,13 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		if err != nil {
 			return nil, nil, err
 		}
+
+		return nil, nil, fmt.Errorf("cant use v2 graph db without " +
+			"native SQL")
 	}
 
-	dbs.GraphDB, err = graphdb.NewChannelGraph(graphStore, chanGraphOpts...)
-	if err != nil {
-		cleanUp()
-
-		err = fmt.Errorf("unable to open channel graph DB: %w", err)
-		d.logger.Error(err)
-
-		return nil, nil, err
-	}
+	dbs.GraphDB = graphStore
+	dbs.GraphDB2 = graphStoreV2
 
 	// Mount the payments DB which is only KV for now.
 	//

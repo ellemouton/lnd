@@ -13,7 +13,7 @@ import (
 	"github.com/lightningnetwork/lnd/chainreg"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/fn/v2"
-	graphdb "github.com/lightningnetwork/lnd/graph/db"
+	"github.com/lightningnetwork/lnd/graph"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/lncfg"
@@ -114,7 +114,7 @@ func (s *subRPCServerConfigs) PopulateDependencies(cfg *Config,
 	chanRouter *routing.ChannelRouter,
 	routerBackend *routerrpc.RouterBackend,
 	nodeSigner *netann.NodeSigner,
-	graphDB *graphdb.ChannelGraph,
+	graphDB *graph.Builder,
 	chanStateDB *channeldb.ChannelStateDB,
 	sweeper *sweep.UtxoSweeper,
 	tower *watchtower.Standalone,
@@ -122,7 +122,7 @@ func (s *subRPCServerConfigs) PopulateDependencies(cfg *Config,
 	tcpResolver lncfg.TCPResolver,
 	genInvoiceFeatures func() *lnwire.FeatureVector,
 	genAmpInvoiceFeatures func() *lnwire.FeatureVector,
-	getNodeAnnouncement func() lnwire.NodeAnnouncement,
+	getNodeAnnouncements func() (*lnwire.NodeAnnouncement1, *lnwire.NodeAnnouncement2),
 	updateNodeAnnouncement func(ctx context.Context,
 		features *lnwire.RawFeatureVector,
 		modifiers ...netann.NodeAnnModifier) error,
@@ -356,8 +356,8 @@ func (s *subRPCServerConfigs) PopulateDependencies(cfg *Config,
 		case *peersrpc.Config:
 			subCfgValue := extractReflectValue(subCfg)
 
-			subCfgValue.FieldByName("GetNodeAnnouncement").Set(
-				reflect.ValueOf(getNodeAnnouncement),
+			subCfgValue.FieldByName("GetNodeAnnouncements").Set(
+				reflect.ValueOf(getNodeAnnouncements),
 			)
 
 			subCfgValue.FieldByName("ParseAddr").Set(

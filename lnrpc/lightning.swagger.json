@@ -4490,6 +4490,9 @@
         "auth_proof": {
           "$ref": "#/definitions/lnrpcChannelAuthProof",
           "description": "Authentication proof for this channel. This proof contains a set of\nsignatures binding four identities, which attests to the legitimacy of\nthe advertised channel. This only is available for advertised channels.\nThis field is not filled by default. Pass include_auth_proof flag to\nDescribeGraph, GetNodeInfo or GetChanInfo to get this data."
+        },
+        "gossip_version": {
+          "$ref": "#/definitions/lnrpcGossipVersion"
         }
       },
       "description": "A fully authenticated channel along with all its unique attributes.\nOnce an authenticated channel announcement has been processed on the network,\nthen an instance of ChannelEdgeInfo encapsulating the channels attributes is\nstored. The other portions relevant to routing policy of a channel are stored\nwithin a ChannelEdgePolicy for each direction of the channel."
@@ -4699,6 +4702,24 @@
           "type": "string",
           "format": "byte",
           "description": "The set of data that was appended to this message, some of which we may\nnot actually know how to iterate or parse. By holding onto this data, we\nensure that we're able to properly validate the set of signatures that\ncover these new fields, and ensure we're able to make upgrades to the\nnetwork in a forwards compatible manner."
+        },
+        "gossip_version": {
+          "$ref": "#/definitions/lnrpcGossipVersion"
+        },
+        "disable_flags": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "block_height": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "extra_signed_types": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "format": "byte"
+          }
         }
       }
     },
@@ -5504,6 +5525,14 @@
         }
       }
     },
+    "lnrpcGossipVersion": {
+      "type": "string",
+      "enum": [
+        "V1",
+        "V2"
+      ],
+      "default": "V1"
+    },
     "lnrpcGraphTopologyUpdate": {
       "type": "object",
       "properties": {
@@ -6073,6 +6102,9 @@
             "format": "byte"
           },
           "description": "Custom node announcement tlv records."
+        },
+        "gossip_version": {
+          "$ref": "#/definitions/lnrpcGossipVersion"
         }
       },
       "description": "An individual vertex/node within the channel graph. A node is\nconnected to other nodes by one or more channel edges emanating from it. As the\ngraph is directed, a node will also have an incoming edge attached to it for\neach outgoing edge."

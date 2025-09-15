@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"image/color"
 	"math"
+	"net"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/tlv"
+	"github.com/lightningnetwork/lnd/tor"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
@@ -129,12 +131,29 @@ var _ TestMessage = (*AnnounceSignatures2)(nil)
 //
 // This is part of the TestMessage interface.
 func (a *AnnounceSignatures2) RandTestMessage(t *rapid.T) Message {
-	return &AnnounceSignatures2{
-		ChannelID:        RandChannelID(t),
-		ShortChannelID:   RandShortChannelID(t),
-		PartialSignature: *RandPartialSig(t),
-		ExtraOpaqueData:  RandExtraOpaqueData(t, nil),
+	var (
+		chanID = RandChannelID(t)
+		scid   = RandShortChannelID(t)
+		pSig   = RandPartialSig(t)
+	)
+
+	msg := &AnnounceSignatures2{
+		ChannelID: tlv.NewRecordT[tlv.TlvType0, ChannelID](
+			chanID,
+		),
+		ShortChannelID: tlv.NewRecordT[tlv.TlvType2](scid),
+		PartialSignature: tlv.NewRecordT[tlv.TlvType4, PartialSig](
+			*pSig,
+		),
+		ExtraSignedFields: make(map[uint64][]byte),
 	}
+
+	randRecs, _ := RandSignedRangeRecords(t)
+	if len(randRecs) > 0 {
+		msg.ExtraSignedFields = ExtraSignedFields(randRecs)
+	}
+
+	return msg
 }
 
 // A compile time check to ensure ChannelAnnouncement1 implements the
@@ -213,7 +232,6 @@ func (c *ChannelAnnouncement2) RandTestMessage(t *rapid.T) Message {
 	copy(chainHashObj[:], chainHash[:])
 
 	msg := &ChannelAnnouncement2{
-		Signature: RandSignature(t),
 		ChainHash: tlv.NewPrimitiveRecord[tlv.TlvType0, chainhash.Hash](
 			chainHashObj,
 		),
@@ -232,10 +250,16 @@ func (c *ChannelAnnouncement2) RandTestMessage(t *rapid.T) Message {
 		NodeID2: tlv.NewPrimitiveRecord[tlv.TlvType10, [33]byte](
 			nodeID2,
 		),
-		ExtraOpaqueData: RandExtraOpaqueData(t, nil),
+		ExtraSignedFields: make(map[uint64][]byte),
 	}
 
-	msg.Signature.ForceSchnorr()
+	msg.Signature.Val = RandSignature(t)
+	msg.Signature.Val.ForceSchnorr()
+
+	randRecs, _ := RandSignedRangeRecords(t)
+	if len(randRecs) > 0 {
+		msg.ExtraSignedFields = ExtraSignedFields(randRecs)
+	}
 
 	// Randomly include optional fields
 	if rapid.Bool().Draw(t, "includeBitcoinKey1") {
@@ -268,6 +292,10 @@ func (c *ChannelAnnouncement2) RandTestMessage(t *rapid.T) Message {
 			),
 		)
 	}
+
+	msg.Outpoint = tlv.NewRecordT[tlv.TlvType18, OutPoint](
+		OutPoint(RandOutPoint(t)),
+	)
 
 	return msg
 }
@@ -411,7 +439,7 @@ func (a *ChannelUpdate1) RandTestMessage(t *rapid.T) Message {
 	// include an inbound fee, then we will also set the record in the
 	// extra opaque data.
 	var (
-		customRecords, _ = RandCustomRecords(t, nil, false)
+		customRecords, _ = RandCustomRecords(t, nil)
 		inboundFee       tlv.OptionalRecordT[tlv.TlvType55555, Fee]
 	)
 	includeInboundFee := rapid.Bool().Draw(t, "includeInboundFee")
@@ -513,7 +541,6 @@ func (c *ChannelUpdate2) RandTestMessage(t *rapid.T) Message {
 
 	//nolint:ll
 	msg := &ChannelUpdate2{
-		Signature: RandSignature(t),
 		ChainHash: tlv.NewPrimitiveRecord[tlv.TlvType0, chainhash.Hash](
 			chainHashObj,
 		),
@@ -541,10 +568,11 @@ func (c *ChannelUpdate2) RandTestMessage(t *rapid.T) Message {
 		FeeProportionalMillionths: tlv.NewPrimitiveRecord[tlv.TlvType18, uint32](
 			feeProportionalMillionths,
 		),
-		ExtraOpaqueData: RandExtraOpaqueData(t, nil),
+		ExtraSignedFields: make(map[uint64][]byte),
 	}
 
-	msg.Signature.ForceSchnorr()
+	msg.Signature.Val = RandSignature(t)
+	msg.Signature.Val.ForceSchnorr()
 
 	if rapid.Bool().Draw(t, "isSecondPeer") {
 		msg.SecondPeer = tlv.SomeRecordT(
@@ -728,7 +756,7 @@ var _ TestMessage = (*CommitSig)(nil)
 //
 // This is part of the TestMessage interface.
 func (c *CommitSig) RandTestMessage(t *rapid.T) Message {
-	cr, _ := RandCustomRecords(t, nil, true)
+	cr, _ := RandCustomRecords(t, nil)
 	sig := &CommitSig{
 		ChanID:        RandChannelID(t),
 		CommitSig:     RandSignature(t),
@@ -1185,15 +1213,19 @@ func (ks *KickoffSig) RandTestMessage(t *rapid.T) Message {
 	}
 }
 
-// A compile time check to ensure NodeAnnouncement implements the
+// A compile time check to ensure NodeAnnouncement1 implements the
 // lnwire.TestMessage interface.
-var _ TestMessage = (*NodeAnnouncement)(nil)
+var _ TestMessage = (*NodeAnnouncement1)(nil)
+
+// A compile time check to ensure NodeAnnouncement2 implements the
+// lnwire.TestMessage interface.
+var _ TestMessage = (*NodeAnnouncement2)(nil)
 
 // RandTestMessage populates the message with random data suitable for testing.
 // It uses the rapid testing framework to generate random values.
 //
 // This is part of the TestMessage interface.
-func (a *NodeAnnouncement) RandTestMessage(t *rapid.T) Message {
+func (a *NodeAnnouncement1) RandTestMessage(t *rapid.T) Message {
 	// Generate random compressed public key for node ID
 	pubKey := RandPubKey(t)
 	var nodeID [33]byte
@@ -1206,7 +1238,7 @@ func (a *NodeAnnouncement) RandTestMessage(t *rapid.T) Message {
 		B: uint8(rapid.IntRange(0, 255).Draw(t, "rgbB")),
 	}
 
-	return &NodeAnnouncement{
+	return &NodeAnnouncement1{
 		Signature: RandSignature(t),
 		Features:  RandFeatureVector(t),
 		Timestamp: uint32(rapid.IntRange(0, 0x7FFFFFFF).Draw(
@@ -1218,6 +1250,123 @@ func (a *NodeAnnouncement) RandTestMessage(t *rapid.T) Message {
 		Addresses:       RandNetAddrs(t),
 		ExtraOpaqueData: RandExtraOpaqueData(t, nil),
 	}
+}
+
+// RandTestMessage populates the message with random data suitable for testing.
+// It uses the rapid testing framework to generate random values.
+//
+// This is part of the TestMessage interface.
+func (n *NodeAnnouncement2) RandTestMessage(t *rapid.T) Message {
+	features := RandFeatureVector(t)
+	blockHeight := uint32(rapid.IntRange(0, 1000000).Draw(t, "blockHeight"))
+
+	// Generate random compressed public key for node ID
+	pubKey := RandPubKey(t)
+	var nodeID [33]byte
+	copy(nodeID[:], pubKey.SerializeCompressed())
+
+	msg := &NodeAnnouncement2{
+		Features: tlv.NewRecordT[tlv.TlvType0, RawFeatureVector](
+			*features,
+		),
+		BlockHeight: tlv.NewPrimitiveRecord[tlv.TlvType2, uint32](
+			blockHeight,
+		),
+		NodeID: tlv.NewPrimitiveRecord[tlv.TlvType6, [33]byte](
+			nodeID,
+		),
+		ExtraSignedFields: make(map[uint64][]byte),
+	}
+
+	msg.Signature.Val = RandSignature(t)
+	msg.Signature.Val.ForceSchnorr()
+
+	// Test optional fields one by one
+	if rapid.Bool().Draw(t, "includeColor") {
+		rgbColor := Color{
+			R: uint8(rapid.IntRange(0, 255).Draw(t, "rgbR")),
+			G: uint8(rapid.IntRange(0, 255).Draw(t, "rgbG")),
+			B: uint8(rapid.IntRange(0, 255).Draw(t, "rgbB")),
+		}
+		colorRecord := tlv.ZeroRecordT[tlv.TlvType1, Color]()
+		colorRecord.Val = rgbColor
+		msg.Color = tlv.SomeRecordT(colorRecord)
+	}
+
+	if rapid.Bool().Draw(t, "includeAlias") {
+		alias := RandNodeAlias(t)
+		aliasBytes := []byte(alias.String())
+		aliasRecord := tlv.ZeroRecordT[tlv.TlvType3, []byte]()
+		aliasRecord.Val = aliasBytes
+		msg.Alias = tlv.SomeRecordT(aliasRecord)
+	}
+
+	if rapid.Bool().Draw(t, "includeIPV4Addrs") {
+		// Start with single address to isolate the issue
+		ipv4Addrs := make(IPV4Addrs, 1)
+		// Create IP as a 4-byte slice directly to match decoder expectations
+		ip := make(net.IP, 4)
+		ip[0] = 192
+		ip[1] = 168
+		ip[2] = 1
+		ip[3] = uint8(rapid.IntRange(1, 254).Draw(t, "ip4_last"))
+
+		ipv4Addrs[0] = &net.TCPAddr{
+			IP:   ip,
+			Port: rapid.IntRange(1000, 65535).Draw(t, "port4"), // Avoid low ports
+		}
+
+		ipv4Record := tlv.ZeroRecordT[tlv.TlvType5, IPV4Addrs]()
+		ipv4Record.Val = ipv4Addrs
+		msg.IPV4Addrs = tlv.SomeRecordT(ipv4Record)
+	}
+
+	if rapid.Bool().Draw(t, "includeIPV6Addrs") {
+		ipv6Addrs := make(IPV6Addrs, 1)
+		// Create a simple IPv6 address
+		ip := make(net.IP, 16)
+		ip[0] = 0x20
+		ip[1] = 0x01
+		ip[2] = 0x0d
+		ip[3] = 0xb8
+		// Fill the rest with some pattern to make it unique
+		for i := 4; i < 15; i++ {
+			ip[i] = uint8(i)
+		}
+		ip[15] = uint8(rapid.IntRange(1, 254).Draw(t, "ip6_last"))
+
+		ipv6Addrs[0] = &net.TCPAddr{
+			IP:   ip,
+			Port: rapid.IntRange(1000, 65535).Draw(t, "port6"),
+		}
+
+		ipv6Record := tlv.ZeroRecordT[tlv.TlvType7, IPV6Addrs]()
+		ipv6Record.Val = ipv6Addrs
+		msg.IPV6Addrs = tlv.SomeRecordT(ipv6Record)
+	}
+
+	if rapid.Bool().Draw(t, "includeTorV3Addrs") {
+		torV3Addrs := make(TorV3Addrs, 1)
+		// Generate a valid tor v3 address
+		onionBytes := rapid.SliceOfN(rapid.Byte(), 35, 35).Draw(t, "onion")
+		onionService := tor.Base32Encoding.EncodeToString(onionBytes) + tor.OnionSuffix
+
+		torV3Addrs[0] = &tor.OnionAddr{
+			OnionService: onionService,
+			Port:         rapid.IntRange(1000, 65535).Draw(t, "torPort"),
+		}
+
+		torV3Record := tlv.ZeroRecordT[tlv.TlvType9, TorV3Addrs]()
+		torV3Record.Val = torV3Addrs
+		msg.TorV3Addrs = tlv.SomeRecordT(torV3Record)
+	}
+
+	randRecs, _ := RandSignedRangeRecords(t)
+	if len(randRecs) > 0 {
+		msg.ExtraSignedFields = ExtraSignedFields(randRecs)
+	}
+
+	return msg
 }
 
 // A compile time check to ensure OpenChannel implements the TestMessage
@@ -1606,7 +1755,7 @@ func (s *Shutdown) RandTestMessage(t *rapid.T) Message {
 		shutdownNonce = SomeShutdownNonce(RandMusig2Nonce(t))
 	}
 
-	cr, _ := RandCustomRecords(t, nil, true)
+	cr, _ := RandCustomRecords(t, nil)
 
 	return &Shutdown{
 		ChannelID:     RandChannelID(t),
@@ -1663,7 +1812,7 @@ func (c *UpdateAddHTLC) RandTestMessage(t *rapid.T) Message {
 
 	numRecords := rapid.IntRange(0, 5).Draw(t, "numRecords")
 	if numRecords > 0 {
-		msg.CustomRecords, _ = RandCustomRecords(t, nil, true)
+		msg.CustomRecords, _ = RandCustomRecords(t, nil)
 	}
 
 	// 50/50 chance to add a blinding point
@@ -1744,7 +1893,7 @@ func (c *UpdateFulfillHTLC) RandTestMessage(t *rapid.T) Message {
 		PaymentPreimage: RandPaymentPreimage(t),
 	}
 
-	cr, ignoreRecords := RandCustomRecords(t, nil, true)
+	cr, ignoreRecords := RandCustomRecords(t, nil)
 	msg.CustomRecords = cr
 
 	randData := RandExtraOpaqueData(t, ignoreRecords)

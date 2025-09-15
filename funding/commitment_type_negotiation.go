@@ -244,7 +244,6 @@ func explicitNegotiateCommitmentType(channelType lnwire.ChannelType, local,
 	case channelFeatures.OnlyContains(
 		lnwire.SimpleTaprootChannelsRequiredStaging,
 	):
-
 		if !hasFeatures(
 			local, remote,
 			lnwire.SimpleTaprootChannelsOptionalStaging,

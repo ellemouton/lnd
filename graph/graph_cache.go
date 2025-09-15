@@ -1,69 +1,18 @@
-package graphdb
+package graph
 
 import (
 	"fmt"
 	"sync"
 
-	"github.com/btcsuite/btcd/btcutil"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
 
-// DirectedChannel is a type that stores the channel information as seen from
-// one side of the channel.
-type DirectedChannel struct {
-	// ChannelID is the unique identifier of this channel.
-	ChannelID uint64
-
-	// IsNode1 indicates if this is the node with the smaller public key.
-	IsNode1 bool
-
-	// OtherNode is the public key of the node on the other end of this
-	// channel.
-	OtherNode route.Vertex
-
-	// Capacity is the announced capacity of this channel in satoshis.
-	Capacity btcutil.Amount
-
-	// OutPolicySet is a boolean that indicates whether the node has an
-	// outgoing policy set. For pathfinding only the existence of the policy
-	// is important to know, not the actual content.
-	OutPolicySet bool
-
-	// InPolicy is the incoming policy *from* the other node to this node.
-	// In path finding, we're walking backward from the destination to the
-	// source, so we're always interested in the edge that arrives to us
-	// from the other node.
-	InPolicy *models.CachedEdgePolicy
-
-	// Inbound fees of this node.
-	InboundFee lnwire.Fee
-}
-
-// DeepCopy creates a deep copy of the channel, including the incoming policy.
-func (c *DirectedChannel) DeepCopy() *DirectedChannel {
-	channelCopy := *c
-
-	if channelCopy.InPolicy != nil {
-		inPolicyCopy := *channelCopy.InPolicy
-		channelCopy.InPolicy = &inPolicyCopy
-
-		// The fields for the ToNode can be overwritten by the path
-		// finding algorithm, which is why we need a deep copy in the
-		// first place. So we always start out with nil values, just to
-		// be sure they don't contain any old data.
-		channelCopy.InPolicy.ToNodePubKey = nil
-		channelCopy.InPolicy.ToNodeFeatures = nil
-	}
-
-	return &channelCopy
-}
-
 // GraphCache is a type that holds a minimal set of information of the public
 // channel graph that can be used for pathfinding.
 type GraphCache struct {
-	nodeChannels map[route.Vertex]map[uint64]*DirectedChannel
+	nodeChannels map[route.Vertex]map[uint64]*models.DirectedChannel
 	nodeFeatures map[route.Vertex]*lnwire.FeatureVector
 
 	mtx sync.RWMutex
@@ -73,7 +22,7 @@ type GraphCache struct {
 func NewGraphCache(preAllocNumNodes int) *GraphCache {
 	return &GraphCache{
 		nodeChannels: make(
-			map[route.Vertex]map[uint64]*DirectedChannel,
+			map[route.Vertex]map[uint64]*models.DirectedChannel,
 			// A channel connects two nodes, so we can look it up
 			// from both sides, meaning we get double the number of
 			// entries.
@@ -121,21 +70,21 @@ func (c *GraphCache) AddChannel(info *models.CachedEdgeInfo,
 		return
 	}
 
-	if policy1 != nil && policy1.IsDisabled() &&
-		policy2 != nil && policy2.IsDisabled() {
+	if policy1 != nil && policy1.IsDisabled &&
+		policy2 != nil && policy2.IsDisabled {
 
 		return
 	}
 
 	// Create the edge entry for both nodes.
 	c.mtx.Lock()
-	c.updateOrAddEdge(info.NodeKey1Bytes, &DirectedChannel{
+	c.updateOrAddEdge(info.NodeKey1Bytes, &models.DirectedChannel{
 		ChannelID: info.ChannelID,
 		IsNode1:   true,
 		OtherNode: info.NodeKey2Bytes,
 		Capacity:  info.Capacity,
 	})
-	c.updateOrAddEdge(info.NodeKey2Bytes, &DirectedChannel{
+	c.updateOrAddEdge(info.NodeKey2Bytes, &models.DirectedChannel{
 		ChannelID: info.ChannelID,
 		IsNode1:   false,
 		OtherNode: info.NodeKey1Bytes,
@@ -147,14 +96,14 @@ func (c *GraphCache) AddChannel(info *models.CachedEdgeInfo,
 	// of node 2 then we have the policy 1 as seen from node 1.
 	if policy1 != nil {
 		fromNode, toNode := info.NodeKey1Bytes, info.NodeKey2Bytes
-		if !policy1.IsNode1() {
+		if !policy1.IsNode1 {
 			fromNode, toNode = toNode, fromNode
 		}
 		c.UpdatePolicy(policy1, fromNode, toNode)
 	}
 	if policy2 != nil {
 		fromNode, toNode := info.NodeKey2Bytes, info.NodeKey1Bytes
-		if policy2.IsNode1() {
+		if policy2.IsNode1 {
 			fromNode, toNode = toNode, fromNode
 		}
 		c.UpdatePolicy(policy2, fromNode, toNode)
@@ -163,9 +112,9 @@ func (c *GraphCache) AddChannel(info *models.CachedEdgeInfo,
 
 // updateOrAddEdge makes sure the edge information for a node is either updated
 // if it already exists or is added to that node's list of channels.
-func (c *GraphCache) updateOrAddEdge(node route.Vertex, edge *DirectedChannel) {
+func (c *GraphCache) updateOrAddEdge(node route.Vertex, edge *models.DirectedChannel) {
 	if len(c.nodeChannels[node]) == 0 {
-		c.nodeChannels[node] = make(map[uint64]*DirectedChannel)
+		c.nodeChannels[node] = make(map[uint64]*models.DirectedChannel)
 	}
 
 	c.nodeChannels[node][edge.ChannelID] = edge
@@ -201,7 +150,7 @@ func (c *GraphCache) UpdatePolicy(policy *models.CachedEdgePolicy, fromNode,
 		switch {
 		// This is node 1, and it is edge 1, so this is the outgoing
 		// policy for node 1.
-		case channel.IsNode1 && policy.IsNode1():
+		case channel.IsNode1 && policy.IsNode1:
 			channel.OutPolicySet = true
 			policy.InboundFee.WhenSome(func(fee lnwire.Fee) {
 				channel.InboundFee = fee
@@ -209,7 +158,7 @@ func (c *GraphCache) UpdatePolicy(policy *models.CachedEdgePolicy, fromNode,
 
 		// This is node 2, and it is edge 2, so this is the outgoing
 		// policy for node 2.
-		case !channel.IsNode1 && !policy.IsNode1():
+		case !channel.IsNode1 && !policy.IsNode1:
 			channel.OutPolicySet = true
 			policy.InboundFee.WhenSome(func(fee lnwire.Fee) {
 				channel.InboundFee = fee
@@ -264,7 +213,7 @@ func (c *GraphCache) removeChannelIfFound(node route.Vertex, chanID uint64) {
 
 // getChannels returns a copy of the passed node's channels or nil if there
 // isn't any.
-func (c *GraphCache) getChannels(node route.Vertex) []*DirectedChannel {
+func (c *GraphCache) getChannels(node route.Vertex) []*models.DirectedChannel {
 	c.mtx.RLock()
 	defer c.mtx.RUnlock()
 
@@ -289,7 +238,7 @@ func (c *GraphCache) getChannels(node route.Vertex) []*DirectedChannel {
 	}
 
 	i := 0
-	channelsCopy := make([]*DirectedChannel, len(channels))
+	channelsCopy := make([]*models.DirectedChannel, len(channels))
 	for _, channel := range channels {
 		// We need to copy the channel and policy to avoid it being
 		// updated in the cache if the path finding algorithm sets
@@ -310,7 +259,7 @@ func (c *GraphCache) getChannels(node route.Vertex) []*DirectedChannel {
 
 // ForEachChannel invokes the given callback for each channel of the given node.
 func (c *GraphCache) ForEachChannel(node route.Vertex,
-	cb func(channel *DirectedChannel) error) error {
+	cb func(channel *models.DirectedChannel) error) error {
 
 	// Obtain a copy of the node's channels. We need do this in order to
 	// avoid deadlocks caused by interaction with the graph cache, channel
@@ -336,7 +285,7 @@ func (c *GraphCache) ForEachChannel(node route.Vertex,
 // NOTE: This method should be considered _read only_, the channels or nodes
 // passed in MUST NOT be modified.
 func (c *GraphCache) ForEachNode(cb func(node route.Vertex,
-	channels map[uint64]*DirectedChannel) error) error {
+	channels map[uint64]*models.DirectedChannel) error) error {
 
 	c.mtx.RLock()
 	defer c.mtx.RUnlock()

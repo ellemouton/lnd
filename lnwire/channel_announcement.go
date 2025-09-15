@@ -58,6 +58,12 @@ type ChannelAnnouncement1 struct {
 	ExtraOpaqueData ExtraOpaqueData
 }
 
+var _ GossipMessage = (*ChannelAnnouncement1)(nil)
+
+func (*ChannelAnnouncement1) GossipVersion() GossipVersion {
+	return GossipVersion1
+}
+
 // A compile time check to ensure ChannelAnnouncement implements the
 // lnwire.Message interface.
 var _ Message = (*ChannelAnnouncement1)(nil)

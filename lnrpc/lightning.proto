@@ -3490,6 +3490,13 @@ message LightningNode {
 
     // Custom node announcement tlv records.
     map<uint64, bytes> custom_records = 7;
+
+    GossipVersion gossip_version = 8;
+}
+
+enum GossipVersion {
+    V1 = 0;
+    V2 = 1;
 }
 
 message NodeAddress {
@@ -3574,6 +3581,8 @@ message ChannelEdge {
     // This field is not filled by default. Pass include_auth_proof flag to
     // DescribeGraph, GetNodeInfo or GetChanInfo to get this data.
     ChannelAuthProof auth_proof = 10;
+
+    GossipVersion gossip_version = 11;
 }
 
 message ChannelGraphRequest {
@@ -5130,6 +5139,11 @@ message ChannelUpdate {
     network in a forwards compatible manner.
     */
     bytes extra_opaque_data = 12;
+
+    GossipVersion gossip_version = 13;
+    uint32 disable_flags = 14;
+    uint32 block_height = 15;
+    map<uint64, bytes> extra_signed_types = 16;
 }
 
 message MacaroonId {

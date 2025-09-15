@@ -2,10 +2,12 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
+	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/netann"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -62,8 +64,34 @@ type ChannelGraphTimeSeries interface {
 	// specified short channel ID. If no channel updates are known for the
 	// channel, then an empty slice will be returned.
 	FetchChanUpdates(chain chainhash.Hash,
-		shortChanID lnwire.ShortChannelID) ([]*lnwire.ChannelUpdate1,
+		shortChanID lnwire.ShortChannelID) ([]lnwire.ChannelUpdate,
 		error)
+}
+
+type GraphDB interface {
+	ChanUpdatesInHorizon(startTime, endTime time.Time) (
+		[]graphdb.ChannelEdge, error)
+
+	HighestChanID(ctx context.Context) (uint64, error)
+
+	NodeUpdatesInHorizon(startTime,
+		endTime time.Time) ([]*models.Node, error)
+
+	IsPublicNode(v lnwire.GossipVersion, pubKey route.Vertex) (bool, error)
+
+	FilterKnownChanIDs(chansInfo []graphdb.ChannelUpdateInfo) ([]uint64,
+		[]graphdb.ChannelUpdateInfo, error)
+
+	MarkEdgeLive(v lnwire.GossipVersion, chanID uint64) error
+
+	FilterChannelRange(startHeight, endHeight uint32, withTimestamps bool) (
+		[]graphdb.BlockChannelRange, error)
+
+	FetchChanInfos(chanIDs []uint64) ([]graphdb.ChannelEdge, error)
+
+	FetchChannelEdgesByID(chanID uint64) (
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, error)
 }
 
 // ChanSeries is an implementation of the ChannelGraphTimeSeries
@@ -72,12 +100,12 @@ type ChannelGraphTimeSeries interface {
 // in-protocol channel range queries to quickly and efficiently synchronize our
 // channel state with all peers.
 type ChanSeries struct {
-	graph *graphdb.ChannelGraph
+	graph GraphDB
 }
 
 // NewChanSeries constructs a new ChanSeries backed by a channeldb.ChannelGraph.
 // The returned ChanSeries implements the ChannelGraphTimeSeries interface.
-func NewChanSeries(graph *graphdb.ChannelGraph) *ChanSeries {
+func NewChanSeries(graph GraphDB) *ChanSeries {
 	return &ChanSeries{
 		graph: graph,
 	}
@@ -203,7 +231,7 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 
 	for _, nodeAnn := range nodeAnnsInHorizon {
 		// If this node has not been seen in the above channels, we can
-		// skip sending its NodeAnnouncement.
+		// skip sending its NodeAnnouncement1.
 		if _, seen := nodesFromChan[nodeAnn.PubKeyBytes]; !seen {
 			log.Debugf("Skipping forwarding as node %x not found "+
 				"in channel announcement", nodeAnn.PubKeyBytes)
@@ -212,7 +240,8 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 
 		// Ensure we only forward nodes that are publicly advertised to
 		// prevent leaking information about nodes.
-		isNodePublic, err := c.graph.IsPublicNode(nodeAnn.PubKeyBytes)
+		// TODO(elle): update for v2
+		isNodePublic, err := c.graph.IsPublicNode(lnwire.GossipVersion1, nodeAnn.PubKeyBytes)
 		if err != nil {
 			log.Errorf("Unable to determine if node %x is "+
 				"advertised: %v", nodeAnn.PubKeyBytes, err)
@@ -254,13 +283,52 @@ func (c *ChanSeries) FilterKnownChanIDs(_ chainhash.Hash,
 	isZombieChan func(time.Time, time.Time) bool) (
 	[]lnwire.ShortChannelID, error) {
 
-	newChanIDs, err := c.graph.FilterKnownChanIDs(superSet, isZombieChan)
+	unknown, knownZombies, err := c.graph.FilterKnownChanIDs(superSet)
 	if err != nil {
 		return nil, err
 	}
 
-	filteredIDs := make([]lnwire.ShortChannelID, 0, len(newChanIDs))
-	for _, chanID := range newChanIDs {
+	for _, info := range knownZombies {
+		// TODO(ziggie): Make sure that for the strict pruning case we
+		// compare the pubkeys and whether the right timestamp is not
+		// older than the `ChannelPruneExpiry`.
+		//
+		// NOTE: The timestamp data has no verification attached to it
+		// in the `ReplyChannelRange` msg so we are trusting this data
+		// at this point. However it is not critical because we are just
+		// removing the channel from the db when the timestamps are more
+		// recent. During the querying of the gossip msg verification
+		// happens as usual. However we should start punishing peers
+		// when they don't provide us honest data ?
+		isStillZombie := isZombieChan(
+			info.Node1UpdateTimestamp, info.Node2UpdateTimestamp,
+		)
+
+		if isStillZombie {
+			continue
+		}
+
+		// If we have marked it as a zombie but the latest update
+		// timestamps could bring it back from the dead, then we mark it
+		// alive, and we let it be added to the set of IDs to query our
+		// peer for.
+		// TODO(elle): update for v2.
+		err := c.graph.MarkEdgeLive(
+			lnwire.GossipVersion1, info.ShortChannelID.ToUint64(),
+		)
+		// Since there is a chance that the edge could have been marked
+		// as "live" between the FilterKnownChanIDs call and the
+		// MarkEdgeLive call, we ignore the error if the edge is already
+		// marked as live.
+		if err != nil &&
+			!errors.Is(err, graphdb.ErrZombieEdgeNotFound) {
+
+			return nil, err
+		}
+	}
+
+	filteredIDs := make([]lnwire.ShortChannelID, 0, len(unknown))
+	for _, chanID := range unknown {
 		filteredIDs = append(
 			filteredIDs, lnwire.NewShortChanIDFromInt(chanID),
 		)
@@ -334,7 +402,7 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 			// If this edge has a validated node announcement, that
 			// we haven't yet sent, then we'll send that as well.
 			nodePub := channel.Node2.PubKeyBytes
-			hasNodeAnn := channel.Node2.HaveNodeAnnouncement
+			hasNodeAnn := channel.Node2.HaveAnnouncement()
 			if _, ok := nodePubsSent[nodePub]; !ok && hasNodeAnn {
 				nodeAnn, err := channel.Node2.NodeAnnouncement(
 					true,
@@ -347,7 +415,8 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 				if err != nil {
 					log.Debugf("Skipping forwarding "+
 						"invalid node announcement "+
-						"%x: %v", nodeAnn.NodeID, err)
+						"%x: %v", nodeAnn.NodePub(),
+						err)
 				} else {
 					chanAnns = append(chanAnns, nodeAnn)
 					nodePubsSent[nodePub] = struct{}{}
@@ -360,7 +429,7 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 			// If this edge has a validated node announcement, that
 			// we haven't yet sent, then we'll send that as well.
 			nodePub := channel.Node1.PubKeyBytes
-			hasNodeAnn := channel.Node1.HaveNodeAnnouncement
+			hasNodeAnn := channel.Node1.HaveAnnouncement()
 			if _, ok := nodePubsSent[nodePub]; !ok && hasNodeAnn {
 				nodeAnn, err := channel.Node1.NodeAnnouncement(
 					true,
@@ -373,7 +442,8 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 				if err != nil {
 					log.Debugf("Skipping forwarding "+
 						"invalid node announcement "+
-						"%x: %v", nodeAnn.NodeID, err)
+						"%x: %v", nodeAnn.NodePub(),
+						err)
 				} else {
 					chanAnns = append(chanAnns, nodeAnn)
 					nodePubsSent[nodePub] = struct{}{}
@@ -391,7 +461,7 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 //
 // NOTE: This is part of the ChannelGraphTimeSeries interface.
 func (c *ChanSeries) FetchChanUpdates(chain chainhash.Hash,
-	shortChanID lnwire.ShortChannelID) ([]*lnwire.ChannelUpdate1, error) {
+	shortChanID lnwire.ShortChannelID) ([]lnwire.ChannelUpdate, error) {
 
 	chanInfo, e1, e2, err := c.graph.FetchChannelEdgesByID(
 		shortChanID.ToUint64(),
@@ -400,7 +470,7 @@ func (c *ChanSeries) FetchChanUpdates(chain chainhash.Hash,
 		return nil, err
 	}
 
-	chanUpdates := make([]*lnwire.ChannelUpdate1, 0, 2)
+	chanUpdates := make([]lnwire.ChannelUpdate, 0, 2)
 	if e1 != nil {
 		chanUpdate, err := netann.ChannelUpdateFromEdge(chanInfo, e1)
 		if err != nil {

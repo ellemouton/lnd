@@ -10,6 +10,41 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func testBasicPubTapChan(ht *lntest.HarnessTest) {
+	// Create network: Alice -> Bob -> Carol where the Alice-Bob channel
+	// is a normal segwit channel and the Bob-Carol channel is a
+	// simple-taproot channel. All are public.
+	// Assert that Alice can pay Carol.
+	_, nodes := ht.CreateSimpleNetwork(
+		[][]string{
+			node.CfgSimpleTaproot,
+			node.CfgSimpleTaproot,
+			node.CfgSimpleTaproot,
+		}, lntest.OpenChannelParams{
+			Amt:            chanAmt,
+			CommitmentType: lnrpc.CommitmentType_SIMPLE_TAPROOT,
+		},
+	)
+
+	alice, carol := nodes[0], nodes[2]
+
+	// Create an invoice for Carol which expects a payment of 1000
+	const paymentAmt = 1000
+	payReqs, _, _ := ht.CreatePayReqs(carol, paymentAmt, 1)
+
+	// Using Alice as the source, pay to the invoice from Carol created
+	ht.CompletePaymentRequests(alice, payReqs)
+
+	// Make sure that Alice has seen Carol's node announcement.
+	nodeInfo, err := alice.RPC.LN.GetNodeInfo(
+		ht.Context(), &lnrpc.NodeInfoRequest{
+			PubKey: carol.PubKeyStr,
+		},
+	)
+	require.NoError(ht, err)
+	require.Equal(ht, lnrpc.GossipVersion_V2, nodeInfo.Node.GossipVersion)
+}
+
 func testMultiHopPayments(ht *lntest.HarnessTest) {
 	const chanAmt = btcutil.Amount(100000)
 
@@ -18,8 +53,8 @@ func testMultiHopPayments(ht *lntest.HarnessTest) {
 	// channel with Alice, and Carol with Dave. After this setup, the
 	// network topology should now look like:
 	//     Carol -> Dave -> Alice -> Bob
-	alice := ht.NewNodeWithCoins("Alice", nil)
-	bob := ht.NewNode("Bob", nil)
+	alice := ht.NewNodeWithCoins("Alice", node.CfgSimpleTaproot)
+	bob := ht.NewNode("Bob", node.CfgSimpleTaproot)
 
 	daveArgs := []string{"--protocol.legacy.onion"}
 	dave := ht.NewNode("Dave", daveArgs)
@@ -45,7 +80,10 @@ func testMultiHopPayments(ht *lntest.HarnessTest) {
 	// Open a channel with 100k satoshis between Alice and Bob with Alice
 	// being the sole funder of the channel.
 	chanPointAlice := ht.OpenChannel(
-		alice, bob, lntest.OpenChannelParams{Amt: chanAmt},
+		alice, bob, lntest.OpenChannelParams{
+			Amt:            chanAmt,
+			CommitmentType: lnrpc.CommitmentType_SIMPLE_TAPROOT,
+		},
 	)
 
 	// We'll create Dave and establish a channel to Alice. Dave will be

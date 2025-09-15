@@ -6,8 +6,10 @@ import (
 	"net"
 
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
+	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lntest"
 	"github.com/lightningnetwork/lnd/lntest/node"
+	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/sqldb"
 	"github.com/stretchr/testify/require"
@@ -67,7 +69,7 @@ func testGraphMigration(ht *lntest.HarnessTest) {
 		)
 		err := db.ForEachNodeCached(ctx, false, func(_ context.Context,
 			_ route.Vertex, _ []net.Addr,
-			chans map[uint64]*graphdb.DirectedChannel) error {
+			chans map[uint64]*models.DirectedChannel) error {
 
 			numNodes++
 
@@ -144,6 +146,7 @@ func openNativeSQLGraphDB(ht *lntest.HarnessTest,
 
 	store, err := graphdb.NewSQLStore(
 		&graphdb.SQLStoreConfig{
+			Version:   lnwire.GossipVersion1,
 			ChainHash: *ht.Miner().ActiveNet.GenesisHash,
 			QueryCfg:  queryCfg,
 		},

@@ -9,7 +9,6 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
-	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -114,7 +113,7 @@ func (d *databaseChannelGraph) ForEachNodesChannels(ctx context.Context,
 	return d.db.ForEachNodeCached(
 		ctx, true, func(ctx context.Context, node route.Vertex,
 			addrs []net.Addr,
-			chans map[uint64]*graphdb.DirectedChannel) error {
+			chans map[uint64]*models.DirectedChannel) error {
 
 			// We'll skip over any node that doesn't have any
 			// advertised addresses. As we won't be able to reach
@@ -165,7 +164,7 @@ func ChannelGraphFromCachedDatabase(db GraphSource) ChannelGraph {
 // interface.
 type dbNodeCached struct {
 	node     route.Vertex
-	channels map[uint64]*graphdb.DirectedChannel
+	channels map[uint64]*models.DirectedChannel
 }
 
 // A compile time assertion to ensure dbNodeCached meets the autopilot.Node
@@ -198,7 +197,7 @@ func (dc *databaseChannelGraphCached) ForEachNode(ctx context.Context,
 
 	return dc.db.ForEachNodeCached(ctx, false, func(ctx context.Context,
 		n route.Vertex, _ []net.Addr,
-		channels map[uint64]*graphdb.DirectedChannel) error {
+		channels map[uint64]*models.DirectedChannel) error {
 
 		if len(channels) > 0 {
 			node := dbNodeCached{
@@ -225,7 +224,7 @@ func (dc *databaseChannelGraphCached) ForEachNodesChannels(ctx context.Context,
 
 	return dc.db.ForEachNodeCached(ctx, false, func(ctx context.Context,
 		n route.Vertex, _ []net.Addr,
-		channels map[uint64]*graphdb.DirectedChannel) error {
+		channels map[uint64]*models.DirectedChannel) error {
 
 		edges := make([]*ChannelEdge, 0, len(channels))
 		for cid, channel := range channels {

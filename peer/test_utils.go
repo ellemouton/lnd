@@ -19,7 +19,7 @@ import (
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/channelnotifier"
 	"github.com/lightningnetwork/lnd/fn/v2"
-	graphdb "github.com/lightningnetwork/lnd/graph/db"
+	"github.com/lightningnetwork/lnd/graph"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/keychain"
@@ -602,7 +602,7 @@ func createTestPeer(t *testing.T) *peerTestCtx {
 
 	const chanActiveTimeout = time.Minute
 
-	dbAliceGraph := graphdb.MakeTestGraph(t)
+	dbAliceGraph := graph.MakeTestGraph(t)
 	require.NoError(t, dbAliceGraph.Start())
 	t.Cleanup(func() {
 		require.NoError(t, dbAliceGraph.Stop())
@@ -625,7 +625,7 @@ func createTestPeer(t *testing.T) *peerTestCtx {
 		IsChannelActive: func(lnwire.ChannelID) bool {
 			return true
 		},
-		ApplyChannelUpdate: func(*lnwire.ChannelUpdate1,
+		ApplyChannelUpdate: func(lnwire.ChannelUpdate,
 			*wire.OutPoint, bool) error {
 
 			return nil
@@ -733,7 +733,7 @@ func createTestPeer(t *testing.T) *peerTestCtx {
 		},
 		PongBuf: make([]byte, lnwire.MaxPongBytes),
 		FetchLastChanUpdate: func(chanID lnwire.ShortChannelID,
-		) (*lnwire.ChannelUpdate1, error) {
+		) (lnwire.ChannelUpdate, error) {
 
 			return &lnwire.ChannelUpdate1{}, nil
 		},

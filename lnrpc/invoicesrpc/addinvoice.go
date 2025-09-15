@@ -572,7 +572,7 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 			// key is used to sign the invoice so that the sender
 			// can derive the true pub key of the recipient.
 			if !blind {
-				return cfg.NodeSigner.SignMessageCompact(
+				return cfg.NodeSigner.SignMessageCompactNoKeyLoc(
 					msg, false,
 				)
 			}
@@ -759,7 +759,7 @@ type SelectHopHintsCfg struct {
 	// IsPublicNode is returns a bool indicating whether the node with the
 	// given public key is seen as a public node in the graph from the
 	// graph's source node's point of view.
-	IsPublicNode func(pubKey [33]byte) (bool, error)
+	IsPublicNode func(pubKey route.Vertex) (bool, error)
 
 	// FetchChannelEdgesByID attempts to lookup the two directed edges for
 	// the channel identified by the channel ID.
@@ -787,9 +787,23 @@ func newSelectHopHintsCfg(invoicesCfg *AddInvoiceConfig,
 	maxHopHints int) *SelectHopHintsCfg {
 
 	return &SelectHopHintsCfg{
-		FetchAllChannels:      invoicesCfg.ChanDB.FetchAllChannels,
-		IsChannelActive:       invoicesCfg.IsChannelActive,
-		IsPublicNode:          invoicesCfg.Graph.IsPublicNode,
+		FetchAllChannels: invoicesCfg.ChanDB.FetchAllChannels,
+		IsChannelActive:  invoicesCfg.IsChannelActive,
+		IsPublicNode: func(pubKey route.Vertex) (bool, error) {
+			pub, err := invoicesCfg.Graph.IsPublicNode(
+				lnwire.GossipVersion1, pubKey,
+			)
+			if err != nil {
+				return false, err
+			}
+			if pub {
+				return true, nil
+			}
+
+			return invoicesCfg.Graph.IsPublicNode(
+				lnwire.GossipVersion2, pubKey,
+			)
+		},
 		FetchChannelEdgesByID: invoicesCfg.Graph.FetchChannelEdgesByID,
 		GetAlias:              invoicesCfg.GetAlias,
 		MaxHopHints:           maxHopHints,

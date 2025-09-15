@@ -11,7 +11,6 @@ import (
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/lnutils"
-	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/tlv"
 )
@@ -36,36 +35,47 @@ var ErrUnableToExtractChanUpdate = fmt.Errorf("unable to extract ChannelUpdate")
 
 // ChannelUpdateModifier is a closure that makes in-place modifications to an
 // lnwire.ChannelUpdate.
-type ChannelUpdateModifier func(*lnwire.ChannelUpdate1)
+type ChannelUpdateModifier func(lnwire.ChannelUpdate)
 
 // ChanUpdSetDisable is a functional option that sets the disabled channel flag
 // if disabled is true, and clears the bit otherwise.
 func ChanUpdSetDisable(disabled bool) ChannelUpdateModifier {
-	return func(update *lnwire.ChannelUpdate1) {
-		if disabled {
-			// Set the bit responsible for marking a channel as
-			// disabled.
-			update.ChannelFlags |= lnwire.ChanUpdateDisabled
-		} else {
-			// Clear the bit responsible for marking a channel as
-			// disabled.
-			update.ChannelFlags &= ^lnwire.ChanUpdateDisabled
-		}
+	return func(update lnwire.ChannelUpdate) {
+		update.SetDisabledFlag(disabled)
 	}
 }
 
 // ChanUpdSetTimestamp is a functional option that sets the timestamp of the
 // update to the current time, or increments it if the timestamp is already in
 // the future.
-func ChanUpdSetTimestamp(update *lnwire.ChannelUpdate1) {
-	newTimestamp := uint32(time.Now().Unix())
-	if newTimestamp <= update.Timestamp {
-		// Increment the prior value to ensure the timestamp
-		// monotonically increases, otherwise the update won't
-		// propagate.
-		newTimestamp = update.Timestamp + 1
+func ChanUpdSetTimestamp(bestBlockHeight uint32) ChannelUpdateModifier {
+	return func(update lnwire.ChannelUpdate) {
+		switch upd := update.(type) {
+		case *lnwire.ChannelUpdate1:
+			newTimestamp := uint32(time.Now().Unix())
+			if newTimestamp <= upd.Timestamp {
+				// Increment the prior value to ensure the
+				// timestamp monotonically increases, otherwise
+				// the update won't propagate.
+				newTimestamp = upd.Timestamp + 1
+			}
+			upd.Timestamp = newTimestamp
+
+		case *lnwire.ChannelUpdate2:
+			newBlockHeight := bestBlockHeight
+			if newBlockHeight <= upd.BlockHeight.Val {
+				// Increment the prior value to ensure the
+				// blockHeight monotonically increases,
+				// otherwise the update won't propagate.
+				newBlockHeight = upd.BlockHeight.Val + 1
+			}
+			upd.BlockHeight.Val = newBlockHeight
+
+		default:
+			log.Errorf("unhandled implementation of "+
+				"lnwire.ChannelUpdate: %T", update)
+		}
 	}
-	update.Timestamp = newTimestamp
 }
 
 // SignChannelUpdate applies the given modifiers to the passed
@@ -74,24 +84,54 @@ func ChanUpdSetTimestamp(update *lnwire.ChannelUpdate1) {
 // monotonically increase from the prior.
 //
 // NOTE: This method modifies the given update.
-func SignChannelUpdate(signer lnwallet.MessageSigner, keyLoc keychain.KeyLocator,
-	update *lnwire.ChannelUpdate1, mods ...ChannelUpdateModifier) error {
+func SignChannelUpdate(signer keychain.MessageSignerRing,
+	keyLoc keychain.KeyLocator,
+	update lnwire.ChannelUpdate, mods ...ChannelUpdateModifier) error {
 
 	// Apply the requested changes to the channel update.
 	for _, modifier := range mods {
 		modifier(update)
 	}
 
-	// Create the DER-encoded ECDSA signature over the message digest.
-	sig, err := SignAnnouncement(signer, keyLoc, update)
-	if err != nil {
-		return err
-	}
+	switch upd := update.(type) {
+	case *lnwire.ChannelUpdate1:
+		data, err := upd.DataToSign()
+		if err != nil {
+			return err
+		}
 
-	// Parse the DER-encoded signature into a fixed-size 64-byte array.
-	update.Signature, err = lnwire.NewSigFromSignature(sig)
-	if err != nil {
-		return err
+		sig, err := signer.SignMessage(keyLoc, data, true)
+		if err != nil {
+			return err
+		}
+
+		// Parse the DER-encoded signature into a fixed-size 64-byte
+		// array.
+		upd.Signature, err = lnwire.NewSigFromSignature(sig)
+		if err != nil {
+			return err
+		}
+
+	case *lnwire.ChannelUpdate2:
+		data, err := lnwire.SerialiseFieldsToSign(upd)
+		if err != nil {
+			return err
+		}
+
+		sig, err := signer.SignMessageSchnorr(
+			keyLoc, data, false, nil, ChanUpdate2DigestTag(),
+		)
+		if err != nil {
+			return err
+		}
+
+		upd.Signature.Val, err = lnwire.NewSigFromSignature(sig)
+		if err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unhandled implementation of "+
+			"ChannelUpdate: %T", update)
 	}
 
 	return nil
@@ -104,7 +144,7 @@ func SignChannelUpdate(signer lnwallet.MessageSigner, keyLoc keychain.KeyLocator
 func ExtractChannelUpdate(ownerPubKey []byte,
 	info *models.ChannelEdgeInfo,
 	policies ...*models.ChannelEdgePolicy) (
-	*lnwire.ChannelUpdate1, error) {
+	lnwire.ChannelUpdate, error) {
 
 	// Helper function to extract the owner of the given policy.
 	owner := func(edge *models.ChannelEdgePolicy) []byte {
@@ -136,46 +176,91 @@ func ExtractChannelUpdate(ownerPubKey []byte,
 // UnsignedChannelUpdateFromEdge reconstructs an unsigned ChannelUpdate from the
 // given edge info and policy.
 func UnsignedChannelUpdateFromEdge(info *models.ChannelEdgeInfo,
-	policy *models.ChannelEdgePolicy) *lnwire.ChannelUpdate1 {
+	policy *models.ChannelEdgePolicy) (lnwire.ChannelUpdate, error) {
 
-	update := &lnwire.ChannelUpdate1{
-		ChainHash:       info.ChainHash,
-		ShortChannelID:  lnwire.NewShortChanIDFromInt(policy.ChannelID),
-		Timestamp:       uint32(policy.LastUpdate.Unix()),
-		ChannelFlags:    policy.ChannelFlags,
-		MessageFlags:    policy.MessageFlags,
-		TimeLockDelta:   policy.TimeLockDelta,
-		HtlcMinimumMsat: policy.MinHTLC,
-		HtlcMaximumMsat: policy.MaxHTLC,
-		BaseFee:         uint32(policy.FeeBaseMSat),
-		FeeRate:         uint32(policy.FeeProportionalMillionths),
-		ExtraOpaqueData: policy.ExtraOpaqueData,
+	switch info.Version {
+	case lnwire.GossipVersion1:
+		update := &lnwire.ChannelUpdate1{
+			ChainHash:       info.ChainHash,
+			ShortChannelID:  lnwire.NewShortChanIDFromInt(policy.ChannelID),
+			Timestamp:       uint32(policy.LastUpdate.Unix()),
+			ChannelFlags:    policy.ChannelFlags,
+			MessageFlags:    policy.MessageFlags,
+			TimeLockDelta:   policy.TimeLockDelta,
+			HtlcMinimumMsat: policy.MinHTLC,
+			HtlcMaximumMsat: policy.MaxHTLC,
+			BaseFee:         uint32(policy.FeeBaseMSat),
+			FeeRate:         uint32(policy.FeeProportionalMillionths),
+			ExtraOpaqueData: policy.ExtraOpaqueData,
+		}
+		policy.InboundFee.WhenSome(func(fee lnwire.Fee) {
+			update.InboundFee = tlv.SomeRecordT(
+				tlv.NewRecordT[tlv.TlvType55555, lnwire.Fee](fee),
+			)
+		})
+
+		return update, nil
+
+	case lnwire.GossipVersion2:
+		update := &lnwire.ChannelUpdate2{
+			ChainHash: tlv.NewPrimitiveRecord[tlv.TlvType0](info.ChainHash),
+			ShortChannelID: tlv.NewRecordT[tlv.TlvType2](
+				lnwire.NewShortChanIDFromInt(policy.ChannelID),
+			),
+			BlockHeight: tlv.NewPrimitiveRecord[tlv.TlvType4](
+				policy.LastBlockHeight,
+			),
+			DisabledFlags: tlv.NewPrimitiveRecord[tlv.TlvType6](
+				policy.DisableFlags,
+			),
+			CLTVExpiryDelta: tlv.NewPrimitiveRecord[tlv.TlvType10](
+				policy.TimeLockDelta,
+			),
+			HTLCMinimumMsat: tlv.NewPrimitiveRecord[tlv.TlvType12](
+				policy.MinHTLC,
+			),
+			HTLCMaximumMsat: tlv.NewPrimitiveRecord[tlv.TlvType14](
+				policy.MaxHTLC,
+			),
+			FeeBaseMsat: tlv.NewPrimitiveRecord[tlv.TlvType16](
+				uint32(policy.FeeBaseMSat),
+			),
+			FeeProportionalMillionths: tlv.NewPrimitiveRecord[tlv.TlvType18](
+				uint32(policy.FeeProportionalMillionths),
+			),
+			ExtraSignedFields: policy.ExtraSignedFields,
+		}
+
+		if policy.SecondPeer {
+			update.SecondPeer = tlv.SomeRecordT(
+				tlv.RecordT[tlv.TlvType8, lnwire.TrueBoolean]{},
+			)
+		}
+
+		policy.InboundFee.WhenSome(func(fee lnwire.Fee) {
+			update.InboundFee = tlv.SomeRecordT(
+				tlv.NewRecordT[tlv.TlvType55555, lnwire.Fee](fee),
+			)
+		})
+
+		return update, nil
 	}
-	policy.InboundFee.WhenSome(func(fee lnwire.Fee) {
-		update.InboundFee = tlv.SomeRecordT(
-			tlv.NewRecordT[tlv.TlvType55555, lnwire.Fee](fee),
-		)
-	})
 
-	return update
+	return nil, fmt.Errorf("unhandled implementation of "+
+		"ChannelUpdate for version %d", info.Version)
 }
 
 // ChannelUpdateFromEdge reconstructs a signed ChannelUpdate from the given edge
 // info and policy.
 func ChannelUpdateFromEdge(info *models.ChannelEdgeInfo,
-	policy *models.ChannelEdgePolicy) (*lnwire.ChannelUpdate1, error) {
+	policy *models.ChannelEdgePolicy) (lnwire.ChannelUpdate, error) {
 
-	update := UnsignedChannelUpdateFromEdge(info, policy)
-
-	var err error
-	update.Signature, err = lnwire.NewSigFromECDSARawSignature(
-		policy.SigBytes,
-	)
+	update, err := UnsignedChannelUpdateFromEdge(info, policy)
 	if err != nil {
 		return nil, err
 	}
 
-	return update, nil
+	return update, update.SetSig(policy.SigBytes)
 }
 
 // ValidateChannelUpdateAnn validates the channel update announcement by
@@ -242,7 +327,7 @@ func verifyChannelUpdate2Signature(c *lnwire.ChannelUpdate2,
 		return fmt.Errorf("unable to reconstruct message data: %w", err)
 	}
 
-	nodeSig, err := c.Signature.ToSignature()
+	nodeSig, err := c.Signature.Val.ToSignature()
 	if err != nil {
 		return err
 	}
@@ -330,7 +415,7 @@ func ChanUpdate2DigestTag() []byte {
 // chanUpdate2DigestToSign computes the digest of the ChannelUpdate2 message to
 // be signed.
 func chanUpdate2DigestToSign(c *lnwire.ChannelUpdate2) ([]byte, error) {
-	data, err := c.DataToSign()
+	data, err := lnwire.SerialiseFieldsToSign(c)
 	if err != nil {
 		return nil, err
 	}

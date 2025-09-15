@@ -226,15 +226,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 
 	var err error
 	for _, rpcNode := range graph.Nodes {
-		node := &models.Node{
-			HaveNodeAnnouncement: true,
-			LastUpdate: time.Unix(
-				int64(rpcNode.LastUpdate), 0,
-			),
-			Alias: rpcNode.Alias,
-		}
-
-		node.PubKeyBytes, err = parsePubKey(rpcNode.PubKey)
+		pubKeyBytes, err := parsePubKey(rpcNode.PubKey)
 		if err != nil {
 			return nil, err
 		}
@@ -251,16 +243,22 @@ func (s *Server) ImportGraph(ctx context.Context,
 		}
 
 		featureVector := lnwire.NewRawFeatureVector(featureBits...)
-		node.Features = lnwire.NewFeatureVector(
-			featureVector, featureNames,
-		)
 
-		node.Color, err = lncfg.ParseHexColor(rpcNode.Color)
+		nodeColor, err := lncfg.ParseHexColor(rpcNode.Color)
 		if err != nil {
 			return nil, err
 		}
 
-		if err := graphDB.AddNode(ctx, node); err != nil {
+		node := models.NewV1Node(pubKeyBytes, &models.NodeV1Fields{
+			LastUpdate: time.Unix(
+				int64(rpcNode.LastUpdate), 0,
+			),
+			Alias:    rpcNode.Alias,
+			Features: featureVector,
+			Color:    nodeColor,
+		})
+
+		if err := graphDB.AddNode(ctx, node, false); err != nil {
 			return nil, fmt.Errorf("unable to add node %v: %w",
 				rpcNode.PubKey, err)
 		}
@@ -272,6 +270,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 		rpcEdge := rpcEdge
 
 		edge := &models.ChannelEdgeInfo{
+			Version:   lnwire.GossipVersion1,
 			ChannelID: rpcEdge.ChannelId,
 			ChainHash: *s.cfg.ActiveNetParams.GenesisHash,
 			Capacity:  btcutil.Amount(rpcEdge.Capacity),
@@ -331,7 +330,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 		if rpcEdge.Node1Policy != nil {
 			policy := makePolicy(rpcEdge.Node1Policy)
 			policy.ChannelFlags = 0
-			err := graphDB.UpdateEdgePolicy(ctx, policy)
+			err := graphDB.UpdateEdge(ctx, policy, false)
 			if err != nil {
 				return nil, fmt.Errorf(
 					"unable to update policy: %v", err)
@@ -341,7 +340,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 		if rpcEdge.Node2Policy != nil {
 			policy := makePolicy(rpcEdge.Node2Policy)
 			policy.ChannelFlags = 1
-			err := graphDB.UpdateEdgePolicy(ctx, policy)
+			err := graphDB.UpdateEdge(ctx, policy, false)
 			if err != nil {
 				return nil, fmt.Errorf(
 					"unable to update policy: %v", err)

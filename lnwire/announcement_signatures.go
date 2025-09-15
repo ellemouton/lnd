@@ -121,3 +121,9 @@ func (a *AnnounceSignatures1) SCID() ShortChannelID {
 func (a *AnnounceSignatures1) ChanID() ChannelID {
 	return a.ChannelID
 }
+
+var _ GossipMessage = (*AnnounceSignatures1)(nil)
+
+func (*AnnounceSignatures1) GossipVersion() GossipVersion {
+	return GossipVersion1
+}

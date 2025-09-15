@@ -19,7 +19,8 @@ import (
 type Config struct {
 	// GetNodeAnnouncement is used to send our retrieve the current
 	// node announcement information.
-	GetNodeAnnouncement func() lnwire.NodeAnnouncement
+	GetNodeAnnouncements func() (*lnwire.NodeAnnouncement1,
+		*lnwire.NodeAnnouncement2)
 
 	// ParseAddr parses an address from its string format to a net.Addr.
 	ParseAddr func(addr string) (net.Addr, error)

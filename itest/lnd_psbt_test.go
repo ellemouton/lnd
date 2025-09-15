@@ -57,7 +57,7 @@ var psbtFundingTestCases = []*lntest.TestCase{
 		Name: "psbt funding simple taproot",
 		TestFunc: func(ht *lntest.HarnessTest) {
 			runPsbtChanFunding(
-				ht, true, lnrpc.CommitmentType_SIMPLE_TAPROOT,
+				ht, false, lnrpc.CommitmentType_SIMPLE_TAPROOT,
 			)
 		},
 	},
@@ -65,7 +65,7 @@ var psbtFundingTestCases = []*lntest.TestCase{
 		Name: "psbt external funding simple taproot",
 		TestFunc: func(ht *lntest.HarnessTest) {
 			runPsbtChanFundingExternal(
-				ht, true, lnrpc.CommitmentType_SIMPLE_TAPROOT,
+				ht, false, lnrpc.CommitmentType_SIMPLE_TAPROOT,
 			)
 		},
 	},
@@ -73,7 +73,7 @@ var psbtFundingTestCases = []*lntest.TestCase{
 		Name: "psbt single step funding simple taproot",
 		TestFunc: func(ht *lntest.HarnessTest) {
 			runPsbtChanFundingSingleStep(
-				ht, true, lnrpc.CommitmentType_SIMPLE_TAPROOT,
+				ht, false, lnrpc.CommitmentType_SIMPLE_TAPROOT,
 			)
 		},
 	},

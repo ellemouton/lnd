@@ -1,6 +1,11 @@
 package lnwire
 
-import "github.com/btcsuite/btcd/chaincfg/chainhash"
+import (
+	"image/color"
+	"net"
+
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+)
 
 // AnnounceSignatures is an interface that represents a message used to
 // exchange signatures of a ChannelAnnouncment message during the funding flow.
@@ -11,6 +16,23 @@ type AnnounceSignatures interface {
 	// ChanID returns the ChannelID identifying the channel.
 	ChanID() ChannelID
 
+	GossipMessage
+	Message
+}
+
+type NodeAnnouncement interface {
+	// NodePub returns the identity public key of the node.
+	NodePub() [33]byte
+
+	NodeAddrs() []net.Addr
+	NodeFeatures() *FeatureVector
+	NodeAlias() string
+	NodeColor() color.RGBA
+	SetAddrs(addrs []net.Addr) error
+	SigBytes() []byte
+	TimestampDesc() string
+
+	GossipMessage
 	Message
 }
 
@@ -33,6 +55,7 @@ type ChannelAnnouncement interface {
 	Node2KeyBytes() [33]byte
 
 	Message
+	GossipMessage
 }
 
 // CompareResult represents the result after comparing two things.
@@ -88,7 +111,12 @@ type ChannelUpdate interface {
 	// SetSCID can be used to overwrite the SCID of the update.
 	SetSCID(scid ShortChannelID)
 
+	SetSig(b []byte) error
+
+	TimestampDesc() string
+
 	Message
+	GossipMessage
 }
 
 // ForwardingPolicy defines the set of forwarding constraints advertised in a

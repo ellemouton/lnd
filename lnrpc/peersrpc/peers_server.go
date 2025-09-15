@@ -313,7 +313,7 @@ func (s *Server) UpdateNodeAnnouncement(ctx context.Context,
 	resp := &NodeAnnouncementUpdateResponse{}
 	nodeModifiers := make([]netann.NodeAnnModifier, 0)
 
-	currentNodeAnn := s.cfg.GetNodeAnnouncement()
+	currentNodeAnn, _ := s.cfg.GetNodeAnnouncements()
 
 	nodeAnnFeatures := currentNodeAnn.Features
 	featureUpdates := len(req.FeatureUpdates) > 0

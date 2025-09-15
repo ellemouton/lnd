@@ -21,7 +21,7 @@ type NodeTraverser interface {
 	// ForEachNodeDirectedChannel calls the callback for every channel of
 	// the given node.
 	ForEachNodeDirectedChannel(nodePub route.Vertex,
-		cb func(channel *DirectedChannel) error, reset func()) error
+		cb func(channel *models.DirectedChannel) error, reset func()) error
 
 	// FetchNodeFeatures returns the features of the given node.
 	FetchNodeFeatures(nodePub route.Vertex) (*lnwire.FeatureVector, error)
@@ -80,7 +80,7 @@ type V1Store interface { //nolint:interfacebloat
 	ForEachNodeCached(ctx context.Context, withAddrs bool,
 		cb func(ctx context.Context, node route.Vertex,
 			addrs []net.Addr,
-			chans map[uint64]*DirectedChannel) error,
+			chans map[uint64]*models.DirectedChannel) error,
 		reset func()) error
 
 	// ForEachNode iterates through all the stored vertices/nodes in the
@@ -110,7 +110,7 @@ type V1Store interface { //nolint:interfacebloat
 	// by two nodes to quickly determine if they have the same set of up to
 	// date node announcements.
 	NodeUpdatesInHorizon(startTime,
-		endTime time.Time) ([]models.Node, error)
+		endTime time.Time) ([]*models.Node, error)
 
 	// FetchNode attempts to look up a target node by its identity
 	// public key. If the node isn't found in the database, then
@@ -123,12 +123,14 @@ type V1Store interface { //nolint:interfacebloat
 	// database, a timestamp of when the data for the node was lasted
 	// updated is returned along with a true boolean. Otherwise, an empty
 	// time.Time is returned with a false boolean.
-	HasNode(ctx context.Context, nodePub [33]byte) (time.Time, bool, error)
+	HasV1Node(ctx context.Context, nodePub [33]byte) (time.Time, bool, error)
+
+	HasV2Node(ctx context.Context, nodePub [33]byte) (uint32, bool, error)
 
 	// IsPublicNode is a helper method that determines whether the node with
 	// the given public key is seen as a public node in the graph from the
 	// graph's source node's point of view.
-	IsPublicNode(pubKey [33]byte) (bool, error)
+	IsPublicNode(pubKey route.Vertex) (bool, error)
 
 	// GraphSession will provide the call-back with access to a
 	// NodeTraverser instance which can be used to perform queries against
@@ -185,8 +187,12 @@ type V1Store interface { //nolint:interfacebloat
 	// last time the edge was updated for both directed edges are returned
 	// along with the boolean. If it is not found, then the zombie index is
 	// checked and its result is returned as the second boolean.
-	HasChannelEdge(chanID uint64) (time.Time, time.Time, bool, bool,
+	HasV1ChannelEdge(chanID uint64) (time.Time, time.Time, bool, bool,
 		error)
+
+	HasV2ChannelEdge(chanID uint64) (uint32, uint32, bool, bool, error)
+
+	HasChannelEdge(chanID uint64) (bool, bool, error)
 
 	// DeleteChannelEdges removes edges with the given channel IDs from the
 	// database and marks them as zombies. This ensures that we're unable to

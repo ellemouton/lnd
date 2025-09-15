@@ -315,6 +315,12 @@ const (
 	// support for the special custom taproot overlay channel.
 	SimpleTaprootOverlayChansRequired = 2026
 
+	TaprootGossipRequiredFinal = 32
+	TaprootGossipOptionalFinal = 33
+
+	TaprootGossipRequiredStaging = 132
+	TaprootGossipOptionalStaging = 133
+
 	// MaxBolt11Feature is the maximum feature bit value allowed in bolt 11
 	// invoices.
 	//
@@ -393,6 +399,10 @@ var Features = map[FeatureBit]string{
 	RbfCoopCloseRequired:                 "rbf-coop-close",
 	RbfCoopCloseOptionalStaging:          "rbf-coop-close-x",
 	RbfCoopCloseRequiredStaging:          "rbf-coop-close-x",
+	TaprootGossipRequiredFinal:           "taproot-gossip",
+	TaprootGossipOptionalFinal:           "taproot-gossip",
+	TaprootGossipRequiredStaging:         "taproot-gossip-x",
+	TaprootGossipOptionalStaging:         "taproot-gossip-x",
 }
 
 // RawFeatureVector represents a set of feature bits as defined in BOLT-09.  A

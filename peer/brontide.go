@@ -28,6 +28,7 @@ import (
 	"github.com/lightningnetwork/lnd/feature"
 	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/funding"
+	"github.com/lightningnetwork/lnd/graph"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
@@ -254,7 +255,7 @@ type Config struct {
 
 	// ChannelGraph is a pointer to the channel graph which is used to
 	// query information about the set of known active channels.
-	ChannelGraph *graphdb.ChannelGraph
+	ChannelGraph *graph.Builder
 
 	// ChainArb is used to subscribe to channel events, update contract signals,
 	// and force close channels.
@@ -326,8 +327,8 @@ type Config struct {
 
 	// GenNodeAnnouncement is used to send our node announcement to the remote
 	// on startup.
-	GenNodeAnnouncement func(...netann.NodeAnnModifier) (
-		lnwire.NodeAnnouncement, error)
+	GenNodeAnnouncements func(...netann.NodeAnnModifier) (
+		*lnwire.NodeAnnouncement1, *lnwire.NodeAnnouncement2, error)
 
 	// PrunePersistentPeerConnection is used to remove all internal state
 	// related to this peer in the server.
@@ -335,7 +336,7 @@ type Config struct {
 
 	// FetchLastChanUpdate fetches our latest channel update for a target
 	// channel.
-	FetchLastChanUpdate func(lnwire.ShortChannelID) (*lnwire.ChannelUpdate1,
+	FetchLastChanUpdate func(lnwire.ShortChannelID) (lnwire.ChannelUpdate,
 		error)
 
 	// FundingManager is an implementation of the funding.Controller interface.
@@ -1492,13 +1493,14 @@ func (p *Brontide) maybeSendNodeAnn(channels []*channeldb.OpenChannel) {
 		return
 	}
 
-	ourNodeAnn, err := p.cfg.GenNodeAnnouncement()
+	// TODO(elle): update for V2 prop.
+	ourV1NodeAnn, _, err := p.cfg.GenNodeAnnouncements()
 	if err != nil {
 		p.log.Debugf("Unable to retrieve node announcement: %v", err)
 		return
 	}
 
-	if err := p.SendMessageLazy(false, &ourNodeAnn); err != nil {
+	if err := p.SendMessageLazy(false, ourV1NodeAnn); err != nil {
 		p.log.Debugf("Unable to resend node announcement: %v", err)
 	}
 }
@@ -2084,7 +2086,7 @@ out:
 				idleTimer.Reset(idleTimeout)
 				continue
 
-			// If the NodeAnnouncement has an invalid alias, then
+			// If the NodeAnnouncement1 has an invalid alias, then
 			// we'll log that error above and continue so we can
 			// continue to read messages from the peer. We do not
 			// store this error because it is of little debugging
@@ -2203,10 +2205,10 @@ out:
 					nextMsg.MsgType())
 			}
 
-		case *lnwire.ChannelUpdate1,
-			*lnwire.ChannelAnnouncement1,
-			*lnwire.NodeAnnouncement,
-			*lnwire.AnnounceSignatures1,
+		case lnwire.ChannelUpdate,
+			lnwire.ChannelAnnouncement,
+			lnwire.NodeAnnouncement,
+			lnwire.AnnounceSignatures,
 			*lnwire.GossipTimestampRange,
 			*lnwire.QueryShortChanIDs,
 			*lnwire.QueryChannelRange,
@@ -2486,7 +2488,7 @@ func messageSummary(msg lnwire.Message) string {
 			msg.ShortChannelID.ToUint64(), msg.MessageFlags,
 			msg.ChannelFlags, time.Unix(int64(msg.Timestamp), 0))
 
-	case *lnwire.NodeAnnouncement:
+	case *lnwire.NodeAnnouncement1:
 		return fmt.Sprintf("node=%x, update_time=%v",
 			msg.NodeID, time.Unix(int64(msg.Timestamp), 0))
 

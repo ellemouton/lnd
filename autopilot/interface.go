@@ -7,7 +7,6 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/wire"
-	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -240,6 +239,6 @@ type GraphSource interface {
 	ForEachNodeCached(ctx context.Context, withAddrs bool,
 		cb func(ctx context.Context, node route.Vertex,
 			addrs []net.Addr,
-			chans map[uint64]*graphdb.DirectedChannel) error,
+			chans map[uint64]*models.DirectedChannel) error,
 		reset func()) error
 }

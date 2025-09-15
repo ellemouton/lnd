@@ -2,7 +2,6 @@ package itest
 
 import (
 	"github.com/btcsuite/btcd/btcutil"
-	"github.com/lightningnetwork/lnd/chainreg"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/invoicesrpc"
@@ -17,59 +16,6 @@ const (
 	finalCltvDelta  = routing.MinCLTVDelta // 18.
 	thawHeightDelta = finalCltvDelta * 2   // 36.
 )
-
-// makeRouteHints creates a route hints that will allow Carol to be reached
-// using an unadvertised channel created by Bob (Bob -> Carol). If the zeroConf
-// bool is set, then the scid alias of Bob will be used in place.
-func makeRouteHints(bob, carol *node.HarnessNode,
-	zeroConf bool) []*lnrpc.RouteHint {
-
-	carolChans := carol.RPC.ListChannels(
-		&lnrpc.ListChannelsRequest{},
-	)
-
-	carolChan := carolChans.Channels[0]
-
-	hopHint := &lnrpc.HopHint{
-		NodeId: carolChan.RemotePubkey,
-		ChanId: carolChan.ChanId,
-		FeeBaseMsat: uint32(
-			chainreg.DefaultBitcoinBaseFeeMSat,
-		),
-		FeeProportionalMillionths: uint32(
-			chainreg.DefaultBitcoinFeeRate,
-		),
-		CltvExpiryDelta: chainreg.DefaultBitcoinTimeLockDelta,
-	}
-
-	if zeroConf {
-		bobChans := bob.RPC.ListChannels(
-			&lnrpc.ListChannelsRequest{},
-		)
-
-		// Now that we have Bob's channels, scan for the channel he has
-		// open to Carol so we can use the proper scid.
-		var found bool
-		for _, bobChan := range bobChans.Channels {
-			if bobChan.RemotePubkey == carol.PubKeyStr {
-				hopHint.ChanId = bobChan.AliasScids[0]
-
-				found = true
-
-				break
-			}
-		}
-		if !found {
-			bob.Fatalf("unable to create route hint")
-		}
-	}
-
-	return []*lnrpc.RouteHint{
-		{
-			HopHints: []*lnrpc.HopHint{hopHint},
-		},
-	}
-}
 
 // testHtlcTimeoutResolverExtractPreimageRemote tests that in the multi-hop
 // setting, Alice->Bob->Carol, when Bob's outgoing HTLC is swept by Carol using
