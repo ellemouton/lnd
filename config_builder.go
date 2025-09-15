@@ -15,7 +15,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btclog/v2"
@@ -917,7 +916,7 @@ func (d *RPCSignerWalletImpl) BuildChainControl(
 type DatabaseInstances struct {
 	// GraphDB is the database that stores the channel graph used for path
 	// finding.
-	GraphDB *graphdb.ChannelGraph
+	GraphDB graphdb.V1Store
 
 	// ChanStateDB is the database that stores all of our node's channel
 	// state.
@@ -1041,20 +1040,6 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		graphdb.WithBatchCommitInterval(cfg.DB.BatchCommitInterval),
 	}
 
-	chanGraphOpts := []graphdb.ChanGraphOption{
-		graphdb.WithUseGraphCache(!cfg.DB.NoGraphCache),
-	}
-
-	// We want to pre-allocate the channel graph cache according to what we
-	// expect for mainnet to speed up memory allocation.
-	if cfg.ActiveNetParams.Name == chaincfg.MainNetParams.Name {
-		chanGraphOpts = append(
-			chanGraphOpts, graphdb.WithPreAllocCacheNumNodes(
-				graphdb.DefaultPreAllocCacheNumNodes,
-			),
-		)
-	}
-
 	dbOptions := []channeldb.OptionModifier{
 		channeldb.OptionDryRunMigration(cfg.DryRunMigration),
 		channeldb.OptionStoreFinalHtlcResolutions(
@@ -1086,10 +1071,6 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 		d.logger.Error(err)
 		return nil, nil, err
 	}
-
-	// The graph store implementation we will use depends on whether
-	// native SQL is enabled or not.
-	var graphStore graphdb.V1Store
 
 	// Instantiate a native SQL store if the flag is set.
 	if d.cfg.DB.UseNativeSQL {
@@ -1207,7 +1188,7 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 			},
 		)
 
-		graphStore, err = graphdb.NewSQLStore(
+		dbs.GraphDB, err = graphdb.NewSQLStore(
 			&graphdb.SQLStoreConfig{
 				ChainHash: *d.cfg.ActiveNetParams.GenesisHash,
 				QueryCfg:  queryCfg,
@@ -1242,22 +1223,12 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 
 		dbs.InvoiceDB = dbs.ChanStateDB
 
-		graphStore, err = graphdb.NewKVStore(
+		dbs.GraphDB, err = graphdb.NewKVStore(
 			databaseBackends.GraphDB, graphDBOptions...,
 		)
 		if err != nil {
 			return nil, nil, err
 		}
-	}
-
-	dbs.GraphDB, err = graphdb.NewChannelGraph(graphStore, chanGraphOpts...)
-	if err != nil {
-		cleanUp()
-
-		err = fmt.Errorf("unable to open channel graph DB: %w", err)
-		d.logger.Error(err)
-
-		return nil, nil, err
 	}
 
 	// Mount the payments DB which is only KV for now.

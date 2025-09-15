@@ -671,12 +671,32 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		HtlcInterceptor:             invoiceHtlcModifier,
 	}
 
-	addrSource := channeldb.NewMultiAddrSource(dbs.ChanStateDB, dbs.GraphDB)
+	chanGraphOpts := []graphdb.ChanGraphOption{
+		graphdb.WithUseGraphCache(!cfg.DB.NoGraphCache),
+	}
+
+	// We want to pre-allocate the channel graph cache according to what we
+	// expect for mainnet to speed up memory allocation.
+	if cfg.ActiveNetParams.Name == chaincfg.MainNetParams.Name {
+		chanGraphOpts = append(
+			chanGraphOpts, graphdb.WithPreAllocCacheNumNodes(
+				graphdb.DefaultPreAllocCacheNumNodes,
+			),
+		)
+	}
+
+	chanGraph, err := graphdb.NewChannelGraph(dbs.GraphDB, chanGraphOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create channel graph: %w",
+			err)
+	}
+
+	addrSource := channeldb.NewMultiAddrSource(dbs.ChanStateDB, chanGraph)
 
 	s := &server{
 		cfg:            cfg,
 		implCfg:        implCfg,
-		graphDB:        dbs.GraphDB,
+		graphDB:        chanGraph,
 		chanStateDB:    dbs.ChanStateDB.ChannelStateDB(),
 		addrSource:     addrSource,
 		miscDB:         dbs.ChanStateDB,
@@ -1012,7 +1032,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 
 	s.graphBuilder, err = graph.NewBuilder(&graph.Config{
 		SelfNode:            nodePubKey,
-		Graph:               dbs.GraphDB,
+		Graph:               s.graphDB,
 		Chain:               cc.ChainIO,
 		ChainView:           cc.ChainView,
 		Notifier:            cc.ChainNotifier,
