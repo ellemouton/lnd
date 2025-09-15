@@ -363,7 +363,7 @@ type server struct {
 	missionController *routing.MissionController
 	defaultMC         *routing.MissionControl
 
-	graphBuilder *graph.Builder
+	graph *graph.Builder
 
 	chanRouter *routing.ChannelRouter
 
@@ -440,7 +440,7 @@ type server struct {
 // updatePersistentPeerAddrs subscribes to topology changes and stores
 // advertised addresses for any NodeAnnouncements from our persisted peers.
 func (s *server) updatePersistentPeerAddrs() error {
-	graphSub, err := s.graphBuilder.SubscribeTopology()
+	graphSub, err := s.graph.SubscribeTopology()
 	if err != nil {
 		return err
 	}
@@ -1030,7 +1030,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	strictPruning := cfg.Bitcoin.Node == "neutrino" ||
 		cfg.Routing.StrictZombiePruning
 
-	s.graphBuilder, err = graph.NewBuilder(&graph.Config{
+	s.graph, err = graph.NewBuilder(&graph.Config{
 		SelfNode:            nodePubKey,
 		Graph:               s.graphDB,
 		Chain:               cc.ChainIO,
@@ -1059,7 +1059,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		NextPaymentID:      sequencer.NextID,
 		PathFindingConfig:  pathFindingConfig,
 		Clock:              clock.NewDefaultClock(),
-		ApplyChannelUpdate: s.graphBuilder.ApplyChannelUpdate,
+		ApplyChannelUpdate: s.graph.ApplyChannelUpdate,
 		ClosedSCIDs:        s.fetchClosedChannelSCIDs(),
 		TrafficShaper:      implCfg.TrafficShaper,
 	})
@@ -1080,7 +1080,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	scidCloserMan := discovery.NewScidCloserMan(s.graphDB, s.chanStateDB)
 
 	s.authGossiper = discovery.New(discovery.Config{
-		Graph:                 s.graphBuilder,
+		Graph:                 s.graph,
 		ChainIO:               s.cc.ChainIO,
 		Notifier:              s.cc.ChainNotifier,
 		ChainParams:           s.cfg.ActiveNetParams.Params,
@@ -1116,7 +1116,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		FindBaseByAlias:         s.aliasMgr.FindBaseSCID,
 		GetAlias:                s.aliasMgr.GetPeerAlias,
 		FindChannel:             s.findChannel,
-		IsStillZombieChannel:    s.graphBuilder.IsZombieChannel,
+		IsStillZombieChannel:    s.graph.IsZombieChannel,
 		ScidCloser:              scidCloserMan,
 		AssumeChannelValid:      cfg.Routing.AssumeChannelValid,
 		MsgRateBytes:            cfg.Gossip.MsgRateBytes,
@@ -1173,7 +1173,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		AddEdge: func(ctx context.Context,
 			edge *models.ChannelEdgeInfo) error {
 
-			return s.graphBuilder.AddEdge(ctx, edge)
+			return s.graph.AddEdge(ctx, edge)
 		},
 	}
 
@@ -2329,8 +2329,8 @@ func (s *server) Start(ctx context.Context) error {
 			return
 		}
 
-		cleanup = cleanup.add(s.graphBuilder.Stop)
-		if err := s.graphBuilder.Start(); err != nil {
+		cleanup = cleanup.add(s.graph.Stop)
+		if err := s.graph.Start(); err != nil {
 			startErr = err
 			return
 		}
@@ -2652,8 +2652,8 @@ func (s *server) Stop() error {
 		if err := s.chanRouter.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop chanRouter: %v", err)
 		}
-		if err := s.graphBuilder.Stop(); err != nil {
-			srvrLog.Warnf("failed to stop graphBuilder %v", err)
+		if err := s.graph.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop graph %v", err)
 		}
 		if err := s.graphDB.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop graphDB %v", err)
@@ -5247,7 +5247,7 @@ func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
 
 	ourPubKey := s.identityECDH.PubKey().SerializeCompressed()
 	return func(cid lnwire.ShortChannelID) (*lnwire.ChannelUpdate1, error) {
-		info, edge1, edge2, err := s.graphBuilder.GetChannelByID(cid)
+		info, edge1, edge2, err := s.graph.GetChannelByID(cid)
 		if err != nil {
 			return nil, err
 		}

@@ -7382,7 +7382,7 @@ func (r *rpcServer) SubscribeChannelGraph(req *lnrpc.GraphTopologySubscription,
 
 	// First, we start by subscribing to a new intent to receive
 	// notifications from the channel router.
-	client, err := r.server.graphBuilder.SubscribeTopology()
+	client, err := r.server.graph.SubscribeTopology()
 	if err != nil {
 		return err
 	}
@@ -9387,7 +9387,7 @@ func (r *rpcServer) getChainSyncInfo() (*chainSyncInfo, error) {
 	// date, we add the router's state to it. So the flag will only toggle
 	// to true once the router was also able to catch up.
 	if !r.cfg.Routing.AssumeChannelValid {
-		routerHeight := r.server.graphBuilder.SyncedHeight()
+		routerHeight := r.server.graph.SyncedHeight()
 		isSynced = uint32(bestHeight) == routerHeight
 	}
 
