@@ -31,8 +31,8 @@ import (
 )
 
 const (
-	// basicGraphFilePath is the file path for a basic graph used within
-	// the tests. The basic graph consists of 5 nodes with 5 channels
+	// basicGraphFilePath is the file path for a basic Graph used within
+	// the tests. The basic Graph consists of 5 nodes with 5 channels
 	// connecting them.
 	basicGraphFilePath = "testdata/basic_graph.json"
 
@@ -115,7 +115,7 @@ func TestIgnoreNodeAnnouncement(t *testing.T) {
 }
 
 // TestIgnoreChannelEdgePolicyForUnknownChannel checks that a router will
-// ignore a channel policy for a channel not in the graph.
+// ignore a channel policy for a channel not in the Graph.
 func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 	t.Parallel()
 	ctxb := t.Context()
@@ -127,7 +127,7 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 	testGraph, err := createTestGraphFromChannels(
 		t, true, testChannels, "roasbeef",
 	)
-	require.NoError(t, err, "unable to create graph")
+	require.NoError(t, err, "unable to create Graph")
 
 	ctx := createTestCtxFromGraphInstance(
 		t, startingBlockHeight, testGraph, false,
@@ -139,7 +139,7 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 	var pub2 [33]byte
 	copy(pub2[:], priv2.PubKey().SerializeCompressed())
 
-	// Add the edge between the two unknown nodes to the graph, and check
+	// Add the edge between the two unknown nodes to the Graph, and check
 	// that the nodes are found after the fact.
 	script, fundingTx, _, chanID, err := createChannelEdge(
 		bitcoinKey1.SerializeCompressed(),
@@ -180,7 +180,7 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 
 	// Add the edge.
 	require.NoErrorf(t, ctx.builder.AddEdge(ctxb, edge),
-		"expected to be able to add edge to the channel graph, even "+
+		"expected to be able to add edge to the channel Graph, even "+
 			"though the vertexes were unknown: %v.", err)
 
 	// Now updating the edge policy should succeed.
@@ -188,8 +188,8 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 }
 
 // TestWakeUpOnStaleBranch tests that upon startup of the ChannelRouter, if the
-// chain previously reflected in the channel graph is stale (overtaken by a
-// longer chain), the channel router will prune the graph for any channels
+// chain previously reflected in the channel Graph is stale (overtaken by a
+// longer chain), the channel router will prune the Graph for any channels
 // confirmed on the stale chain, and resync to the main chain.
 func TestWakeUpOnStaleBranch(t *testing.T) {
 	t.Parallel()
@@ -267,7 +267,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 	// Give time to process new blocks
 	time.Sleep(time.Millisecond * 500)
 
-	// Now add the two edges to the channel graph, and check that they
+	// Now add the two edges to the channel Graph, and check that they
 	// correctly show up in the database.
 	node1 := createTestNode(t)
 	node2 := createTestNode(t)
@@ -312,13 +312,13 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
-	// Check that the fundingTxs are in the graph db.
+	// Check that the fundingTxs are in the Graph db.
 	_, _, has, isZombie, err := ctx.graph.HasChannelEdge(chanID1)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID1)
 	}
 	if !has {
-		t.Fatalf("could not find edge in graph")
+		t.Fatalf("could not find edge in Graph")
 	}
 	if isZombie {
 		t.Fatal("edge was marked as zombie")
@@ -329,7 +329,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		t.Fatalf("error looking for edge: %v", chanID2)
 	}
 	if !has {
-		t.Fatalf("could not find edge in graph")
+		t.Fatalf("could not find edge in Graph")
 	}
 	if isZombie {
 		t.Fatal("edge was marked as zombie")
@@ -356,10 +356,10 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 	selfNode, err := ctx.graph.SourceNode(t.Context())
 	require.NoError(t, err)
 
-	// Create new router with same graph database.
+	// Create new router with same Graph database.
 	router, err := NewBuilder(&Config{
 		SelfNode:           selfNode.PubKeyBytes,
-		Graph:              ctx.graph,
+		GraphDB:            ctx.graph,
 		Chain:              ctx.chain,
 		ChainView:          ctx.chainView,
 		ChannelPruneExpiry: time.Hour * 24,
@@ -385,7 +385,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 	require.NoError(t, err)
 
 	if !has {
-		t.Fatalf("did not find edge in graph")
+		t.Fatalf("did not find edge in Graph")
 	}
 	if isZombie {
 		t.Fatal("edge was marked as zombie")
@@ -396,7 +396,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		t.Fatalf("error looking for edge: %v", chanID2)
 	}
 	if has {
-		t.Fatalf("found edge in graph")
+		t.Fatalf("found edge in Graph")
 	}
 	if isZombie {
 		t.Fatal("reorged edge should not be marked as zombie")
@@ -477,7 +477,7 @@ func TestDisconnectedBlocks(t *testing.T) {
 	// Give time to process new blocks
 	time.Sleep(time.Millisecond * 500)
 
-	// Now add the two edges to the channel graph, and check that they
+	// Now add the two edges to the channel Graph, and check that they
 	// correctly show up in the database.
 	node1 := createTestNode(t)
 	node2 := createTestNode(t)
@@ -526,13 +526,13 @@ func TestDisconnectedBlocks(t *testing.T) {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
-	// Check that the fundingTxs are in the graph db.
+	// Check that the fundingTxs are in the Graph db.
 	_, _, has, isZombie, err := ctx.graph.HasChannelEdge(chanID1)
 	if err != nil {
 		t.Fatalf("error looking for edge: %v", chanID1)
 	}
 	if !has {
-		t.Fatalf("could not find edge in graph")
+		t.Fatalf("could not find edge in Graph")
 	}
 	if isZombie {
 		t.Fatal("edge was marked as zombie")
@@ -543,7 +543,7 @@ func TestDisconnectedBlocks(t *testing.T) {
 		t.Fatalf("error looking for edge: %v", chanID2)
 	}
 	if !has {
-		t.Fatalf("could not find edge in graph")
+		t.Fatalf("could not find edge in Graph")
 	}
 	if isZombie {
 		t.Fatal("edge was marked as zombie")
@@ -585,7 +585,7 @@ func TestDisconnectedBlocks(t *testing.T) {
 		t.Fatalf("error looking for edge: %v", chanID1)
 	}
 	if !has {
-		t.Fatalf("did not find edge in graph")
+		t.Fatalf("did not find edge in Graph")
 	}
 	if isZombie {
 		t.Fatal("edge was marked as zombie")
@@ -596,7 +596,7 @@ func TestDisconnectedBlocks(t *testing.T) {
 		t.Fatalf("error looking for edge: %v", chanID2)
 	}
 	if has {
-		t.Fatalf("found edge in graph")
+		t.Fatalf("found edge in Graph")
 	}
 	if isZombie {
 		t.Fatal("reorged edge should not be marked as zombie")
@@ -667,7 +667,7 @@ func TestChansClosedOfflinePruneGraph(t *testing.T) {
 		t.Fatalf("error looking for edge: %v", chanID1)
 	}
 	if !hasChan {
-		t.Fatalf("could not find edge in graph")
+		t.Fatalf("could not find edge in Graph")
 	}
 	if isZombie {
 		t.Fatal("edge was marked as zombie")
@@ -749,7 +749,7 @@ func TestChansClosedOfflinePruneGraph(t *testing.T) {
 		t.Fatalf("error looking for edge: %v", chanID1)
 	}
 	if hasChan {
-		t.Fatalf("channel was found in graph but shouldn't have been")
+		t.Fatalf("channel was found in Graph but shouldn't have been")
 	}
 	if isZombie {
 		t.Fatal("closed channel should not be marked as zombie")
@@ -757,14 +757,14 @@ func TestChansClosedOfflinePruneGraph(t *testing.T) {
 }
 
 // TestPruneChannelGraphStaleEdges ensures that we properly prune stale edges
-// from the channel graph.
+// from the channel Graph.
 func TestPruneChannelGraphStaleEdges(t *testing.T) {
 	t.Parallel()
 
 	freshTimestamp := time.Now()
 	staleTimestamp := time.Unix(0, 0)
 
-	// We'll create the following test graph so that two of the channels
+	// We'll create the following test Graph so that two of the channels
 	// are pruned.
 	testChannels := []*testChannel{
 		// No edges.
@@ -847,13 +847,13 @@ func TestPruneChannelGraphStaleEdges(t *testing.T) {
 	}
 
 	for _, strictPruning := range []bool{true, false} {
-		// We'll create our test graph and router backed with these test
+		// We'll create our test Graph and router backed with these test
 		// channels we've created.
 		testGraph, err := createTestGraphFromChannels(
 			t, true, testChannels, "a",
 		)
 		if err != nil {
-			t.Fatalf("unable to create test graph: %v", err)
+			t.Fatalf("unable to create test Graph: %v", err)
 		}
 
 		const startingHeight = 100
@@ -885,7 +885,7 @@ func TestPruneChannelGraphStaleEdges(t *testing.T) {
 }
 
 // TestPruneChannelGraphDoubleDisabled test that we can properly prune channels
-// with both edges disabled from our channel graph.
+// with both edges disabled from our channel Graph.
 func TestPruneChannelGraphDoubleDisabled(t *testing.T) {
 	t.Parallel()
 
@@ -911,7 +911,7 @@ func testPruneChannelGraphDoubleDisabled(t *testing.T, assumeValid bool) {
 		return timestamp
 	}
 
-	// We'll create the following test graph so that only the last channel
+	// We'll create the following test Graph so that only the last channel
 	// is pruned. We'll use a fresh timestamp to ensure they're not pruned
 	// according to that heuristic.
 	testChannels := []*testChannel{
@@ -992,19 +992,19 @@ func testPruneChannelGraphDoubleDisabled(t *testing.T, assumeValid bool) {
 		}, 3),
 	}
 
-	// We'll create our test graph and router backed with these test
+	// We'll create our test Graph and router backed with these test
 	// channels we've created.
 	testGraph, err := createTestGraphFromChannels(
 		t, true, testChannels, "self",
 	)
-	require.NoError(t, err, "unable to create test graph")
+	require.NoError(t, err, "unable to create test Graph")
 
 	const startingHeight = 100
 	ctx := createTestCtxFromGraphInstanceAssumeValid(
 		t, startingHeight, testGraph, assumeValid, false,
 	)
 
-	// All the channels should exist within the graph before pruning them
+	// All the channels should exist within the Graph before pruning them
 	// when not using AssumeChannelValid, otherwise we should have pruned
 	// the last channel on startup.
 	if !assumeValid {
@@ -1344,9 +1344,9 @@ func createTestCtxFromFile(t *testing.T,
 	startingHeight uint32, testGraph string) *testCtx {
 
 	// We'll attempt to locate and parse out the file
-	// that encodes the graph that our tests should be run against.
+	// that encodes the Graph that our tests should be run against.
 	graphInstance, err := parseTestGraph(t, true, testGraph)
-	require.NoError(t, err, "unable to create test graph")
+	require.NoError(t, err, "unable to create test Graph")
 
 	return createTestCtxFromGraphInstance(
 		t, startingHeight, graphInstance, false,
@@ -1354,7 +1354,7 @@ func createTestCtxFromFile(t *testing.T,
 }
 
 // parseTestGraph returns a fully populated ChannelGraph given a path to a JSON
-// file which encodes a test graph.
+// file which encodes a test Graph.
 func parseTestGraph(t *testing.T, useCache bool, path string) (
 	*testGraphInstance, error) {
 
@@ -1365,7 +1365,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 		return nil, err
 	}
 
-	// First unmarshal the JSON graph into an instance of the testGraph
+	// First unmarshal the JSON Graph into an instance of the testGraph
 	// struct. Using the struct tags created above in the struct, the JSON
 	// will be properly parsed into the struct above.
 	var g testGraph
@@ -1383,10 +1383,8 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 	}
 	testAddrs = append(testAddrs, testAddr)
 
-	// Next, create a temporary graph database for usage within the test.
-	graph := graphdb.MakeTestGraph(
-		t, graphdb.WithUseGraphCache(useCache),
-	)
+	// Next, create a temporary Graph database for usage within the test.
+	graph := graphdb.NewTestDB(t)
 
 	aliasMap := make(map[string]route.Vertex)
 	privKeyMap := make(map[string]*btcec.PrivateKey)
@@ -1394,7 +1392,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 	links := make(map[lnwire.ShortChannelID]htlcswitch.ChannelLink)
 	var source *models.Node
 
-	// First we insert all the nodes within the graph as vertexes.
+	// First we insert all the nodes within the Graph as vertexes.
 	for _, node := range g.Nodes {
 		pubBytes, err := hex.DecodeString(node.PubKey)
 		if err != nil {
@@ -1411,7 +1409,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 		}
 		copy(dbNode.PubKeyBytes[:], pubBytes)
 
-		// We require all aliases within the graph to be unique for our
+		// We require all aliases within the Graph to be unique for our
 		// tests.
 		if _, ok := aliasMap[node.Alias]; ok {
 			return nil, errors.New("aliases for nodes " +
@@ -1450,13 +1448,13 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 		}
 
 		// If the node is tagged as the source, then we create a
-		// pointer to is so we can mark the source in the graph
+		// pointer to is so we can mark the source in the Graph
 		// properly.
 		if node.Source {
 			// If we come across a node that's marked as the
 			// source, and we've already set the source in a prior
 			// iteration, then the JSON has an error as only ONE
-			// node can be the source in the graph.
+			// node can be the source in the Graph.
 			if source != nil {
 				return nil, errors.New("JSON is invalid " +
 					"multiple nodes are tagged as the " +
@@ -1474,14 +1472,14 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 		}
 
 		// With the node fully parsed, add it as a vertex within the
-		// graph.
+		// Graph.
 		if err := graph.AddNode(ctx, dbNode); err != nil {
 			return nil, err
 		}
 	}
 
 	// With all the vertexes inserted, we can now insert the edges into the
-	// test graph.
+	// test Graph.
 	for _, edge := range g.Edges {
 		node1Bytes, err := hex.DecodeString(edge.Node1)
 		if err != nil {
@@ -1567,7 +1565,8 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 			),
 			ToNode: targetNode,
 		}
-		if err := graph.UpdateEdgePolicy(ctx, edgePolicy); err != nil {
+		_, _, err = graph.UpdateEdgePolicy(ctx, edgePolicy)
+		if err != nil {
 			return nil, err
 		}
 
@@ -1594,7 +1593,10 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 	}
 
 	return &testGraphInstance{
-		graph:      graph,
+		graph: graph,
+		opts: []BuilderOption{
+			WithUseGraphCache(useCache),
+		},
 		aliasMap:   aliasMap,
 		privKeyMap: privKeyMap,
 		channelIDs: channelIDs,
@@ -1605,14 +1607,14 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 // testGraph is the struct which corresponds to the JSON format used to encode
 // graphs within the files in the testdata directory.
 //
-// TODO(roasbeef): add test graph auto-generator.
+// TODO(roasbeef): add test Graph auto-generator.
 type testGraph struct {
 	Info  []string   `json:"info"`
 	Nodes []testNode `json:"nodes"`
 	Edges []testChan `json:"edges"`
 }
 
-// testNode represents a node within the test graph above. We skip certain
+// testNode represents a node within the test Graph above. We skip certain
 // information such as the node's IP address as that information isn't needed
 // for our tests. Private keys are optional. If set, they should be consistent
 // with the public key. The private key is used to sign error messages
@@ -1625,7 +1627,7 @@ type testNode struct {
 }
 
 // testChan represents the JSON version of a payment channel. This struct
-// matches the Json that's encoded under the "edges" key within the test graph.
+// matches the Json that's encoded under the "edges" key within the test Graph.
 type testChan struct {
 	Node1        string `json:"node_1"`
 	Node2        string `json:"node_2"`
@@ -1657,7 +1659,7 @@ func symmetricTestChannel(alias1, alias2 string, capacity btcutil.Amount,
 	policy *testChannelPolicy, chanID ...uint64) *testChannel {
 
 	// Leaving id zero will result in auto-generation of a channel id during
-	// graph construction.
+	// Graph construction.
 	var id uint64
 	if len(chanID) > 0 {
 		id = chanID[0]
@@ -1688,8 +1690,8 @@ func asymmetricTestChannel(alias1, alias2 string, capacity btcutil.Amount,
 }
 
 // assertChannelsPruned ensures that only the given channels are pruned from the
-// graph out of the set of all channels.
-func assertChannelsPruned(t *testing.T, graph *graphdb.ChannelGraph,
+// Graph out of the set of all channels.
+func assertChannelsPruned(t *testing.T, graph graphdb.V1Store,
 	channels []*testChannel, prunedChanIDs ...uint64) {
 
 	t.Helper()
@@ -1706,16 +1708,16 @@ func assertChannelsPruned(t *testing.T, graph *graphdb.ChannelGraph,
 		)
 		if err != nil {
 			t.Fatalf("unable to determine existence of "+
-				"channel=%v in the graph: %v",
+				"channel=%v in the Graph: %v",
 				channel.ChannelID, err)
 		}
 		if !shouldPrune && !exists {
 			t.Fatalf("expected channel=%v to exist within "+
-				"the graph", channel.ChannelID)
+				"the Graph", channel.ChannelID)
 		}
 		if shouldPrune && exists {
 			t.Fatalf("expected channel=%v to not exist "+
-				"within the graph", channel.ChannelID)
+				"within the Graph", channel.ChannelID)
 		}
 		if !shouldPrune && isZombie {
 			t.Fatalf("expected channel=%v to not be marked "+
@@ -1743,9 +1745,9 @@ type testChannelPolicy struct {
 
 // createTestGraphFromChannels returns a fully populated ChannelGraph based on a
 // set of test channels. Additional required information like keys are derived
-// in a deterministic way and added to the channel graph. A list of nodes is not
+// in a deterministic way and added to the channel Graph. A list of nodes is not
 // required and derived from the channel data. The goal is to keep instantiating
-// a test channel graph as light weight as possible.
+// a test channel Graph as light weight as possible.
 func createTestGraphFromChannels(t *testing.T, useCache bool,
 	testChannels []*testChannel, source string) (*testGraphInstance,
 	error) {
@@ -1762,10 +1764,8 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 	}
 	testAddrs = append(testAddrs, testAddr)
 
-	// Next, create a temporary graph database for usage within the test.
-	graph := graphdb.MakeTestGraph(
-		t, graphdb.WithUseGraphCache(useCache),
-	)
+	// Next, create a temporary Graph database for usage within the test.
+	graph := graphdb.NewTestDB(t)
 
 	aliasMap := make(map[string]route.Vertex)
 	privKeyMap := make(map[string]*btcec.PrivateKey)
@@ -1801,7 +1801,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 		privKeyMap[alias] = privKey
 
 		// With the node fully parsed, add it as a vertex within the
-		// graph.
+		// Graph.
 		if alias == source {
 			err = graph.SetSourceNode(ctx, dbNode)
 			require.NoError(t, err)
@@ -1939,7 +1939,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 				ToNode:                    node2Vertex,
 				ExtraOpaqueData:           getExtraData(node1),
 			}
-			err := graph.UpdateEdgePolicy(ctx, edgePolicy)
+			_, _, err := graph.UpdateEdgePolicy(ctx, edgePolicy)
 			if err != nil {
 				return nil, err
 			}
@@ -1970,7 +1970,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 				ToNode:                    node1Vertex,
 				ExtraOpaqueData:           getExtraData(node2),
 			}
-			err := graph.UpdateEdgePolicy(ctx, edgePolicy)
+			_, _, err := graph.UpdateEdgePolicy(ctx, edgePolicy)
 			if err != nil {
 				return nil, err
 			}
@@ -1980,7 +1980,10 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 	}
 
 	return &testGraphInstance{
-		graph:      graph,
+		graph: graph,
+		opts: []BuilderOption{
+			WithUseGraphCache(useCache),
+		},
 		aliasMap:   aliasMap,
 		privKeyMap: privKeyMap,
 		links:      links,

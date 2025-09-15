@@ -19,7 +19,7 @@ const (
 	ErrIgnored
 )
 
-// Error is a structure that represent the error inside the graph package,
+// Error is a structure that represent the error inside the Graph package,
 // this structure carries additional information about error code in order to
 // be able distinguish errors outside of the current package.
 type Error struct {

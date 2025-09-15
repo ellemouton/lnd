@@ -657,7 +657,7 @@ func TestNodeUpdateNotification(t *testing.T) {
 	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
 	copy(edge.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
 
-	// Adding the edge will add the nodes to the graph, but with no info
+	// Adding the edge will add the nodes to the Graph, but with no info
 	// except the pubkey known.
 	if err := ctx.builder.AddEdge(ctxb, edge); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
@@ -1045,7 +1045,7 @@ func TestEncodeHexColor(t *testing.T) {
 type testCtx struct {
 	builder *Builder
 
-	graph *graphdb.ChannelGraph
+	graph graphdb.V1Store
 
 	aliases map[string]route.Vertex
 
@@ -1062,7 +1062,7 @@ type testCtx struct {
 func createTestCtxSingleNode(t *testing.T,
 	startingHeight uint32) *testCtx {
 
-	graph := graphdb.MakeTestGraph(t)
+	graph := graphdb.NewTestDB(t)
 	sourceNode := createTestNode(t)
 
 	require.NoError(t,
@@ -1089,7 +1089,7 @@ func (c *testCtx) RestartBuilder(t *testing.T) {
 	// start it.
 	builder, err := NewBuilder(&Config{
 		SelfNode:            selfNode.PubKeyBytes,
-		Graph:               c.graph,
+		GraphDB:             c.graph,
 		Chain:               c.chain,
 		ChainView:           c.chainView,
 		Notifier:            c.builder.cfg.Notifier,
@@ -1111,7 +1111,8 @@ func (c *testCtx) RestartBuilder(t *testing.T) {
 }
 
 type testGraphInstance struct {
-	graph *graphdb.ChannelGraph
+	graph graphdb.V1Store
+	opts  []BuilderOption
 
 	// aliasMap is a map from a node's alias to its public key. This type is
 	// provided in order to allow easily look up from the human memorable
@@ -1160,7 +1161,7 @@ func createTestCtxFromGraphInstanceAssumeValid(t *testing.T,
 
 	graphBuilder, err := NewBuilder(&Config{
 		SelfNode:            selfnode.PubKeyBytes,
-		Graph:               graphInstance.graph,
+		GraphDB:             graphInstance.graph,
 		Chain:               chain,
 		ChainView:           chainView,
 		Notifier:            notifier,

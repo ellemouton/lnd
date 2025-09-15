@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// builderStats is a struct that tracks various updates to the graph and
+// builderStats is a struct that tracks various updates to the Graph and
 // facilitates aggregate logging of the statistics.
 type builderStats struct {
 	numChannels uint32

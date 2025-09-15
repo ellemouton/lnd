@@ -50,11 +50,11 @@ func newTopologyManager() *topologyManager {
 }
 
 // TopologyClient represents an intent to receive notifications from the
-// channel router regarding changes to the topology of the channel graph. The
+// channel router regarding changes to the topology of the channel Graph. The
 // TopologyChanges channel will be sent upon with new updates to the channel
-// graph in real-time as they're encountered.
+// Graph in real-time as they're encountered.
 type TopologyClient struct {
-	// TopologyChanges is a receive only channel that new channel graph
+	// TopologyChanges is a receive only channel that new channel Graph
 	// updates will be sent over.
 	//
 	// TODO(roasbeef): chan for each update type instead?
@@ -85,7 +85,7 @@ type topologyClientUpdate struct {
 }
 
 // SubscribeTopology returns a new topology client which can be used by the
-// caller to receive notifications whenever a change in the channel graph
+// caller to receive notifications whenever a change in the channel Graph
 // topology occurs. Changes that will be sent at notifications include: new
 // nodes appearing, node updating their attributes, new channels, channels
 // closing, and updates in the routing policies of a channel's directed edges.
@@ -100,7 +100,7 @@ func (b *Builder) SubscribeTopology() (*TopologyClient, error) {
 	// incrementing client ID counter.
 	clientID := b.ntfnClientCounter.Add(1)
 
-	log.Debugf("New graph topology client subscription, client %v",
+	log.Debugf("New Graph topology client subscription, client %v",
 		clientID)
 
 	ntfnChan := make(chan *TopologyChange, 10)
@@ -148,7 +148,7 @@ type topologyClient struct {
 }
 
 // notifyTopologyChange notifies all registered clients of a new change in
-// graph topology in a non-blocking.
+// Graph topology in a non-blocking.
 //
 // NOTE: this should only ever be called from a call-stack originating from the
 // handleTopologySubscriptions handler.
@@ -217,12 +217,12 @@ func (b *Builder) handleTopologyUpdate(update any) {
 	b.notifyTopologyChange(topChange)
 }
 
-// TopologyChange represents a new set of modifications to the channel graph.
+// TopologyChange represents a new set of modifications to the channel Graph.
 // Topology changes will be dispatched in real-time as the ChannelGraph
-// validates and process modifications to the authenticated channel graph.
+// validates and process modifications to the authenticated channel Graph.
 type TopologyChange struct {
 	// NodeUpdates is a slice of nodes which are either new to the channel
-	// graph, or have had their attributes updated in an authenticated
+	// Graph, or have had their attributes updated in an authenticated
 	// manner.
 	NodeUpdates []*NetworkNodeUpdate
 
@@ -371,7 +371,7 @@ type ChannelEdgeUpdate struct {
 // appendTopologyChange appends the passed update message to the passed
 // TopologyChange, properly identifying which type of update the message
 // constitutes. This function will also fetch any required auxiliary
-// information required to create the topology change update from the graph
+// information required to create the topology change update from the Graph
 // database.
 func (b *Builder) addToTopologyChange(update *TopologyChange,
 	msg any) error {
@@ -408,7 +408,7 @@ func (b *Builder) addToTopologyChange(update *TopologyChange,
 		// We'll need to fetch the edge's information from the database
 		// in order to get the information concerning which nodes are
 		// being connected.
-		edgeInfo, _, _, err := b.cfg.Graph.FetchChannelEdgesByID(
+		edgeInfo, _, _, err := b.Graph.FetchChannelEdgesByID(
 			m.ChannelID,
 		)
 		if err != nil {

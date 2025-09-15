@@ -671,34 +671,10 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		HtlcInterceptor:             invoiceHtlcModifier,
 	}
 
-	chanGraphOpts := []graphdb.ChanGraphOption{
-		graphdb.WithUseGraphCache(!cfg.DB.NoGraphCache),
-	}
-
-	// We want to pre-allocate the channel graph cache according to what we
-	// expect for mainnet to speed up memory allocation.
-	if cfg.ActiveNetParams.Name == chaincfg.MainNetParams.Name {
-		chanGraphOpts = append(
-			chanGraphOpts, graphdb.WithPreAllocCacheNumNodes(
-				graphdb.DefaultPreAllocCacheNumNodes,
-			),
-		)
-	}
-
-	chanGraph, err := graphdb.NewChannelGraph(dbs.GraphDB, chanGraphOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("unable to create channel graph: %w",
-			err)
-	}
-
-	addrSource := channeldb.NewMultiAddrSource(dbs.ChanStateDB, chanGraph)
-
 	s := &server{
 		cfg:            cfg,
 		implCfg:        implCfg,
-		graphDB:        chanGraph,
 		chanStateDB:    dbs.ChanStateDB.ChannelStateDB(),
-		addrSource:     addrSource,
 		miscDB:         dbs.ChanStateDB,
 		invoicesDB:     dbs.InvoiceDB,
 		paymentsDB:     dbs.PaymentsDB,
@@ -855,6 +831,44 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		s.interceptableSwitch.ForwardPacket,
 	)
 
+	strictPruning := cfg.Bitcoin.Node == "neutrino" ||
+		cfg.Routing.StrictZombiePruning
+
+	nodePubKey := route.NewVertex(nodeKeyDesc.PubKey)
+
+	graphBuiderOpts := []graph.BuilderOption{
+		graph.WithUseGraphCache(!cfg.DB.NoGraphCache),
+	}
+
+	// We want to pre-allocate the channel graph cache according to what we
+	// expect for mainnet to speed up memory allocation.
+	if cfg.ActiveNetParams.Name == chaincfg.MainNetParams.Name {
+		graphBuiderOpts = append(
+			graphBuiderOpts, graph.WithPreAllocCacheNumNodes(
+				graph.DefaultPreAllocCacheNumNodes,
+			),
+		)
+	}
+
+	s.graph, err = graph.NewBuilder(&graph.Config{
+		SelfNode:            nodePubKey,
+		GraphDB:             dbs.GraphDB,
+		Chain:               cc.ChainIO,
+		ChainView:           cc.ChainView,
+		Notifier:            cc.ChainNotifier,
+		ChannelPruneExpiry:  graph.DefaultChannelPruneExpiry,
+		GraphPruneInterval:  time.Hour,
+		FirstTimePruneDelay: graph.DefaultFirstTimePruneDelay,
+		AssumeChannelValid:  cfg.Routing.AssumeChannelValid,
+		StrictZombiePruning: strictPruning,
+		IsAlias:             aliasmgr.IsAlias,
+	}, graphBuiderOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("can't create graph builder: %w", err)
+	}
+	s.graphDB = s.graph.Graph
+	s.addrSource = channeldb.NewMultiAddrSource(dbs.ChanStateDB, s.graphDB)
+
 	chanStatusMgrCfg := &netann.ChanStatusConfig{
 		ChanStatusSampleInterval: cfg.ChanStatusSampleInterval,
 		ChanEnableTimeout:        cfg.ChanEnableTimeout,
@@ -911,7 +925,6 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		}
 	}
 
-	nodePubKey := route.NewVertex(nodeKeyDesc.PubKey)
 	// Set the self node which represents our node in the graph.
 	err = s.setSelfNode(ctx, nodePubKey, listenAddrs)
 	if err != nil {
@@ -1026,26 +1039,6 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	}
 
 	s.controlTower = routing.NewControlTower(dbs.PaymentsDB)
-
-	strictPruning := cfg.Bitcoin.Node == "neutrino" ||
-		cfg.Routing.StrictZombiePruning
-
-	s.graph, err = graph.NewBuilder(&graph.Config{
-		SelfNode:            nodePubKey,
-		Graph:               s.graphDB,
-		Chain:               cc.ChainIO,
-		ChainView:           cc.ChainView,
-		Notifier:            cc.ChainNotifier,
-		ChannelPruneExpiry:  graph.DefaultChannelPruneExpiry,
-		GraphPruneInterval:  time.Hour,
-		FirstTimePruneDelay: graph.DefaultFirstTimePruneDelay,
-		AssumeChannelValid:  cfg.Routing.AssumeChannelValid,
-		StrictZombiePruning: strictPruning,
-		IsAlias:             aliasmgr.IsAlias,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("can't create graph builder: %w", err)
-	}
 
 	s.chanRouter, err = routing.New(routing.Config{
 		SelfNode:           nodePubKey,
@@ -2323,12 +2316,6 @@ func (s *server) Start(ctx context.Context) error {
 			return
 		}
 
-		cleanup = cleanup.add(s.graphDB.Stop)
-		if err := s.graphDB.Start(); err != nil {
-			startErr = err
-			return
-		}
-
 		cleanup = cleanup.add(s.graph.Stop)
 		if err := s.graph.Start(); err != nil {
 			startErr = err
@@ -2654,9 +2641,6 @@ func (s *server) Stop() error {
 		}
 		if err := s.graph.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop graph %v", err)
-		}
-		if err := s.graphDB.Stop(); err != nil {
-			srvrLog.Warnf("failed to stop graphDB %v", err)
 		}
 		if err := s.chainArb.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop chainArb: %v", err)
