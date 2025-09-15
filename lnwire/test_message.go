@@ -1209,9 +1209,9 @@ func (ks *KickoffSig) RandTestMessage(t *rapid.T) Message {
 	}
 }
 
-// A compile time check to ensure NodeAnnouncement implements the
+// A compile time check to ensure NodeAnnouncement1 implements the
 // lnwire.TestMessage interface.
-var _ TestMessage = (*NodeAnnouncement)(nil)
+var _ TestMessage = (*NodeAnnouncement1)(nil)
 
 // A compile time check to ensure NodeAnnouncement2 implements the
 // lnwire.TestMessage interface.
@@ -1221,7 +1221,7 @@ var _ TestMessage = (*NodeAnnouncement2)(nil)
 // It uses the rapid testing framework to generate random values.
 //
 // This is part of the TestMessage interface.
-func (a *NodeAnnouncement) RandTestMessage(t *rapid.T) Message {
+func (a *NodeAnnouncement1) RandTestMessage(t *rapid.T) Message {
 	// Generate random compressed public key for node ID
 	pubKey := RandPubKey(t)
 	var nodeID [33]byte
@@ -1234,7 +1234,7 @@ func (a *NodeAnnouncement) RandTestMessage(t *rapid.T) Message {
 		B: uint8(rapid.IntRange(0, 255).Draw(t, "rgbB")),
 	}
 
-	return &NodeAnnouncement{
+	return &NodeAnnouncement1{
 		Signature: RandSignature(t),
 		Features:  RandFeatureVector(t),
 		Timestamp: uint32(rapid.IntRange(0, 0x7FFFFFFF).Draw(
