@@ -65,7 +65,8 @@ type SQLQueries interface {
 	InsertNodeFeature(ctx context.Context, arg sqlc.InsertNodeFeatureParams) error
 	GetNodeFeatures(ctx context.Context, nodeID int64) ([]sqlc.GraphNodeFeature, error)
 	GetNodeFeaturesBatch(ctx context.Context, ids []int64) ([]sqlc.GraphNodeFeature, error)
-	GetNodeFeaturesByPubKey(ctx context.Context, arg sqlc.GetNodeFeaturesByPubKeyParams) ([]int32, error)
+	GetNodeFeaturesByPubKey(ctx context.Context, pubKey []byte) ([]int32, error)
+	GetNodeFeaturesByPubKeyAndVersion(ctx context.Context, arg sqlc.GetNodeFeaturesByPubKeyAndVersionParams) ([]int32, error)
 	DeleteNodeFeature(ctx context.Context, arg sqlc.DeleteNodeFeatureParams) error
 
 	/*
@@ -398,6 +399,14 @@ func (s *SQLStore) FetchNodeFeatures(nodePub route.Vertex) (
 	ctx := context.TODO()
 
 	return fetchNodeFeatures(ctx, s.db, nodePub)
+}
+
+func (s *SQLStore) FetchVersionedNodeFeatures(v lnwire.GossipVersion,
+	nodePub route.Vertex) (*lnwire.FeatureVector, error) {
+
+	ctx := context.TODO()
+
+	return fetchVersionedNodeFeatures(ctx, s.db, v, nodePub)
 }
 
 // DisabledChannelIDs returns the channel ids of disabled channels.
@@ -3519,13 +3528,34 @@ func upsertNodeFeatures(ctx context.Context, db SQLQueries, nodeID int64,
 }
 
 // fetchNodeFeatures fetches the features for a node with the given public key.
+//
+// NOTE: this merge merges feature bits across node announcements (ie across
+// gossip versions)!!.
 func fetchNodeFeatures(ctx context.Context, queries SQLQueries,
 	nodePub route.Vertex) (*lnwire.FeatureVector, error) {
 
-	rows, err := queries.GetNodeFeaturesByPubKey(
-		ctx, sqlc.GetNodeFeaturesByPubKeyParams{
+	rows, err := queries.GetNodeFeaturesByPubKey(ctx, nodePub[:])
+	if err != nil {
+		return nil, fmt.Errorf("unable to get node(%s) features: %w",
+			nodePub, err)
+	}
+
+	features := lnwire.EmptyFeatureVector()
+	for _, bit := range rows {
+		features.Set(lnwire.FeatureBit(bit))
+	}
+
+	return features, nil
+}
+
+func fetchVersionedNodeFeatures(ctx context.Context, queries SQLQueries,
+	v lnwire.GossipVersion, nodePub route.Vertex) (*lnwire.FeatureVector,
+	error) {
+
+	rows, err := queries.GetNodeFeaturesByPubKeyAndVersion(
+		ctx, sqlc.GetNodeFeaturesByPubKeyAndVersionParams{
 			PubKey:  nodePub[:],
-			Version: int16(lnwire.GossipVersion1),
+			Version: int16(v),
 		},
 	)
 	if err != nil {

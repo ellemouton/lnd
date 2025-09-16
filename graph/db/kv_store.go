@@ -673,6 +673,16 @@ func (c *KVStore) FetchNodeFeatures(nodePub route.Vertex) (
 	return c.fetchNodeFeatures(nil, nodePub)
 }
 
+func (c *KVStore) FetchVersionedNodeFeatures(v lnwire.GossipVersion,
+	nodePub route.Vertex) (*lnwire.FeatureVector, error) {
+
+	if v != lnwire.GossipVersion1 {
+		return nil, ErrGossipV1OnlyForKVDB
+	}
+
+	return c.fetchNodeFeatures(nil, nodePub)
+}
+
 // ForEachNodeCached is similar to forEachNode, but it returns DirectedChannel
 // data to the call-back.
 //

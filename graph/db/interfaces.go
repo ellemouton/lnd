@@ -32,6 +32,9 @@ type NodeTraverser interface {
 type Store interface { //nolint:interfacebloat
 	NodeTraverser
 
+	FetchVersionedNodeFeatures(v lnwire.GossipVersion,
+		nodePub route.Vertex) (*lnwire.FeatureVector, error)
+
 	// AddNode adds a vertex/node to the graph database. If the
 	// node is not in the database from before, this will add a new,
 	// unconnected one to the graph. If it is present from before, this will

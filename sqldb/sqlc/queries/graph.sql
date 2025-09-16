@@ -121,8 +121,14 @@ WHERE node_id = $1;
 SELECT f.feature_bit
 FROM graph_nodes n
     JOIN graph_node_features f ON f.node_id = n.id
+WHERE n.pub_key = $1;
+
+-- name: GetNodeFeaturesByPubKeyAndVersion :many
+SELECT f.feature_bit
+FROM graph_nodes n
+         JOIN graph_node_features f ON f.node_id = n.id
 WHERE n.pub_key = $1
-  AND n.version = $2;
+AND n.version = $2;
 
 -- name: GetNodeFeaturesBatch :many
 SELECT node_id, feature_bit

@@ -1910,16 +1910,46 @@ SELECT f.feature_bit
 FROM graph_nodes n
     JOIN graph_node_features f ON f.node_id = n.id
 WHERE n.pub_key = $1
-  AND n.version = $2
 `
 
-type GetNodeFeaturesByPubKeyParams struct {
+func (q *Queries) GetNodeFeaturesByPubKey(ctx context.Context, pubKey []byte) ([]int32, error) {
+	rows, err := q.db.QueryContext(ctx, getNodeFeaturesByPubKey, pubKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int32
+	for rows.Next() {
+		var feature_bit int32
+		if err := rows.Scan(&feature_bit); err != nil {
+			return nil, err
+		}
+		items = append(items, feature_bit)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getNodeFeaturesByPubKeyAndVersion = `-- name: GetNodeFeaturesByPubKeyAndVersion :many
+SELECT f.feature_bit
+FROM graph_nodes n
+         JOIN graph_node_features f ON f.node_id = n.id
+WHERE n.pub_key = $1
+AND n.version = $2
+`
+
+type GetNodeFeaturesByPubKeyAndVersionParams struct {
 	PubKey  []byte
 	Version int16
 }
 
-func (q *Queries) GetNodeFeaturesByPubKey(ctx context.Context, arg GetNodeFeaturesByPubKeyParams) ([]int32, error) {
-	rows, err := q.db.QueryContext(ctx, getNodeFeaturesByPubKey, arg.PubKey, arg.Version)
+func (q *Queries) GetNodeFeaturesByPubKeyAndVersion(ctx context.Context, arg GetNodeFeaturesByPubKeyAndVersionParams) ([]int32, error) {
+	rows, err := q.db.QueryContext(ctx, getNodeFeaturesByPubKeyAndVersion, arg.PubKey, arg.Version)
 	if err != nil {
 		return nil, err
 	}
