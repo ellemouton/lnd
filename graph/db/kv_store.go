@@ -377,8 +377,12 @@ func initKVStore(db kvdb.Backend) error {
 // unknown to the graph DB or not.
 //
 // NOTE: this is part of the channeldb.AddrSource interface.
-func (c *KVStore) AddrsForNode(ctx context.Context,
+func (c *KVStore) AddrsForNode(ctx context.Context, v lnwire.GossipVersion,
 	nodePub *btcec.PublicKey) (bool, []net.Addr, error) {
+
+	if v != lnwire.GossipVersion1 {
+		return false, nil, ErrGossipV1OnlyForKVDB
+	}
 
 	pubKey, err := route.NewVertexFromBytes(nodePub.SerializeCompressed())
 	if err != nil {

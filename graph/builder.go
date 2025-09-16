@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1523,6 +1524,43 @@ func (b *Builder) IsStaleEdgePolicy(chanID lnwire.ShortChannelID,
 	}
 
 	return false
+}
+
+func (b *Builder) AddrsForNode(ctx context.Context,
+	pub *btcec.PublicKey) (bool, []net.Addr, error) {
+
+	dedup := make(map[string]net.Addr)
+
+	knownV1, addrs, err := b.cfg.Graph.AddrsForNode(
+		ctx, lnwire.GossipVersion2, pub,
+	)
+	if err != nil && !errors.Is(err, graphdb.ErrGossipV1OnlyForKVDB) {
+		return false, nil, fmt.Errorf("unable to fetch addrs for "+
+			"node %x: %w", pub.SerializeCompressed(), err)
+	}
+
+	for _, addr := range addrs {
+		dedup[addr.String()] = addr
+	}
+
+	knownV2, addrs, err := b.cfg.Graph.AddrsForNode(
+		ctx, lnwire.GossipVersion1, pub,
+	)
+	if err != nil {
+		return false, nil, fmt.Errorf("unable to fetch addrs for "+
+			"node %x: %w", pub.SerializeCompressed(), err)
+	}
+
+	for _, addr := range addrs {
+		dedup[addr.String()] = addr
+	}
+
+	addrs = make([]net.Addr, 0, len(dedup))
+	for _, addr := range dedup {
+		addrs = append(addrs, addr)
+	}
+
+	return knownV1 || knownV2, addrs, nil
 }
 
 // MarkEdgeLive clears an edge from our zombie index, deeming it as live.

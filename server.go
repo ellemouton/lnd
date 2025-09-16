@@ -672,14 +672,11 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		HtlcInterceptor:             invoiceHtlcModifier,
 	}
 
-	addrSource := channeldb.NewMultiAddrSource(dbs.ChanStateDB, dbs.GraphDB)
-
 	s := &server{
 		cfg:            cfg,
 		implCfg:        implCfg,
 		graphDB:        dbs.GraphDB,
 		chanStateDB:    dbs.ChanStateDB.ChannelStateDB(),
-		addrSource:     addrSource,
 		miscDB:         dbs.ChanStateDB,
 		invoicesDB:     dbs.InvoiceDB,
 		paymentsDB:     dbs.PaymentsDB,
@@ -1027,6 +1024,10 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	if err != nil {
 		return nil, fmt.Errorf("can't create graph builder: %w", err)
 	}
+	s.addrSource = channeldb.NewMultiAddrSource(
+		dbs.ChanStateDB, s.graphBuilder,
+	)
+
 
 	s.chanRouter, err = routing.New(routing.Config{
 		SelfNode:           nodePubKey,

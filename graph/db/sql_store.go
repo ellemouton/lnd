@@ -320,7 +320,8 @@ func (s *SQLStore) HasNode(ctx context.Context, v lnwire.GossipVersion,
 //
 // NOTE: part of the Store interface.
 func (s *SQLStore) AddrsForNode(ctx context.Context,
-	nodePub *btcec.PublicKey) (bool, []net.Addr, error) {
+	v lnwire.GossipVersion, nodePub *btcec.PublicKey) (bool, []net.Addr,
+	error) {
 
 	var (
 		addresses []net.Addr
@@ -331,7 +332,7 @@ func (s *SQLStore) AddrsForNode(ctx context.Context,
 		// does.
 		dbID, err := db.GetNodeIDByPubKey(
 			ctx, sqlc.GetNodeIDByPubKeyParams{
-				Version: int16(lnwire.GossipVersion1),
+				Version: int16(v),
 				PubKey:  nodePub.SerializeCompressed(),
 			},
 		)

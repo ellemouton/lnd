@@ -47,7 +47,7 @@ type Store interface { //nolint:interfacebloat
 	// AddrsForNode returns all known addresses for the target node public
 	// key that the graph DB is aware of. The returned boolean indicates if
 	// the given node is unknown to the graph DB or not.
-	AddrsForNode(ctx context.Context,
+	AddrsForNode(ctx context.Context, v lnwire.GossipVersion,
 		nodePub *btcec.PublicKey) (bool, []net.Addr, error)
 
 	// ForEachSourceNodeChannel iterates through all channels of the source
