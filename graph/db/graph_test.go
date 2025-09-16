@@ -97,6 +97,7 @@ func createTestVertex(t testing.TB) *models.Node {
 func TestNodeInsertionAndDeletion(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
+	v := lnwire.GossipVersion1
 
 	graph := MakeTestGraph(t)
 
@@ -127,10 +128,10 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 
 	// Next, fetch the node from the database to ensure everything was
 	// serialized properly.
-	dbNode, err := graph.FetchNode(ctx, lnwire.GossipVersion1, testPub)
+	dbNode, err := graph.FetchNode(ctx, v, testPub)
 	require.NoError(t, err, "unable to locate node")
 
-	_, exists, err := graph.HasNode(ctx, dbNode.PubKeyBytes)
+	exists, err := graph.HasNode(ctx, v, dbNode.PubKeyBytes)
 	require.NoError(t, err)
 	require.True(t, exists)
 
@@ -163,7 +164,7 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 
 	// Finally, attempt to fetch the node again. This should fail as the
 	// node should have been deleted from the database.
-	_, err = graph.FetchNode(ctx, lnwire.GossipVersion1, testPub)
+	_, err = graph.FetchNode(ctx, v, testPub)
 	require.ErrorIs(t, err, ErrGraphNodeNotFound)
 
 	// Now, we'll specifically test the updating of addresses of a node
@@ -185,7 +186,7 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 	require.NoError(t, graph.AddNode(ctx, node))
 
 	// Fetch the node and assert the empty addresses.
-	dbNode, err = graph.FetchNode(ctx, lnwire.GossipVersion1, testPub)
+	dbNode, err = graph.FetchNode(ctx, v, testPub)
 	require.NoError(t, err)
 	compareNodes(t, node, dbNode)
 
@@ -214,7 +215,7 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 	require.NoError(t, graph.AddNode(ctx, node))
 
 	// Fetch the node and assert the updated addresses.
-	dbNode, err = graph.FetchNode(ctx, lnwire.GossipVersion1, testPub)
+	dbNode, err = graph.FetchNode(ctx, v, testPub)
 	require.NoError(t, err)
 	require.Equal(t, expAddrs, dbNode.Addresses)
 
@@ -235,7 +236,7 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 	require.NoError(t, graph.AddNode(ctx, node))
 
 	// Fetch the node and assert the updated addresses.
-	dbNode, err = graph.FetchNode(ctx, lnwire.GossipVersion1, testPub)
+	dbNode, err = graph.FetchNode(ctx, v, testPub)
 	require.NoError(t, err)
 	require.Equal(t, expAddrs, dbNode.Addresses)
 
@@ -248,7 +249,7 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 	require.NoError(t, graph.AddNode(ctx, node))
 
 	// Fetch the node and assert the updated addresses.
-	dbNode, err = graph.FetchNode(ctx, lnwire.GossipVersion1, testPub)
+	dbNode, err = graph.FetchNode(ctx, v, testPub)
 	require.NoError(t, err)
 	require.Equal(t, expAddrs, dbNode.Addresses)
 
@@ -276,6 +277,7 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 func TestPartialNode(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
+	v := lnwire.GossipVersion1
 
 	graph := MakeTestGraph(t)
 
@@ -296,12 +298,12 @@ func TestPartialNode(t *testing.T) {
 
 	// Next, fetch the node2 from the database to ensure everything was
 	// serialized properly.
-	dbNode1, err := graph.FetchNode(ctx, lnwire.GossipVersion1, pubKey1)
+	dbNode1, err := graph.FetchNode(ctx, v, pubKey1)
 	require.NoError(t, err)
-	dbNode2, err := graph.FetchNode(ctx, lnwire.GossipVersion1, pubKey2)
+	dbNode2, err := graph.FetchNode(ctx, v, pubKey2)
 	require.NoError(t, err)
 
-	_, exists, err := graph.HasNode(ctx, dbNode1.PubKeyBytes)
+	exists, err := graph.HasNode(ctx, v, dbNode1.PubKeyBytes)
 	require.NoError(t, err)
 	require.True(t, exists)
 
@@ -310,7 +312,7 @@ func TestPartialNode(t *testing.T) {
 	expectedNode1 := models.NewV1ShellNode(pubKey1)
 	compareNodes(t, expectedNode1, dbNode1)
 
-	_, exists, err = graph.HasNode(ctx, dbNode2.PubKeyBytes)
+	exists, err = graph.HasNode(ctx, v, dbNode2.PubKeyBytes)
 	require.NoError(t, err)
 	require.True(t, exists)
 
@@ -326,7 +328,7 @@ func TestPartialNode(t *testing.T) {
 
 	// Finally, attempt to fetch the node again. This should fail as the
 	// node should have been deleted from the database.
-	_, err = graph.FetchNode(ctx, lnwire.GossipVersion1, testPub)
+	_, err = graph.FetchNode(ctx, v, testPub)
 	require.ErrorIs(t, err, ErrGraphNodeNotFound)
 }
 
@@ -3377,6 +3379,7 @@ func TestChannelEdgePruningUpdateIndexDeletion(t *testing.T) {
 func TestPruneGraphNodes(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
+	v := lnwire.GossipVersion1
 
 	graph := MakeTestGraph(t)
 
@@ -3433,7 +3436,7 @@ func TestPruneGraphNodes(t *testing.T) {
 
 	// Finally, we'll ensure that node3, the only fully unconnected node as
 	// properly deleted from the graph and not another node in its place.
-	_, err := graph.FetchNode(ctx, lnwire.GossipVersion1, node3.PubKeyBytes)
+	_, err := graph.FetchNode(ctx, v, node3.PubKeyBytes)
 	require.NotNil(t, err)
 }
 
@@ -3443,6 +3446,7 @@ func TestPruneGraphNodes(t *testing.T) {
 func TestAddChannelEdgeShellNodes(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
+	v := lnwire.GossipVersion1
 
 	graph := MakeTestGraph(t)
 
@@ -3459,11 +3463,11 @@ func TestAddChannelEdgeShellNodes(t *testing.T) {
 
 	// Ensure that node1 was inserted as a full node, while node2 only has
 	// a shell node present.
-	node1, err := graph.FetchNode(ctx, lnwire.GossipVersion1, node1.PubKeyBytes)
+	node1, err := graph.FetchNode(ctx, v, node1.PubKeyBytes)
 	require.NoError(t, err, "unable to fetch node1")
 	require.True(t, node1.HaveAnnouncement())
 
-	node2, err = graph.FetchNode(ctx, lnwire.GossipVersion1, node2.PubKeyBytes)
+	node2, err = graph.FetchNode(ctx, v, node2.PubKeyBytes)
 	require.NoError(t, err, "unable to fetch node2")
 	require.False(t, node2.HaveAnnouncement())
 
@@ -4438,6 +4442,7 @@ var testNodeAnn = "01012674c2e7ef68c73a086b7de2603f4ef1567358df84bb4edaa06c" +
 func TestLightningNodePersistence(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
+	v := lnwire.GossipVersion1
 
 	// Create a new test graph instance.
 	graph := MakeTestGraph(t)
@@ -4461,7 +4466,7 @@ func TestLightningNodePersistence(t *testing.T) {
 	require.NoError(t, err)
 
 	// Read the node from disk.
-	diskNode, err := graph.FetchNode(ctx, lnwire.GossipVersion1, node.PubKeyBytes)
+	diskNode, err := graph.FetchNode(ctx, v, node.PubKeyBytes)
 	require.NoError(t, err)
 
 	// Convert it back to a wire message.

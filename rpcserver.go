@@ -1785,7 +1785,8 @@ func (r *rpcServer) VerifyMessage(ctx context.Context,
 	//
 	// TODO(phlip9): Require valid nodes to have capital in active channels.
 	graph := r.server.graphDB
-	_, active, err := graph.HasNode(ctx, pub)
+	// TODO(elle): update for v2.
+	active, err := graph.HasNode(ctx, lnwire.GossipVersion1, pub)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query graph: %w", err)
 	}

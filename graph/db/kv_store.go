@@ -165,6 +165,8 @@ var (
 	closedScidBucket = []byte("closed-scid")
 )
 
+var ErrGossipV1OnlyForKVDB = errors.New("only gossip v1 supported for kvdb")
+
 const (
 	// MaxAllowedExtraOpaqueBytes is the largest amount of opaque bytes that
 	// we'll permit to be written to disk. We limit this as otherwise, it
@@ -3052,8 +3054,7 @@ func (c *KVStore) FetchNode(_ context.Context, v lnwire.GossipVersion,
 	nodePub route.Vertex) (*models.Node, error) {
 
 	if v != lnwire.GossipVersion1 {
-		return nil, fmt.Errorf("gossip version %d not supported on "+
-			"kvdb backend", v)
+		return nil, ErrGossipV1OnlyForKVDB
 	}
 
 	return c.fetchLightningNode(nil, nodePub)
@@ -3116,19 +3117,19 @@ func (c *KVStore) fetchLightningNode(tx kvdb.RTx,
 	return node, nil
 }
 
-// HasLightningNode determines if the graph has a vertex identified by the
+// HasNode determines if the graph has a vertex identified by the
 // target node identity public key. If the node exists in the database, a
 // timestamp of when the data for the node was lasted updated is returned along
 // with a true boolean. Otherwise, an empty time.Time is returned with a false
 // boolean.
 func (c *KVStore) HasNode(_ context.Context,
-	nodePub [33]byte) (time.Time, bool, error) {
+	v lnwire.GossipVersion, nodePub [33]byte) (bool, error) {
 
-	var (
-		updateTime time.Time
-		exists     bool
-	)
+	if v != lnwire.GossipVersion1 {
+		return false, ErrGossipV1OnlyForKVDB
+	}
 
+	var exists bool
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		// First grab the nodes bucket which stores the mapping from
 		// pubKey to node information.
@@ -3145,28 +3146,17 @@ func (c *KVStore) HasNode(_ context.Context,
 			return nil
 		}
 
-		// Otherwise we continue on to obtain the time stamp
-		// representing the last time the data for this node was
-		// updated.
-		nodeReader := bytes.NewReader(nodeBytes)
-		node, err := deserializeLightningNode(nodeReader)
-		if err != nil {
-			return err
-		}
-
 		exists = true
-		updateTime = node.LastUpdate
 
 		return nil
 	}, func() {
-		updateTime = time.Time{}
 		exists = false
 	})
 	if err != nil {
-		return time.Time{}, exists, err
+		return exists, err
 	}
 
-	return updateTime, exists, nil
+	return exists, nil
 }
 
 // nodeTraversal is used to traverse all channels of a node given by its

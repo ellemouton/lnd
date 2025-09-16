@@ -279,17 +279,14 @@ func (s *SQLStore) FetchNode(ctx context.Context, v lnwire.GossipVersion,
 // boolean.
 //
 // NOTE: part of the V1Store interface.
-func (s *SQLStore) HasNode(ctx context.Context,
-	pubKey [33]byte) (time.Time, bool, error) {
+func (s *SQLStore) HasNode(ctx context.Context, v lnwire.GossipVersion,
+	pubKey [33]byte) (bool, error) {
 
-	var (
-		exists     bool
-		lastUpdate time.Time
-	)
+	var exists bool
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		dbNode, err := db.GetNodeByPubKey(
+		_, err := db.GetNodeByPubKey(
 			ctx, sqlc.GetNodeByPubKeyParams{
-				Version: int16(lnwire.GossipVersion1),
+				Version: int16(v),
 				PubKey:  pubKey[:],
 			},
 		)
@@ -301,18 +298,13 @@ func (s *SQLStore) HasNode(ctx context.Context,
 
 		exists = true
 
-		if dbNode.LastUpdate.Valid {
-			lastUpdate = time.Unix(dbNode.LastUpdate.Int64, 0)
-		}
-
 		return nil
 	}, sqldb.NoOpReset)
 	if err != nil {
-		return time.Time{}, false,
-			fmt.Errorf("unable to fetch node: %w", err)
+		return false, fmt.Errorf("unable to fetch node: %w", err)
 	}
 
-	return lastUpdate, exists, nil
+	return exists, nil
 }
 
 // AddrsForNode returns all known addresses for the target node public key

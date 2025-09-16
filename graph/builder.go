@@ -964,7 +964,7 @@ func (b *Builder) updateGraphWithClosedChannels(
 // timestamp. ErrIgnored will be returned if we already have the node, and
 // ErrOutdated will be returned if we have a timestamp that's after the new
 // timestamp.
-func (b *Builder) assertNodeAnnFreshness(ctx context.Context, node route.Vertex,
+func (b *Builder) assertNodeAnnFreshness(ctx context.Context, pub route.Vertex,
 	msgTimestamp time.Time) error {
 
 	// If we are not already aware of this node, it means that we don't
@@ -972,24 +972,24 @@ func (b *Builder) assertNodeAnnFreshness(ctx context.Context, node route.Vertex,
 	// node announcements, we will ignore such nodes. If we do know about
 	// this node, check that this update brings info newer than what we
 	// already have.
-	lastUpdate, exists, err := b.cfg.Graph.HasNode(ctx, node)
+	node, err := b.cfg.Graph.FetchNode(ctx, lnwire.GossipVersion1, pub)
 	if err != nil {
 		return fmt.Errorf("unable to query for the "+
 			"existence of node: %w", err)
 	}
-	if !exists {
+	if errors.Is(err, graphdb.ErrGraphNotFound) {
 		return NewErrf(ErrIgnored, "Ignoring node announcement"+
 			" for node not found in channel graph (%x)",
-			node[:])
+			pub[:])
 	}
 
 	// If we've reached this point then we're aware of the vertex being
 	// advertised. So we now check if the new message has a new time stamp,
 	// if not then we won't accept the new data as it would override newer
 	// data.
-	if !lastUpdate.Before(msgTimestamp) {
+	if !node.LastUpdate.Before(msgTimestamp) {
 		return NewErrf(ErrOutdated, "Ignoring outdated "+
-			"announcement for %x", node[:])
+			"announcement for %x", pub[:])
 	}
 
 	return nil
