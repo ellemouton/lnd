@@ -83,7 +83,8 @@ type ChannelGraphSource interface {
 	// FetchNode attempts to look up a target node by its identity
 	// public key. channeldb.ErrGraphNodeNotFound is returned if the node
 	// doesn't exist within the graph.
-	FetchNode(context.Context, route.Vertex) (*models.Node, error)
+	FetchNode(context.Context, lnwire.GossipVersion,
+		route.Vertex) (*models.Node, error)
 
 	// MarkZombieEdge marks the channel with the given ID as a zombie edge.
 	MarkZombieEdge(chanID uint64) error

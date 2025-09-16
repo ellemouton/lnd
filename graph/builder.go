@@ -1379,10 +1379,10 @@ func (b *Builder) GetChannelByID(chanID lnwire.ShortChannelID) (
 // within the graph.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) FetchNode(ctx context.Context,
+func (b *Builder) FetchNode(ctx context.Context, v lnwire.GossipVersion,
 	node route.Vertex) (*models.Node, error) {
 
-	return b.cfg.Graph.FetchNode(ctx, node)
+	return b.cfg.Graph.FetchNode(ctx, v, node)
 }
 
 // ForAllOutgoingChannels is used to iterate over all outgoing channels owned by

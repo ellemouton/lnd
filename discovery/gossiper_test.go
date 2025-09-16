@@ -297,7 +297,7 @@ func (r *mockGraphSource) GetChannelByID(chanID lnwire.ShortChannelID) (
 }
 
 func (r *mockGraphSource) FetchNode(_ context.Context,
-	nodePub route.Vertex) (*models.Node, error) {
+	_ lnwire.GossipVersion, nodePub route.Vertex) (*models.Node, error) {
 
 	for _, node := range r.nodes {
 		if bytes.Equal(nodePub[:], node.PubKeyBytes[:]) {

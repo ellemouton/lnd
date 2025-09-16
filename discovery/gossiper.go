@@ -2266,9 +2266,10 @@ func (d *AuthenticatedGossiper) processZombieUpdate(_ context.Context,
 // announcement fields and returns an error if they are invalid to prevent
 // forwarding invalid node announcements to our peers.
 func (d *AuthenticatedGossiper) fetchNodeAnn(ctx context.Context,
-	pubKey [33]byte) (*lnwire.NodeAnnouncement1, error) {
+	v lnwire.GossipVersion,
+	pubKey [33]byte) (lnwire.NodeAnnouncement, error) {
 
-	node, err := d.cfg.Graph.FetchNode(ctx, pubKey)
+	node, err := d.cfg.Graph.FetchNode(ctx, v, pubKey)
 	if err != nil {
 		return nil, err
 	}
@@ -2278,14 +2279,7 @@ func (d *AuthenticatedGossiper) fetchNodeAnn(ctx context.Context,
 		return nil, err
 	}
 
-	// TODO(elle): update for V2.
-	ann, ok := nodeAnn.(*lnwire.NodeAnnouncement1)
-	if !ok {
-		return nil, fmt.Errorf("expected NodeAnnouncement1, got %T",
-			nodeAnn)
-	}
-
-	return ann, netann.ValidateNodeAnnFields(nodeAnn)
+	return nodeAnn, netann.ValidateNodeAnnFields(nodeAnn)
 }
 
 // isMsgStale determines whether a message retrieved from the backing
@@ -3441,6 +3435,8 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	nMsg *networkMsg, ann *lnwire.AnnounceSignatures1) ([]networkMsg,
 	bool) {
 
+	v := ann.GossipVersion()
+
 	needBlockHeight := ann.ShortChannelID.BlockHeight +
 		d.cfg.ProofMatureDelta
 	shortChanID := ann.ShortChannelID.ToUint64()
@@ -3723,7 +3719,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	// it since the source gets skipped. This isn't necessary for channel
 	// updates and announcement signatures since we send those directly to
 	// our channel counterparty through the gossiper's reliable sender.
-	node1Ann, err := d.fetchNodeAnn(ctx, chanInfo.NodeKey1Bytes)
+	node1Ann, err := d.fetchNodeAnn(ctx, v, chanInfo.NodeKey1Bytes)
 	if err != nil {
 		log.Debugf("Unable to fetch node announcement for %x: %v",
 			chanInfo.NodeKey1Bytes, err)
@@ -3737,7 +3733,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 		}
 	}
 
-	node2Ann, err := d.fetchNodeAnn(ctx, chanInfo.NodeKey2Bytes)
+	node2Ann, err := d.fetchNodeAnn(ctx, v, chanInfo.NodeKey2Bytes)
 	if err != nil {
 		log.Debugf("Unable to fetch node announcement for %x: %v",
 			chanInfo.NodeKey2Bytes, err)
