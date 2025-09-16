@@ -55,6 +55,19 @@ WHERE version = $1  AND id > $2
 ORDER BY id
 LIMIT $3;
 
+-- name: ListNodesPaginatedAllVersions :many
+SELECT id, pub_key, version, last_update
+FROM graph_nodes
+WHERE id > $1
+ORDER BY id
+    LIMIT $2;
+
+-- name: GetAllNodeVersionsByPubKeys :many
+SELECT id, pub_key, version, last_update
+FROM graph_nodes
+WHERE pub_key IN (sqlc.slice('pub_keys')/*SLICE:pub_keys*/)
+ORDER BY pub_key, version DESC, last_update DESC NULLS LAST;
+
 -- name: IsPublicV1Node :one
 SELECT EXISTS (
     SELECT 1
@@ -578,8 +591,7 @@ FROM graph_channels c
                    ON cp1.channel_id = c.id AND cp1.node_id = c.node_id_1 AND cp1.version = c.version
          LEFT JOIN graph_channel_policies cp2
                    ON cp2.channel_id = c.id AND cp2.node_id = c.node_id_2 AND cp2.version = c.version
-WHERE c.version = $1
-  AND (c.node_id_1 IN (sqlc.slice('node1_ids')/*SLICE:node1_ids*/)
+WHERE (c.node_id_1 IN (sqlc.slice('node1_ids')/*SLICE:node1_ids*/)
    OR c.node_id_2 IN (sqlc.slice('node2_ids')/*SLICE:node2_ids*/));
 
 -- name: ListChannelsByNodeID :many

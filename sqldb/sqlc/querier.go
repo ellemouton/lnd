@@ -33,6 +33,7 @@ type Querier interface {
 	FetchSettledAMPSubInvoices(ctx context.Context, arg FetchSettledAMPSubInvoicesParams) ([]FetchSettledAMPSubInvoicesRow, error)
 	FilterInvoices(ctx context.Context, arg FilterInvoicesParams) ([]Invoice, error)
 	GetAMPInvoiceID(ctx context.Context, setID []byte) (int64, error)
+	GetAllNodeVersionsByPubKeys(ctx context.Context, pubKeys [][]byte) ([]GetAllNodeVersionsByPubKeysRow, error)
 	GetChannelAndNodesBySCID(ctx context.Context, arg GetChannelAndNodesBySCIDParams) (GetChannelAndNodesBySCIDRow, error)
 	GetChannelByOutpointWithPolicies(ctx context.Context, arg GetChannelByOutpointWithPoliciesParams) (GetChannelByOutpointWithPoliciesRow, error)
 	GetChannelBySCID(ctx context.Context, arg GetChannelBySCIDParams) (GraphChannel, error)
@@ -126,6 +127,7 @@ type Querier interface {
 	ListChannelsWithPoliciesPaginated(ctx context.Context, arg ListChannelsWithPoliciesPaginatedParams) ([]ListChannelsWithPoliciesPaginatedRow, error)
 	ListNodeIDsAndPubKeys(ctx context.Context, arg ListNodeIDsAndPubKeysParams) ([]ListNodeIDsAndPubKeysRow, error)
 	ListNodesPaginated(ctx context.Context, arg ListNodesPaginatedParams) ([]GraphNode, error)
+	ListNodesPaginatedAllVersions(ctx context.Context, arg ListNodesPaginatedAllVersionsParams) ([]ListNodesPaginatedAllVersionsRow, error)
 	NextInvoiceSettleIndex(ctx context.Context) (int64, error)
 	OnAMPSubInvoiceCanceled(ctx context.Context, arg OnAMPSubInvoiceCanceledParams) error
 	OnAMPSubInvoiceCreated(ctx context.Context, arg OnAMPSubInvoiceCreatedParams) error

@@ -288,6 +288,58 @@ func (q *Queries) DeleteZombieChannel(ctx context.Context, arg DeleteZombieChann
 	return q.db.ExecContext(ctx, deleteZombieChannel, arg.Scid, arg.Version)
 }
 
+const getAllNodeVersionsByPubKeys = `-- name: GetAllNodeVersionsByPubKeys :many
+SELECT id, pub_key, version, last_update
+FROM graph_nodes
+WHERE pub_key IN (/*SLICE:pub_keys*/?)
+ORDER BY pub_key, version DESC, last_update DESC NULLS LAST
+`
+
+type GetAllNodeVersionsByPubKeysRow struct {
+	ID         int64
+	PubKey     []byte
+	Version    int16
+	LastUpdate sql.NullInt64
+}
+
+func (q *Queries) GetAllNodeVersionsByPubKeys(ctx context.Context, pubKeys [][]byte) ([]GetAllNodeVersionsByPubKeysRow, error) {
+	query := getAllNodeVersionsByPubKeys
+	var queryParams []interface{}
+	if len(pubKeys) > 0 {
+		for _, v := range pubKeys {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:pub_keys*/?", makeQueryParams(len(queryParams), len(pubKeys)), 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:pub_keys*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllNodeVersionsByPubKeysRow
+	for rows.Next() {
+		var i GetAllNodeVersionsByPubKeysRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PubKey,
+			&i.Version,
+			&i.LastUpdate,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getChannelAndNodesBySCID = `-- name: GetChannelAndNodesBySCID :one
 SELECT
     c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature, c.funding_pk_script, c.merkle_root_hash,
@@ -2942,13 +2994,11 @@ FROM graph_channels c
                    ON cp1.channel_id = c.id AND cp1.node_id = c.node_id_1 AND cp1.version = c.version
          LEFT JOIN graph_channel_policies cp2
                    ON cp2.channel_id = c.id AND cp2.node_id = c.node_id_2 AND cp2.version = c.version
-WHERE c.version = $1
-  AND (c.node_id_1 IN (/*SLICE:node1_ids*/?)
+WHERE (c.node_id_1 IN (/*SLICE:node1_ids*/?)
    OR c.node_id_2 IN (/*SLICE:node2_ids*/?))
 `
 
 type ListChannelsForNodeIDsParams struct {
-	Version  int16
 	Node1Ids []int64
 	Node2Ids []int64
 }
@@ -2992,7 +3042,6 @@ type ListChannelsForNodeIDsRow struct {
 func (q *Queries) ListChannelsForNodeIDs(ctx context.Context, arg ListChannelsForNodeIDsParams) ([]ListChannelsForNodeIDsRow, error) {
 	query := listChannelsForNodeIDs
 	var queryParams []interface{}
-	queryParams = append(queryParams, arg.Version)
 	if len(arg.Node1Ids) > 0 {
 		for _, v := range arg.Node1Ids {
 			queryParams = append(queryParams, v)
@@ -3500,6 +3549,54 @@ func (q *Queries) ListNodesPaginated(ctx context.Context, arg ListNodesPaginated
 			&i.Color,
 			&i.BlockHeight,
 			&i.Signature,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listNodesPaginatedAllVersions = `-- name: ListNodesPaginatedAllVersions :many
+SELECT id, pub_key, version, last_update
+FROM graph_nodes
+WHERE id > $1
+ORDER BY id
+    LIMIT $2
+`
+
+type ListNodesPaginatedAllVersionsParams struct {
+	ID    int64
+	Limit int32
+}
+
+type ListNodesPaginatedAllVersionsRow struct {
+	ID         int64
+	PubKey     []byte
+	Version    int16
+	LastUpdate sql.NullInt64
+}
+
+func (q *Queries) ListNodesPaginatedAllVersions(ctx context.Context, arg ListNodesPaginatedAllVersionsParams) ([]ListNodesPaginatedAllVersionsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listNodesPaginatedAllVersions, arg.ID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListNodesPaginatedAllVersionsRow
+	for rows.Next() {
+		var i ListNodesPaginatedAllVersionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PubKey,
+			&i.Version,
+			&i.LastUpdate,
 		); err != nil {
 			return nil, err
 		}

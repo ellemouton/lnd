@@ -52,6 +52,8 @@ type SQLQueries interface {
 	DeleteUnconnectedNodes(ctx context.Context) ([][]byte, error)
 	DeleteNodeByPubKey(ctx context.Context, arg sqlc.DeleteNodeByPubKeyParams) (sql.Result, error)
 	DeleteNode(ctx context.Context, id int64) error
+	ListNodesPaginatedAllVersions(ctx context.Context, arg sqlc.ListNodesPaginatedAllVersionsParams) ([]sqlc.ListNodesPaginatedAllVersionsRow, error)
+	GetAllNodeVersionsByPubKeys(ctx context.Context, pubKeys [][]byte) ([]sqlc.GetAllNodeVersionsByPubKeysRow, error)
 
 	GetExtraNodeTypes(ctx context.Context, nodeID int64) ([]sqlc.GraphNodeExtraType, error)
 	GetNodeExtraTypesBatch(ctx context.Context, ids []int64) ([]sqlc.GraphNodeExtraType, error)
@@ -1050,78 +1052,89 @@ func (s *SQLStore) ForEachNodeCached(ctx context.Context, withAddrs bool,
 		addrs         map[int64][]nodeAddress
 		chanBatchData *batchChannelData
 		chanMap       map[int64][]sqlc.ListChannelsForNodeIDsRow
+		nodesByPubKey map[string][]sqlc.GetAllNodeVersionsByPubKeysRow
 	}
 
-	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		// pageQueryFunc is used to query the next page of nodes.
-		pageQueryFunc := func(ctx context.Context, lastID int64,
-			limit int32) ([]sqlc.ListNodeIDsAndPubKeysRow, error) {
+	// Track processed pub_keys globally across all pages
+	processedPubKeys := make(map[string]bool)
 
-			return db.ListNodeIDsAndPubKeys(
-				ctx, sqlc.ListNodeIDsAndPubKeysParams{
-					Version: int16(lnwire.GossipVersion1),
-					ID:      lastID,
-					Limit:   limit,
-				},
-			)
+	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+		// pageQueryFunc gets all nodes (all versions)
+		pageQueryFunc := func(ctx context.Context, lastID int64, limit int32) ([]sqlc.ListNodesPaginatedAllVersionsRow, error) {
+			return db.ListNodesPaginatedAllVersions(ctx, sqlc.ListNodesPaginatedAllVersionsParams{
+				ID:    lastID,
+				Limit: limit,
+			})
 		}
 
-		// batchDataFunc is then used to batch load the data required
-		// for each page of nodes.
-		batchDataFunc := func(ctx context.Context,
-			nodeIDs []int64) (*nodeCachedBatchData, error) {
-
-			// Batch load node features.
-			nodeFeatures, err := batchLoadNodeFeaturesHelper(
-				ctx, s.cfg.QueryCfg, db, nodeIDs,
-			)
-			if err != nil {
-				return nil, fmt.Errorf("unable to batch load "+
-					"node features: %w", err)
-			}
-
-			// Maybe fetch the node's addresses if requested.
-			var nodeAddrs map[int64][]nodeAddress
-			if withAddrs {
-				nodeAddrs, err = batchLoadNodeAddressesHelper(
-					ctx, s.cfg.QueryCfg, db, nodeIDs,
-				)
-				if err != nil {
-					return nil, fmt.Errorf("unable to "+
-						"batch load node "+
-						"addresses: %w", err)
+		// batchDataFunc loads data for nodes in the page, including all versions of unique pub_keys
+		batchDataFunc := func(ctx context.Context, nodeRows []sqlc.ListNodesPaginatedAllVersionsRow) (*nodeCachedBatchData, error) {
+			// Extract unique pub_keys from this page that we haven't processed yet
+			uniquePubKeysInPage := make(map[string][]byte)
+			for _, nodeRow := range nodeRows {
+				pubKeyHex := hex.EncodeToString(nodeRow.PubKey)
+				if !processedPubKeys[pubKeyHex] {
+					uniquePubKeysInPage[pubKeyHex] = nodeRow.PubKey
 				}
 			}
 
-			// Batch load ALL unique channels for ALL nodes in this
-			// page.
-			allChannels, err := db.ListChannelsForNodeIDs(
-				ctx, sqlc.ListChannelsForNodeIDsParams{
-					Version:  int16(lnwire.GossipVersion1),
-					Node1Ids: nodeIDs,
-					Node2Ids: nodeIDs,
-				},
-			)
-			if err != nil {
-				return nil, fmt.Errorf("unable to batch "+
-					"fetch channels for nodes: %w", err)
+			// Get ALL versions of the unique pub_keys in this page
+			var pubKeysToQuery [][]byte
+			for _, pubKey := range uniquePubKeysInPage {
+				pubKeysToQuery = append(pubKeysToQuery, pubKey)
 			}
 
-			// Deduplicate channels and collect IDs.
+			var allNodeVersions []sqlc.GetAllNodeVersionsByPubKeysRow
+			if len(pubKeysToQuery) > 0 {
+				var err error
+				allNodeVersions, err = db.GetAllNodeVersionsByPubKeys(
+					ctx, pubKeysToQuery,
+				)
+				if err != nil {
+					return nil, fmt.Errorf("unable to get all node versions: %w", err)
+				}
+			}
+
+			// Extract all node IDs for batch loading
+			var allNodeIDs []int64
+			for _, nodeVersion := range allNodeVersions {
+				allNodeIDs = append(allNodeIDs, nodeVersion.ID)
+			}
+
+			// Batch load features for ALL node versions
+			nodeFeatures, err := batchLoadNodeFeaturesHelper(ctx, s.cfg.QueryCfg, db, allNodeIDs)
+			if err != nil {
+				return nil, fmt.Errorf("unable to batch load node features: %w", err)
+			}
+
+			// Batch load addresses if requested
+			var nodeAddrs map[int64][]nodeAddress
+			if withAddrs {
+				nodeAddrs, err = batchLoadNodeAddressesHelper(ctx, s.cfg.QueryCfg, db, allNodeIDs)
+				if err != nil {
+					return nil, fmt.Errorf("unable to batch load node addresses: %w", err)
+				}
+			}
+
+			// Batch load channels for ALL node versions
+			allChannels, err := db.ListChannelsForNodeIDs(ctx, sqlc.ListChannelsForNodeIDsParams{
+				Node1Ids: allNodeIDs,
+				Node2Ids: allNodeIDs,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("unable to batch fetch channels: %w", err)
+			}
+
+			// Process channels - deduplicate and collect policy IDs
 			var (
 				allChannelIDs []int64
 				allPolicyIDs  []int64
 			)
-			uniqueChannels := make(
-				map[int64]sqlc.ListChannelsForNodeIDsRow,
-			)
+			uniqueChannels := make(map[int64]sqlc.ListChannelsForNodeIDsRow)
 
 			for _, channel := range allChannels {
 				channelID := channel.GraphChannel.ID
-
-				// Only process each unique channel once.
-				_, exists := uniqueChannels[channelID]
-				if exists {
+				if _, exists := uniqueChannels[channelID]; exists {
 					continue
 				}
 
@@ -1129,54 +1142,34 @@ func (s *SQLStore) ForEachNodeCached(ctx context.Context, withAddrs bool,
 				allChannelIDs = append(allChannelIDs, channelID)
 
 				if channel.Policy1ID.Valid {
-					allPolicyIDs = append(
-						allPolicyIDs,
-						channel.Policy1ID.Int64,
-					)
+					allPolicyIDs = append(allPolicyIDs, channel.Policy1ID.Int64)
 				}
 				if channel.Policy2ID.Valid {
-					allPolicyIDs = append(
-						allPolicyIDs,
-						channel.Policy2ID.Int64,
-					)
+					allPolicyIDs = append(allPolicyIDs, channel.Policy2ID.Int64)
 				}
 			}
 
-			// Batch load channel data for all unique channels.
-			channelBatchData, err := batchLoadChannelData(
-				ctx, s.cfg.QueryCfg, db, allChannelIDs,
-				allPolicyIDs,
-			)
+			// Batch load channel data
+			channelBatchData, err := batchLoadChannelData(ctx, s.cfg.QueryCfg, db, allChannelIDs, allPolicyIDs)
 			if err != nil {
-				return nil, fmt.Errorf("unable to batch "+
-					"load channel data: %w", err)
+				return nil, fmt.Errorf("unable to batch load channel data: %w", err)
 			}
 
-			// Create map of node ID to channels that involve this
-			// node.
-			nodeIDSet := make(map[int64]bool)
-			for _, nodeID := range nodeIDs {
-				nodeIDSet[nodeID] = true
-			}
-
-			nodeChannelMap := make(
-				map[int64][]sqlc.ListChannelsForNodeIDsRow,
-			)
+			// Create node ID -> channels mapping
+			nodeChannelMap := make(map[int64][]sqlc.ListChannelsForNodeIDsRow)
 			for _, channel := range uniqueChannels {
-				// Add channel to both nodes if they're in our
-				// current page.
 				node1 := channel.GraphChannel.NodeID1
-				if nodeIDSet[node1] {
-					nodeChannelMap[node1] = append(
-						nodeChannelMap[node1], channel,
-					)
-				}
 				node2 := channel.GraphChannel.NodeID2
-				if nodeIDSet[node2] {
-					nodeChannelMap[node2] = append(
-						nodeChannelMap[node2], channel,
-					)
-				}
+
+				nodeChannelMap[node1] = append(nodeChannelMap[node1], channel)
+				nodeChannelMap[node2] = append(nodeChannelMap[node2], channel)
+			}
+
+			// Group node versions by pub_key for easy lookup
+			nodesByPubKey := make(map[string][]sqlc.GetAllNodeVersionsByPubKeysRow)
+			for _, nodeVersion := range allNodeVersions {
+				pubKeyHex := hex.EncodeToString(nodeVersion.PubKey)
+				nodesByPubKey[pubKeyHex] = append(nodesByPubKey[pubKeyHex], nodeVersion)
 			}
 
 			return &nodeCachedBatchData{
@@ -1184,71 +1177,135 @@ func (s *SQLStore) ForEachNodeCached(ctx context.Context, withAddrs bool,
 				addrs:         nodeAddrs,
 				chanBatchData: channelBatchData,
 				chanMap:       nodeChannelMap,
+				nodesByPubKey: nodesByPubKey,
 			}, nil
 		}
 
-		// processItem is used to process each node in the current page.
-		processItem := func(ctx context.Context,
-			nodeData sqlc.ListNodeIDsAndPubKeysRow,
-			batchData *nodeCachedBatchData) error {
+		// processItem handles deduplication and combining of node versions
+		processItem := func(ctx context.Context, nodeRow sqlc.ListNodesPaginatedAllVersionsRow, batchData *nodeCachedBatchData) error {
+			pubKeyHex := hex.EncodeToString(nodeRow.PubKey)
 
-			// Build feature vector for this node.
-			fv := lnwire.EmptyFeatureVector()
-			features, exists := batchData.features[nodeData.ID]
-			if exists {
-				for _, bit := range features {
-					fv.Set(lnwire.FeatureBit(bit))
-				}
+			// Skip if we've already processed this pub_key
+			if processedPubKeys[pubKeyHex] {
+				return nil
+			}
+
+			// Mark this pub_key as processed
+			processedPubKeys[pubKeyHex] = true
+
+			// Get all versions from the pre-loaded data
+			allNodeVersions := batchData.nodesByPubKey[pubKeyHex]
+			if len(allNodeVersions) == 0 {
+				return nil // Skip if no versions found
 			}
 
 			var nodePub route.Vertex
-			copy(nodePub[:], nodeData.PubKey)
+			copy(nodePub[:], nodeRow.PubKey)
 
-			nodeChannels := batchData.chanMap[nodeData.ID]
+			// Combine features from all versions
+			allFeatures := make(map[int]bool)
+			for _, nodeVersion := range allNodeVersions {
+				if features, exists := batchData.features[nodeVersion.ID]; exists {
+					for _, bit := range features {
+						allFeatures[bit] = true
+					}
+				}
+			}
+
+			// Build combined feature vector
+			fv := lnwire.EmptyFeatureVector()
+			for bit := range allFeatures {
+				fv.Set(lnwire.FeatureBit(bit))
+			}
+
+			// Combine addresses from all versions
+			var allAddresses []nodeAddress
+			if withAddrs {
+				for _, nodeVersion := range allNodeVersions {
+					if addrs, exists := batchData.addrs[nodeVersion.ID]; exists {
+						allAddresses = append(allAddresses, addrs...)
+					}
+				}
+			}
+
+			type channelWithVersion struct {
+				channel sqlc.ListChannelsForNodeIDsRow
+				version int16
+			}
+
+			// Combine channels from all versions, preferring newer versions
+			channelsByChannelID := make(map[uint64]channelWithVersion)
+
+			for _, nodeVersion := range allNodeVersions {
+				nodeChannels := batchData.chanMap[nodeVersion.ID]
+
+				for _, channelRow := range nodeChannels {
+					channelSCID := extractChannelIDFromSCID(channelRow.GraphChannel.Scid)
+					currentVersion := channelRow.GraphChannel.Version
+
+					// If we haven't seen this channel or this version is newer, use it
+					if existing, exists := channelsByChannelID[channelSCID]; !exists || currentVersion > existing.version {
+						channelsByChannelID[channelSCID] = channelWithVersion{
+							channel: channelRow,
+							version: currentVersion,
+						}
+					}
+				}
+			}
 
 			toNodeCallback := func() route.Vertex {
 				return nodePub
 			}
 
-			// Build cached channels map for this node.
+			// Build final channels map using the preferred version of each channel
 			channels := make(map[uint64]*DirectedChannel)
-			for _, channelRow := range nodeChannels {
+			for channelID, chanWithVer := range channelsByChannelID {
+				// Use the primary node (first in the sorted list) for building the directed channel
+				primaryNodeID := allNodeVersions[0].ID
+
 				directedChan, err := buildDirectedChannel(
-					s.cfg.ChainHash, nodeData.ID, nodePub,
-					channelRow, batchData.chanBatchData, fv,
+					s.cfg.ChainHash, primaryNodeID, nodePub,
+					chanWithVer.channel, batchData.chanBatchData, fv,
 					toNodeCallback,
 				)
 				if err != nil {
-					return err
+					return fmt.Errorf("unable to build directed channel: %w", err)
 				}
 
-				channels[directedChan.ChannelID] = directedChan
+				channels[channelID] = directedChan
 			}
 
-			addrs, err := buildNodeAddresses(
-				batchData.addrs[nodeData.ID],
-			)
+			// Build addresses
+			addrs, err := buildNodeAddresses(allAddresses)
 			if err != nil {
-				return fmt.Errorf("unable to build node "+
-					"addresses: %w", err)
+				return fmt.Errorf("unable to build node addresses: %w", err)
 			}
 
+			// Call the callback once per unique pub_key
 			return cb(ctx, nodePub, addrs, channels)
 		}
 
+		// Use existing helper
 		return sqldb.ExecuteCollectAndBatchWithSharedDataQuery(
-			ctx, s.cfg.QueryCfg, int64(-1), pageQueryFunc,
-			func(node sqlc.ListNodeIDsAndPubKeysRow) int64 {
+			ctx, s.cfg.QueryCfg, int64(-1),
+			pageQueryFunc,
+			func(node sqlc.ListNodesPaginatedAllVersionsRow) int64 {
 				return node.ID
 			},
-			func(node sqlc.ListNodeIDsAndPubKeysRow) (int64,
-				error) {
-
-				return node.ID, nil
+			func(node sqlc.ListNodesPaginatedAllVersionsRow) (sqlc.ListNodesPaginatedAllVersionsRow, error) {
+				return node, nil
 			},
-			batchDataFunc, processItem,
+			func(ctx context.Context, nodeRows []sqlc.ListNodesPaginatedAllVersionsRow) (*nodeCachedBatchData, error) {
+				return batchDataFunc(ctx, nodeRows)
+			},
+			processItem,
 		)
 	}, reset)
+}
+
+// Helper function to extract channel ID from SCID bytes
+func extractChannelIDFromSCID(scidBytes []byte) uint64 {
+	return byteOrder.Uint64(scidBytes)
 }
 
 // ForEachChannelCacheable iterates through all the channel edges stored
