@@ -3374,7 +3374,7 @@ func upsertNode(ctx context.Context, db SQLQueries,
 	node *models.Node) (int64, error) {
 
 	params := sqlc.UpsertNodeParams{
-		Version: int16(lnwire.GossipVersion1),
+		Version: int16(node.Version),
 		PubKey:  node.PubKeyBytes[:],
 	}
 
@@ -3386,6 +3386,9 @@ func upsertNode(ctx context.Context, db SQLQueries,
 			)
 
 		case lnwire.GossipVersion2:
+			params.BlockHeight = sqldb.SQLInt64(
+				int32(node.LastBlockHeight),
+			)
 
 		default:
 			return 0, fmt.Errorf("unknown gossip version: %d",
@@ -3427,10 +3430,13 @@ func upsertNode(ctx context.Context, db SQLQueries,
 
 	// Convert the flat extra opaque data into a map of TLV types to
 	// values.
-	extra, err := marshalExtraOpaqueData(node.ExtraOpaqueData)
-	if err != nil {
-		return 0, fmt.Errorf("unable to marshal extra opaque data: %w",
-			err)
+	extra := node.ExtraSignedFields
+	if node.Version == lnwire.GossipVersion1 {
+		extra, err = marshalExtraOpaqueData(node.ExtraOpaqueData)
+		if err != nil {
+			return 0, fmt.Errorf("unable to marshal extra opaque "+
+				"data: %w", err)
+		}
 	}
 
 	// Update the node's extra signed fields.
