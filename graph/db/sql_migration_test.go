@@ -137,6 +137,7 @@ var (
 func TestMigrateGraphToSQL(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
+	v := lnwire.GossipVersion1
 
 	dbFixture := NewTestDBFixture(t)
 
@@ -224,7 +225,7 @@ func TestMigrateGraphToSQL(t *testing.T) {
 				node, ok := object.(*models.Node)
 				require.True(t, ok)
 
-				err := db.SetSourceNode(ctx, node)
+				err := db.SetSourceNode(ctx, v, node)
 				require.NoError(t, err)
 			},
 			objects: []any{
@@ -369,7 +370,7 @@ func TestMigrateGraphToSQL(t *testing.T) {
 
 				switch obj := object.(type) {
 				case *models.Node:
-					err = db.SetSourceNode(ctx, obj)
+					err = db.SetSourceNode(ctx, v, obj)
 				default:
 					height, ok := obj.(uint32)
 					require.True(t, ok)
@@ -556,7 +557,7 @@ func fetchAllNodes(t *testing.T, store Store) []*models.Node {
 
 // fetchSourceNode retrieves the source node from the given store.
 func fetchSourceNode(t *testing.T, store Store) *models.Node {
-	node, err := store.SourceNode(t.Context())
+	node, err := store.SourceNode(t.Context(), v1)
 	if errors.Is(err, ErrSourceNodeNotSet) {
 		return nil
 	} else {

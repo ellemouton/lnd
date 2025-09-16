@@ -695,7 +695,7 @@ func (r *rpcServer) addDeps(ctx context.Context, s *server,
 	invoiceHtlcModifier *invoices.HtlcModificationInterceptor) error {
 
 	// Set up router rpc backend.
-	selfNode, err := s.graphDB.SourceNode(ctx)
+	selfNode, err := s.graphDB.SourceNode(ctx, lnwire.GossipVersion1)
 	if err != nil {
 		return err
 	}
@@ -7868,7 +7868,7 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 	_ *lnrpc.FeeReportRequest) (*lnrpc.FeeReportResponse, error) {
 
 	channelGraph := r.server.graphDB
-	selfNode, err := channelGraph.SourceNode(ctx)
+	selfNode, err := channelGraph.SourceNode(ctx, lnwire.GossipVersion1)
 	if err != nil {
 		return nil, err
 	}

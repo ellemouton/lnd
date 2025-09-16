@@ -991,7 +991,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		MinProbability: routingConfig.MinRouteProbability,
 	}
 
-	sourceNode, err := dbs.GraphDB.SourceNode(ctx)
+	sourceNode, err := dbs.GraphDB.SourceNode(ctx, lnwire.GossipVersion1)
 	if err != nil {
 		return nil, fmt.Errorf("error getting source node: %w", err)
 	}
@@ -1027,7 +1027,6 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	s.addrSource = channeldb.NewMultiAddrSource(
 		dbs.ChanStateDB, s.graphBuilder,
 	)
-
 
 	s.chanRouter, err = routing.New(routing.Config{
 		SelfNode:           nodePubKey,
@@ -3331,7 +3330,8 @@ func (s *server) createNewHiddenService(ctx context.Context) error {
 		},
 	)
 
-	if err := s.graphDB.SetSourceNode(ctx, selfNode); err != nil {
+	err = s.graphDB.SetSourceNode(ctx, lnwire.GossipVersion1, selfNode)
+	if err != nil {
 		return fmt.Errorf("can't set self node: %w", err)
 	}
 
@@ -3439,7 +3439,7 @@ func (s *server) updateAndBroadcastSelfNode(ctx context.Context,
 	// Update the on-disk version of our announcement.
 	// Load and modify self node istead of creating anew instance so we
 	// don't risk overwriting any existing values.
-	selfNode, err := s.graphDB.SourceNode(ctx)
+	selfNode, err := s.graphDB.SourceNode(ctx, lnwire.GossipVersion1)
 	if err != nil {
 		return fmt.Errorf("unable to get current source node: %w", err)
 	}
@@ -3453,7 +3453,8 @@ func (s *server) updateAndBroadcastSelfNode(ctx context.Context,
 
 	copy(selfNode.PubKeyBytes[:], s.identityECDH.PubKey().SerializeCompressed())
 
-	if err := s.graphDB.SetSourceNode(ctx, selfNode); err != nil {
+	err = s.graphDB.SetSourceNode(ctx, lnwire.GossipVersion1, selfNode)
+	if err != nil {
 		return fmt.Errorf("can't set self node: %w", err)
 	}
 
@@ -5584,7 +5585,7 @@ func (s *server) setSelfNode(ctx context.Context, nodePub route.Vertex,
 		nodeLastUpdate = time.Now()
 	)
 
-	srcNode, err := s.graphDB.SourceNode(ctx)
+	srcNode, err := s.graphDB.SourceNode(ctx, lnwire.GossipVersion1)
 	switch {
 	case err == nil:
 		// If we have a source node persisted in the DB already, then we
@@ -5692,7 +5693,8 @@ func (s *server) setSelfNode(ctx context.Context, nodePub route.Vertex,
 
 	// Finally, we'll update the representation on disk, and update our
 	// cached in-memory version as well.
-	if err := s.graphDB.SetSourceNode(ctx, selfNode); err != nil {
+	err = s.graphDB.SetSourceNode(ctx, lnwire.GossipVersion1, selfNode)
+	if err != nil {
 		return fmt.Errorf("can't set self node: %w", err)
 	}
 

@@ -421,6 +421,7 @@ func TestAliasLookup(t *testing.T) {
 func TestSourceNode(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
+	v := lnwire.GossipVersion1
 
 	graph := MakeTestGraph(t)
 
@@ -430,16 +431,16 @@ func TestSourceNode(t *testing.T) {
 
 	// Attempt to fetch the source node, this should return an error as the
 	// source node hasn't yet been set.
-	_, err := graph.SourceNode(ctx)
+	_, err := graph.SourceNode(ctx, v)
 	require.ErrorIs(t, err, ErrSourceNodeNotSet)
 
 	// Set the source node, this should insert the node into the
 	// database in a special way indicating it's the source node.
-	require.NoError(t, graph.SetSourceNode(ctx, testNode))
+	require.NoError(t, graph.SetSourceNode(ctx, v, testNode))
 
 	// Retrieve the source node from the database, it should exactly match
 	// the one we set above.
-	sourceNode, err := graph.SourceNode(ctx)
+	sourceNode, err := graph.SourceNode(ctx, v)
 	require.NoError(t, err, "unable to fetch source node")
 	compareNodes(t, testNode, sourceNode)
 }
@@ -573,11 +574,11 @@ func createEdge(height, txIndex uint32, txPosition uint16, outPointIndex uint32,
 func TestDisconnectBlockAtHeight(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-
 	graph := MakeTestGraph(t)
+	v := lnwire.GossipVersion1
 
 	sourceNode := createTestVertex(t)
-	if err := graph.SetSourceNode(ctx, sourceNode); err != nil {
+	if err := graph.SetSourceNode(ctx, v, sourceNode); err != nil {
 		t.Fatalf("unable to set source node: %v", err)
 	}
 
@@ -1313,12 +1314,12 @@ func TestAddEdgeProof(t *testing.T) {
 func TestForEachSourceNodeChannel(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-
+	v := lnwire.GossipVersion1
 	graph := MakeTestGraph(t)
 
 	// Create a source node (A) and set it as such in the DB.
 	nodeA := createTestVertex(t)
-	require.NoError(t, graph.SetSourceNode(ctx, nodeA))
+	require.NoError(t, graph.SetSourceNode(ctx, v, nodeA))
 
 	// Now, create a few more nodes (B, C, D) along with some channels
 	// between them. We'll create the following graph:
@@ -1818,11 +1819,11 @@ func assertChanViewEqualChanPoints(t *testing.T, a []EdgePoint,
 func TestGraphPruning(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-
+	v := lnwire.GossipVersion1
 	graph := MakeTestGraph(t)
 
 	sourceNode := createTestVertex(t)
-	if err := graph.SetSourceNode(ctx, sourceNode); err != nil {
+	if err := graph.SetSourceNode(ctx, v, sourceNode); err != nil {
 		t.Fatalf("unable to set source node: %v", err)
 	}
 
@@ -2581,7 +2582,7 @@ func TestStressTestChannelGraphAPI(t *testing.T) {
 	}
 
 	ctx := t.Context()
-
+	v := lnwire.GossipVersion1
 	graph := MakeTestGraph(t)
 
 	node1 := createTestVertex(t)
@@ -2594,7 +2595,7 @@ func TestStressTestChannelGraphAPI(t *testing.T) {
 	// SetSourceNode will trigger an upsert which will only be allowed if
 	// the newest LastUpdate time is greater than the current one.
 	node1.LastUpdate = node1.LastUpdate.Add(time.Second)
-	require.NoError(t, graph.SetSourceNode(ctx, node1))
+	require.NoError(t, graph.SetSourceNode(ctx, v, node1))
 
 	type chanInfo struct {
 		info models.ChannelEdgeInfo
@@ -3285,6 +3286,7 @@ func TestIncompleteChannelPolicies(t *testing.T) {
 func TestChannelEdgePruningUpdateIndexDeletion(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
+	v := lnwire.GossipVersion1
 
 	graph := MakeTestGraph(t)
 
@@ -3295,7 +3297,7 @@ func TestChannelEdgePruningUpdateIndexDeletion(t *testing.T) {
 	}
 
 	sourceNode := createTestVertex(t)
-	if err := graph.SetSourceNode(ctx, sourceNode); err != nil {
+	if err := graph.SetSourceNode(ctx, v, sourceNode); err != nil {
 		t.Fatalf("unable to set source node: %v", err)
 	}
 
@@ -3440,7 +3442,7 @@ func TestPruneGraphNodes(t *testing.T) {
 	// We'll start off by inserting our source node, to ensure that it's
 	// the only node left after we prune the graph.
 	sourceNode := createTestVertex(t)
-	if err := graph.SetSourceNode(ctx, sourceNode); err != nil {
+	if err := graph.SetSourceNode(ctx, v, sourceNode); err != nil {
 		t.Fatalf("unable to set source node: %v", err)
 	}
 
@@ -3507,7 +3509,7 @@ func TestAddChannelEdgeShellNodes(t *testing.T) {
 	// To start, we'll create two nodes, and only add one of them to the
 	// channel graph.
 	node1 := createTestVertex(t)
-	require.NoError(t, graph.SetSourceNode(ctx, node1))
+	require.NoError(t, graph.SetSourceNode(ctx, v, node1))
 	node2 := createTestVertex(t)
 
 	// We'll now create an edge between the two nodes, as a result, node2
@@ -3614,19 +3616,19 @@ func TestNodeIsPublic(t *testing.T) {
 	// some graphs but not others, etc.).
 	aliceGraph := MakeTestGraph(t)
 	aliceNode := createTestVertex(t)
-	if err := aliceGraph.SetSourceNode(ctx, aliceNode); err != nil {
+	if err := aliceGraph.SetSourceNode(ctx, v, aliceNode); err != nil {
 		t.Fatalf("unable to set source node: %v", err)
 	}
 
 	bobGraph := MakeTestGraph(t)
 	bobNode := createTestVertex(t)
-	if err := bobGraph.SetSourceNode(ctx, bobNode); err != nil {
+	if err := bobGraph.SetSourceNode(ctx, v, bobNode); err != nil {
 		t.Fatalf("unable to set source node: %v", err)
 	}
 
 	carolGraph := MakeTestGraph(t)
 	carolNode := createTestVertex(t)
-	if err := carolGraph.SetSourceNode(ctx, carolNode); err != nil {
+	if err := carolGraph.SetSourceNode(ctx, v, carolNode); err != nil {
 		t.Fatalf("unable to set source node: %v", err)
 	}
 
@@ -4153,11 +4155,12 @@ func TestComputeFee(t *testing.T) {
 func TestBatchedAddChannelEdge(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
+	v := lnwire.GossipVersion1
 
 	graph := MakeTestGraph(t)
 
 	sourceNode := createTestVertex(t)
-	require.Nil(t, graph.SetSourceNode(ctx, sourceNode))
+	require.Nil(t, graph.SetSourceNode(ctx, v, sourceNode))
 
 	// We'd like to test the insertion/deletion of edges, so we create two
 	// vertexes to connect.

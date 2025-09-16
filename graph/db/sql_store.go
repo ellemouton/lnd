@@ -488,21 +488,19 @@ func (s *SQLStore) LookupAlias(ctx context.Context, v lnwire.GossipVersion,
 // node based off the source node.
 //
 // NOTE: part of the Store interface.
-func (s *SQLStore) SourceNode(ctx context.Context) (*models.Node,
-	error) {
+func (s *SQLStore) SourceNode(ctx context.Context, v lnwire.GossipVersion) (
+	*models.Node, error) {
 
 	var node *models.Node
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		_, nodePub, err := s.getSourceNode(
-			ctx, db, lnwire.GossipVersion1,
-		)
+		_, nodePub, err := s.getSourceNode(ctx, db, v)
 		if err != nil {
 			return fmt.Errorf("unable to fetch V1 source node: %w",
 				err)
 		}
 
 		_, node, err = getNodeByPubKey(
-			ctx, s.cfg.QueryCfg, db, lnwire.GossipVersion1, nodePub,
+			ctx, s.cfg.QueryCfg, db, v, nodePub,
 		)
 
 		return err
@@ -519,7 +517,7 @@ func (s *SQLStore) SourceNode(ctx context.Context) (*models.Node,
 // algorithms.
 //
 // NOTE: part of the Store interface.
-func (s *SQLStore) SetSourceNode(ctx context.Context,
+func (s *SQLStore) SetSourceNode(ctx context.Context, v lnwire.GossipVersion,
 	node *models.Node) error {
 
 	return s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
@@ -531,9 +529,7 @@ func (s *SQLStore) SetSourceNode(ctx context.Context,
 
 		// Make sure that if a source node for this version is already
 		// set, then the ID is the same as the one we are about to set.
-		dbSourceNodeID, _, err := s.getSourceNode(
-			ctx, db, lnwire.GossipVersion1,
-		)
+		dbSourceNodeID, _, err := s.getSourceNode(ctx, db, v)
 		if err != nil && !errors.Is(err, ErrSourceNodeNotSet) {
 			return fmt.Errorf("unable to fetch source node: %w",
 				err)

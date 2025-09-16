@@ -329,12 +329,13 @@ type Store interface { //nolint:interfacebloat
 	// treated as the center node within a star-graph. This method may be
 	// used to kick off a path finding algorithm in order to explore the
 	// reachability of another node based off the source node.
-	SourceNode(ctx context.Context) (*models.Node, error)
+	SourceNode(ctx context.Context, v lnwire.GossipVersion) (*models.Node,
+		error)
 
 	// SetSourceNode sets the source node within the graph database. The
 	// source node is to be used as the center of a star-graph within path
 	// finding algorithms.
-	SetSourceNode(ctx context.Context,
+	SetSourceNode(ctx context.Context, v lnwire.GossipVersion,
 		node *models.Node) error
 
 	// PruneTip returns the block height and hash of the latest block that

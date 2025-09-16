@@ -381,7 +381,7 @@ func (c *KVStore) AddrsForNode(ctx context.Context, v lnwire.GossipVersion,
 	nodePub *btcec.PublicKey) (bool, []net.Addr, error) {
 
 	if v != lnwire.GossipVersion1 {
-		return false, nil, ErrGossipV1OnlyForKVDB
+		return false, nil, nil
 	}
 
 	pubKey, err := route.NewVertexFromBytes(nodePub.SerializeCompressed())
@@ -916,7 +916,13 @@ func (c *KVStore) ForEachNodeCacheable(_ context.Context,
 // as the center node within a star-graph. This method may be used to kick off
 // a path finding algorithm in order to explore the reachability of another
 // node based off the source node.
-func (c *KVStore) SourceNode(_ context.Context) (*models.Node, error) {
+func (c *KVStore) SourceNode(_ context.Context,
+	v lnwire.GossipVersion) (*models.Node, error) {
+
+	if v != lnwire.GossipVersion1 {
+		return nil, ErrGossipV1OnlyForKVDB
+	}
+
 	return sourceNode(c.db)
 }
 
@@ -967,8 +973,12 @@ func sourceNodeWithTx(nodes kvdb.RBucket) (*models.Node, error) {
 // SetSourceNode sets the source node within the graph database. The source
 // node is to be used as the center of a star-graph within path finding
 // algorithms.
-func (c *KVStore) SetSourceNode(_ context.Context,
+func (c *KVStore) SetSourceNode(_ context.Context, v lnwire.GossipVersion,
 	node *models.Node) error {
+
+	if v != lnwire.GossipVersion1 {
+		return ErrGossipV1OnlyForKVDB
+	}
 
 	nodePubBytes := node.PubKeyBytes[:]
 

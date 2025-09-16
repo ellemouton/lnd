@@ -1066,7 +1066,9 @@ func createTestCtxSingleNode(t *testing.T,
 	sourceNode := createTestNode(t)
 
 	require.NoError(t,
-		graph.SetSourceNode(t.Context(), sourceNode),
+		graph.SetSourceNode(
+			t.Context(), lnwire.GossipVersion1, sourceNode,
+		),
 		"failed to set source node",
 	)
 
@@ -1082,7 +1084,7 @@ func createTestCtxSingleNode(t *testing.T,
 func (c *testCtx) RestartBuilder(t *testing.T) {
 	c.chainView.Reset()
 
-	selfNode, err := c.graph.SourceNode(t.Context())
+	selfNode, err := c.graph.SourceNode(t.Context(), lnwire.GossipVersion1)
 	require.NoError(t, err)
 
 	// With the chainView reset, we'll now re-create the builder itself, and
@@ -1155,7 +1157,9 @@ func createTestCtxFromGraphInstanceAssumeValid(t *testing.T,
 		ConfChan:  make(chan *chainntnfs.TxConfirmation),
 	}
 
-	selfnode, err := graphInstance.graph.SourceNode(t.Context())
+	selfnode, err := graphInstance.graph.SourceNode(
+		t.Context(), lnwire.GossipVersion1,
+	)
 	require.NoError(t, err)
 
 	graphBuilder, err := NewBuilder(&Config{
