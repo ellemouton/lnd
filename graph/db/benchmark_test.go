@@ -713,7 +713,10 @@ func BenchmarkCacheLoading(b *testing.B) {
 				require.NoError(b, err)
 				b.StartTimer()
 
-				require.NoError(b, graph.populateCache(ctx))
+				err = graph.graphCache.PopulateFromDB(
+					ctx, store,
+				)
+				require.NoError(b, err)
 			}
 		})
 	}

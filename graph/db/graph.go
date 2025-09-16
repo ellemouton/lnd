@@ -66,7 +66,8 @@ func (c *ChannelGraph) Start() error {
 	defer log.Debug("ChannelGraph started")
 
 	if c.graphCache != nil {
-		if err := c.populateCache(context.TODO()); err != nil {
+		err := c.graphCache.PopulateFromDB(context.TODO(), c.V1Store)
+		if err != nil {
 			return fmt.Errorf("could not populate the graph "+
 				"cache: %w", err)
 		}
@@ -86,44 +87,6 @@ func (c *ChannelGraph) Stop() error {
 
 	close(c.quit)
 	c.wg.Wait()
-
-	return nil
-}
-
-// populateCache loads the entire channel graph into the in-memory graph cache.
-//
-// NOTE: This should only be called if the graphCache has been constructed.
-func (c *ChannelGraph) populateCache(ctx context.Context) error {
-	startTime := time.Now()
-	log.Info("Populating in-memory channel graph, this might take a " +
-		"while...")
-
-	err := c.V1Store.ForEachNodeCacheable(ctx, func(node route.Vertex,
-		features *lnwire.FeatureVector) error {
-
-		c.graphCache.AddNodeFeatures(node, features)
-
-		return nil
-	}, func() {})
-	if err != nil {
-		return err
-	}
-
-	err = c.V1Store.ForEachChannelCacheable(
-		func(info *models.CachedEdgeInfo,
-			policy1, policy2 *models.CachedEdgePolicy) error {
-
-			c.graphCache.AddChannel(info, policy1, policy2)
-
-			return nil
-		}, func() {},
-	)
-	if err != nil {
-		return err
-	}
-
-	log.Infof("Finished populating in-memory channel graph (took %v, %s)",
-		time.Since(startTime), c.graphCache.Stats())
 
 	return nil
 }
