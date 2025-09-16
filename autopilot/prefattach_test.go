@@ -37,10 +37,6 @@ type testDBGraph struct {
 
 func newDiskChanGraph(t *testing.T) (testGraph, error) {
 	graphDB := graphdb.MakeTestGraph(t)
-	require.NoError(t, graphDB.Start())
-	t.Cleanup(func() {
-		require.NoError(t, graphDB.Stop())
-	})
 
 	return &testDBGraph{
 		db: graphDB,

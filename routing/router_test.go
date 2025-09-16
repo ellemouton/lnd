@@ -23,7 +23,6 @@ import (
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/fn/v2"
-	"github.com/lightningnetwork/lnd/graph"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
@@ -142,7 +141,7 @@ func createTestCtxFromGraphInstanceAssumeValid(t *testing.T,
 		MissionControl:      mc,
 	}
 
-	graphBuilder := newMockGraphBuilder(graphInstance.graph)
+	graphBuilder := newMockGraphBuilder(graphInstance.graph.V1Store)
 
 	router, err := New(Config{
 		SelfNode:       sourceNode.PubKeyBytes,
@@ -2941,12 +2940,14 @@ type mockGraphBuilder struct {
 	updateEdge   func(update *models.ChannelEdgePolicy) error
 }
 
-func newMockGraphBuilder(graph graph.DB) *mockGraphBuilder {
+func newMockGraphBuilder(graph graphdb.V1Store) *mockGraphBuilder {
 	return &mockGraphBuilder{
 		updateEdge: func(update *models.ChannelEdgePolicy) error {
-			return graph.UpdateEdgePolicy(
+			_, _, err := graph.UpdateEdgePolicy(
 				context.Background(), update,
 			)
+
+			return err
 		},
 	}
 }

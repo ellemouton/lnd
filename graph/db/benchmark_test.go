@@ -338,12 +338,7 @@ func TestPopulateDBs(t *testing.T) {
 	}
 
 	// Open and start the source graph.
-	src, err := NewChannelGraph(sourceDB.open(t))
-	require.NoError(t, err)
-	require.NoError(t, src.Start())
-	t.Cleanup(func() {
-		require.NoError(t, src.Stop())
-	})
+	src := MakeTestGraphWithStore(t, sourceDB.open(t))
 
 	// countNodes is a helper function to count the number of nodes in the
 	// graph.
@@ -404,12 +399,7 @@ func TestPopulateDBs(t *testing.T) {
 			t.Parallel()
 
 			// Open and start the destination graph.
-			dest, err := NewChannelGraph(destDB.open(t))
-			require.NoError(t, err)
-			require.NoError(t, dest.Start())
-			t.Cleanup(func() {
-				require.NoError(t, dest.Stop())
-			})
+			dest := MakeTestGraphWithStore(t, destDB.open(t))
 
 			t.Logf("Number of nodes in %s graph: %d", destDB.name,
 				countNodes(dest))
@@ -709,11 +699,15 @@ func BenchmarkCacheLoading(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
-				graph, err := NewChannelGraph(store)
-				require.NoError(b, err)
+				graphCache := NewGraphCache(
+					DefaultPreAllocCacheNumNodes,
+				)
 				b.StartTimer()
 
-				require.NoError(b, graph.populateCache(ctx))
+				err := graphCache.PopulateFromGraphDB(
+					ctx, store,
+				)
+				require.NoError(b, err)
 			}
 		})
 	}

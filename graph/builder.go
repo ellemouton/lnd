@@ -118,6 +118,8 @@ type Builder struct {
 
 	*topologyManager
 
+	graphCache *graphdb.GraphCache
+
 	// newBlocks is a channel in which new blocks connected to the end of
 	// the main chain are sent over, and blocks updated after a call to
 	// UpdateFilter.
@@ -155,12 +157,14 @@ func NewBuilder(cfg *Config, options ...BuilderOption) (*Builder, error) {
 		o(opts)
 	}
 
-	chanGraphOpts := []graphdb.ChanGraphOption{
-		graphdb.WithUseGraphCache(opts.useGraphCache),
-		graphdb.WithPreAllocCacheNumNodes(opts.preAllocCacheNumNodes),
+	// The graph cache can be turned off (e.g. for mobile users) for a
+	// speed/memory usage tradeoff.
+	var graphCache *graphdb.GraphCache
+	if opts.useGraphCache {
+		graphCache = graphdb.NewGraphCache(opts.preAllocCacheNumNodes)
 	}
 
-	chanGraph, err := graphdb.NewChannelGraph(cfg.GraphDB, chanGraphOpts...)
+	chanGraph, err := graphdb.NewChannelGraph(cfg.GraphDB, graphCache)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create channel Graph: %w",
 			err)
@@ -169,6 +173,7 @@ func NewBuilder(cfg *Config, options ...BuilderOption) (*Builder, error) {
 	return &Builder{
 		cfg:             cfg,
 		Graph:           chanGraph,
+		graphCache:      graphCache,
 		channelEdgeMtx:  multimutex.NewMutex[uint64](),
 		statTicker:      ticker.New(defaultStatInterval),
 		stats:           new(builderStats),
@@ -184,12 +189,17 @@ func (b *Builder) Start() error {
 		return nil
 	}
 
-	err := b.Graph.Start()
-	if err != nil {
-		return fmt.Errorf("unable to start channel graph: %w", err)
-	}
-
 	log.Info("Builder starting")
+
+	if b.graphCache != nil {
+		err := b.graphCache.PopulateFromGraphDB(
+			context.TODO(), b.cfg.GraphDB,
+		)
+		if err != nil {
+			return fmt.Errorf("could not populate the graph "+
+				"cache: %w", err)
+		}
+	}
 
 	bestHash, bestHeight, err := b.cfg.Chain.GetBestBlock()
 	if err != nil {
@@ -332,10 +342,6 @@ func (b *Builder) Stop() error {
 
 	close(b.quit)
 	b.wg.Wait()
-
-	if err := b.Graph.Stop(); err != nil {
-		return fmt.Errorf("unable to stop channel graph: %w", err)
-	}
 
 	log.Debug("Builder shutdown complete")
 

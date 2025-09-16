@@ -4372,12 +4372,7 @@ func TestGraphLoading(t *testing.T) {
 	// Next, create the graph for the first time.
 	graphStore := NewTestDB(t)
 
-	graph, err := NewChannelGraph(graphStore)
-	require.NoError(t, err)
-	require.NoError(t, graph.Start())
-	t.Cleanup(func() {
-		require.NoError(t, graph.Stop())
-	})
+	graph := MakeTestGraphWithStore(t, graphStore)
 
 	// Populate the graph with test data.
 	const numNodes = 100
@@ -4386,12 +4381,7 @@ func TestGraphLoading(t *testing.T) {
 
 	// Recreate the graph. This should cause the graph cache to be
 	// populated.
-	graphReloaded, err := NewChannelGraph(graphStore)
-	require.NoError(t, err)
-	require.NoError(t, graphReloaded.Start())
-	t.Cleanup(func() {
-		require.NoError(t, graphReloaded.Stop())
-	})
+	graphReloaded := MakeTestGraphWithStore(t, graphStore)
 
 	// Assert that the cache content is identical.
 	require.Equal(

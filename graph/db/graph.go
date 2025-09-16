@@ -3,10 +3,8 @@ package graphdb
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,9 +19,6 @@ import (
 
 // ChannelGraph is a layer above the graph's CRUD layer.
 type ChannelGraph struct {
-	started atomic.Bool
-	stopped atomic.Bool
-
 	graphCache *GraphCache
 
 	V1Store
@@ -33,99 +28,14 @@ type ChannelGraph struct {
 }
 
 // NewChannelGraph creates a new ChannelGraph instance with the given backend.
-func NewChannelGraph(v1Store V1Store,
-	options ...ChanGraphOption) (*ChannelGraph, error) {
+func NewChannelGraph(v1Store V1Store, cache *GraphCache) (*ChannelGraph,
+	error) {
 
-	opts := defaultChanGraphOptions()
-	for _, o := range options {
-		o(opts)
-	}
-
-	g := &ChannelGraph{
-		V1Store: v1Store,
-		quit:    make(chan struct{}),
-	}
-
-	// The graph cache can be turned off (e.g. for mobile users) for a
-	// speed/memory usage tradeoff.
-	if opts.useGraphCache {
-		g.graphCache = NewGraphCache(opts.preAllocCacheNumNodes)
-	}
-
-	return g, nil
-}
-
-// Start kicks off any goroutines required for the ChannelGraph to function.
-// If the graph cache is enabled, then it will be populated with the contents of
-// the database.
-func (c *ChannelGraph) Start() error {
-	if !c.started.CompareAndSwap(false, true) {
-		return nil
-	}
-	log.Debugf("ChannelGraph starting")
-	defer log.Debug("ChannelGraph started")
-
-	if c.graphCache != nil {
-		if err := c.populateCache(context.TODO()); err != nil {
-			return fmt.Errorf("could not populate the graph "+
-				"cache: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// Stop signals any active goroutines for a graceful closure.
-func (c *ChannelGraph) Stop() error {
-	if !c.stopped.CompareAndSwap(false, true) {
-		return nil
-	}
-
-	log.Debugf("ChannelGraph shutting down...")
-	defer log.Debug("ChannelGraph shutdown complete")
-
-	close(c.quit)
-	c.wg.Wait()
-
-	return nil
-}
-
-// populateCache loads the entire channel graph into the in-memory graph cache.
-//
-// NOTE: This should only be called if the graphCache has been constructed.
-func (c *ChannelGraph) populateCache(ctx context.Context) error {
-	startTime := time.Now()
-	log.Info("Populating in-memory channel graph, this might take a " +
-		"while...")
-
-	err := c.V1Store.ForEachNodeCacheable(ctx, func(node route.Vertex,
-		features *lnwire.FeatureVector) error {
-
-		c.graphCache.AddNodeFeatures(node, features)
-
-		return nil
-	}, func() {})
-	if err != nil {
-		return err
-	}
-
-	err = c.V1Store.ForEachChannelCacheable(
-		func(info *models.CachedEdgeInfo,
-			policy1, policy2 *models.CachedEdgePolicy) error {
-
-			c.graphCache.AddChannel(info, policy1, policy2)
-
-			return nil
-		}, func() {},
-	)
-	if err != nil {
-		return err
-	}
-
-	log.Infof("Finished populating in-memory channel graph (took %v, %s)",
-		time.Since(startTime), c.graphCache.Stats())
-
-	return nil
+	return &ChannelGraph{
+		graphCache: cache,
+		V1Store:    v1Store,
+		quit:       make(chan struct{}),
+	}, nil
 }
 
 // ForEachNodeDirectedChannel iterates through all channels of a given node,
@@ -509,20 +419,57 @@ func (c *ChannelGraph) UpdateEdgePolicy(ctx context.Context,
 // MakeTestGraph creates a new instance of the ChannelGraph for testing
 // purposes. The backing V1Store implementation depends on the version of
 // NewTestDB included in the current build.
-func MakeTestGraph(t testing.TB,
-	opts ...ChanGraphOption) *ChannelGraph {
-
+func MakeTestGraph(t testing.TB) *ChannelGraph {
 	t.Helper()
 
 	store := NewTestDB(t)
 
-	graph, err := NewChannelGraph(store, opts...)
-	require.NoError(t, err)
-	require.NoError(t, graph.Start())
+	graphCache := NewGraphCache(DefaultPreAllocCacheNumNodes)
 
-	t.Cleanup(func() {
-		require.NoError(t, graph.Stop())
-	})
+	err := graphCache.PopulateFromGraphDB(t.Context(), store)
+	require.NoError(t, err)
+
+	graph, err := NewChannelGraph(store, graphCache)
+	require.NoError(t, err)
+
+	return graph
+}
+
+// MakeTestGraphWithCache creates a new instance of the ChannelGraph for testing
+// purposes. The backing V1Store implementation depends on the version of
+// NewTestDB included in the current build. The useCache boolean determines
+// whether to enable the graph cache or not.
+func MakeTestGraphWithCache(t testing.TB, useCache bool) *ChannelGraph {
+	t.Helper()
+
+	store := NewTestDB(t)
+
+	// The graph cache can be turned off (e.g. for mobile users) for a
+	// speed/memory usage tradeoff.
+	var graphCache *GraphCache
+	if useCache {
+		graphCache = NewGraphCache(DefaultPreAllocCacheNumNodes)
+
+		err := graphCache.PopulateFromGraphDB(t.Context(), store)
+		require.NoError(t, err)
+	}
+
+	graph, err := NewChannelGraph(store, graphCache)
+	require.NoError(t, err)
+
+	return graph
+}
+
+func MakeTestGraphWithStore(t testing.TB, store V1Store) *ChannelGraph {
+	t.Helper()
+
+	graphCache := NewGraphCache(DefaultPreAllocCacheNumNodes)
+
+	err := graphCache.PopulateFromGraphDB(t.Context(), store)
+	require.NoError(t, err)
+
+	graph, err := NewChannelGraph(store, graphCache)
+	require.NoError(t, err)
 
 	return graph
 }

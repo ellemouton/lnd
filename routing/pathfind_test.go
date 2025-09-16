@@ -160,13 +160,7 @@ func makeTestGraph(t *testing.T, useCache bool) (*graphdb.ChannelGraph,
 	kvdb.Backend, error) {
 
 	// Create channelgraph for the first time.
-	graph := graphdb.MakeTestGraph(
-		t, graphdb.WithUseGraphCache(useCache),
-	)
-	require.NoError(t, graph.Start())
-	t.Cleanup(func() {
-		require.NoError(t, graph.Stop())
-	})
+	graph := graphdb.MakeTestGraphWithCache(t, useCache)
 
 	mcBackend, backendCleanup, err := kvdb.GetTestBackend(
 		t.TempDir(), "mission_control",

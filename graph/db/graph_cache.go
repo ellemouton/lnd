@@ -1,8 +1,10 @@
 package graphdb
 
 import (
+	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/lightningnetwork/lnd/graph/db/models"
@@ -367,4 +369,51 @@ func (c *GraphCache) GetFeatures(node route.Vertex) *lnwire.FeatureVector {
 	}
 
 	return features
+}
+
+type CacheGraphDB interface {
+	ForEachNodeCacheable(ctx context.Context,
+		cb func(route.Vertex, *lnwire.FeatureVector) error,
+		reset func()) error
+
+	ForEachChannelCacheable(cb func(*models.CachedEdgeInfo,
+		*models.CachedEdgePolicy, *models.CachedEdgePolicy) error,
+		reset func()) error
+}
+
+func (c *GraphCache) PopulateFromGraphDB(ctx context.Context,
+	db CacheGraphDB) error {
+
+	startTime := time.Now()
+	log.Info("Populating in-memory channel graph, this might take a " +
+		"while...")
+
+	err := db.ForEachNodeCacheable(ctx, func(node route.Vertex,
+		features *lnwire.FeatureVector) error {
+
+		c.AddNodeFeatures(node, features)
+
+		return nil
+	}, func() {})
+	if err != nil {
+		return err
+	}
+
+	err = db.ForEachChannelCacheable(
+		func(info *models.CachedEdgeInfo,
+			policy1, policy2 *models.CachedEdgePolicy) error {
+
+			c.AddChannel(info, policy1, policy2)
+
+			return nil
+		}, func() {},
+	)
+	if err != nil {
+		return err
+	}
+
+	log.Infof("Finished populating in-memory channel graph (took %v, %s)",
+		time.Since(startTime), c.Stats())
+
+	return nil
 }
