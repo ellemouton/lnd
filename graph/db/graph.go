@@ -188,9 +188,9 @@ func (c *ChannelGraph) AddNode(ctx context.Context,
 // DeleteNode starts a new database transaction to remove a vertex/node
 // from the database according to the node's public key.
 func (c *ChannelGraph) DeleteNode(ctx context.Context,
-	nodePub route.Vertex) error {
+	v lnwire.GossipVersion, nodePub route.Vertex) error {
 
-	err := c.Store.DeleteNode(ctx, nodePub)
+	err := c.Store.DeleteNode(ctx, v, nodePub)
 	if err != nil {
 		return err
 	}

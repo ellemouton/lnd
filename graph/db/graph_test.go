@@ -154,13 +154,13 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 
 	// Next, delete the node from the graph, this should purge all data
 	// related to the node.
-	require.NoError(t, graph.DeleteNode(ctx, testPub))
+	require.NoError(t, graph.DeleteNode(ctx, v, testPub))
 	assertNodeNotInCache(t, graph, testPub)
 
 	// Attempting to delete the node again should return an error since
 	// the node is no longer known.
 	require.ErrorIs(
-		t, graph.DeleteNode(ctx, testPub),
+		t, graph.DeleteNode(ctx, v, testPub),
 		ErrGraphNodeNotFound,
 	)
 
@@ -325,7 +325,7 @@ func TestPartialNode(t *testing.T) {
 
 	// Next, delete the node from the graph, this should purge all data
 	// related to the node.
-	require.NoError(t, graph.DeleteNode(ctx, pubKey1))
+	require.NoError(t, graph.DeleteNode(ctx, v, pubKey1))
 	assertNodeNotInCache(t, graph, testPub)
 
 	// Finally, attempt to fetch the node again. This should fail as the
@@ -3488,6 +3488,7 @@ func TestAddChannelEdgeShellNodes(t *testing.T) {
 func TestNodePruningUpdateIndexDeletion(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
+	v := lnwire.GossipVersion1
 
 	graph := MakeTestGraph(t)
 
@@ -3516,7 +3517,7 @@ func TestNodePruningUpdateIndexDeletion(t *testing.T) {
 
 	// We'll now delete the node from the graph, this should result in it
 	// being removed from the update index as well.
-	err = graph.DeleteNode(ctx, node1.PubKeyBytes)
+	err = graph.DeleteNode(ctx, v, node1.PubKeyBytes)
 	require.NoError(t, err)
 
 	// Now that the node has been deleted, we'll again query the nodes in

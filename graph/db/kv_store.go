@@ -1071,8 +1071,12 @@ func (c *KVStore) LookupAlias(_ context.Context,
 
 // DeleteNode starts a new database transaction to remove a vertex/node
 // from the database according to the node's public key.
-func (c *KVStore) DeleteNode(_ context.Context,
+func (c *KVStore) DeleteNode(_ context.Context, v lnwire.GossipVersion,
 	nodePub route.Vertex) error {
+
+	if v != lnwire.GossipVersion1 {
+		return ErrGossipV1OnlyForKVDB
+	}
 
 	// TODO(roasbeef): ensure dangling edges are removed...
 	return kvdb.Update(c.db, func(tx kvdb.RwTx) error {

@@ -106,7 +106,8 @@ type Store interface { //nolint:interfacebloat
 
 	// DeleteNode starts a new database transaction to remove a
 	// vertex/node from the database according to the node's public key.
-	DeleteNode(ctx context.Context, nodePub route.Vertex) error
+	DeleteNode(ctx context.Context, v lnwire.GossipVersion,
+		nodePub route.Vertex) error
 
 	// NodeUpdatesInHorizon returns all the known lightning node which have
 	// an update timestamp within the passed range. This method can be used

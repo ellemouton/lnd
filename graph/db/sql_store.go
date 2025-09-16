@@ -355,13 +355,13 @@ func (s *SQLStore) AddrsForNode(ctx context.Context,
 // from the database according to the node's public key.
 //
 // NOTE: part of the Store interface.
-func (s *SQLStore) DeleteNode(ctx context.Context,
+func (s *SQLStore) DeleteNode(ctx context.Context, v lnwire.GossipVersion,
 	pubKey route.Vertex) error {
 
 	err := s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
 		res, err := db.DeleteNodeByPubKey(
 			ctx, sqlc.DeleteNodeByPubKeyParams{
-				Version: int16(lnwire.GossipVersion1),
+				Version: int16(v),
 				PubKey:  pubKey[:],
 			},
 		)
