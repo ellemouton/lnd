@@ -1440,8 +1440,10 @@ func (b *Builder) IsStaleNode(ctx context.Context, node route.Vertex,
 // the graph from the graph's source node's point of view.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsPublicNode(node route.Vertex) (bool, error) {
-	return b.cfg.Graph.IsPublicNode(node)
+func (b *Builder) IsPublicNode(v lnwire.GossipVersion, node route.Vertex) (bool,
+	error) {
+
+	return b.cfg.Graph.IsPublicNode(v, node)
 }
 
 // IsKnownEdge returns true if the graph source already knows of the passed

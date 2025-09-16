@@ -3550,6 +3550,7 @@ func nextUpdateTime() time.Time {
 func TestNodeIsPublic(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
+	v := lnwire.GossipVersion1
 
 	// We'll start off the test by creating a small network of 3
 	// participants with the following graph:
@@ -3607,7 +3608,7 @@ func TestNodeIsPublic(t *testing.T) {
 		for _, node := range nodes {
 			for _, graph := range graphs {
 				isPublic, err := graph.IsPublicNode(
-					node.PubKeyBytes,
+					v, node.PubKeyBytes,
 				)
 				if err != nil {
 					t.Fatalf("unable to determine if "+

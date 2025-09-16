@@ -6362,6 +6362,21 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 		DefaultCLTVExpiry: defaultDelta,
 		ChanDB:            r.server.chanStateDB,
 		Graph:             r.server.graphDB,
+		IsPublicNode: func(pubKey [33]byte) (bool, error) {
+			graph := r.server.graphDB
+
+			public, err := graph.IsPublicNode(
+				lnwire.GossipVersion2, pubKey,
+			)
+			if err != nil {
+				return false, err
+			}
+			if public {
+				return true, nil
+			}
+
+			return graph.IsPublicNode(lnwire.GossipVersion1, pubKey)
+		},
 		GenInvoiceFeatures: func() *lnwire.FeatureVector {
 			v := r.server.featureMgr.Get(feature.SetInvoice)
 

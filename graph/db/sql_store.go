@@ -48,6 +48,7 @@ type SQLQueries interface {
 	ListNodesPaginated(ctx context.Context, arg sqlc.ListNodesPaginatedParams) ([]sqlc.GraphNode, error)
 	ListNodeIDsAndPubKeys(ctx context.Context, arg sqlc.ListNodeIDsAndPubKeysParams) ([]sqlc.ListNodeIDsAndPubKeysRow, error)
 	IsPublicV1Node(ctx context.Context, pubKey []byte) (bool, error)
+	IsPublicV2Node(ctx context.Context, pubKey []byte) (bool, error)
 	DeleteUnconnectedNodes(ctx context.Context) ([][]byte, error)
 	DeleteNodeByPubKey(ctx context.Context, arg sqlc.DeleteNodeByPubKeyParams) (sql.Result, error)
 	DeleteNode(ctx context.Context, id int64) error
@@ -154,6 +155,11 @@ type SQLQueries interface {
 	InsertChannelMig(ctx context.Context, arg sqlc.InsertChannelMigParams) (int64, error)
 	InsertEdgePolicyMig(ctx context.Context, arg sqlc.InsertEdgePolicyMigParams) (int64, error)
 }
+
+const (
+	v1 = lnwire.GossipVersion1
+	v2 = lnwire.GossipVersion2
+)
 
 // BatchedSQLQueries is a version of SQLQueries that's capable of batched
 // database operations.
@@ -2052,13 +2058,22 @@ func (s *SQLStore) ChannelID(chanPoint *wire.OutPoint) (uint64, error) {
 // source node's point of view.
 //
 // NOTE: part of the Store interface.
-func (s *SQLStore) IsPublicNode(pubKey [33]byte) (bool, error) {
+func (s *SQLStore) IsPublicNode(v lnwire.GossipVersion, pubKey [33]byte) (bool,
+	error) {
+
 	ctx := context.TODO()
 
 	var isPublic bool
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		var err error
-		isPublic, err = db.IsPublicV1Node(ctx, pubKey[:])
+		switch v {
+		case v1:
+			isPublic, err = db.IsPublicV1Node(ctx, pubKey[:])
+		case v2:
+			isPublic, err = db.IsPublicV2Node(ctx, pubKey[:])
+		default:
+			return fmt.Errorf("unknown gossip version: %d", v)
+		}
 
 		return err
 	}, sqldb.NoOpReset)
