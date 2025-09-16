@@ -146,7 +146,7 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 
 	// Check that the node's features are fetched correctly. This check
 	// will check the database directly.
-	features, err = graph.V1Store.FetchNodeFeatures(node.PubKeyBytes)
+	features, err = graph.Store.FetchNodeFeatures(node.PubKeyBytes)
 	require.NoError(t, err)
 	require.Equal(t, testFeatures, features)
 
@@ -1505,7 +1505,7 @@ func TestGraphTraversalCacheable(t *testing.T) {
 		require.NoError(t, err)
 
 		// Now skip the cache and query the DB directly.
-		err = graph.V1Store.ForEachNodeDirectedChannel(
+		err = graph.Store.ForEachNodeDirectedChannel(
 			node, func(d *DirectedChannel) error {
 				delete(chanIndex2, d.ChannelID)
 				return nil
@@ -3235,7 +3235,7 @@ func TestChannelEdgePruningUpdateIndexDeletion(t *testing.T) {
 	graph := MakeTestGraph(t)
 
 	// The update index only applies to the bbolt graph.
-	boltStore, ok := graph.V1Store.(*KVStore)
+	boltStore, ok := graph.Store.(*KVStore)
 	if !ok {
 		t.Skipf("skipping test that is aimed at a bbolt graph DB")
 	}
@@ -3771,7 +3771,7 @@ func TestEdgePolicyMissingMaxHTLC(t *testing.T) {
 	graph := MakeTestGraph(t)
 
 	// This test currently directly edits the bytes stored in the bbolt DB.
-	boltStore, ok := graph.V1Store.(*KVStore)
+	boltStore, ok := graph.Store.(*KVStore)
 	if !ok {
 		t.Skipf("skipping test that is aimed at a bbolt graph DB")
 	}
