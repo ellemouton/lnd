@@ -5209,7 +5209,8 @@ func (s *server) fetchNodeAdvertisedAddrs(ctx context.Context,
 		return nil, err
 	}
 
-	node, err := s.graphDB.FetchNode(ctx, vertex)
+	// TODO(elle): update for V2.
+	node, err := s.graphDB.FetchNode(ctx, lnwire.GossipVersion1, vertex)
 	if err != nil {
 		return nil, err
 	}

@@ -383,7 +383,7 @@ func (c *KVStore) AddrsForNode(ctx context.Context,
 		return false, nil, err
 	}
 
-	node, err := c.FetchNode(ctx, pubKey)
+	node, err := c.FetchNode(ctx, lnwire.GossipVersion1, pubKey)
 	// We don't consider it an error if the graph is unaware of the node.
 	switch {
 	case err != nil && !errors.Is(err, ErrGraphNodeNotFound):
@@ -3048,8 +3048,13 @@ func (c *KVStore) fetchNodeTx(tx kvdb.RTx, nodePub route.Vertex) (*models.Node,
 // FetchNode attempts to look up a target node by its identity public
 // key. If the node isn't found in the database, then ErrGraphNodeNotFound is
 // returned.
-func (c *KVStore) FetchNode(_ context.Context,
+func (c *KVStore) FetchNode(_ context.Context, v lnwire.GossipVersion,
 	nodePub route.Vertex) (*models.Node, error) {
+
+	if v != lnwire.GossipVersion1 {
+		return nil, fmt.Errorf("gossip version %d not supported on "+
+			"kvdb backend", v)
+	}
 
 	return c.fetchLightningNode(nil, nodePub)
 }

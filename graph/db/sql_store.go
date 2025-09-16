@@ -253,13 +253,15 @@ func (s *SQLStore) AddNode(ctx context.Context,
 // returned.
 //
 // NOTE: part of the V1Store interface.
-func (s *SQLStore) FetchNode(ctx context.Context,
+func (s *SQLStore) FetchNode(ctx context.Context, v lnwire.GossipVersion,
 	pubKey route.Vertex) (*models.Node, error) {
 
 	var node *models.Node
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		var err error
-		_, node, err = getNodeByPubKey(ctx, s.cfg.QueryCfg, db, pubKey)
+		_, node, err = getNodeByPubKey(
+			ctx, s.cfg.QueryCfg, db, v, pubKey,
+		)
 
 		return err
 	}, sqldb.NoOpReset)
@@ -481,13 +483,17 @@ func (s *SQLStore) SourceNode(ctx context.Context) (*models.Node,
 
 	var node *models.Node
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		_, nodePub, err := s.getSourceNode(ctx, db, lnwire.GossipVersion1)
+		_, nodePub, err := s.getSourceNode(
+			ctx, db, lnwire.GossipVersion1,
+		)
 		if err != nil {
 			return fmt.Errorf("unable to fetch V1 source node: %w",
 				err)
 		}
 
-		_, node, err = getNodeByPubKey(ctx, s.cfg.QueryCfg, db, nodePub)
+		_, node, err = getNodeByPubKey(
+			ctx, s.cfg.QueryCfg, db, lnwire.GossipVersion1, nodePub,
+		)
 
 		return err
 	}, sqldb.NoOpReset)
@@ -515,7 +521,9 @@ func (s *SQLStore) SetSourceNode(ctx context.Context,
 
 		// Make sure that if a source node for this version is already
 		// set, then the ID is the same as the one we are about to set.
-		dbSourceNodeID, _, err := s.getSourceNode(ctx, db, lnwire.GossipVersion1)
+		dbSourceNodeID, _, err := s.getSourceNode(
+			ctx, db, lnwire.GossipVersion1,
+		)
 		if err != nil && !errors.Is(err, ErrSourceNodeNotSet) {
 			return fmt.Errorf("unable to fetch source node: %w",
 				err)
@@ -765,8 +773,10 @@ func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
 	cb func(chanPoint wire.OutPoint, havePolicy bool,
 		otherNode *models.Node) error, reset func()) error {
 
+	version := lnwire.GossipVersion1
+
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		nodeID, nodePub, err := s.getSourceNode(ctx, db, lnwire.GossipVersion1)
+		nodeID, nodePub, err := s.getSourceNode(ctx, db, version)
 		if err != nil {
 			return fmt.Errorf("unable to fetch source node: %w",
 				err)
@@ -795,7 +805,8 @@ func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
 				}
 
 				_, otherNode, err := getNodeByPubKey(
-					ctx, s.cfg.QueryCfg, db, otherNodePub,
+					ctx, s.cfg.QueryCfg, db, version,
+					otherNodePub,
 				)
 				if err != nil {
 					return fmt.Errorf("unable to fetch "+
@@ -3188,11 +3199,12 @@ func updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 
 // getNodeByPubKey attempts to look up a target node by its public key.
 func getNodeByPubKey(ctx context.Context, cfg *sqldb.QueryConfig, db SQLQueries,
-	pubKey route.Vertex) (int64, *models.Node, error) {
+	v lnwire.GossipVersion, pubKey route.Vertex) (int64, *models.Node,
+	error) {
 
 	dbNode, err := db.GetNodeByPubKey(
 		ctx, sqlc.GetNodeByPubKeyParams{
-			Version: int16(lnwire.GossipVersion1),
+			Version: int16(v),
 			PubKey:  pubKey[:],
 		},
 	)
@@ -3245,15 +3257,12 @@ func buildNode(ctx context.Context, cfg *sqldb.QueryConfig, db SQLQueries,
 func buildNodeWithBatchData(dbNode sqlc.GraphNode,
 	batchData *batchNodeData) (*models.Node, error) {
 
-	if dbNode.Version != int16(lnwire.GossipVersion1) {
-		return nil, fmt.Errorf("unsupported node version: %d",
-			dbNode.Version)
-	}
-
 	var pub [33]byte
 	copy(pub[:], dbNode.PubKey)
 
-	node := models.NewV1ShellNode(pub)
+	version := lnwire.GossipVersion(dbNode.Version)
+
+	node := models.NewShellNode(version, pub)
 
 	if len(dbNode.Signature) == 0 {
 		return node, nil
@@ -3266,6 +3275,10 @@ func buildNodeWithBatchData(dbNode sqlc.GraphNode,
 	}
 	if dbNode.LastUpdate.Valid {
 		node.LastUpdate = time.Unix(dbNode.LastUpdate.Int64, 0)
+	}
+
+	if dbNode.BlockHeight.Valid {
+		node.LastBlockHeight = uint32(dbNode.BlockHeight.Int64)
 	}
 
 	var err error
@@ -3305,8 +3318,12 @@ func buildNodeWithBatchData(dbNode sqlc.GraphNode,
 			return nil, fmt.Errorf("unable to serialize extra "+
 				"signed fields: %w", err)
 		}
-		if len(recs) != 0 {
-			node.ExtraOpaqueData = recs
+		if version == lnwire.GossipVersion1 {
+			if len(recs) != 0 {
+				node.ExtraOpaqueData = recs
+			}
+		} else {
+			node.ExtraSignedFields = extraFields
 		}
 	}
 
