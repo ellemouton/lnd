@@ -520,7 +520,7 @@ func TestEdgeInsertionDeletion(t *testing.T) {
 	require.ErrorIs(t, err, ErrZombieEdge)
 	require.NotNil(t, edge)
 
-	isZombie, _, _, err := graph.IsZombieEdge(chanID)
+	isZombie, _, _, err := graph.IsZombieEdge(lnwire.GossipVersion1, chanID)
 	require.NoError(t, err)
 	require.True(t, isZombie)
 
@@ -2341,16 +2341,16 @@ func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 	)
 
 	isZombie := func(scid lnwire.ShortChannelID) bool {
-		zombie, _, _, err := graph.IsZombieEdge(scid.ToUint64())
+		zombie, _, _, err := graph.IsZombieEdge(lnwire.GossipVersion1, scid.ToUint64())
 		require.NoError(t, err)
 
 		return zombie
 	}
 
 	// Mark channel 1 and 2 as zombies.
-	err := graph.MarkEdgeZombie(scid1.ToUint64(), [33]byte{}, [33]byte{})
+	err := graph.MarkEdgeZombie(lnwire.GossipVersion1, scid1.ToUint64(), [33]byte{}, [33]byte{})
 	require.NoError(t, err)
-	err = graph.MarkEdgeZombie(scid2.ToUint64(), [33]byte{}, [33]byte{})
+	err = graph.MarkEdgeZombie(lnwire.GossipVersion1, scid2.ToUint64(), [33]byte{}, [33]byte{})
 	require.NoError(t, err)
 
 	require.True(t, isZombie(scid1))
@@ -2359,7 +2359,7 @@ func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 
 	// Call FilterKnownChanIDs with an isStillZombie call-back that would
 	// result in the current zombies still be considered as zombies.
-	_, err = graph.FilterKnownChanIDs([]ChannelUpdateInfo{
+	_, err = graph.FilterKnownChanIDs(lnwire.GossipVersion1, []ChannelUpdateInfo{
 		{ShortChannelID: scid1},
 		{ShortChannelID: scid2},
 		{ShortChannelID: scid3},
@@ -2375,7 +2375,7 @@ func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 	// Now call it again but this time with a isStillZombie call-back that
 	// would result in channel with SCID 2 no longer being considered a
 	// zombie.
-	_, err = graph.FilterKnownChanIDs([]ChannelUpdateInfo{
+	_, err = graph.FilterKnownChanIDs(lnwire.GossipVersion1, []ChannelUpdateInfo{
 		{ShortChannelID: scid1},
 		{
 			ShortChannelID:       scid2,
@@ -2421,7 +2421,7 @@ func TestFilterKnownChanIDs(t *testing.T) {
 		{ShortChannelID: scid2},
 		{ShortChannelID: scid3},
 	}
-	filteredIDs, err := graph.FilterKnownChanIDs(preChanIDs, isZombieUpdate)
+	filteredIDs, err := graph.FilterKnownChanIDs(lnwire.GossipVersion1, preChanIDs, isZombieUpdate)
 	require.NoError(t, err, "unable to filter chan IDs")
 	require.EqualValues(t, []uint64{
 		scid1.ToUint64(),
@@ -2553,7 +2553,7 @@ func TestFilterKnownChanIDs(t *testing.T) {
 
 	for _, queryCase := range queryCases {
 		resp, err := graph.FilterKnownChanIDs(
-			queryCase.queryIDs, isZombieUpdate,
+			lnwire.GossipVersion1, queryCase.queryIDs, isZombieUpdate,
 		)
 		require.NoError(t, err)
 
@@ -2709,7 +2709,7 @@ func TestStressTestChannelGraphAPI(t *testing.T) {
 				}
 
 				return graph.MarkEdgeZombie(
-					channel.id.ToUint64(),
+					lnwire.GossipVersion1, channel.id.ToUint64(),
 					node1.PubKeyBytes,
 					node2.PubKeyBytes,
 				)
@@ -2731,7 +2731,7 @@ func TestStressTestChannelGraphAPI(t *testing.T) {
 				}
 
 				_, err := graph.FilterKnownChanIDs(
-					chanIDs,
+					lnwire.GossipVersion1, chanIDs,
 					func(t time.Time, t2 time.Time) bool {
 						return rand.Intn(2) == 0
 					},
@@ -3955,7 +3955,7 @@ func putSerializedPolicy(t *testing.T, db kvdb.Backend, from []byte,
 func assertNumZombies(t *testing.T, graph *ChannelGraph, expZombies uint64) {
 	t.Helper()
 
-	numZombies, err := graph.NumZombies()
+	numZombies, err := graph.NumZombies(lnwire.GossipVersion1)
 	require.NoError(t, err, "unable to query number of zombies")
 
 	if numZombies != expZombies {
@@ -3986,7 +3986,7 @@ func TestGraphZombieIndex(t *testing.T) {
 
 	// Since the edge is known the graph and it isn't a zombie, IsZombieEdge
 	// should not report the channel as a zombie.
-	isZombie, _, _, err := graph.IsZombieEdge(edge.ChannelID)
+	isZombie, _, _, err := graph.IsZombieEdge(lnwire.GossipVersion1, edge.ChannelID)
 	require.NoError(t, err)
 	require.False(t, isZombie)
 	assertNumZombies(t, graph, 0)
@@ -3995,7 +3995,7 @@ func TestGraphZombieIndex(t *testing.T) {
 	// to see it within the index.
 	err = graph.DeleteChannelEdges(false, true, edge.ChannelID)
 	require.NoError(t, err, "unable to mark edge as zombie")
-	isZombie, pubKey1, pubKey2, err := graph.IsZombieEdge(edge.ChannelID)
+	isZombie, pubKey1, pubKey2, err := graph.IsZombieEdge(lnwire.GossipVersion1, edge.ChannelID)
 	require.NoError(t, err)
 	require.True(t, isZombie)
 	require.Equal(t, node1.PubKeyBytes, pubKey1)
@@ -4004,15 +4004,15 @@ func TestGraphZombieIndex(t *testing.T) {
 
 	// Similarly, if we mark the same edge as live, we should no longer see
 	// it within the index.
-	require.NoError(t, graph.MarkEdgeLive(edge.ChannelID))
+	require.NoError(t, graph.MarkEdgeLive(lnwire.GossipVersion1, edge.ChannelID))
 
 	// Attempting to mark the edge as live again now that it is no longer
 	// in the zombie index should fail.
 	require.ErrorIs(
-		t, graph.MarkEdgeLive(edge.ChannelID), ErrZombieEdgeNotFound,
+		t, graph.MarkEdgeLive(lnwire.GossipVersion1, edge.ChannelID), ErrZombieEdgeNotFound,
 	)
 
-	isZombie, _, _, err = graph.IsZombieEdge(edge.ChannelID)
+	isZombie, _, _, err = graph.IsZombieEdge(lnwire.GossipVersion1, edge.ChannelID)
 	require.NoError(t, err)
 	require.False(t, isZombie)
 
@@ -4021,11 +4021,11 @@ func TestGraphZombieIndex(t *testing.T) {
 	// If we mark the edge as a zombie manually, then it should show up as
 	// being a zombie once again.
 	err = graph.MarkEdgeZombie(
-		edge.ChannelID, node1.PubKeyBytes, node2.PubKeyBytes,
+		lnwire.GossipVersion1, edge.ChannelID, node1.PubKeyBytes, node2.PubKeyBytes,
 	)
 	require.NoError(t, err, "unable to mark edge as zombie")
 
-	isZombie, _, _, err = graph.IsZombieEdge(edge.ChannelID)
+	isZombie, _, _, err = graph.IsZombieEdge(lnwire.GossipVersion1, edge.ChannelID)
 	require.NoError(t, err)
 	require.True(t, isZombie)
 	assertNumZombies(t, graph, 1)

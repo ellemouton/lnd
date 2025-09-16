@@ -226,8 +226,10 @@ func (c *ChannelGraph) AddChannelEdge(ctx context.Context,
 // MarkEdgeLive clears an edge from our zombie index, deeming it as live.
 // If the cache is enabled, the edge will be added back to the graph cache if
 // we still have a record of this channel in the DB.
-func (c *ChannelGraph) MarkEdgeLive(chanID uint64) error {
-	err := c.Store.MarkEdgeLive(chanID)
+func (c *ChannelGraph) MarkEdgeLive(v lnwire.GossipVersion,
+	chanID uint64) error {
+
+	err := c.Store.MarkEdgeLive(v, chanID)
 	if err != nil {
 		return err
 	}
@@ -380,10 +382,11 @@ func (c *ChannelGraph) PruneGraphNodes() error {
 // words, we perform a set difference of our set of chan ID's and the ones
 // passed in. This method can be used by callers to determine the set of
 // channels another peer knows of that we don't.
-func (c *ChannelGraph) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo,
+func (c *ChannelGraph) FilterKnownChanIDs(v lnwire.GossipVersion,
+	chansInfo []ChannelUpdateInfo,
 	isZombieChan func(time.Time, time.Time) bool) ([]uint64, error) {
 
-	unknown, knownZombies, err := c.Store.FilterKnownChanIDs(chansInfo)
+	unknown, knownZombies, err := c.Store.FilterKnownChanIDs(v, chansInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -413,7 +416,7 @@ func (c *ChannelGraph) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo,
 		// alive, and we let it be added to the set of IDs to query our
 		// peer for.
 		err := c.Store.MarkEdgeLive(
-			info.ShortChannelID.ToUint64(),
+			v, info.ShortChannelID.ToUint64(),
 		)
 		// Since there is a chance that the edge could have been marked
 		// as "live" between the FilterKnownChanIDs call and the
@@ -430,14 +433,15 @@ func (c *ChannelGraph) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo,
 // MarkEdgeZombie attempts to mark a channel identified by its channel ID as a
 // zombie. This method is used on an ad-hoc basis, when channels need to be
 // marked as zombies outside the normal pruning cycle.
-func (c *ChannelGraph) MarkEdgeZombie(chanID uint64,
+func (c *ChannelGraph) MarkEdgeZombie(v lnwire.GossipVersion, chanID uint64,
 	pubKey1, pubKey2 [33]byte) error {
 
-	err := c.Store.MarkEdgeZombie(chanID, pubKey1, pubKey2)
+	err := c.Store.MarkEdgeZombie(v, chanID, pubKey1, pubKey2)
 	if err != nil {
 		return err
 	}
 
+	// TODO(elle): this will remove it regardless of version.
 	if c.graphCache != nil {
 		c.graphCache.RemoveChannel(pubKey1, pubKey2, chanID)
 	}

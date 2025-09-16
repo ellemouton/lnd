@@ -2291,8 +2291,12 @@ func (c *KVStore) NodeUpdatesInHorizon(startTime,
 // passed in. This method can be used by callers to determine the set of
 // channels another peer knows of that we don't. The ChannelUpdateInfos for the
 // known zombies is also returned.
-func (c *KVStore) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo) ([]uint64,
-	[]ChannelUpdateInfo, error) {
+func (c *KVStore) FilterKnownChanIDs(v lnwire.GossipVersion,
+	chansInfo []ChannelUpdateInfo) ([]uint64, []ChannelUpdateInfo, error) {
+
+	if v != lnwire.GossipVersion1 {
+		return nil, nil, ErrGossipV1OnlyForKVDB
+	}
 
 	var (
 		newChanIDs   []uint64
@@ -3773,8 +3777,12 @@ func (c *KVStore) ChannelView() ([]EdgePoint, error) {
 // MarkEdgeZombie attempts to mark a channel identified by its channel ID as a
 // zombie. This method is used on an ad-hoc basis, when channels need to be
 // marked as zombies outside the normal pruning cycle.
-func (c *KVStore) MarkEdgeZombie(chanID uint64,
+func (c *KVStore) MarkEdgeZombie(v lnwire.GossipVersion, chanID uint64,
 	pubKey1, pubKey2 [33]byte) error {
+
+	if v != lnwire.GossipVersion1 {
+		return ErrGossipV1OnlyForKVDB
+	}
 
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
@@ -3819,7 +3827,11 @@ func markEdgeZombie(zombieIndex kvdb.RwBucket, chanID uint64, pubKey1,
 }
 
 // MarkEdgeLive clears an edge from our zombie index, deeming it as live.
-func (c *KVStore) MarkEdgeLive(chanID uint64) error {
+func (c *KVStore) MarkEdgeLive(v lnwire.GossipVersion, chanID uint64) error {
+	if v != lnwire.GossipVersion1 {
+		return ErrGossipV1OnlyForKVDB
+	}
+
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
 
@@ -3874,8 +3886,12 @@ func (c *KVStore) markEdgeLiveUnsafe(tx kvdb.RwTx, chanID uint64) error {
 // IsZombieEdge returns whether the edge is considered zombie. If it is a
 // zombie, then the two node public keys corresponding to this edge are also
 // returned.
-func (c *KVStore) IsZombieEdge(chanID uint64) (bool, [33]byte, [33]byte,
-	error) {
+func (c *KVStore) IsZombieEdge(v lnwire.GossipVersion, chanID uint64) (bool,
+	[33]byte, [33]byte, error) {
+
+	if v != lnwire.GossipVersion1 {
+		return false, [33]byte{}, [33]byte{}, ErrGossipV1OnlyForKVDB
+	}
 
 	var (
 		isZombie         bool
@@ -3930,7 +3946,11 @@ func isZombieEdge(zombieIndex kvdb.RBucket,
 }
 
 // NumZombies returns the current number of zombie channels in the graph.
-func (c *KVStore) NumZombies() (uint64, error) {
+func (c *KVStore) NumZombies(v lnwire.GossipVersion) (uint64, error) {
+	if v != lnwire.GossipVersion1 {
+		return 0, ErrGossipV1OnlyForKVDB
+	}
+
 	var numZombies uint64
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		edges := tx.ReadBucket(edgeBucket)

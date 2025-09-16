@@ -420,6 +420,7 @@ func TestMigrateGraphToSQL(t *testing.T) {
 				require.True(t, ok)
 
 				err := db.MarkEdgeZombie(
+					lnwire.GossipVersion1,
 					obj.scid, obj.pubKey1, obj.pubKey2,
 				)
 				require.NoError(t, err)
@@ -697,7 +698,9 @@ func checkZombieIndex(t *testing.T, kv kvdb.Backend, sql *SQLStore) {
 		isClosed, err := sql.IsClosedScid(scid)
 		require.NoError(t, err)
 
-		isZombie, _, _, err := sql.IsZombieEdge(chanID)
+		isZombie, _, _, err := sql.IsZombieEdge(
+			lnwire.GossipVersion1, chanID,
+		)
 		require.NoError(t, err)
 
 		if isClosed {
@@ -1217,10 +1220,14 @@ func TestSQLMigrationEdgeCases(t *testing.T) {
 
 		populateKV := func(t *testing.T, db *KVStore) {
 			// Mark both channels as zombies.
-			err := db.MarkEdgeZombie(cID1, n1, n2)
+			err := db.MarkEdgeZombie(
+				lnwire.GossipVersion1, cID1, n1, n2,
+			)
 			require.NoError(t, err)
 
-			err = db.MarkEdgeZombie(cID2, n1, n2)
+			err = db.MarkEdgeZombie(
+				lnwire.GossipVersion1, cID2, n1, n2,
+			)
 			require.NoError(t, err)
 
 			// Mark channel 1 as closed.
@@ -1389,14 +1396,16 @@ func assertResultState(t *testing.T, sql *SQLStore, expState dbState) {
 
 		// Any closed SCID should NOT be in the zombie
 		// index.
-		isZombie, _, _, err := sql.IsZombieEdge(closed)
+		isZombie, _, _, err := sql.IsZombieEdge(
+			lnwire.GossipVersion1, closed,
+		)
 		require.NoError(t, err)
 		require.False(t, isZombie)
 	}
 
 	for _, zombie := range expState.zombies {
 		isZombie, _, _, err := sql.IsZombieEdge(
-			zombie,
+			lnwire.GossipVersion1, zombie,
 		)
 		require.NoError(t, err)
 		require.True(t, isZombie)
