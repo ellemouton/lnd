@@ -338,6 +338,7 @@ func TestPartialNode(t *testing.T) {
 func TestAliasLookup(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
+	v := lnwire.GossipVersion1
 
 	graph := MakeTestGraph(t)
 
@@ -353,7 +354,7 @@ func TestAliasLookup(t *testing.T) {
 	// the one which the test node was assigned.
 	nodePub, err := testNode.PubKey()
 	require.NoError(t, err, "unable to generate pubkey")
-	dbAlias, err := graph.LookupAlias(ctx, nodePub)
+	dbAlias, err := graph.LookupAlias(ctx, v, nodePub)
 	require.NoError(t, err, "unable to find alias")
 	require.Equal(t, testNode.Alias.UnwrapOr(""), dbAlias)
 
@@ -361,7 +362,7 @@ func TestAliasLookup(t *testing.T) {
 	node := createTestVertex(t)
 	nodePub, err = node.PubKey()
 	require.NoError(t, err, "unable to generate pubkey")
-	_, err = graph.LookupAlias(ctx, nodePub)
+	_, err = graph.LookupAlias(ctx, v, nodePub)
 	require.ErrorIs(t, err, ErrNodeAliasNotFound)
 }
 

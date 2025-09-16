@@ -102,7 +102,8 @@ type Store interface { //nolint:interfacebloat
 
 	// LookupAlias attempts to return the alias as advertised by the target
 	// node.
-	LookupAlias(ctx context.Context, pub *btcec.PublicKey) (string, error)
+	LookupAlias(ctx context.Context, v lnwire.GossipVersion,
+		pub *btcec.PublicKey) (string, error)
 
 	// DeleteNode starts a new database transaction to remove a
 	// vertex/node from the database according to the node's public key.

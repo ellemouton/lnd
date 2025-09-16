@@ -448,14 +448,14 @@ func (s *SQLStore) DisabledChannelIDs() ([]uint64, error) {
 // LookupAlias attempts to return the alias as advertised by the target node.
 //
 // NOTE: part of the Store interface.
-func (s *SQLStore) LookupAlias(ctx context.Context,
+func (s *SQLStore) LookupAlias(ctx context.Context, v lnwire.GossipVersion,
 	pub *btcec.PublicKey) (string, error) {
 
 	var alias string
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		dbNode, err := db.GetNodeByPubKey(
 			ctx, sqlc.GetNodeByPubKeyParams{
-				Version: int16(lnwire.GossipVersion1),
+				Version: int16(v),
 				PubKey:  pub.SerializeCompressed(),
 			},
 		)

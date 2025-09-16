@@ -4941,7 +4941,10 @@ func createRPCOpenChannel(ctx context.Context, r *rpcServer,
 
 	// Look up our channel peer's node alias if the caller requests it.
 	if peerAliasLookup {
-		peerAlias, err := r.server.graphDB.LookupAlias(ctx, nodePub)
+		// TODO(elle): update for V2.
+		peerAlias, err := r.server.graphDB.LookupAlias(
+			ctx, lnwire.GossipVersion1, nodePub,
+		)
 		if err != nil {
 			peerAlias = fmt.Sprintf("unable to lookup "+
 				"peer alias: %v", err)
