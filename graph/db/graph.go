@@ -101,14 +101,15 @@ func (c *ChannelGraph) Stop() error {
 // Unknown policies are passed into the callback as nil values.
 //
 // NOTE: this is part of the graphdb.NodeTraverser interface.
-func (c *ChannelGraph) ForEachNodeDirectedChannel(node route.Vertex,
+func (c *ChannelGraph) ForEachNodeDirectedChannel(v lnwire.GossipVersion,
+	node route.Vertex,
 	cb func(channel *DirectedChannel) error, reset func()) error {
 
 	if c.graphCache != nil {
 		return c.graphCache.ForEachChannel(node, cb)
 	}
 
-	return c.Store.ForEachNodeDirectedChannel(node, cb, reset)
+	return c.Store.ForEachNodeDirectedChannel(v, node, cb, reset)
 }
 
 // FetchNodeFeatures returns the features of the given node. If no features are

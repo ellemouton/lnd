@@ -1502,6 +1502,7 @@ func TestGraphTraversal(t *testing.T) {
 func TestGraphTraversalCacheable(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
+	v := lnwire.GossipVersion1
 
 	graph := MakeTestGraph(t)
 
@@ -1552,7 +1553,7 @@ func TestGraphTraversalCacheable(t *testing.T) {
 		// Query the ChannelGraph which uses the cache to iterate
 		// through the channels for each node.
 		err = graph.ForEachNodeDirectedChannel(
-			node, func(d *DirectedChannel) error {
+			v, node, func(d *DirectedChannel) error {
 				delete(chanIndex, d.ChannelID)
 				return nil
 			}, func() {},
@@ -1561,7 +1562,7 @@ func TestGraphTraversalCacheable(t *testing.T) {
 
 		// Now skip the cache and query the DB directly.
 		err = graph.Store.ForEachNodeDirectedChannel(
-			node, func(d *DirectedChannel) error {
+			v, node, func(d *DirectedChannel) error {
 				delete(chanIndex2, d.ChannelID)
 				return nil
 			}, func() {},
@@ -4339,6 +4340,7 @@ func BenchmarkForEachChannel(b *testing.B) {
 func TestGraphCacheForEachNodeChannel(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
+	v := lnwire.GossipVersion1
 
 	graph := MakeTestGraph(t)
 
@@ -4369,7 +4371,8 @@ func TestGraphCacheForEachNodeChannel(t *testing.T) {
 
 	getSingleChannel := func() *DirectedChannel {
 		var ch *DirectedChannel
-		err := graph.ForEachNodeDirectedChannel(node1.PubKeyBytes,
+		err := graph.ForEachNodeDirectedChannel(
+			v, node1.PubKeyBytes,
 			func(c *DirectedChannel) error {
 				require.Nil(t, ch)
 				ch = c
