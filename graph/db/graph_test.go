@@ -96,29 +96,80 @@ func createTestVertex(t testing.TB) *models.Node {
 // TestNodeInsertionAndDeletion tests the CRUD operations for a Node.
 func TestNodeInsertionAndDeletion(t *testing.T) {
 	t.Parallel()
-	ctx := t.Context()
-	v := lnwire.GossipVersion1
 
-	graph := MakeTestGraph(t)
+	t.Run("v1", func(t *testing.T) {
+		v := lnwire.GossipVersion1
 
-	// We'd like to test basic insertion/deletion for vertexes from the
-	// graph, so we'll create a test vertex to start with.
-	timeStamp := int64(1232342)
-	nodeWithAddrs := func(addrs []net.Addr) *models.Node {
-		timeStamp++
+		// We'd like to test basic insertion/deletion for vertexes from the
+		// graph, so we'll create a test vertex to start with.
+		timeStamp := int64(1232342)
+		nodeWithAddrs := func(addrs []net.Addr) *models.Node {
+			timeStamp++
 
-		return models.NewV1Node(
-			testPub, &models.NodeV1Fields{
-				AuthSigBytes:    testSig.Serialize(),
-				LastUpdate:      time.Unix(timeStamp, 0),
-				Color:           color.RGBA{1, 2, 3, 0},
-				Alias:           "kek",
-				Features:        testFeatures.RawFeatureVector,
-				Addresses:       addrs,
-				ExtraOpaqueData: []byte{1, 1, 1, 2, 2, 2, 2},
-			},
-		)
+			return models.NewV1Node(
+				testPub, &models.NodeV1Fields{
+					AuthSigBytes:    testSig.Serialize(),
+					LastUpdate:      time.Unix(timeStamp, 0),
+					Color:           color.RGBA{1, 2, 3, 0},
+					Alias:           "kek",
+					Features:        testFeatures.RawFeatureVector,
+					Addresses:       addrs,
+					ExtraOpaqueData: []byte{1, 1, 1, 2, 2, 2, 2},
+				},
+			)
+		}
+
+		testNodeInsertionAndDeletion(t, v, nodeWithAddrs)
+	})
+
+	store := NewTestDB(t)
+	_, ok := store.(*SQLStore)
+	if !ok {
+		t.Logf("The rest of the test is for SQL store only")
+		return
 	}
+
+	t.Run("v2", func(t *testing.T) {
+		v := lnwire.GossipVersion2
+
+		// We'd like to test basic insertion/deletion for vertexes from
+		// the graph, so we'll create a test vertex to start with.
+		blockHeight := uint32(100)
+		nodeWithAddrs := func(addrs []net.Addr) *models.Node {
+			blockHeight++
+
+			return models.NewV2Node(
+				testPub, &models.NodeV2Fields{
+					Signature:       testSig.Serialize(),
+					LastBlockHeight: blockHeight,
+					Color: fn.Some(
+						color.RGBA{1, 2, 3, 0},
+					),
+					Alias: fn.Some("kek"),
+					Features: testFeatures.
+						RawFeatureVector,
+					Addresses: addrs,
+					ExtraSignedFields: map[uint64][]byte{
+						20: []byte{0x1, 0x2, 0x3},
+						21: []byte{0x4, 0x5, 0x6, 0x7},
+					},
+				},
+			)
+		}
+
+		testNodeInsertionAndDeletion(t, v, nodeWithAddrs)
+	})
+
+	t.Run("v1 and v2", func(t *testing.T) {
+		// TODO(elle).
+	})
+}
+
+func testNodeInsertionAndDeletion(t *testing.T, v lnwire.GossipVersion,
+	nodeWithAddrs func(addrs []net.Addr) *models.Node) {
+
+	ctx := t.Context()
+	graph := MakeTestGraph(t)
 
 	// First, insert the node into the graph DB. This should succeed
 	// without any errors.
