@@ -11,4 +11,6 @@ type GraphSource interface {
 	// found, then graphdb.ErrEdgeNotFound is returned.
 	FetchChannelEdgesByID(chanID uint64) (*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error)
+
+	IsAdvertisedNode(pubKey [33]byte) (bool, error)
 }

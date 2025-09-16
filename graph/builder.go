@@ -143,6 +143,12 @@ type Builder struct {
 	wg   sync.WaitGroup
 }
 
+func (b *Builder) FetchChannelEdgesByID(chanID uint64) (*models.ChannelEdgeInfo,
+	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error) {
+
+	return b.cfg.Graph.FetchChannelEdgesByID(chanID)
+}
+
 // A compile time check to ensure Builder implements the
 // ChannelGraphSource interface.
 var _ ChannelGraphSource = (*Builder)(nil)
@@ -1447,6 +1453,19 @@ func (b *Builder) IsPublicNode(v lnwire.GossipVersion, node route.Vertex) (bool,
 	error) {
 
 	return b.cfg.Graph.IsPublicNode(v, node)
+}
+
+func (b *Builder) IsAdvertisedNode(pub [33]byte) (bool, error) {
+	known, err := b.cfg.Graph.IsPublicNode(lnwire.GossipVersion2, pub)
+	if err != nil && !errors.Is(err, graphdb.ErrGossipV1OnlyForKVDB) {
+		return false, fmt.Errorf("unable to determine if node is "+
+			"advertised: %w", err)
+	}
+	if known {
+		return true, nil
+	}
+
+	return b.cfg.Graph.IsPublicNode(lnwire.GossipVersion1, pub)
 }
 
 // IsKnownEdge returns true if the graph source already knows of the passed

@@ -253,9 +253,9 @@ func (s *Server) ImportGraph(ctx context.Context,
 			LastUpdate: time.Unix(
 				int64(rpcNode.LastUpdate), 0,
 			),
-			Alias:     rpcNode.Alias,
-			Features:  featureVector,
-			Color:     nodeColor,
+			Alias:    rpcNode.Alias,
+			Features: featureVector,
+			Color:    nodeColor,
 		})
 
 		if err := graphDB.AddNode(ctx, node); err != nil {
@@ -291,7 +291,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 		}
 		edge.ChannelPoint = *channelPoint
 
-		if err := graphDB.AddChannelEdge(ctx, edge); err != nil {
+		if err := graphDB.AddEdge(ctx, edge); err != nil {
 			return nil, fmt.Errorf("unable to add edge %v: %w",
 				rpcEdge.ChanPoint, err)
 		}
@@ -329,7 +329,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 		if rpcEdge.Node1Policy != nil {
 			policy := makePolicy(rpcEdge.Node1Policy)
 			policy.ChannelFlags = 0
-			err := graphDB.UpdateEdgePolicy(ctx, policy)
+			err := graphDB.UpdateEdge(ctx, policy)
 			if err != nil {
 				return nil, fmt.Errorf(
 					"unable to update policy: %v", err)
@@ -339,7 +339,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 		if rpcEdge.Node2Policy != nil {
 			policy := makePolicy(rpcEdge.Node2Policy)
 			policy.ChannelFlags = 1
-			err := graphDB.UpdateEdgePolicy(ctx, policy)
+			err := graphDB.UpdateEdge(ctx, policy)
 			if err != nil {
 				return nil, fmt.Errorf(
 					"unable to update policy: %v", err)

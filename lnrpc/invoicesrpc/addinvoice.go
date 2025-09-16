@@ -76,8 +76,7 @@ type AddInvoiceConfig struct {
 
 	// Graph gives the invoice server access to various graph related
 	// queries.
-	Graph        GraphSource
-	IsPublicNode func(pubKey [33]byte) (bool, error)
+	Graph GraphSource
 
 	// GenInvoiceFeatures returns a feature containing feature bits that
 	// should be advertised on freshly generated invoices.
@@ -790,7 +789,7 @@ func newSelectHopHintsCfg(invoicesCfg *AddInvoiceConfig,
 	return &SelectHopHintsCfg{
 		FetchAllChannels:      invoicesCfg.ChanDB.FetchAllChannels,
 		IsChannelActive:       invoicesCfg.IsChannelActive,
-		IsPublicNode:          invoicesCfg.IsPublicNode,
+		IsPublicNode:          invoicesCfg.Graph.IsAdvertisedNode,
 		FetchChannelEdgesByID: invoicesCfg.Graph.FetchChannelEdgesByID,
 		GetAlias:              invoicesCfg.GetAlias,
 		MaxHopHints:           maxHopHints,
