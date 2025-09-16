@@ -2083,9 +2083,13 @@ func (d *AuthenticatedGossiper) addNode(ctx context.Context,
 			err)
 	}
 
-	return d.cfg.Graph.AddNode(
-		ctx, models.NodeFromWireAnnouncement(msg), op...,
-	)
+	node, err := models.NodeFromWireAnnouncement(msg)
+	if err != nil {
+		return fmt.Errorf("unable to parse node announcement: %w",
+			err)
+	}
+
+	return d.cfg.Graph.AddNode(ctx, node, op...)
 }
 
 // isPremature decides whether a given network message has a block height+delta
@@ -2274,7 +2278,14 @@ func (d *AuthenticatedGossiper) fetchNodeAnn(ctx context.Context,
 		return nil, err
 	}
 
-	return nodeAnn, netann.ValidateNodeAnnFields(nodeAnn)
+	// TODO(elle): update for V2.
+	ann, ok := nodeAnn.(*lnwire.NodeAnnouncement1)
+	if !ok {
+		return nil, fmt.Errorf("expected NodeAnnouncement1, got %T",
+			nodeAnn)
+	}
+
+	return ann, netann.ValidateNodeAnnFields(nodeAnn)
 }
 
 // isMsgStale determines whether a message retrieved from the backing

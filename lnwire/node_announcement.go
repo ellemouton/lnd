@@ -245,6 +245,15 @@ func (a *NodeAnnouncement1) TimestampDesc() string {
 	return fmt.Sprintf("timestamp=%d", a.Timestamp)
 }
 
+// SetAddrs sets the addresses of the node contained within the announcement.
+//
+// NOTE: part of the NodeAnnouncement interface.
+func (a *NodeAnnouncement1) SetAddrs(addrs []net.Addr) error {
+	a.Addresses = addrs
+
+	return nil
+}
+
 // GossipVersion returns the gossip version that this message is part of.
 //
 // NOTE: this is part of the GossipMessage interface.

@@ -5658,9 +5658,16 @@ func (s *server) setSelfNode(ctx context.Context, nodePub route.Vertex,
 	// Based on the disk representation of the node announcement generated
 	// above, we'll generate a node announcement that can go out on the
 	// network so we can properly sign it.
-	nodeAnn, err := selfNode.NodeAnnouncement(false)
+	ann, err := selfNode.NodeAnnouncement(false)
 	if err != nil {
 		return fmt.Errorf("unable to gen self node ann: %w", err)
+	}
+
+	// TODO(elle): update for V2.
+	nodeAnn, ok := ann.(*lnwire.NodeAnnouncement1)
+	if !ok {
+		return fmt.Errorf("expected *lnwire.NodeAnnouncement1, got %T",
+			ann)
 	}
 
 	// With the announcement generated, we'll sign it to properly

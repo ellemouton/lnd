@@ -93,25 +93,35 @@ func ValidateNodeAnn(a *lnwire.NodeAnnouncement1) error {
 }
 
 // ValidateNodeAnnFields validates the fields of a node announcement.
-func ValidateNodeAnnFields(a *lnwire.NodeAnnouncement1) error {
-	// Check that it only has at most one DNS address.
-	hasDNSAddr := false
-	for _, addr := range a.Addresses {
-		dnsAddr, ok := addr.(*lnwire.DNSAddress)
-		if !ok {
-			continue
-		}
-		if hasDNSAddr {
-			return errors.New("node announcement contains " +
-				"multiple DNS addresses. Only one is allowed")
+func ValidateNodeAnnFields(ann lnwire.NodeAnnouncement) error {
+	switch a := ann.(type) {
+	case *lnwire.NodeAnnouncement1:
+		// Check that it only has at most one DNS address.
+		hasDNSAddr := false
+		for _, addr := range a.Addresses {
+			dnsAddr, ok := addr.(*lnwire.DNSAddress)
+			if !ok {
+				continue
+			}
+			if hasDNSAddr {
+				return errors.New("node announcement " +
+					"contains multiple DNS addresses. " +
+					"Only one is allowed")
+			}
+
+			hasDNSAddr = true
+
+			err := lnwire.ValidateDNSAddr(
+				dnsAddr.Hostname, dnsAddr.Port,
+			)
+			if err != nil {
+				return err
+			}
 		}
 
-		hasDNSAddr = true
-
-		err := lnwire.ValidateDNSAddr(dnsAddr.Hostname, dnsAddr.Port)
-		if err != nil {
-			return err
-		}
+	case *lnwire.NodeAnnouncement2:
+		// TODO(elle): add DNS TLV to NodeAnnouncement2 and validate it
+		// here.
 	}
 
 	return nil

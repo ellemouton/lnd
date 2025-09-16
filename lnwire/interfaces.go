@@ -2,6 +2,7 @@ package lnwire
 
 import (
 	"fmt"
+	"net"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 )
@@ -139,6 +140,9 @@ type NodeAnnouncement interface {
 	// TimestampDesc returns a human-readable description of the
 	// timestamp of the announcement.
 	TimestampDesc() string
+
+	// SetAddrs sets the addresses of the node.
+	SetAddrs(addrs []net.Addr) error
 
 	Message
 	GossipMessage

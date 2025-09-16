@@ -193,6 +193,48 @@ func (n *NodeAnnouncement2) TimestampDesc() string {
 	return fmt.Sprintf("block_height=%d", n.BlockHeight.Val)
 }
 
+// SetAddrs sets the addresses of the node announcement.
+//
+// NOTE: part of the NodeAnnouncement interface.
+func (n *NodeAnnouncement2) SetAddrs(addrs []net.Addr) error {
+	var (
+		ipv4Addrs  IPV4Addrs
+		ipv6Addrs  IPV6Addrs
+		torV3Addrs TorV3Addrs
+	)
+
+	for _, address := range addrs {
+		switch addr := address.(type) {
+		case *net.TCPAddr:
+			if addr.IP.To4() != nil {
+				ipv4Addrs = append(ipv4Addrs, addr)
+			} else {
+				ipv6Addrs = append(ipv6Addrs, addr)
+			}
+		case *tor.OnionAddr:
+			torV3Addrs = append(torV3Addrs, addr)
+
+		default:
+			return fmt.Errorf("unknown address type: %T", addr)
+		}
+
+	}
+
+	ipv4Record := tlv.ZeroRecordT[tlv.TlvType5, IPV4Addrs]()
+	ipv4Record.Val = ipv4Addrs
+	n.IPV4Addrs = tlv.SomeRecordT(ipv4Record)
+
+	ipv6Record := tlv.ZeroRecordT[tlv.TlvType7, IPV6Addrs]()
+	ipv6Record.Val = ipv6Addrs
+	n.IPV6Addrs = tlv.SomeRecordT(ipv6Record)
+
+	torV3Record := tlv.ZeroRecordT[tlv.TlvType9, TorV3Addrs]()
+	torV3Record.Val = torV3Addrs
+	n.TorV3Addrs = tlv.SomeRecordT(torV3Record)
+
+	return nil
+}
+
 // GossipVersion returns the gossip version that this message is part of.
 //
 // NOTE: this is part of the GossipMessage interface.
