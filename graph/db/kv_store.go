@@ -4530,7 +4530,12 @@ func deserializeChanEdgeInfo(r io.Reader) (*models.ChannelEdgeInfo, error) {
 		return nil, err
 	}
 
-	if !proof.IsEmpty() {
+	// Set the proof only if all 4 signatures are present.
+	if !(len(proof.NodeSig1Bytes) == 0 ||
+		len(proof.NodeSig2Bytes) == 0 ||
+		len(proof.BitcoinSig1Bytes) == 0 ||
+		len(proof.BitcoinSig2Bytes) == 0) {
+
 		edgeInfo.AuthProof = proof
 	}
 
