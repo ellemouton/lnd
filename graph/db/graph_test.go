@@ -964,7 +964,7 @@ func TestEdgeInfoUpdates(t *testing.T) {
 
 	// We should also be able to retrieve the channelID only knowing the
 	// channel point of the channel.
-	dbChanID, err := graph.ChannelID(&outpoint)
+	dbChanID, err := graph.ChannelID(v, &outpoint)
 	require.NoError(t, err, "unable to retrieve channel ID")
 	if dbChanID != chanID {
 		t.Fatalf("chan ID's mismatch, expected %v got %v", dbChanID,
@@ -1029,7 +1029,8 @@ func TestEdgePolicyCRUD(t *testing.T) {
 		// assert that the deserialized policies match the original
 		// ones.
 		err := graph.ForEachChannel(
-			ctx, func(info *models.ChannelEdgeInfo,
+			ctx, lnwire.GossipVersion1,
+			func(info *models.ChannelEdgeInfo,
 				policy1 *models.ChannelEdgePolicy,
 				policy2 *models.ChannelEdgePolicy) error {
 
@@ -1466,7 +1467,7 @@ func TestGraphTraversal(t *testing.T) {
 	// set of channels (to force the fall back), we should find all the
 	// channel as well as the nodes included.
 	graph.graphCache = nil
-	err := graph.ForEachNodeCached(ctx, lnwire.GossipVersion1, false, func(_ context.Context,
+	err := graph.ForEachNodeCached(ctx, v, false, func(_ context.Context,
 		node route.Vertex, _ []net.Addr,
 		chans map[uint64]*DirectedChannel) error {
 
@@ -1488,7 +1489,7 @@ func TestGraphTraversal(t *testing.T) {
 	// Iterate through all the known channels within the graph DB, once
 	// again if the map is empty that indicates that all edges have
 	// properly been reached.
-	err = graph.ForEachChannel(ctx, func(ei *models.ChannelEdgeInfo,
+	err = graph.ForEachChannel(ctx, v, func(ei *models.ChannelEdgeInfo,
 		_ *models.ChannelEdgePolicy,
 		_ *models.ChannelEdgePolicy) error {
 
@@ -1787,7 +1788,7 @@ func assertPruneTip(t *testing.T, graph *ChannelGraph,
 func assertNumChans(t *testing.T, graph *ChannelGraph, n int) {
 	numChans := 0
 	err := graph.ForEachChannel(
-		t.Context(), func(*models.ChannelEdgeInfo,
+		t.Context(), lnwire.GossipVersion1, func(*models.ChannelEdgeInfo,
 			*models.ChannelEdgePolicy,
 			*models.ChannelEdgePolicy) error {
 
@@ -3212,7 +3213,7 @@ func TestFetchChanInfos(t *testing.T) {
 	// We'll now attempt to query for the range of channel ID's we just
 	// inserted into the database. We should get the exact same set of
 	// edges back.
-	resp, err := graph.FetchChanInfos(edgeQuery)
+	resp, err := graph.FetchChanInfos(v, edgeQuery)
 	require.NoError(t, err, "unable to fetch chan edges")
 	if len(resp) != len(edges) {
 		t.Fatalf("expected %v edges, instead got %v", len(edges),

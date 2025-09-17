@@ -963,7 +963,7 @@ func (s *SQLStore) ChanUpdatesInHorizon(startTime,
 
 	var (
 		ctx = context.TODO()
-		v   = lnwire.GossipVersion1
+		v   = v1
 		// To ensure we don't return duplicate ChannelEdges, we'll use
 		// an additional map to keep track of the edges already seen to
 		// prevent re-adding it.
@@ -1347,12 +1347,12 @@ func extractChannelIDFromSCID(scidBytes []byte) uint64 {
 //
 // NOTE: this method is like ForEachChannel but fetches only the data
 // required for the graph cache.
-func (s *SQLStore) ForEachChannelCacheable(cb func(*models.CachedEdgeInfo,
-	*models.CachedEdgePolicy, *models.CachedEdgePolicy) error,
+func (s *SQLStore) ForEachChannelCacheable(v lnwire.GossipVersion,
+	cb func(*models.CachedEdgeInfo,
+		*models.CachedEdgePolicy, *models.CachedEdgePolicy) error,
 	reset func()) error {
 
 	ctx := context.TODO()
-	v := lnwire.GossipVersion1
 
 	handleChannel := func(_ context.Context,
 		row sqlc.ListChannelsWithPoliciesForCachePaginatedRow) error {
@@ -1422,11 +1422,9 @@ func (s *SQLStore) ForEachChannelCacheable(cb func(*models.CachedEdgeInfo,
 // callback.
 //
 // NOTE: part of the Store interface.
-func (s *SQLStore) ForEachChannel(ctx context.Context,
+func (s *SQLStore) ForEachChannel(ctx context.Context, v lnwire.GossipVersion,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error, reset func()) error {
-
-	v := lnwire.GossipVersion1
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		return forEachChannelWithPolicies(ctx, db, s.cfg, v, cb)
@@ -1447,7 +1445,7 @@ func (s *SQLStore) FilterChannelRange(startHeight, endHeight uint32,
 
 	var (
 		ctx       = context.TODO()
-		v         = lnwire.GossipVersion1
+		v         = v1
 		startSCID = &lnwire.ShortChannelID{
 			BlockHeight: startHeight,
 		}
@@ -2008,7 +2006,7 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 	ctx := context.TODO()
 
 	var (
-		v               = lnwire.GossipVersion1
+		v               = v1
 		exists          bool
 		isZombie        bool
 		node1LastUpdate time.Time
@@ -2119,11 +2117,12 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 // the database, then ErrEdgeNotFound is returned.
 //
 // NOTE: part of the Store interface.
-func (s *SQLStore) ChannelID(chanPoint *wire.OutPoint) (uint64, error) {
+func (s *SQLStore) ChannelID(v lnwire.GossipVersion,
+	chanPoint *wire.OutPoint) (uint64, error) {
+
 	var (
 		ctx       = context.TODO()
 		channelID uint64
-		v         = lnwire.GossipVersion1
 	)
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		chanID, err := db.GetSCIDByOutpoint(
@@ -2189,10 +2188,11 @@ func (s *SQLStore) IsPublicNode(v lnwire.GossipVersion, pubKey [33]byte) (bool,
 // fill in gaps in their view of the channel graph.
 //
 // NOTE: part of the Store interface.
-func (s *SQLStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
+func (s *SQLStore) FetchChanInfos(v lnwire.GossipVersion,
+	chanIDs []uint64) ([]ChannelEdge, error) {
+
 	var (
 		ctx   = context.TODO()
-		v     = lnwire.GossipVersion1
 		edges = make(map[uint64]ChannelEdge)
 	)
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {

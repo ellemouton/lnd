@@ -684,7 +684,7 @@ func (b *Builder) pruneZombieChans() error {
 		}
 
 		disabledEdges, err := b.cfg.Graph.FetchChanInfos(
-			disabledChanIDs,
+			lnwire.GossipVersion1, disabledChanIDs,
 		)
 		if err != nil {
 			return fmt.Errorf("unable to fetch disabled channels "+

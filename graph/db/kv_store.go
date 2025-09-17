@@ -411,7 +411,7 @@ func (c *KVStore) AddrsForNode(ctx context.Context, v lnwire.GossipVersion,
 // NOTE: If an edge can't be found, or wasn't advertised, then a nil pointer
 // for that particular channel edge routing policy will be passed into the
 // callback.
-func (c *KVStore) ForEachChannel(_ context.Context,
+func (c *KVStore) ForEachChannel(_ context.Context, v lnwire.GossipVersion,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error, reset func()) error {
 
@@ -492,8 +492,9 @@ func forEachChannel(db kvdb.Backend, cb func(*models.ChannelEdgeInfo,
 //
 // NOTE: this method is like ForEachChannel but fetches only the data required
 // for the graph cache.
-func (c *KVStore) ForEachChannelCacheable(cb func(*models.CachedEdgeInfo,
-	*models.CachedEdgePolicy, *models.CachedEdgePolicy) error,
+func (c *KVStore) ForEachChannelCacheable(v lnwire.GossipVersion,
+	cb func(*models.CachedEdgeInfo,
+		*models.CachedEdgePolicy, *models.CachedEdgePolicy) error,
 	reset func()) error {
 
 	return c.db.View(func(tx kvdb.RTx) error {
@@ -1979,7 +1980,9 @@ func (c *KVStore) DeleteChannelEdges(v lnwire.GossipVersion,
 // ChannelID attempt to lookup the 8-byte compact channel ID which maps to the
 // passed channel point (outpoint). If the passed channel doesn't exist within
 // the database, then ErrEdgeNotFound is returned.
-func (c *KVStore) ChannelID(chanPoint *wire.OutPoint) (uint64, error) {
+func (c *KVStore) ChannelID(v lnwire.GossipVersion,
+	chanPoint *wire.OutPoint) (uint64, error) {
+
 	var chanID uint64
 	if err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		var err error
@@ -2605,7 +2608,13 @@ func (c *KVStore) FilterChannelRange(startHeight,
 // skipped and the result will contain only those edges that exist at the time
 // of the query. This can be used to respond to peer queries that are seeking to
 // fill in gaps in their view of the channel graph.
-func (c *KVStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
+func (c *KVStore) FetchChanInfos(v lnwire.GossipVersion,
+	chanIDs []uint64) ([]ChannelEdge, error) {
+
+	if v != lnwire.GossipVersion1 {
+		return nil, ErrGossipV1OnlyForKVDB
+	}
+
 	return c.fetchChanInfos(nil, chanIDs)
 }
 

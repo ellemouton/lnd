@@ -599,28 +599,30 @@ func (c chanSet) CountPolicies() int {
 func fetchAllChannelsAndPolicies(t *testing.T, store Store) chanSet {
 	ctx := t.Context()
 	channels := make(chanSet, 0)
-	err := store.ForEachChannel(ctx, func(info *models.ChannelEdgeInfo,
-		p1 *models.ChannelEdgePolicy,
-		p2 *models.ChannelEdgePolicy) error {
+	err := store.ForEachChannel(ctx, lnwire.GossipVersion1,
+		func(info *models.ChannelEdgeInfo,
 
-		if len(info.ExtraOpaqueData) == 0 {
-			info.ExtraOpaqueData = nil
-		}
-		if p1 != nil && len(p1.ExtraOpaqueData) == 0 {
-			p1.ExtraOpaqueData = nil
-		}
-		if p2 != nil && len(p2.ExtraOpaqueData) == 0 {
-			p2.ExtraOpaqueData = nil
-		}
+			p1 *models.ChannelEdgePolicy,
+			p2 *models.ChannelEdgePolicy) error {
 
-		channels = append(channels, chanInfo{
-			edgeInfo: info,
-			policy1:  p1,
-			policy2:  p2,
-		})
+			if len(info.ExtraOpaqueData) == 0 {
+				info.ExtraOpaqueData = nil
+			}
+			if p1 != nil && len(p1.ExtraOpaqueData) == 0 {
+				p1.ExtraOpaqueData = nil
+			}
+			if p2 != nil && len(p2.ExtraOpaqueData) == 0 {
+				p2.ExtraOpaqueData = nil
+			}
 
-		return nil
-	}, func() {})
+			channels = append(channels, chanInfo{
+				edgeInfo: info,
+				policy1:  p1,
+				policy2:  p2,
+			})
+
+			return nil
+		}, func() {})
 	require.NoError(t, err)
 
 	// Sort the channels by their channel ID to ensure a consistent order.

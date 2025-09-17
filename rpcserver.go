@@ -3157,7 +3157,7 @@ func abandonChanFromGraph(chanGraph *graphdb.ChannelGraph,
 	// First, we'll obtain the channel ID. If we can't locate this, then
 	// it's the case that the channel may have already been removed from
 	// the graph, so we'll return a nil error.
-	chanID, err := chanGraph.ChannelID(chanPoint)
+	chanID, err := chanGraph.ChannelID(lnwire.GossipVersion1, chanPoint)
 	switch {
 	case errors.Is(err, graphdb.ErrEdgeNotFound):
 		return nil
@@ -6828,24 +6828,25 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// Next, for each active channel we know of within the graph, create a
 	// similar response which details both the edge information as well as
 	// the routing policies of th nodes connecting the two edges.
-	err = graph.ForEachChannel(ctx, func(edgeInfo *models.ChannelEdgeInfo,
-		c1, c2 *models.ChannelEdgePolicy) error {
+	err = graph.ForEachChannel(ctx, lnwire.GossipVersion1,
+		func(edgeInfo *models.ChannelEdgeInfo,
+			c1, c2 *models.ChannelEdgePolicy) error {
 
-		// Do not include unannounced channels unless specifically
-		// requested. Unannounced channels include both private channels as
-		// well as public channels whose authentication proof were not
-		// confirmed yet, hence were not announced.
-		if !includeUnannounced && edgeInfo.AuthProof == nil {
+			// Do not include unannounced channels unless specifically
+			// requested. Unannounced channels include both private channels as
+			// well as public channels whose authentication proof were not
+			// confirmed yet, hence were not announced.
+			if !includeUnannounced && edgeInfo.AuthProof == nil {
+				return nil
+			}
+
+			edge := marshalDBEdge(edgeInfo, c1, c2, req.IncludeAuthProof)
+			resp.Edges = append(resp.Edges, edge)
+
 			return nil
-		}
-
-		edge := marshalDBEdge(edgeInfo, c1, c2, req.IncludeAuthProof)
-		resp.Edges = append(resp.Edges, edge)
-
-		return nil
-	}, func() {
-		resp.Edges = nil
-	})
+		}, func() {
+			resp.Edges = nil
+		})
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
 		return nil, err
 	}

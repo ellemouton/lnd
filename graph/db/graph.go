@@ -239,7 +239,7 @@ func (c *ChannelGraph) MarkEdgeLive(v lnwire.GossipVersion,
 	if c.graphCache != nil {
 		// We need to add the channel back into our graph cache,
 		// otherwise we won't use it for path finding.
-		infos, err := c.Store.FetchChanInfos([]uint64{chanID})
+		infos, err := c.Store.FetchChanInfos(v, []uint64{chanID})
 		if err != nil {
 			return err
 		}

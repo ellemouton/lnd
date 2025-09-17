@@ -304,7 +304,7 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 		chanIDs = append(chanIDs, chanID.ToUint64())
 	}
 
-	channels, err := c.graph.FetchChanInfos(chanIDs)
+	channels, err := c.graph.FetchChanInfos(lnwire.GossipVersion1, chanIDs)
 	if err != nil {
 		return nil, err
 	}

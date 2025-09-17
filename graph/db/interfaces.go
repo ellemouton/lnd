@@ -150,8 +150,9 @@ type Store interface { //nolint:interfacebloat
 	// NOTE: If an edge can't be found, or wasn't advertised, then a nil
 	// pointer for that particular channel edge routing policy will be
 	// passed into the callback.
-	ForEachChannel(ctx context.Context, cb func(*models.ChannelEdgeInfo,
-		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error,
+	ForEachChannel(ctx context.Context, v lnwire.GossipVersion,
+		cb func(*models.ChannelEdgeInfo,
+			*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error,
 		reset func()) error
 
 	// ForEachChannelCacheable iterates through all the channel edges stored
@@ -166,8 +167,9 @@ type Store interface { //nolint:interfacebloat
 	//
 	// NOTE: this method is like ForEachChannel but fetches only the data
 	// required for the graph cache.
-	ForEachChannelCacheable(cb func(*models.CachedEdgeInfo,
-		*models.CachedEdgePolicy, *models.CachedEdgePolicy) error,
+	ForEachChannelCacheable(v lnwire.GossipVersion,
+		cb func(*models.CachedEdgeInfo,
+			*models.CachedEdgePolicy, *models.CachedEdgePolicy) error,
 		reset func()) error
 
 	// DisabledChannelIDs returns the channel ids of disabled channels.
@@ -215,7 +217,7 @@ type Store interface { //nolint:interfacebloat
 	// ChannelID attempt to lookup the 8-byte compact channel ID which maps
 	// to the passed channel point (outpoint). If the passed channel doesn't
 	// exist within the database, then ErrEdgeNotFound is returned.
-	ChannelID(chanPoint *wire.OutPoint) (uint64, error)
+	ChannelID(v lnwire.GossipVersion, chanPoint *wire.OutPoint) (uint64, error)
 
 	// HighestChanID returns the "highest" known channel ID in the channel
 	// graph. This represents the "newest" channel from the PoV of the
@@ -258,7 +260,7 @@ type Store interface { //nolint:interfacebloat
 	// edges that exist at the time of the query. This can be used to
 	// respond to peer queries that are seeking to fill in gaps in their
 	// view of the channel graph.
-	FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error)
+	FetchChanInfos(v lnwire.GossipVersion, chanIDs []uint64) ([]ChannelEdge, error)
 
 	// FetchChannelEdgesByOutpoint attempts to lookup the two directed edges
 	// for the channel identified by the funding outpoint. If the channel

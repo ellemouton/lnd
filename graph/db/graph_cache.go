@@ -93,7 +93,7 @@ type graphCacheDB interface {
 		cb func(route.Vertex, *lnwire.FeatureVector) error,
 		reset func()) error
 
-	ForEachChannelCacheable(cb func(*models.CachedEdgeInfo,
+	ForEachChannelCacheable(v lnwire.GossipVersion, cb func(*models.CachedEdgeInfo,
 		*models.CachedEdgePolicy, *models.CachedEdgePolicy) error,
 		reset func()) error
 }
@@ -115,13 +115,14 @@ func (c *GraphCache) PopulateFromDB(ctx context.Context, db graphCacheDB) error 
 		return err
 	}
 
-	err = db.ForEachChannelCacheable(func(info *models.CachedEdgeInfo,
-		policy1, policy2 *models.CachedEdgePolicy) error {
+	err = db.ForEachChannelCacheable(lnwire.GossipVersion1,
+		func(info *models.CachedEdgeInfo,
+			policy1, policy2 *models.CachedEdgePolicy) error {
 
-		c.AddChannel(info, policy1, policy2)
+			c.AddChannel(info, policy1, policy2)
 
-		return nil
-	}, func() {})
+			return nil
+		}, func() {})
 	if err != nil {
 		return err
 	}
