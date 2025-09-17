@@ -25,6 +25,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btclog/v2"
+	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/kvdb/sqlbase"
@@ -803,8 +804,8 @@ func makeTestChannel(t *testing.T,
 		ChainHash:        testChain,
 		NodeKey1Bytes:    genPubKey(t),
 		NodeKey2Bytes:    genPubKey(t),
-		BitcoinKey1Bytes: genPubKey(t),
-		BitcoinKey2Bytes: genPubKey(t),
+		BitcoinKey1Bytes: fn.Some(genPubKey(t)),
+		BitcoinKey2Bytes: fn.Some(genPubKey(t)),
 		Features:         testFeatures,
 		AuthProof:        testAuthProof,
 		ChannelPoint: wire.OutPoint{
@@ -1681,8 +1682,8 @@ func genRandomChannel(rt *rapid.T,
 		ChainHash:        testChain,
 		NodeKey1Bytes:    nodeKey1Bytes,
 		NodeKey2Bytes:    nodeKey2Bytes,
-		BitcoinKey1Bytes: bitcoinKey1Bytes,
-		BitcoinKey2Bytes: bitcoinKey2Bytes,
+		BitcoinKey1Bytes: fn.Some(bitcoinKey1Bytes),
+		BitcoinKey2Bytes: fn.Some(bitcoinKey2Bytes),
 		Features:         features,
 		AuthProof:        authProof,
 		ChannelPoint:     outpoint,

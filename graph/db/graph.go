@@ -274,11 +274,11 @@ func (c *ChannelGraph) MarkEdgeLive(v lnwire.GossipVersion,
 // that we require the node that failed to send the fresh update to be the one
 // that resurrects the channel from its zombie state. The markZombie bool
 // denotes whether to mark the channel as a zombie.
-func (c *ChannelGraph) DeleteChannelEdges(strictZombiePruning, markZombie bool,
-	chanIDs ...uint64) error {
+func (c *ChannelGraph) DeleteChannelEdges(v lnwire.GossipVersion,
+	strictZombiePruning, markZombie bool, chanIDs ...uint64) error {
 
 	infos, err := c.Store.DeleteChannelEdges(
-		strictZombiePruning, markZombie, chanIDs...,
+		v, strictZombiePruning, markZombie, chanIDs...,
 	)
 	if err != nil {
 		return err

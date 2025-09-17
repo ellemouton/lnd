@@ -411,8 +411,9 @@ func (b *Builder) addToTopologyChange(update *TopologyChange,
 		// We'll need to fetch the edge's information from the database
 		// in order to get the information concerning which nodes are
 		// being connected.
+		// TODO(elle): get version from POlicy
 		edgeInfo, _, _, err := b.cfg.Graph.FetchChannelEdgesByID(
-			m.ChannelID,
+			lnwire.GossipVersion1, m.ChannelID,
 		)
 		if err != nil {
 			return fmt.Errorf("unable fetch channel edge: %w", err)

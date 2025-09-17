@@ -23,4 +23,6 @@ type ChannelAuthProof struct {
 	// BitcoinSig2Bytes are the raw bytes of the second bitcoin signature
 	// encoded in DER format.
 	BitcoinSig2Bytes []byte
+
+	Signature []byte
 }

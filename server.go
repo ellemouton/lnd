@@ -1394,8 +1394,9 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	deleteAliasEdge := func(scid lnwire.ShortChannelID) (
 		*models.ChannelEdgePolicy, error) {
 
+		// TODO(elle): update for v2.
 		info, e1, e2, err := s.graphDB.FetchChannelEdgesByID(
-			scid.ToUint64(),
+			lnwire.GossipVersion1, scid.ToUint64(),
 		)
 		if errors.Is(err, graphdb.ErrEdgeNotFound) {
 			// This is unlikely but there is a slim chance of this
@@ -1423,9 +1424,11 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 			return nil, fmt.Errorf("we don't have an edge")
 		}
 
+		// TODO(elle): update for v2.
 		err = s.graphDB.DeleteChannelEdges(
-			false, false, scid.ToUint64(),
+			lnwire.GossipVersion1, false, false, scid.ToUint64(),
 		)
+
 		return ourPolicy, err
 	}
 
@@ -5232,7 +5235,10 @@ func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
 
 	ourPubKey := s.identityECDH.PubKey().SerializeCompressed()
 	return func(cid lnwire.ShortChannelID) (*lnwire.ChannelUpdate1, error) {
-		info, edge1, edge2, err := s.graphBuilder.GetChannelByID(cid)
+		// TODO(elle): update for V2.
+		info, edge1, edge2, err := s.graphBuilder.GetChannelByID(
+			lnwire.GossipVersion1, cid,
+		)
 		if err != nil {
 			return nil, err
 		}

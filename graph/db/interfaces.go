@@ -203,8 +203,9 @@ type Store interface { //nolint:interfacebloat
 	// failed to send the fresh update to be the one that resurrects the
 	// channel from its zombie state. The markZombie bool denotes whether
 	// to mark the channel as a zombie.
-	DeleteChannelEdges(strictZombiePruning, markZombie bool,
-		chanIDs ...uint64) ([]*models.ChannelEdgeInfo, error)
+	DeleteChannelEdges(v lnwire.GossipVersion, strictZombiePruning,
+		markZombie bool, chanIDs ...uint64) ([]*models.ChannelEdgeInfo,
+		error)
 
 	// AddEdgeProof sets the proof of an existing edge in the graph
 	// database.
@@ -279,8 +280,8 @@ type Store interface { //nolint:interfacebloat
 	// zombie within the database. In this case, the ChannelEdgePolicy's
 	// will be nil, and the ChannelEdgeInfo will only include the public
 	// keys of each node.
-	FetchChannelEdgesByID(chanID uint64) (
-		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	FetchChannelEdgesByID(v lnwire.GossipVersion,
+		chanID uint64) (*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy, error)
 
 	// ChannelView returns the verifiable edge information for each active

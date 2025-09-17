@@ -1725,13 +1725,12 @@ func (s *SQLStore) NumZombies(v lnwire.GossipVersion) (uint64, error) {
 // denotes whether to mark the channel as a zombie.
 //
 // NOTE: part of the Store interface.
-func (s *SQLStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
+func (s *SQLStore) DeleteChannelEdges(v lnwire.GossipVersion,
+	strictZombiePruning, markZombie bool,
 	chanIDs ...uint64) ([]*models.ChannelEdgeInfo, error) {
 
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
-
-	v := lnwire.GossipVersion1
 
 	// Keep track of which channels we end up finding so that we can
 	// correctly return ErrEdgeNotFound if we do not find a channel.
@@ -1832,13 +1831,12 @@ func (s *SQLStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 // the ChannelEdgeInfo will only include the public keys of each node.
 //
 // NOTE: part of the Store interface.
-func (s *SQLStore) FetchChannelEdgesByID(chanID uint64) (
-	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+func (s *SQLStore) FetchChannelEdgesByID(v lnwire.GossipVersion,
+	chanID uint64) (*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
 	var (
 		ctx              = context.TODO()
-		v                = lnwire.GossipVersion1
 		edge             *models.ChannelEdgeInfo
 		policy1, policy2 *models.ChannelEdgePolicy
 		chanIDB          = channelIDToBytes(chanID)
@@ -3971,7 +3969,7 @@ func marshalExtraOpaqueData(data []byte) (map[uint64][]byte, error) {
 func insertChannel(ctx context.Context, db SQLQueries,
 	edge *models.ChannelEdgeInfo) error {
 
-	v := lnwire.GossipVersion1
+	v := edge.Version
 
 	// Make sure that at least a "shell" entry for each node is present in
 	// the nodes table.
@@ -3991,15 +3989,26 @@ func insertChannel(ctx context.Context, db SQLQueries,
 	}
 
 	createParams := sqlc.CreateChannelParams{
-		Version:     int16(v),
-		Scid:        channelIDToBytes(edge.ChannelID),
-		NodeID1:     node1DBID,
-		NodeID2:     node2DBID,
-		Outpoint:    edge.ChannelPoint.String(),
-		Capacity:    capacity,
-		BitcoinKey1: edge.BitcoinKey1Bytes[:],
-		BitcoinKey2: edge.BitcoinKey2Bytes[:],
+		Version:  int16(v),
+		Scid:     channelIDToBytes(edge.ChannelID),
+		NodeID1:  node1DBID,
+		NodeID2:  node2DBID,
+		Outpoint: edge.ChannelPoint.String(),
+		Capacity: capacity,
 	}
+	edge.BitcoinKey1Bytes.WhenSome(func(vertex route.Vertex) {
+		createParams.BitcoinKey1 = vertex[:]
+	})
+	edge.BitcoinKey2Bytes.WhenSome(func(vertex route.Vertex) {
+		createParams.BitcoinKey2 = vertex[:]
+	})
+
+	edge.FundingScript.WhenSome(func(script []byte) {
+		createParams.FundingPkScript = script
+	})
+	edge.MerkleRootHash.WhenSome(func(hash chainhash.Hash) {
+		createParams.MerkleRootHash = hash[:]
+	})
 
 	if edge.AuthProof != nil {
 		proof := edge.AuthProof
@@ -4008,6 +4017,7 @@ func insertChannel(ctx context.Context, db SQLQueries,
 		createParams.Node2Signature = proof.NodeSig2Bytes
 		createParams.Bitcoin1Signature = proof.BitcoinSig1Bytes
 		createParams.Bitcoin2Signature = proof.BitcoinSig2Bytes
+		createParams.Signature = proof.Signature
 	}
 
 	// Insert the new channel record.
@@ -4031,10 +4041,13 @@ func insertChannel(ctx context.Context, db SQLQueries,
 	}
 
 	// Finally, insert any extra TLV fields in the channel announcement.
-	extra, err := marshalExtraOpaqueData(edge.ExtraOpaqueData)
-	if err != nil {
-		return fmt.Errorf("unable to marshal extra opaque data: %w",
-			err)
+	extra := edge.ExtraSignedFields
+	if v == v1 {
+		extra, err = marshalExtraOpaqueData(edge.ExtraOpaqueData)
+		if err != nil {
+			return fmt.Errorf("unable to marshal extra opaque "+
+				"data: %w", err)
+		}
 	}
 
 	for tlvType, value := range extra {
@@ -4142,14 +4155,11 @@ func getAndBuildEdgeInfo(ctx context.Context, cfg *SQLStoreConfig,
 }
 
 // buildEdgeInfoWithBatchData builds edge info using pre-loaded batch data.
-func buildEdgeInfoWithBatchData(chain chainhash.Hash,
-	dbChan sqlc.GraphChannel, node1, node2 route.Vertex,
+func buildEdgeInfoWithBatchData(chain chainhash.Hash, dbChan sqlc.GraphChannel,
+	node1, node2 route.Vertex,
 	batchData *batchChannelData) (*models.ChannelEdgeInfo, error) {
 
-	if dbChan.Version != int16(lnwire.GossipVersion1) {
-		return nil, fmt.Errorf("unsupported channel version: %d",
-			dbChan.Version)
-	}
+	version := lnwire.GossipVersion(dbChan.Version)
 
 	// Use pre-loaded features and extras types.
 	fv := lnwire.EmptyFeatureVector()
@@ -4172,31 +4182,50 @@ func buildEdgeInfoWithBatchData(chain chainhash.Hash,
 		return nil, err
 	}
 
-	recs, err := lnwire.CustomRecords(extras).Serialize()
-	if err != nil {
-		return nil, fmt.Errorf("unable to serialize extra signed "+
-			"fields: %w", err)
-	}
-	if recs == nil {
-		recs = make([]byte, 0)
+	channel := &models.ChannelEdgeInfo{
+		Version:       version,
+		ChainHash:     chain,
+		ChannelID:     byteOrder.Uint64(dbChan.Scid),
+		NodeKey1Bytes: node1,
+		NodeKey2Bytes: node2,
+		ChannelPoint:  *op,
+		Capacity:      btcutil.Amount(dbChan.Capacity.Int64),
+		Features:      fv,
 	}
 
-	var btcKey1, btcKey2 route.Vertex
-	copy(btcKey1[:], dbChan.BitcoinKey1)
-	copy(btcKey2[:], dbChan.BitcoinKey2)
+	if len(dbChan.BitcoinKey1) > 0 {
+		var btcKey1 route.Vertex
+		copy(btcKey1[:], dbChan.BitcoinKey1)
+		channel.BitcoinKey1Bytes = fn.Some(btcKey1)
+	}
+	if len(dbChan.BitcoinKey2) > 0 {
+		var btcKey2 route.Vertex
+		copy(btcKey2[:], dbChan.BitcoinKey2)
+		channel.BitcoinKey2Bytes = fn.Some(btcKey2)
+	}
+	if len(dbChan.MerkleRootHash) > 0 {
+		var merkleRoot chainhash.Hash
+		copy(merkleRoot[:], dbChan.MerkleRootHash)
+		channel.MerkleRootHash = fn.Some(merkleRoot)
+	}
+	if len(dbChan.FundingPkScript) > 0 {
+		channel.FundingScript = fn.Some(dbChan.FundingPkScript)
+	}
 
-	channel := models.NewChannelEdge(
-		lnwire.GossipVersion(dbChan.Version),
-		byteOrder.Uint64(dbChan.Scid), chain,
-		node1, node2,
-		models.WithBitcoinKeys(btcKey1, btcKey2),
-		models.WithCapacity(btcutil.Amount(dbChan.Capacity.Int64)),
-		models.WithChannelPoint(*op),
-		func(info *models.ChannelEdgeInfo) {
-			info.Features = fv
-			info.ExtraOpaqueData = recs
-		},
-	)
+	if version == v1 {
+		recs, err := lnwire.CustomRecords(extras).Serialize()
+		if err != nil {
+			return nil, fmt.Errorf("unable to serialize extra "+
+				"signed fields: %w", err)
+		}
+		if recs == nil {
+			recs = make([]byte, 0)
+		} else {
+			channel.ExtraOpaqueData = recs
+		}
+	} else {
+		channel.ExtraSignedFields = extras
+	}
 
 	// We always set all the signatures at the same time, so we can
 	// safely check if one signature is present to determine if we have the
@@ -4207,6 +4236,10 @@ func buildEdgeInfoWithBatchData(chain chainhash.Hash,
 			NodeSig2Bytes:    dbChan.Node2Signature,
 			BitcoinSig1Bytes: dbChan.Bitcoin1Signature,
 			BitcoinSig2Bytes: dbChan.Bitcoin2Signature,
+		}
+	} else if len(dbChan.Signature) > 0 {
+		channel.AuthProof = &models.ChannelAuthProof{
+			Signature: dbChan.Signature,
 		}
 	}
 

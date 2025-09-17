@@ -663,13 +663,18 @@ func chanCanBeHopHint(channel *HopHintInfo, cfg *SelectHopHintsCfg) (
 	}
 
 	// Fetch the policies for each end of the channel.
-	info, p1, p2, err := cfg.FetchChannelEdgesByID(channel.ShortChannelID)
+	// TODO(elle): update for v2.
+	info, p1, p2, err := cfg.FetchChannelEdgesByID(
+		lnwire.GossipVersion1, channel.ShortChannelID,
+	)
 	if err != nil {
 		// In the case of zero-conf channels, it may be the case that
 		// the alias SCID was deleted from the graph, and replaced by
 		// the confirmed SCID. Check the Graph for the confirmed SCID.
 		confirmedScid := channel.ConfirmedScidZC
-		info, p1, p2, err = cfg.FetchChannelEdgesByID(confirmedScid)
+		info, p1, p2, err = cfg.FetchChannelEdgesByID(
+			lnwire.GossipVersion1, confirmedScid,
+		)
 		if err != nil {
 			log.Errorf("Unable to fetch the routing policies for "+
 				"the edges of the channel %v: %v",
@@ -763,7 +768,8 @@ type SelectHopHintsCfg struct {
 
 	// FetchChannelEdgesByID attempts to lookup the two directed edges for
 	// the channel identified by the channel ID.
-	FetchChannelEdgesByID func(chanID uint64) (*models.ChannelEdgeInfo,
+	FetchChannelEdgesByID func(v lnwire.GossipVersion,
+		chanID uint64) (*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy,
 		error)
 

@@ -707,7 +707,10 @@ func (r *rpcServer) addDeps(ctx context.Context, s *server,
 		FetchChannelCapacity: func(chanID uint64) (btcutil.Amount,
 			error) {
 
-			info, _, _, err := graph.FetchChannelEdgesByID(chanID)
+			// TODO(elle): update for v2.
+			info, _, _, err := graph.FetchChannelEdgesByID(
+				lnwire.GossipVersion1, chanID,
+			)
 			if err != nil {
 				return 0, err
 			}
@@ -724,8 +727,9 @@ func (r *rpcServer) addDeps(ctx context.Context, s *server,
 		FetchChannelEndpoints: func(chanID uint64) (route.Vertex,
 			route.Vertex, error) {
 
+			// TODO(elle): update for v2.
 			info, _, _, err := graph.FetchChannelEdgesByID(
-				chanID,
+				lnwire.GossipVersion1, chanID,
 			)
 			if err != nil {
 				return route.Vertex{}, route.Vertex{},
@@ -3163,7 +3167,10 @@ func abandonChanFromGraph(chanGraph *graphdb.ChannelGraph,
 
 	// If the channel ID is still in the graph, then that means the channel
 	// is still open, so we'll now move to purge it from the graph.
-	return chanGraph.DeleteChannelEdges(false, true, chanID)
+	// TODO(elle): update for v2.
+	return chanGraph.DeleteChannelEdges(
+		lnwire.GossipVersion1, false, true, chanID,
+	)
 }
 
 // abandonChan removes a channel from the database, graph and contract court.
@@ -7045,7 +7052,7 @@ func (r *rpcServer) GetChanInfo(_ context.Context,
 	switch {
 	case in.ChanId != 0:
 		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByID(
-			in.ChanId,
+			lnwire.GossipVersion1, in.ChanId,
 		)
 
 	case in.ChanPoint != "":

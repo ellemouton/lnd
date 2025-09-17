@@ -143,10 +143,11 @@ type Builder struct {
 	wg   sync.WaitGroup
 }
 
-func (b *Builder) FetchChannelEdgesByID(chanID uint64) (*models.ChannelEdgeInfo,
+func (b *Builder) FetchChannelEdgesByID(v lnwire.GossipVersion,
+	chanID uint64) (*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error) {
 
-	return b.cfg.Graph.FetchChannelEdgesByID(chanID)
+	return b.cfg.Graph.FetchChannelEdgesByID(v, chanID)
 }
 
 // A compile time check to ensure Builder implements the
@@ -724,8 +725,10 @@ func (b *Builder) pruneZombieChans() error {
 		toPrune = append(toPrune, chanID)
 		log.Tracef("Pruning zombie channel with ChannelID(%v)", chanID)
 	}
+	// TODO(elle): update for v2.
 	err = b.cfg.Graph.DeleteChannelEdges(
-		b.cfg.StrictZombiePruning, true, toPrune...,
+		lnwire.GossipVersion1, b.cfg.StrictZombiePruning, true,
+		toPrune...,
 	)
 	if err != nil {
 		return fmt.Errorf("unable to delete zombie channels: %w", err)
@@ -1024,12 +1027,16 @@ func (b *Builder) MarkZombieEdge(chanID uint64) error {
 func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 	ctx := context.TODO()
 
-	ch, _, _, err := b.GetChannelByID(msg.ShortChannelID)
+	ch, _, _, err := b.GetChannelByID(
+		msg.GossipVersion(),
+		msg.ShortChannelID,
+	)
 	if err != nil {
 		log.Errorf("Unable to retrieve channel by id: %v", err)
 		return false
 	}
 
+	// TODO(elle): handle v2.
 	var pubKey *btcec.PublicKey
 
 	switch msg.ChannelFlags & lnwire.ChanUpdateDirection {
@@ -1374,12 +1381,12 @@ func (b *Builder) SyncedHeight() uint32 {
 // GetChannelByID return the channel by the channel id.
 //
 // NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) GetChannelByID(chanID lnwire.ShortChannelID) (
-	*models.ChannelEdgeInfo,
+func (b *Builder) GetChannelByID(v lnwire.GossipVersion,
+	chanID lnwire.ShortChannelID) (*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
-	return b.cfg.Graph.FetchChannelEdgesByID(chanID.ToUint64())
+	return b.cfg.Graph.FetchChannelEdgesByID(v, chanID.ToUint64())
 }
 
 // FetchNode attempts to look up a target node by its identity public

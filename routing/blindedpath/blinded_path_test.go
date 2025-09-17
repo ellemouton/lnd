@@ -597,8 +597,9 @@ func TestBuildBlindedPath(t *testing.T) {
 
 			return []*route.Route{realRoute}, nil
 		},
-		FetchChannelEdgesByID: func(chanID uint64) (
-			*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		FetchChannelEdgesByID: func(_ lnwire.GossipVersion,
+			chanID uint64) (*models.ChannelEdgeInfo,
+			*models.ChannelEdgePolicy,
 			*models.ChannelEdgePolicy, error) {
 
 			return nil, realPolicies[chanID], nil, nil
@@ -765,8 +766,9 @@ func TestBuildBlindedPathWithDummyHops(t *testing.T) {
 
 			return []*route.Route{realRoute}, nil
 		},
-		FetchChannelEdgesByID: func(chanID uint64) (
-			*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		FetchChannelEdgesByID: func(_ lnwire.GossipVersion,
+			chanID uint64) (*models.ChannelEdgeInfo,
+			*models.ChannelEdgePolicy,
 			*models.ChannelEdgePolicy, error) {
 
 			policy, ok := realPolicies[chanID]
@@ -936,8 +938,9 @@ func TestBuildBlindedPathWithDummyHops(t *testing.T) {
 			return []*route.Route{realRoute, realRoute, realRoute},
 				nil
 		},
-		FetchChannelEdgesByID: func(chanID uint64) (
-			*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		FetchChannelEdgesByID: func(_ lnwire.GossipVersion,
+			chanID uint64) (*models.ChannelEdgeInfo,
+			*models.ChannelEdgePolicy,
 			*models.ChannelEdgePolicy, error) {
 
 			// Force the call to error for the first 2 channels.

@@ -88,7 +88,7 @@ func createNode(t testing.TB, v lnwire.GossipVersion,
 		)
 	case lnwire.GossipVersion2:
 		return models.NewV2Node(
-			testPub, &models.NodeV2Fields{
+			pubKey, &models.NodeV2Fields{
 				Signature:       testSig.Serialize(),
 				LastBlockHeight: nextBlockHeight(),
 				Color: fn.Some(
@@ -144,9 +144,7 @@ func TestNodeInsertionAndDeletion(t *testing.T) {
 		testNodeInsertionAndDeletion(t, v, nodeWithAddrs)
 	})
 
-	store := NewTestDB(t)
-	_, ok := store.(*SQLStore)
-	if !ok {
+	if !isSQLDB {
 		t.Logf("The rest of the test is for SQL store only")
 		return
 	}
@@ -467,18 +465,23 @@ func TestSourceNode(t *testing.T) {
 	compareNodes(t, testNode, sourceNode)
 }
 
-// TestEdgeInsertionDeletion tests the basic CRUD operations for channel edges.
-func TestEdgeInsertionDeletion(t *testing.T) {
-	t.Parallel()
-	ctx := t.Context()
-	v := lnwire.GossipVersion1
+func createTestEdge(t testing.TB, v lnwire.GossipVersion) *models.ChannelEdgeInfo {
+	t.Helper()
 
-	graph := MakeTestGraph(t)
-
-	// We'd like to test the insertion/deletion of edges, so we create two
-	// vertexes to connect.
+	// We'll create two nodes to use within the edge.
 	node1 := createTestVertex(t, v)
 	node2 := createTestVertex(t, v)
+
+	// Ensure lexicographical ordering of the nodes as required by the protocol.
+	// The first node should have a smaller public key lexicographically.
+	var firstNode, secondNode route.Vertex
+	if bytes.Compare(node1.PubKeyBytes[:], node2.PubKeyBytes[:]) == -1 {
+		firstNode = node1.PubKeyBytes
+		secondNode = node2.PubKeyBytes
+	} else {
+		firstNode = node2.PubKeyBytes
+		secondNode = node1.PubKeyBytes
+	}
 
 	// In addition to the fake vertexes we create some fake channel
 	// identifiers.
@@ -488,23 +491,89 @@ func TestEdgeInsertionDeletion(t *testing.T) {
 		Index: 9,
 	}
 
+	switch v {
+	case lnwire.GossipVersion1:
+		return models.NewChannelEdge(
+			v, chanID, *chaincfg.MainNetParams.GenesisHash,
+			firstNode, secondNode,
+			models.WithCapacity(9000),
+			models.WithChannelPoint(outpoint),
+			models.WithBitcoinKeys(
+				node1.PubKeyBytes, node2.PubKeyBytes,
+			),
+			models.WithChanProof(&models.ChannelAuthProof{
+				NodeSig1Bytes:    testSig.Serialize(),
+				NodeSig2Bytes:    testSig.Serialize(),
+				BitcoinSig1Bytes: testSig.Serialize(),
+				BitcoinSig2Bytes: testSig.Serialize(),
+			}),
+			func(info *models.ChannelEdgeInfo) {
+				info.ExtraOpaqueData = []byte{
+					1, 1, 1, 2, 2, 2, 2,
+				}
+			},
+		)
+	case lnwire.GossipVersion2:
+		return models.NewChannelEdge(
+			v, chanID, *chaincfg.MainNetParams.GenesisHash,
+			node1.PubKeyBytes, node2.PubKeyBytes,
+			models.WithCapacity(9000),
+			models.WithChannelPoint(outpoint),
+			models.WithBitcoinKeys(
+				node1.PubKeyBytes, node2.PubKeyBytes,
+			),
+			models.WithChanProof(&models.ChannelAuthProof{
+				Signature: testSig.Serialize(),
+			}),
+			func(info *models.ChannelEdgeInfo) {
+				info.MerkleRootHash = fn.Some(
+					chainhash.Hash(sha256.Sum256([]byte("kek"))),
+				)
+				info.ExtraSignedFields = map[uint64][]byte{
+					20: []byte{0x1, 0x2, 0x3},
+					21: []byte{0x4, 0x5, 0x6, 0x7},
+				}
+			},
+		)
+
+	default:
+		t.Fatalf("unknown gossip version: %v", v)
+	}
+
+	return nil
+}
+
+// TestEdgeInsertionDeletion tests the basic CRUD operations for channel edges.
+func TestEdgeInsertionDeletion(t *testing.T) {
+	t.Parallel()
+
+	t.Run("v1", func(t *testing.T) {
+		testEdgeInsertionDeletion(t, v1)
+	})
+
+	if !isSQLDB {
+		t.Logf("The rest of the test is for SQL store only")
+		return
+	}
+
+	t.Run("v2", func(t *testing.T) {
+		testEdgeInsertionDeletion(t, v2)
+	})
+
+	t.Run("v1 + v2", func(t *testing.T) {
+		// TODO(elle).
+	})
+}
+
+func testEdgeInsertionDeletion(t *testing.T, v lnwire.GossipVersion) {
+	ctx := t.Context()
+	graph := MakeTestGraph(t)
+
 	// Add the new edge to the database, this should proceed without any
 	// errors.
-	edgeInfo := models.NewChannelEdge(
-		v, chanID, *chaincfg.MainNetParams.GenesisHash,
-		node1.PubKeyBytes, node2.PubKeyBytes,
-		models.WithCapacity(9000),
-		models.WithChannelPoint(outpoint),
-		models.WithBitcoinKeys(
-			node1.PubKeyBytes, node2.PubKeyBytes,
-		),
-		models.WithChanProof(&models.ChannelAuthProof{
-			NodeSig1Bytes:    testSig.Serialize(),
-			NodeSig2Bytes:    testSig.Serialize(),
-			BitcoinSig1Bytes: testSig.Serialize(),
-			BitcoinSig2Bytes: testSig.Serialize(),
-		}),
-	)
+	edgeInfo := createTestEdge(t, v)
+	chanID := edgeInfo.ChannelID
+	outpoint := edgeInfo.ChannelPoint
 
 	require.NoError(t, graph.AddChannelEdge(ctx, edgeInfo))
 	assertEdgeWithNoPoliciesInCache(t, graph, edgeInfo)
@@ -515,14 +584,14 @@ func TestEdgeInsertionDeletion(t *testing.T) {
 	require.ErrorIs(t, err, ErrEdgeAlreadyExist)
 
 	// Ensure that both policies are returned as unknown (nil).
-	_, e1, e2, err := graph.FetchChannelEdgesByID(chanID)
+	_, e1, e2, err := graph.FetchChannelEdgesByID(v, chanID)
 	require.NoError(t, err)
 	require.Nil(t, e1)
 	require.Nil(t, e2)
 
 	// Next, attempt to delete the edge from the database, again this
 	// should proceed without any issues.
-	require.NoError(t, graph.DeleteChannelEdges(false, true, chanID))
+	require.NoError(t, graph.DeleteChannelEdges(v, false, true, chanID))
 	assertNoEdge(t, graph, chanID)
 
 	// Ensure that any query attempts to lookup the delete channel edge are
@@ -533,17 +602,17 @@ func TestEdgeInsertionDeletion(t *testing.T) {
 	// Assert that if the edge is a zombie, then FetchChannelEdgesByID
 	// still returns a populated models.ChannelEdgeInfo as its comment
 	// description promises.
-	edge, _, _, err := graph.FetchChannelEdgesByID(chanID)
+	edge, _, _, err := graph.FetchChannelEdgesByID(v, chanID)
 	require.ErrorIs(t, err, ErrZombieEdge)
 	require.NotNil(t, edge)
 
-	isZombie, _, _, err := graph.IsZombieEdge(lnwire.GossipVersion1, chanID)
+	isZombie, _, _, err := graph.IsZombieEdge(v, chanID)
 	require.NoError(t, err)
 	require.True(t, isZombie)
 
 	// Finally, attempt to delete a (now) non-existent edge within the
 	// database, this should result in an error.
-	err = graph.DeleteChannelEdges(false, true, chanID)
+	err = graph.DeleteChannelEdges(v, false, true, chanID)
 	require.ErrorIs(t, err, ErrEdgeNotFound)
 }
 
@@ -711,62 +780,7 @@ func TestDisconnectBlockAtHeight(t *testing.T) {
 func assertEdgeInfoEqual(t *testing.T, e1 *models.ChannelEdgeInfo,
 	e2 *models.ChannelEdgeInfo) {
 
-	if e1.ChannelID != e2.ChannelID {
-		t.Fatalf("chan id's don't match: %v vs %v", e1.ChannelID,
-			e2.ChannelID)
-	}
-
-	if e1.ChainHash != e2.ChainHash {
-		t.Fatalf("chain hashes don't match: %v vs %v", e1.ChainHash,
-			e2.ChainHash)
-	}
-
-	if !bytes.Equal(e1.NodeKey1Bytes[:], e2.NodeKey1Bytes[:]) {
-		t.Fatalf("nodekey1 doesn't match")
-	}
-	if !bytes.Equal(e1.NodeKey2Bytes[:], e2.NodeKey2Bytes[:]) {
-		t.Fatalf("nodekey2 doesn't match")
-	}
-	if !bytes.Equal(e1.BitcoinKey1Bytes[:], e2.BitcoinKey1Bytes[:]) {
-		t.Fatalf("bitcoinkey1 doesn't match")
-	}
-	if !bytes.Equal(e1.BitcoinKey2Bytes[:], e2.BitcoinKey2Bytes[:]) {
-		t.Fatalf("bitcoinkey2 doesn't match")
-	}
-
-	if !e1.Features.Equals(e2.Features.RawFeatureVector) {
-		t.Fatalf("features don't match: %v vs %v", e1.Features,
-			e2.Features)
-	}
-
-	require.True(t, bytes.Equal(
-		e1.AuthProof.NodeSig1Bytes, e2.AuthProof.NodeSig1Bytes,
-	))
-	require.True(t, bytes.Equal(
-		e1.AuthProof.NodeSig2Bytes, e2.AuthProof.NodeSig2Bytes,
-	))
-	require.True(t, bytes.Equal(
-		e1.AuthProof.BitcoinSig1Bytes,
-		e2.AuthProof.BitcoinSig1Bytes,
-	))
-	require.True(t, bytes.Equal(
-		e1.AuthProof.BitcoinSig2Bytes, e2.AuthProof.BitcoinSig2Bytes,
-	))
-
-	if e1.ChannelPoint != e2.ChannelPoint {
-		t.Fatalf("channel point match: %v vs %v", e1.ChannelPoint,
-			e2.ChannelPoint)
-	}
-
-	if e1.Capacity != e2.Capacity {
-		t.Fatalf("capacity doesn't match: %v vs %v", e1.Capacity,
-			e2.Capacity)
-	}
-
-	if !bytes.Equal(e1.ExtraOpaqueData, e2.ExtraOpaqueData) {
-		t.Fatalf("extra data doesn't match: %v vs %v",
-			e2.ExtraOpaqueData, e2.ExtraOpaqueData)
-	}
+	require.Equal(t, e1, e2)
 }
 
 type createEdgeConfig struct {
@@ -959,7 +973,7 @@ func TestEdgeInfoUpdates(t *testing.T) {
 
 	// With the edges inserted, perform some queries to ensure that they've
 	// been inserted properly.
-	dbEdgeInfo, dbEdge1, dbEdge2, err := graph.FetchChannelEdgesByID(chanID)
+	dbEdgeInfo, dbEdge1, dbEdge2, err := graph.FetchChannelEdgesByID(v, chanID)
 	require.NoError(t, err, "unable to fetch channel by ID")
 	if err := compareEdgePolicies(dbEdge1, edge1); err != nil {
 		t.Fatalf("edge doesn't match: %v", err)
@@ -1295,7 +1309,7 @@ func TestAddEdgeProof(t *testing.T) {
 
 	// Fetch the edge and assert that the proof is nil and that the rest
 	// of the edge info is correct.
-	dbEdge, _, _, err := graph.FetchChannelEdgesByID(edge1.ChannelID)
+	dbEdge, _, _, err := graph.FetchChannelEdgesByID(v, edge1.ChannelID)
 	require.NoError(t, err)
 	require.Nil(t, dbEdge.AuthProof)
 	require.Equal(t, edge1, dbEdge)
@@ -1320,7 +1334,7 @@ func TestAddEdgeProof(t *testing.T) {
 	require.NoError(t, graph.AddEdgeProof(scid1, proof))
 
 	// Fetch the edge again and assert that the proof is now set.
-	dbEdge, _, _, err = graph.FetchChannelEdgesByID(edge1.ChannelID)
+	dbEdge, _, _, err = graph.FetchChannelEdgesByID(v, edge1.ChannelID)
 	require.NoError(t, err)
 	require.NotNil(t, dbEdge.AuthProof)
 	require.Equal(t, edge1, dbEdge)
@@ -1332,7 +1346,7 @@ func TestAddEdgeProof(t *testing.T) {
 
 	// Fetch the edge and assert that the proof is nil and that the rest
 	// of the edge info is correct.
-	dbEdge2, _, _, err := graph.FetchChannelEdgesByID(edge2.ChannelID)
+	dbEdge2, _, _, err := graph.FetchChannelEdgesByID(v, edge2.ChannelID)
 	require.NoError(t, err)
 	require.NotNil(t, dbEdge2.AuthProof)
 	require.Equal(t, edge2, dbEdge2)
@@ -1910,13 +1924,8 @@ func TestGraphPruning(t *testing.T) {
 			t.Fatalf("unable to add node: %v", err)
 		}
 
-		pkScript, err := genMultiSigP2WSH(
-			edgeInfo.BitcoinKey1Bytes[:],
-			edgeInfo.BitcoinKey2Bytes[:],
-		)
-		if err != nil {
-			t.Fatalf("unable to gen multi-sig p2wsh: %v", err)
-		}
+		pkScript, err := edgeInfo.FundingPKScript()
+		require.NoError(t, err)
 		edgePoints = append(edgePoints, EdgePoint{
 			FundingPkScript: pkScript,
 			OutPoint:        op,
@@ -2500,7 +2509,7 @@ func TestFilterKnownChanIDs(t *testing.T) {
 		if err := graph.AddChannelEdge(ctx, &channel); err != nil {
 			t.Fatalf("unable to create channel edge: %v", err)
 		}
-		err := graph.DeleteChannelEdges(false, true, channel.ChannelID)
+		err := graph.DeleteChannelEdges(v, false, true, channel.ChannelID)
 		if err != nil {
 			t.Fatalf("unable to mark edge zombie: %v", err)
 		}
@@ -2837,7 +2846,7 @@ func TestStressTestChannelGraphAPI(t *testing.T) {
 				}
 
 				err := graph.DeleteChannelEdges(
-					strictPruning, markZombie, chanIDs...,
+					v, strictPruning, markZombie, chanIDs...,
 				)
 				if err != nil &&
 					!errors.Is(err, ErrEdgeNotFound) {
@@ -3196,7 +3205,7 @@ func TestFetchChanInfos(t *testing.T) {
 	if err := graph.AddChannelEdge(ctx, &zombieChan); err != nil {
 		t.Fatalf("unable to create channel edge: %v", err)
 	}
-	err := graph.DeleteChannelEdges(false, true, zombieChan.ChannelID)
+	err := graph.DeleteChannelEdges(v, false, true, zombieChan.ChannelID)
 	require.NoError(t, err, "unable to delete and mark edge zombie")
 	edgeQuery = append(edgeQuery, zombieChanID.ToUint64())
 
@@ -3736,7 +3745,7 @@ func TestNodeIsPublic(t *testing.T) {
 	// has any advertised edges.
 	for _, graph := range graphs {
 		err := graph.DeleteChannelEdges(
-			false, true, aliceBobEdge.ChannelID,
+			v, false, true, aliceBobEdge.ChannelID,
 		)
 		if err != nil {
 			t.Fatalf("unable to remove edge: %v", err)
@@ -3755,7 +3764,7 @@ func TestNodeIsPublic(t *testing.T) {
 	// it without it being advertised.
 	for _, graph := range graphs {
 		err := graph.DeleteChannelEdges(
-			false, true, bobCarolEdge.ChannelID,
+			v, false, true, bobCarolEdge.ChannelID,
 		)
 		if err != nil {
 			t.Fatalf("unable to remove edge: %v", err)
@@ -3852,7 +3861,7 @@ func TestDisabledChannelIDs(t *testing.T) {
 	// Delete the channel edge and ensure it is removed from the disabled
 	// list.
 	if err = graph.DeleteChannelEdges(
-		false, true, edgeInfo.ChannelID,
+		v, false, true, edgeInfo.ChannelID,
 	); err != nil {
 		t.Fatalf("unable to delete channel edge: %v", err)
 	}
@@ -3937,7 +3946,7 @@ func TestEdgePolicyMissingMaxHTLC(t *testing.T) {
 	// we added is invalid according to the new format, it should be as we
 	// are not aware of the policy (indicated by the policy returned being
 	// nil)
-	dbEdgeInfo, dbEdge1, dbEdge2, err := graph.FetchChannelEdgesByID(chanID)
+	dbEdgeInfo, dbEdge1, dbEdge2, err := graph.FetchChannelEdgesByID(v, chanID)
 	require.NoError(t, err, "unable to fetch channel by ID")
 
 	// The first edge should have a nil-policy returned
@@ -3955,7 +3964,7 @@ func TestEdgePolicyMissingMaxHTLC(t *testing.T) {
 		t.Fatalf("unable to update edge: %v", err)
 	}
 
-	dbEdgeInfo, dbEdge1, dbEdge2, err = graph.FetchChannelEdgesByID(chanID)
+	dbEdgeInfo, dbEdge1, dbEdge2, err = graph.FetchChannelEdgesByID(v, chanID)
 	require.NoError(t, err, "unable to fetch channel by ID")
 	if err := compareEdgePolicies(dbEdge1, edge1); err != nil {
 		t.Fatalf("edge doesn't match: %v", err)
@@ -4035,16 +4044,16 @@ func TestGraphZombieIndex(t *testing.T) {
 
 	// Since the edge is known the graph and it isn't a zombie, IsZombieEdge
 	// should not report the channel as a zombie.
-	isZombie, _, _, err := graph.IsZombieEdge(lnwire.GossipVersion1, edge.ChannelID)
+	isZombie, _, _, err := graph.IsZombieEdge(v, edge.ChannelID)
 	require.NoError(t, err)
 	require.False(t, isZombie)
 	assertNumZombies(t, graph, 0)
 
 	// If we delete the edge and mark it as a zombie, then we should expect
 	// to see it within the index.
-	err = graph.DeleteChannelEdges(false, true, edge.ChannelID)
+	err = graph.DeleteChannelEdges(v, false, true, edge.ChannelID)
 	require.NoError(t, err, "unable to mark edge as zombie")
-	isZombie, pubKey1, pubKey2, err := graph.IsZombieEdge(lnwire.GossipVersion1, edge.ChannelID)
+	isZombie, pubKey1, pubKey2, err := graph.IsZombieEdge(v, edge.ChannelID)
 	require.NoError(t, err)
 	require.True(t, isZombie)
 	require.Equal(t, node1.PubKeyBytes, pubKey1)
@@ -4053,7 +4062,7 @@ func TestGraphZombieIndex(t *testing.T) {
 
 	// Similarly, if we mark the same edge as live, we should no longer see
 	// it within the index.
-	require.NoError(t, graph.MarkEdgeLive(lnwire.GossipVersion1, edge.ChannelID))
+	require.NoError(t, graph.MarkEdgeLive(v, edge.ChannelID))
 
 	// Attempting to mark the edge as live again now that it is no longer
 	// in the zombie index should fail.

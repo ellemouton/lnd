@@ -400,7 +400,7 @@ func (c *ChanSeries) FetchChanUpdates(chain chainhash.Hash,
 	shortChanID lnwire.ShortChannelID) ([]*lnwire.ChannelUpdate1, error) {
 
 	chanInfo, e1, e2, err := c.graph.FetchChannelEdgesByID(
-		shortChanID.ToUint64(),
+		lnwire.GossipVersion1, shortChanID.ToUint64(),
 	)
 	if err != nil {
 		return nil, err

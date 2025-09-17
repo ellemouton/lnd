@@ -5,10 +5,13 @@ import (
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/fn/v2"
+	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 )
@@ -40,10 +43,10 @@ type ChannelEdgeInfo struct {
 	nodeKey2      *btcec.PublicKey
 
 	// BitcoinKey1Bytes is the raw public key of the first node.
-	BitcoinKey1Bytes route.Vertex
+	BitcoinKey1Bytes fn.Option[route.Vertex]
 
 	// BitcoinKey2Bytes is the raw public key of the first node.
-	BitcoinKey2Bytes route.Vertex
+	BitcoinKey2Bytes fn.Option[route.Vertex]
 
 	MerkleRootHash fn.Option[chainhash.Hash]
 
@@ -159,12 +162,119 @@ func (c *ChannelEdgeInfo) OtherNodeKeyBytes(thisNodeKey []byte) (
 	}
 }
 
+func (c *ChannelEdgeInfo) FundingPKScript() ([]byte, error) {
+	switch c.Version {
+	case lnwire.GossipVersion1:
+		btc1Key, err := c.BitcoinKey1Bytes.UnwrapOrErr(
+			fmt.Errorf("missing bitcoin key 1"),
+		)
+		if err != nil {
+			return nil, err
+		}
+		btc2Key, err := c.BitcoinKey2Bytes.UnwrapOrErr(
+			fmt.Errorf("missing bitcoin key 2"),
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		witnessScript, err := input.GenMultiSigScript(
+			btc1Key[:], btc2Key[:],
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		return input.WitnessScriptHash(witnessScript)
+
+	case lnwire.GossipVersion2:
+		var (
+			pubKey1 *btcec.PublicKey
+			pubKey2 *btcec.PublicKey
+			err     error
+		)
+		c.BitcoinKey1Bytes.WhenSome(func(key route.Vertex) {
+			pubKey1, err = btcec.ParsePubKey(key[:])
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		c.BitcoinKey2Bytes.WhenSome(func(key route.Vertex) {
+			pubKey2, err = btcec.ParsePubKey(key[:])
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		// If both bitcoin keys are not present in the announcement, then we
+		// should previously have stored the funding script found on-chain.
+		if pubKey1 == nil || pubKey2 == nil {
+			return c.FundingScript.UnwrapOrErr(fmt.Errorf(
+				"expected a funding pk script since no bitcoin keys " +
+					"were provided",
+			))
+		}
+
+		// Initially we set the tweak to an empty byte array. If a merkle root
+		// hash is provided in the announcement then we use that to set the
+		// tweak but otherwise, the empty tweak will have the same effect as a
+		// BIP86 tweak.
+		var tweak []byte
+		c.MerkleRootHash.WhenSome(func(hash chainhash.Hash) {
+			tweak = hash[:]
+		})
+
+		// Calculate the internal key by computing the MuSig2 combination of the
+		// two public keys.
+		internalKey, _, _, err := musig2.AggregateKeys(
+			[]*btcec.PublicKey{pubKey1, pubKey2}, true,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// Now, determine the tweak to be added to the internal key. If the
+		// tweak is empty, then this will effectively be a BIP86 tweak.
+		tapTweakHash := chainhash.TaggedHash(
+			chainhash.TagTapTweak, schnorr.SerializePubKey(
+				internalKey.FinalKey,
+			), tweak,
+		)
+
+		// Compute the final output key.
+		combinedKey, _, _, err := musig2.AggregateKeys(
+			[]*btcec.PublicKey{pubKey1, pubKey2}, true,
+			musig2.WithKeyTweaks(musig2.KeyTweakDesc{
+				Tweak:   *tapTweakHash,
+				IsXOnly: true,
+			}),
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// Now that we have the combined key, we can create a taproot pkScript
+		// from this, and then make the txout given the amount.
+		fundingScript, err := input.PayToTaprootScript(combinedKey.FinalKey)
+		if err != nil {
+			return nil, fmt.Errorf("unable to make taproot pkscript: %w",
+				err)
+		}
+
+		return fundingScript, nil
+
+	default:
+		return nil, fmt.Errorf("unknown gossip version: %d", c.Version)
+	}
+}
+
 type EdgeModifier func(*ChannelEdgeInfo)
 
 func WithBitcoinKeys(btc1, btc2 route.Vertex) EdgeModifier {
 	return func(e *ChannelEdgeInfo) {
-		e.BitcoinKey1Bytes = btc1
-		e.BitcoinKey2Bytes = btc2
+		e.BitcoinKey1Bytes = fn.Some(btc1)
+		e.BitcoinKey2Bytes = fn.Some(btc2)
 	}
 }
 
@@ -195,8 +305,8 @@ func EdgeFromWireAnnouncement(ann *lnwire.ChannelAnnouncement1,
 		ChainHash:        ann.ChainHash,
 		NodeKey1Bytes:    ann.NodeID1,
 		NodeKey2Bytes:    ann.NodeID2,
-		BitcoinKey1Bytes: ann.BitcoinKey1,
-		BitcoinKey2Bytes: ann.BitcoinKey2,
+		BitcoinKey1Bytes: fn.Some(route.Vertex(ann.BitcoinKey1)),
+		BitcoinKey2Bytes: fn.Some(route.Vertex(ann.BitcoinKey2)),
 		Features: lnwire.NewFeatureVector(
 			ann.Features, lnwire.Features,
 		),

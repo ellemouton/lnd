@@ -76,7 +76,7 @@ type ChannelGraphSource interface {
 	CurrentBlockHeight() (uint32, error)
 
 	// GetChannelByID return the channel by the channel id.
-	GetChannelByID(chanID lnwire.ShortChannelID) (
+	GetChannelByID(v lnwire.GossipVersion, chanID lnwire.ShortChannelID) (
 		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy, error)
 

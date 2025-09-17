@@ -1908,8 +1908,13 @@ func (c *KVStore) PruneTip() (*chainhash.Hash, uint32, error) {
 // that we require the node that failed to send the fresh update to be the one
 // that resurrects the channel from its zombie state. The markZombie bool
 // denotes whether or not to mark the channel as a zombie.
-func (c *KVStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
+func (c *KVStore) DeleteChannelEdges(v lnwire.GossipVersion,
+	strictZombiePruning, markZombie bool,
 	chanIDs ...uint64) ([]*models.ChannelEdgeInfo, error) {
+
+	if v != lnwire.GossipVersion1 {
+		return nil, ErrGossipV1OnlyForKVDB
+	}
 
 	// TODO(roasbeef): possibly delete from node bucket if node has no more
 	// channels
@@ -3556,9 +3561,13 @@ func (c *KVStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 // ErrZombieEdge an be returned if the edge is currently marked as a zombie
 // within the database. In this case, the ChannelEdgePolicy's will be nil, and
 // the ChannelEdgeInfo will only include the public keys of each node.
-func (c *KVStore) FetchChannelEdgesByID(chanID uint64) (
-	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+func (c *KVStore) FetchChannelEdgesByID(v lnwire.GossipVersion,
+	chanID uint64) (*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
+
+	if v != lnwire.GossipVersion1 {
+		return nil, nil, nil, ErrGossipV1OnlyForKVDB
+	}
 
 	var (
 		edgeInfo  *models.ChannelEdgeInfo
@@ -3779,10 +3788,7 @@ func (c *KVStore) ChannelView() ([]EdgePoint, error) {
 					return err
 				}
 
-				pkScript, err := genMultiSigP2WSH(
-					edgeInfo.BitcoinKey1Bytes[:],
-					edgeInfo.BitcoinKey2Bytes[:],
-				)
+				pkScript, err := edgeInfo.FundingPKScript()
 				if err != nil {
 					return err
 				}
@@ -4398,16 +4404,29 @@ func putChanEdgeInfo(edgeIndex kvdb.RwBucket,
 
 	var b bytes.Buffer
 
+	btc1Key, err := edgeInfo.BitcoinKey1Bytes.UnwrapOrErr(
+		fmt.Errorf("edge missing bitcoin key 1"),
+	)
+	if err != nil {
+		return err
+	}
+	btc2Key, err := edgeInfo.BitcoinKey2Bytes.UnwrapOrErr(
+		fmt.Errorf("edge missing bitcoin key 2"),
+	)
+	if err != nil {
+		return err
+	}
+
 	if _, err := b.Write(edgeInfo.NodeKey1Bytes[:]); err != nil {
 		return err
 	}
 	if _, err := b.Write(edgeInfo.NodeKey2Bytes[:]); err != nil {
 		return err
 	}
-	if _, err := b.Write(edgeInfo.BitcoinKey1Bytes[:]); err != nil {
+	if _, err := b.Write(btc1Key[:]); err != nil {
 		return err
 	}
-	if _, err := b.Write(edgeInfo.BitcoinKey2Bytes[:]); err != nil {
+	if _, err := b.Write(btc2Key[:]); err != nil {
 		return err
 	}
 
@@ -4445,7 +4464,7 @@ func putChanEdgeInfo(edgeIndex kvdb.RwBucket,
 	if err := WriteOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
 		return err
 	}
-	err := binary.Write(&b, byteOrder, uint64(edgeInfo.Capacity))
+	err = binary.Write(&b, byteOrder, uint64(edgeInfo.Capacity))
 	if err != nil {
 		return err
 	}
@@ -4486,6 +4505,8 @@ func deserializeChanEdgeInfo(r io.Reader) (*models.ChannelEdgeInfo, error) {
 		edgeInfo = models.ChannelEdgeInfo{
 			Version: lnwire.GossipVersion1,
 		}
+		btc1Key route.Vertex
+		btc2Key route.Vertex
 	)
 
 	if _, err := io.ReadFull(r, edgeInfo.NodeKey1Bytes[:]); err != nil {
@@ -4494,12 +4515,15 @@ func deserializeChanEdgeInfo(r io.Reader) (*models.ChannelEdgeInfo, error) {
 	if _, err := io.ReadFull(r, edgeInfo.NodeKey2Bytes[:]); err != nil {
 		return nil, err
 	}
-	if _, err := io.ReadFull(r, edgeInfo.BitcoinKey1Bytes[:]); err != nil {
+	if _, err := io.ReadFull(r, btc1Key[:]); err != nil {
 		return nil, err
 	}
-	if _, err := io.ReadFull(r, edgeInfo.BitcoinKey2Bytes[:]); err != nil {
+	if _, err := io.ReadFull(r, btc2Key[:]); err != nil {
 		return nil, err
 	}
+
+	edgeInfo.BitcoinKey1Bytes = fn.Some(btc1Key)
+	edgeInfo.BitcoinKey2Bytes = fn.Some(btc2Key)
 
 	featureBytes, err := wire.ReadVarBytes(r, 0, 900, "features")
 	if err != nil {

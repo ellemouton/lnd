@@ -1975,7 +1975,7 @@ func (d *AuthenticatedGossiper) processRejectedEdge(_ context.Context,
 	// First, we'll fetch the state of the channel as we know if from the
 	// database.
 	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(
-		chanAnnMsg.ShortChannelID,
+		lnwire.GossipVersion1, chanAnnMsg.ShortChannelID,
 	)
 	if err != nil {
 		return nil, err
@@ -2290,7 +2290,7 @@ func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
 	switch msg := msg.(type) {
 	case *lnwire.AnnounceSignatures1:
 		chanInfo, _, _, err := d.cfg.Graph.GetChannelByID(
-			msg.ShortChannelID,
+			msg.GossipVersion(), msg.ShortChannelID,
 		)
 
 		// If the channel cannot be found, it is most likely a leftover
@@ -2311,7 +2311,9 @@ func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
 		return chanInfo.AuthProof != nil
 
 	case *lnwire.ChannelUpdate1:
-		_, p1, p2, err := d.cfg.Graph.GetChannelByID(msg.ShortChannelID)
+		_, p1, p2, err := d.cfg.Graph.GetChannelByID(
+			msg.GossipVersion(), msg.ShortChannelID,
+		)
 
 		// If the channel cannot be found, it is most likely a leftover
 		// message for a channel that was closed, so we can consider it
@@ -2358,6 +2360,11 @@ func (d *AuthenticatedGossiper) updateChannel(ctx context.Context,
 	edge *models.ChannelEdgePolicy) (*lnwire.ChannelAnnouncement1,
 	*lnwire.ChannelUpdate1, error) {
 
+	// TODO(elle): update for v2.
+	if info.Version != lnwire.GossipVersion1 {
+		return nil, nil, fmt.Errorf("unsupported gossip version: %v")
+	}
+
 	// Parse the unsigned edge into a channel update.
 	chanUpdate := netann.UnsignedChannelUpdateFromEdge(info, edge)
 
@@ -2402,10 +2409,20 @@ func (d *AuthenticatedGossiper) updateChannel(ctx context.Context,
 			NodeID1:         info.NodeKey1Bytes,
 			NodeID2:         info.NodeKey2Bytes,
 			ChainHash:       info.ChainHash,
-			BitcoinKey1:     info.BitcoinKey1Bytes,
 			Features:        lnwire.NewRawFeatureVector(),
-			BitcoinKey2:     info.BitcoinKey2Bytes,
 			ExtraOpaqueData: info.ExtraOpaqueData,
+		}
+		chanAnn.BitcoinKey1, err = info.BitcoinKey1Bytes.UnwrapOrErr(
+			fmt.Errorf("expected btc 1 key"),
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+		chanAnn.BitcoinKey2, err = info.BitcoinKey2Bytes.UnwrapOrErr(
+			fmt.Errorf("expected btc 2 key"),
+		)
+		if err != nil {
+			return nil, nil, err
 		}
 		chanAnn.NodeSig1, err = lnwire.NewSigFromECDSARawSignature(
 			info.AuthProof.NodeSig1Bytes,
@@ -3123,7 +3140,9 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 	// Get the node pub key as far since we don't have it in the channel
 	// update announcement message. We'll need this to properly verify the
 	// message's signature.
-	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(graphScid)
+	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(
+		upd.GossipVersion(), graphScid,
+	)
 	switch {
 	// No error, break.
 	case err == nil:
@@ -3476,7 +3495,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	defer d.channelMtx.Unlock(ann.ShortChannelID.ToUint64())
 
 	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(
-		ann.ShortChannelID,
+		ann.GossipVersion(), ann.ShortChannelID,
 	)
 	if err != nil {
 		_, err = d.cfg.FindChannel(nMsg.source, ann.ChannelID)
