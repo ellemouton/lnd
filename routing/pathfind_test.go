@@ -345,18 +345,18 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 
 		// We first insert the existence of the edge between the two
 		// nodes.
-		edgeInfo := models.ChannelEdgeInfo{
-			ChannelID:    edge.ChannelID,
-			AuthProof:    &testAuthProof,
-			ChannelPoint: fundingPoint,
-			Features:     lnwire.EmptyFeatureVector(),
-			Capacity:     btcutil.Amount(edge.Capacity),
-		}
-
-		copy(edgeInfo.NodeKey1Bytes[:], node1Bytes)
-		copy(edgeInfo.NodeKey2Bytes[:], node2Bytes)
-		copy(edgeInfo.BitcoinKey1Bytes[:], node1Bytes)
-		copy(edgeInfo.BitcoinKey2Bytes[:], node2Bytes)
+		edgeInfo := *models.NewChannelEdge(
+			lnwire.GossipVersion1, edge.ChannelID,
+			chainhash.Hash{}, // Default empty chain hash
+			route.Vertex(node1Bytes), route.Vertex(node2Bytes),
+			models.WithChannelPoint(fundingPoint),
+			models.WithCapacity(btcutil.Amount(edge.Capacity)),
+			models.WithBitcoinKeys(
+				route.Vertex(node1Bytes),
+				route.Vertex(node2Bytes),
+			),
+			models.WithChanProof(&testAuthProof),
+		)
 
 		shortID := lnwire.NewShortChanIDFromInt(edge.ChannelID)
 		links[shortID] = &mockLink{
@@ -677,18 +677,15 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 
 		// We first insert the existence of the edge between the two
 		// nodes.
-		edgeInfo := models.ChannelEdgeInfo{
-			ChannelID:    channelID,
-			AuthProof:    &testAuthProof,
-			ChannelPoint: *fundingPoint,
-			Capacity:     testChannel.Capacity,
-			Features:     lnwire.EmptyFeatureVector(),
-
-			NodeKey1Bytes:    node1Vertex,
-			BitcoinKey1Bytes: node1Vertex,
-			NodeKey2Bytes:    node2Vertex,
-			BitcoinKey2Bytes: node2Vertex,
-		}
+		edgeInfo := *models.NewChannelEdge(
+			lnwire.GossipVersion1, channelID,
+			chainhash.Hash{}, // Default empty chain hash
+			node1Vertex, node2Vertex,
+			models.WithChannelPoint(*fundingPoint),
+			models.WithCapacity(testChannel.Capacity),
+			models.WithBitcoinKeys(node1Vertex, node2Vertex),
+			models.WithChanProof(&testAuthProof),
+		)
 
 		err = graph.AddChannelEdge(ctx, &edgeInfo)
 		if err != nil && !errors.Is(err, graphdb.ErrEdgeAlreadyExist) {

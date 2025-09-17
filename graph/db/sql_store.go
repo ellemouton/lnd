@@ -163,6 +163,16 @@ const (
 	v2 = lnwire.GossipVersion2
 )
 
+var knownGossipVersions = map[lnwire.GossipVersion]struct{}{
+	v1: {},
+	v2: {},
+}
+
+func isKnownGossipVersion(v lnwire.GossipVersion) bool {
+	_, ok := knownGossipVersions[v]
+	return ok
+}
+
 // BatchedSQLQueries is a version of SQLQueries that's capable of batched
 // database operations.
 type BatchedSQLQueries interface {
@@ -245,6 +255,10 @@ func NewSQLStore(cfg *SQLStoreConfig, db BatchedSQLQueries,
 // NOTE: part of the Store interface.
 func (s *SQLStore) AddNode(ctx context.Context,
 	node *models.Node, opts ...batch.SchedulerOption) error {
+
+	if !isKnownGossipVersion(node.Version) {
+		return fmt.Errorf("unknown gossip version: %d", node.Version)
+	}
 
 	r := &batch.Request[SQLQueries]{
 		Opts: batch.NewSchedulerOptions(opts...),
@@ -602,7 +616,9 @@ func (s *SQLStore) NodeUpdatesInHorizon(startTime,
 func (s *SQLStore) AddChannelEdge(ctx context.Context,
 	edge *models.ChannelEdgeInfo, opts ...batch.SchedulerOption) error {
 
-	v := lnwire.GossipVersion1
+	if !isKnownGossipVersion(edge.Version) {
+		return fmt.Errorf("unknown gossip version: %d", edge.Version)
+	}
 
 	var alreadyExists bool
 	r := &batch.Request[SQLQueries]{
@@ -621,7 +637,7 @@ func (s *SQLStore) AddChannelEdge(ctx context.Context,
 			_, err := tx.GetChannelBySCID(
 				ctx, sqlc.GetChannelBySCIDParams{
 					Scid:    chanIDB,
-					Version: int16(v),
+					Version: int16(edge.Version),
 				},
 			)
 			if err == nil {
@@ -693,6 +709,9 @@ func (s *SQLStore) HighestChanID(ctx context.Context) (uint64, error) {
 func (s *SQLStore) UpdateEdgePolicy(ctx context.Context,
 	edge *models.ChannelEdgePolicy,
 	opts ...batch.SchedulerOption) (route.Vertex, route.Vertex, error) {
+
+	//if !isKnownGossipVersion(edge.Version) {
+	//}
 
 	var (
 		isUpdate1    bool
@@ -1852,9 +1871,13 @@ func (s *SQLStore) FetchChannelEdgesByID(chanID uint64) (
 			// populate the edge info with the public keys of each
 			// party as this is the only information we have about
 			// it.
-			edge = &models.ChannelEdgeInfo{}
-			copy(edge.NodeKey1Bytes[:], zombie.NodeKey1)
-			copy(edge.NodeKey2Bytes[:], zombie.NodeKey2)
+			var nodeKey1, nodeKey2 route.Vertex
+			copy(nodeKey1[:], zombie.NodeKey1)
+			copy(nodeKey2[:], zombie.NodeKey2)
+
+			edge = models.NewChannelEdge(
+				v, chanID, s.cfg.ChainHash, nodeKey1, nodeKey2,
+			)
 
 			return ErrZombieEdge
 		} else if err != nil {
@@ -4162,18 +4185,18 @@ func buildEdgeInfoWithBatchData(chain chainhash.Hash,
 	copy(btcKey1[:], dbChan.BitcoinKey1)
 	copy(btcKey2[:], dbChan.BitcoinKey2)
 
-	channel := &models.ChannelEdgeInfo{
-		ChainHash:        chain,
-		ChannelID:        byteOrder.Uint64(dbChan.Scid),
-		NodeKey1Bytes:    node1,
-		NodeKey2Bytes:    node2,
-		BitcoinKey1Bytes: btcKey1,
-		BitcoinKey2Bytes: btcKey2,
-		ChannelPoint:     *op,
-		Capacity:         btcutil.Amount(dbChan.Capacity.Int64),
-		Features:         fv,
-		ExtraOpaqueData:  recs,
-	}
+	channel := models.NewChannelEdge(
+		lnwire.GossipVersion(dbChan.Version),
+		byteOrder.Uint64(dbChan.Scid), chain,
+		node1, node2,
+		models.WithBitcoinKeys(btcKey1, btcKey2),
+		models.WithCapacity(btcutil.Amount(dbChan.Capacity.Int64)),
+		models.WithChannelPoint(*op),
+		func(info *models.ChannelEdgeInfo) {
+			info.Features = fv
+			info.ExtraOpaqueData = recs
+		},
+	)
 
 	// We always set all the signatures at the same time, so we can
 	// safely check if one signature is present to determine if we have the

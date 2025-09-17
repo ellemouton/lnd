@@ -798,6 +798,7 @@ func makeTestChannel(t *testing.T,
 	opts ...testChanOpt) *models.ChannelEdgeInfo {
 
 	c := &models.ChannelEdgeInfo{
+		Version:          lnwire.GossipVersion1,
 		ChannelID:        prand.Uint64(),
 		ChainHash:        testChain,
 		NodeKey1Bytes:    genPubKey(t),
@@ -1675,6 +1676,7 @@ func genRandomChannel(rt *rapid.T,
 	}
 
 	info := &models.ChannelEdgeInfo{
+		Version:          lnwire.GossipVersion1,
 		ChannelID:        chanID,
 		ChainHash:        testChain,
 		NodeKey1Bytes:    nodeKey1Bytes,

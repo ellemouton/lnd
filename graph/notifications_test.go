@@ -447,23 +447,26 @@ func TestEdgeUpdateNotification(t *testing.T) {
 
 	// Finally, to conclude our test set up, we'll create a channel
 	// update to announce the created channel between the two nodes.
-	edge := &models.ChannelEdgeInfo{
-		ChannelID:     chanID.ToUint64(),
-		NodeKey1Bytes: node1.PubKeyBytes,
-		NodeKey2Bytes: node2.PubKeyBytes,
-		AuthProof: &models.ChannelAuthProof{
+	edge := models.NewChannelEdge(
+		lnwire.GossipVersion1, chanID.ToUint64(),
+		chainhash.Hash{}, // Default empty chain hash
+		node1.PubKeyBytes, node2.PubKeyBytes,
+		models.WithChannelPoint(*chanPoint),
+		models.WithCapacity(chanValue),
+		models.WithBitcoinKeys(
+			route.Vertex(bitcoinKey1.SerializeCompressed()),
+			route.Vertex(bitcoinKey2.SerializeCompressed()),
+		),
+		models.WithChanProof(&models.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
 			BitcoinSig2Bytes: testSig.Serialize(),
+		}),
+		func(e *models.ChannelEdgeInfo) {
+			e.FundingScript = fn.Some(script)
 		},
-		Features:      lnwire.EmptyFeatureVector(),
-		ChannelPoint:  *chanPoint,
-		Capacity:      chanValue,
-		FundingScript: fn.Some(script),
-	}
-	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
-	copy(edge.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
+	)
 
 	if err := ctx.builder.AddEdge(ctxb, edge); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
@@ -641,21 +644,24 @@ func TestNodeUpdateNotification(t *testing.T) {
 	testFeaturesBuf := new(bytes.Buffer)
 	require.NoError(t, testFeatures.Encode(testFeaturesBuf))
 
-	edge := &models.ChannelEdgeInfo{
-		ChannelID:     chanID.ToUint64(),
-		NodeKey1Bytes: node1.PubKeyBytes,
-		NodeKey2Bytes: node2.PubKeyBytes,
-		Features:      lnwire.EmptyFeatureVector(),
-		AuthProof: &models.ChannelAuthProof{
+	edge := models.NewChannelEdge(
+		lnwire.GossipVersion1, chanID.ToUint64(),
+		chainhash.Hash{}, // Default empty chain hash
+		node1.PubKeyBytes, node2.PubKeyBytes,
+		models.WithBitcoinKeys(
+			route.Vertex(bitcoinKey1.SerializeCompressed()),
+			route.Vertex(bitcoinKey2.SerializeCompressed()),
+		),
+		models.WithChanProof(&models.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
 			BitcoinSig2Bytes: testSig.Serialize(),
+		}),
+		func(e *models.ChannelEdgeInfo) {
+			e.FundingScript = fn.Some(script)
 		},
-		FundingScript: fn.Some(script),
-	}
-	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
-	copy(edge.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
+	)
 
 	// Adding the edge will add the nodes to the graph, but with no info
 	// except the pubkey known.
@@ -830,23 +836,26 @@ func TestNotificationCancellation(t *testing.T) {
 	// to the client.
 	ntfnClient.Cancel()
 
-	edge := &models.ChannelEdgeInfo{
-		ChannelID:     chanID.ToUint64(),
-		NodeKey1Bytes: node1.PubKeyBytes,
-		NodeKey2Bytes: node2.PubKeyBytes,
-		AuthProof: &models.ChannelAuthProof{
+	edge := models.NewChannelEdge(
+		lnwire.GossipVersion1, chanID.ToUint64(),
+		chainhash.Hash{}, // Default empty chain hash
+		node1.PubKeyBytes, node2.PubKeyBytes,
+		models.WithChannelPoint(*chanPoint),
+		models.WithCapacity(chanValue),
+		models.WithBitcoinKeys(
+			route.Vertex(bitcoinKey1.SerializeCompressed()),
+			route.Vertex(bitcoinKey2.SerializeCompressed()),
+		),
+		models.WithChanProof(&models.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
 			BitcoinSig2Bytes: testSig.Serialize(),
+		}),
+		func(e *models.ChannelEdgeInfo) {
+			e.FundingScript = fn.Some(script)
 		},
-		Features:      lnwire.EmptyFeatureVector(),
-		ChannelPoint:  *chanPoint,
-		Capacity:      chanValue,
-		FundingScript: fn.Some(script),
-	}
-	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
-	copy(edge.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
+	)
 	if err := ctx.builder.AddEdge(ctxb, edge); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
@@ -906,23 +915,26 @@ func TestChannelCloseNotification(t *testing.T) {
 
 	// Finally, to conclude our test set up, we'll create a channel
 	// announcement to announce the created channel between the two nodes.
-	edge := &models.ChannelEdgeInfo{
-		ChannelID:     chanID.ToUint64(),
-		NodeKey1Bytes: node1.PubKeyBytes,
-		NodeKey2Bytes: node2.PubKeyBytes,
-		AuthProof: &models.ChannelAuthProof{
+	edge := models.NewChannelEdge(
+		lnwire.GossipVersion1, chanID.ToUint64(),
+		chainhash.Hash{}, // Default empty chain hash
+		node1.PubKeyBytes, node2.PubKeyBytes,
+		models.WithChannelPoint(*chanUtxo),
+		models.WithCapacity(chanValue),
+		models.WithBitcoinKeys(
+			route.Vertex(bitcoinKey1.SerializeCompressed()),
+			route.Vertex(bitcoinKey2.SerializeCompressed()),
+		),
+		models.WithChanProof(&models.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
 			BitcoinSig2Bytes: testSig.Serialize(),
+		}),
+		func(e *models.ChannelEdgeInfo) {
+			e.FundingScript = fn.Some(script)
 		},
-		Features:      lnwire.EmptyFeatureVector(),
-		ChannelPoint:  *chanUtxo,
-		Capacity:      chanValue,
-		FundingScript: fn.Some(script),
-	}
-	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
-	copy(edge.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
+	)
 	if err := ctx.builder.AddEdge(ctxb, edge); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}

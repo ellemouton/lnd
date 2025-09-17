@@ -17,6 +17,7 @@ import (
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing"
+	"github.com/lightningnetwork/lnd/routing/route"
 )
 
 // Manager manages the node's local channels. The only operation that is
@@ -321,18 +322,24 @@ func (r *Manager) createEdge(channel *channeldb.OpenChannel,
 		shortChanID = channel.ZeroConfRealScid()
 	}
 
-	info := &models.ChannelEdgeInfo{
-		ChannelID:    shortChanID.ToUint64(),
-		ChainHash:    channel.ChainHash,
-		Features:     lnwire.EmptyFeatureVector(),
-		Capacity:     channel.Capacity,
-		ChannelPoint: channel.FundingOutpoint,
-	}
+	var (
+		node1Pub, node2Pub route.Vertex
+		btc1, btc2     route.Vertex
+	)
+	copy(node1Pub[:], nodeKey1Bytes)
+	copy(node2Pub[:], nodeKey2Bytes)
+	copy(btc1[:], bitcoinKey1Bytes)
+	copy(btc2[:], bitcoinKey2Bytes)
 
-	copy(info.NodeKey1Bytes[:], nodeKey1Bytes)
-	copy(info.NodeKey2Bytes[:], nodeKey2Bytes)
-	copy(info.BitcoinKey1Bytes[:], bitcoinKey1Bytes)
-	copy(info.BitcoinKey2Bytes[:], bitcoinKey2Bytes)
+	// TODO(elle): update for V2.
+	info := models.NewChannelEdge(
+		lnwire.GossipVersion1, shortChanID.ToUint64(),
+		channel.ChainHash, node1Pub, node2Pub,
+		models.WithBitcoinKeys(btc1, btc2),
+		models.WithCapacity(channel.Capacity),
+		models.WithChannelPoint(channel.FundingOutpoint),
+	)
+
 
 	// Construct a dummy channel edge policy with default values that will
 	// be updated with the new values in the call to processChan below.

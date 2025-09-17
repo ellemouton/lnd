@@ -10,6 +10,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing/route"
 )
 
 // ChannelEdgeInfo represents a fully authenticated channel along with all its
@@ -19,6 +20,8 @@ import (
 // policy of a channel are stored within a ChannelEdgePolicy for each direction
 // of the channel.
 type ChannelEdgeInfo struct {
+	Version lnwire.GossipVersion
+
 	// ChannelID is the unique channel ID for the channel. The first 3
 	// bytes are the block height, the next 3 the index within the block,
 	// and the last 2 bytes are the output index for the channel.
@@ -29,18 +32,18 @@ type ChannelEdgeInfo struct {
 	ChainHash chainhash.Hash
 
 	// NodeKey1Bytes is the raw public key of the first node.
-	NodeKey1Bytes [33]byte
+	NodeKey1Bytes route.Vertex
 	nodeKey1      *btcec.PublicKey
 
 	// NodeKey2Bytes is the raw public key of the first node.
-	NodeKey2Bytes [33]byte
+	NodeKey2Bytes route.Vertex
 	nodeKey2      *btcec.PublicKey
 
 	// BitcoinKey1Bytes is the raw public key of the first node.
-	BitcoinKey1Bytes [33]byte
+	BitcoinKey1Bytes route.Vertex
 
 	// BitcoinKey2Bytes is the raw public key of the first node.
-	BitcoinKey2Bytes [33]byte
+	BitcoinKey2Bytes route.Vertex
 
 	// Features is the list of protocol features supported by this channel
 	// edge.
@@ -72,6 +75,27 @@ type ChannelEdgeInfo struct {
 	// and ensure we're able to make upgrades to the network in a forwards
 	// compatible manner.
 	ExtraOpaqueData []byte
+}
+
+func NewChannelEdge(v lnwire.GossipVersion, chanID uint64,
+	chainHash chainhash.Hash, node1, node2 route.Vertex,
+	opts ...EdgeModifier) *ChannelEdgeInfo {
+
+	edge := &ChannelEdgeInfo{
+		Version:       v,
+		ChannelID:     chanID,
+		ChainHash:     chainHash,
+		NodeKey1Bytes: node1,
+		NodeKey2Bytes: node2,
+		Features:      lnwire.EmptyFeatureVector(),
+	}
+
+	for _, opt := range opts {
+		opt(edge)
+	}
+
+	return edge
+
 }
 
 // NodeKey1 is the identity public key of the "first" node that was involved in
@@ -129,4 +153,56 @@ func (c *ChannelEdgeInfo) OtherNodeKeyBytes(thisNodeKey []byte) (
 		return [33]byte{}, fmt.Errorf("node not participating in " +
 			"this channel")
 	}
+}
+
+type EdgeModifier func(*ChannelEdgeInfo)
+
+func WithBitcoinKeys(btc1, btc2 route.Vertex) EdgeModifier {
+	return func(e *ChannelEdgeInfo) {
+		e.BitcoinKey1Bytes = btc1
+		e.BitcoinKey2Bytes = btc2
+	}
+}
+
+func WithChannelPoint(cp wire.OutPoint) EdgeModifier {
+	return func(e *ChannelEdgeInfo) {
+		e.ChannelPoint = cp
+	}
+}
+
+func WithCapacity(cap btcutil.Amount) EdgeModifier {
+	return func(e *ChannelEdgeInfo) {
+		e.Capacity = cap
+	}
+}
+
+func WithChanProof(proof *ChannelAuthProof) EdgeModifier {
+	return func(e *ChannelEdgeInfo) {
+		e.AuthProof = proof
+	}
+}
+
+func EdgeFromWireAnnouncement(ann *lnwire.ChannelAnnouncement1,
+	proof *ChannelAuthProof, opts ...EdgeModifier) *ChannelEdgeInfo {
+
+	edge := &ChannelEdgeInfo{
+		Version:          lnwire.GossipVersion1,
+		ChannelID:        ann.ShortChannelID.ToUint64(),
+		ChainHash:        ann.ChainHash,
+		NodeKey1Bytes:    ann.NodeID1,
+		NodeKey2Bytes:    ann.NodeID2,
+		BitcoinKey1Bytes: ann.BitcoinKey1,
+		BitcoinKey2Bytes: ann.BitcoinKey2,
+		Features: lnwire.NewFeatureVector(
+			ann.Features, lnwire.Features,
+		),
+		AuthProof:       proof,
+		ExtraOpaqueData: ann.ExtraOpaqueData,
+	}
+
+	for _, opt := range opts {
+		opt(edge)
+	}
+
+	return edge
 }
