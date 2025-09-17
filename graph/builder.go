@@ -980,11 +980,10 @@ func (b *Builder) assertNodeAnnFreshness(ctx context.Context, pub route.Vertex,
 	// this node, check that this update brings info newer than what we
 	// already have.
 	node, err := b.cfg.Graph.FetchNode(ctx, lnwire.GossipVersion1, pub)
-	if err != nil {
+	if err != nil && !errors.Is(err, graphdb.ErrGraphNodeNotFound) {
 		return fmt.Errorf("unable to query for the "+
 			"existence of node: %w", err)
-	}
-	if errors.Is(err, graphdb.ErrGraphNotFound) {
+	} else if errors.Is(err, graphdb.ErrGraphNodeNotFound) {
 		return NewErrf(ErrIgnored, "Ignoring node announcement"+
 			" for node not found in channel graph (%x)",
 			pub[:])

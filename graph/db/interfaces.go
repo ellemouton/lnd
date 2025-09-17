@@ -54,7 +54,7 @@ type Store interface { //nolint:interfacebloat
 	// node, executing the passed callback on each. The call-back is
 	// provided with the channel's outpoint, whether we have a policy for
 	// the channel and the channel peer's node information.
-	ForEachSourceNodeChannel(ctx context.Context,
+	ForEachSourceNodeChannel(ctx context.Context, v lnwire.GossipVersion,
 		cb func(chanPoint wire.OutPoint, havePolicy bool,
 			otherNode *models.Node) error,
 		reset func()) error
@@ -81,7 +81,8 @@ type Store interface { //nolint:interfacebloat
 	// the addresses are actually needed.
 	//
 	// NOTE: The callback contents MUST not be modified.
-	ForEachNodeCached(ctx context.Context, withAddrs bool,
+	ForEachNodeCached(ctx context.Context, v lnwire.GossipVersion,
+		withAddrs bool,
 		cb func(ctx context.Context, node route.Vertex,
 			addrs []net.Addr,
 			chans map[uint64]*DirectedChannel) error,
@@ -91,15 +92,16 @@ type Store interface { //nolint:interfacebloat
 	// graph, executing the passed callback with each node encountered. If
 	// the callback returns an error, then the transaction is aborted and
 	// the iteration stops early.
-	ForEachNode(ctx context.Context, cb func(*models.Node) error,
-		reset func()) error
+	ForEachNode(ctx context.Context, v lnwire.GossipVersion,
+		cb func(*models.Node) error, reset func()) error
 
 	// ForEachNodeCacheable iterates through all the stored vertices/nodes
 	// in the graph, executing the passed callback with each node
 	// encountered. If the callback returns an error, then the transaction
 	// is aborted and the iteration stops early.
-	ForEachNodeCacheable(ctx context.Context, cb func(route.Vertex,
-		*lnwire.FeatureVector) error, reset func()) error
+	ForEachNodeCacheable(ctx context.Context, v lnwire.GossipVersion,
+		cb func(route.Vertex, *lnwire.FeatureVector) error,
+		reset func()) error
 
 	// LookupAlias attempts to return the alias as advertised by the target
 	// node.

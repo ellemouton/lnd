@@ -146,7 +146,8 @@ func (c *ChannelGraph) GraphSession(cb func(graph NodeTraverser) error,
 // graph, executing the passed callback with each node encountered.
 //
 // NOTE: The callback contents MUST not be modified.
-func (c *ChannelGraph) ForEachNodeCached(ctx context.Context, withAddrs bool,
+func (c *ChannelGraph) ForEachNodeCached(ctx context.Context,
+	v lnwire.GossipVersion, withAddrs bool,
 	cb func(ctx context.Context, node route.Vertex, addrs []net.Addr,
 		chans map[uint64]*DirectedChannel) error, reset func()) error {
 
@@ -160,7 +161,7 @@ func (c *ChannelGraph) ForEachNodeCached(ctx context.Context, withAddrs bool,
 		)
 	}
 
-	return c.Store.ForEachNodeCached(ctx, withAddrs, cb, reset)
+	return c.Store.ForEachNodeCached(ctx, v, withAddrs, cb, reset)
 }
 
 // AddNode adds a vertex/node to the graph database. If the node is not

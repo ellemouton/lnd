@@ -230,14 +230,16 @@ type GraphSource interface {
 	// graph, executing the passed callback with each node encountered. If
 	// the callback returns an error, then the transaction is aborted and
 	// the iteration stops early.
-	ForEachNode(context.Context, func(*models.Node) error,
+	ForEachNode(context.Context, lnwire.GossipVersion,
+		func(*models.Node) error,
 		func()) error
 
 	// ForEachNodeCached is similar to ForEachNode, but it utilizes the
 	// channel graph cache if one is available. It is less consistent than
 	// ForEachNode since any further calls are made across multiple
 	// transactions.
-	ForEachNodeCached(ctx context.Context, withAddrs bool,
+	ForEachNodeCached(ctx context.Context, version lnwire.GossipVersion,
+		withAddrs bool,
 		cb func(ctx context.Context, node route.Vertex,
 			addrs []net.Addr,
 			chans map[uint64]*graphdb.DirectedChannel) error,

@@ -6804,15 +6804,16 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// First iterate through all the known nodes (connected or unconnected
 	// within the graph), collating their current state into the RPC
 	// response.
-	err := graph.ForEachNode(ctx, func(node *models.Node) error {
-		lnNode := marshalNode(node)
+	err := graph.ForEachNode(ctx, lnwire.GossipVersion1,
+		func(node *models.Node) error {
+			lnNode := marshalNode(node)
 
-		resp.Nodes = append(resp.Nodes, lnNode)
+			resp.Nodes = append(resp.Nodes, lnNode)
 
-		return nil
-	}, func() {
-		resp.Nodes = nil
-	})
+			return nil
+		}, func() {
+			resp.Nodes = nil
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -7231,69 +7232,70 @@ func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 	// network, tallying up the total number of nodes, and also gathering
 	// each node so we can measure the graph diameter and degree stats
 	// below.
-	err := graph.ForEachNodeCached(ctx, false, func(ctx context.Context,
-		node route.Vertex, _ []net.Addr,
-		edges map[uint64]*graphdb.DirectedChannel) error {
+	err := graph.ForEachNodeCached(ctx, lnwire.GossipVersion1, false,
+		func(ctx context.Context,
+			node route.Vertex, _ []net.Addr,
+			edges map[uint64]*graphdb.DirectedChannel) error {
 
-		// Increment the total number of nodes with each iteration.
-		numNodes++
+			// Increment the total number of nodes with each iteration.
+			numNodes++
 
-		// For each channel we'll compute the out degree of each node,
-		// and also update our running tallies of the min/max channel
-		// capacity, as well as the total channel capacity. We pass
-		// through the db transaction from the outer view so we can
-		// re-use it within this inner view.
-		var outDegree uint32
-		for _, edge := range edges {
-			// Bump up the out degree for this node for each
-			// channel encountered.
-			outDegree++
+			// For each channel we'll compute the out degree of each node,
+			// and also update our running tallies of the min/max channel
+			// capacity, as well as the total channel capacity. We pass
+			// through the db transaction from the outer view so we can
+			// re-use it within this inner view.
+			var outDegree uint32
+			for _, edge := range edges {
+				// Bump up the out degree for this node for each
+				// channel encountered.
+				outDegree++
 
-			// If we've already seen this channel, then we'll
-			// return early to ensure that we don't double-count
-			// stats.
-			if _, ok := seenChans[edge.ChannelID]; ok {
-				return nil
+				// If we've already seen this channel, then we'll
+				// return early to ensure that we don't double-count
+				// stats.
+				if _, ok := seenChans[edge.ChannelID]; ok {
+					return nil
+				}
+
+				// Compare the capacity of this channel against the
+				// running min/max to see if we should update the
+				// extrema.
+				chanCapacity := edge.Capacity
+				if chanCapacity < minChannelSize {
+					minChannelSize = chanCapacity
+				}
+				if chanCapacity > maxChannelSize {
+					maxChannelSize = chanCapacity
+				}
+
+				// Accumulate the total capacity of this channel to the
+				// network wide-capacity.
+				totalNetworkCapacity += chanCapacity
+
+				numChannels++
+
+				seenChans[edge.ChannelID] = struct{}{}
+				allChans = append(allChans, edge.Capacity)
 			}
 
-			// Compare the capacity of this channel against the
-			// running min/max to see if we should update the
-			// extrema.
-			chanCapacity := edge.Capacity
-			if chanCapacity < minChannelSize {
-				minChannelSize = chanCapacity
-			}
-			if chanCapacity > maxChannelSize {
-				maxChannelSize = chanCapacity
+			// Finally, if the out degree of this node is greater than what
+			// we've seen so far, update the maxChanOut variable.
+			if outDegree > maxChanOut {
+				maxChanOut = outDegree
 			}
 
-			// Accumulate the total capacity of this channel to the
-			// network wide-capacity.
-			totalNetworkCapacity += chanCapacity
-
-			numChannels++
-
-			seenChans[edge.ChannelID] = struct{}{}
-			allChans = append(allChans, edge.Capacity)
-		}
-
-		// Finally, if the out degree of this node is greater than what
-		// we've seen so far, update the maxChanOut variable.
-		if outDegree > maxChanOut {
-			maxChanOut = outDegree
-		}
-
-		return nil
-	}, func() {
-		numChannels = 0
-		numNodes = 0
-		maxChanOut = 0
-		totalNetworkCapacity = 0
-		minChannelSize = math.MaxInt64
-		maxChannelSize = 0
-		allChans = nil
-		clear(seenChans)
-	})
+			return nil
+		}, func() {
+			numChannels = 0
+			numNodes = 0
+			maxChanOut = 0
+			totalNetworkCapacity = 0
+			minChannelSize = math.MaxInt64
+			maxChannelSize = 0
+			allChans = nil
+			clear(seenChans)
+		})
 	if err != nil {
 		return nil, err
 	}

@@ -696,9 +696,14 @@ func (c *KVStore) FetchVersionedNodeFeatures(v lnwire.GossipVersion,
 // data to the call-back.
 //
 // NOTE: The callback contents MUST not be modified.
-func (c *KVStore) ForEachNodeCached(ctx context.Context, withAddrs bool,
+func (c *KVStore) ForEachNodeCached(ctx context.Context, v lnwire.GossipVersion,
+	withAddrs bool,
 	cb func(ctx context.Context, node route.Vertex, addrs []net.Addr,
 		chans map[uint64]*DirectedChannel) error, reset func()) error {
+
+	if v != lnwire.GossipVersion1 {
+		return ErrGossipV1OnlyForKVDB
+	}
 
 	// Otherwise call back to a version that uses the database directly.
 	// We'll iterate over each node, then the set of channels for each
@@ -825,8 +830,12 @@ func (c *KVStore) DisabledChannelIDs() ([]uint64, error) {
 // early.
 //
 // NOTE: this is part of the Store interface.
-func (c *KVStore) ForEachNode(_ context.Context,
+func (c *KVStore) ForEachNode(_ context.Context, v lnwire.GossipVersion,
 	cb func(*models.Node) error, reset func()) error {
+
+	if v != lnwire.GossipVersion1 {
+		return ErrGossipV1OnlyForKVDB
+	}
 
 	return forEachNode(c.db, func(tx kvdb.RTx,
 		node *models.Node) error {
@@ -881,8 +890,13 @@ func forEachNode(db kvdb.Backend,
 // callback returns an error, then the transaction is aborted and the iteration
 // stops early.
 func (c *KVStore) ForEachNodeCacheable(_ context.Context,
+	v lnwire.GossipVersion,
 	cb func(route.Vertex, *lnwire.FeatureVector) error,
 	reset func()) error {
+
+	if v != lnwire.GossipVersion1 {
+		return ErrGossipV1OnlyForKVDB
+	}
 
 	traversal := func(tx kvdb.RTx) error {
 		// First grab the nodes bucket which stores the mapping from
@@ -3319,8 +3333,13 @@ func (c *KVStore) ForEachNodeChannel(_ context.Context, v lnwire.GossipVersion,
 // channel's outpoint, whether we have a policy for the channel and the channel
 // peer's node information.
 func (c *KVStore) ForEachSourceNodeChannel(_ context.Context,
+	v lnwire.GossipVersion,
 	cb func(chanPoint wire.OutPoint, havePolicy bool,
 		otherNode *models.Node) error, reset func()) error {
+
+	if v != lnwire.GossipVersion1 {
+		return ErrGossipV1OnlyForKVDB
+	}
 
 	return kvdb.View(c.db, func(tx kvdb.RTx) error {
 		nodes := tx.ReadBucket(nodeBucket)

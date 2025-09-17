@@ -530,7 +530,7 @@ func fetchAllNodes(t *testing.T, store Store) []*models.Node {
 	nodes := make([]*models.Node, 0)
 
 	err := store.ForEachNode(t.Context(),
-		func(node *models.Node) error {
+		lnwire.GossipVersion1, func(node *models.Node) error {
 			// Call PubKey to ensure the objects cached pubkey is
 			// set so that the objects can be compared as a whole.
 			_, err := node.PubKey()

@@ -3577,7 +3577,7 @@ func (s *server) establishPersistentConnections(ctx context.Context) error {
 		return nil
 	}
 	err = s.graphDB.ForEachSourceNodeChannel(
-		ctx, forEachSrcNodeChan, func() {
+		ctx, lnwire.GossipVersion1, forEachSrcNodeChan, func() {
 			clear(graphAddrs)
 		},
 	)

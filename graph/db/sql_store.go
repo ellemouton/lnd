@@ -776,13 +776,12 @@ func (s *SQLStore) updateEdgeCache(e *models.ChannelEdgePolicy,
 //
 // NOTE: part of the Store interface.
 func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
-	cb func(chanPoint wire.OutPoint, havePolicy bool,
+	v lnwire.GossipVersion, cb func(chanPoint wire.OutPoint,
+		havePolicy bool,
 		otherNode *models.Node) error, reset func()) error {
 
-	version := lnwire.GossipVersion1
-
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		nodeID, nodePub, err := s.getSourceNode(ctx, db, version)
+		nodeID, nodePub, err := s.getSourceNode(ctx, db, v)
 		if err != nil {
 			return fmt.Errorf("unable to fetch source node: %w",
 				err)
@@ -811,7 +810,7 @@ func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
 				}
 
 				_, otherNode, err := getNodeByPubKey(
-					ctx, s.cfg.QueryCfg, db, version,
+					ctx, s.cfg.QueryCfg, db, v,
 					otherNodePub,
 				)
 				if err != nil {
@@ -835,13 +834,13 @@ func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
 // early.
 //
 // NOTE: part of the Store interface.
-func (s *SQLStore) ForEachNode(ctx context.Context,
+func (s *SQLStore) ForEachNode(ctx context.Context, v lnwire.GossipVersion,
 	cb func(node *models.Node) error, reset func()) error {
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		return forEachNodePaginated(
-			ctx, s.cfg.QueryCfg, db,
-			lnwire.GossipVersion1, func(_ context.Context, _ int64,
+			ctx, s.cfg.QueryCfg, db, v,
+			func(_ context.Context, _ int64,
 				node *models.Node) error {
 
 				return cb(node)
@@ -876,12 +875,13 @@ func (s *SQLStore) ForEachNodeDirectedChannel(v lnwire.GossipVersion,
 // callback returns an error, then the transaction is aborted and the iteration
 // stops early.
 func (s *SQLStore) ForEachNodeCacheable(ctx context.Context,
+	v lnwire.GossipVersion,
 	cb func(route.Vertex, *lnwire.FeatureVector) error,
 	reset func()) error {
 
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		return forEachNodeCacheable(
-			ctx, s.cfg.QueryCfg, db,
+			ctx, s.cfg.QueryCfg, db, v,
 			func(_ int64, nodePub route.Vertex,
 				features *lnwire.FeatureVector) error {
 
@@ -1043,9 +1043,12 @@ func (s *SQLStore) ChanUpdatesInHorizon(startTime,
 // if the addresses are actually needed.
 //
 // NOTE: part of the Store interface.
-func (s *SQLStore) ForEachNodeCached(ctx context.Context, withAddrs bool,
+func (s *SQLStore) ForEachNodeCached(ctx context.Context,
+	v lnwire.GossipVersion, withAddrs bool,
 	cb func(ctx context.Context, node route.Vertex, addrs []net.Addr,
 		chans map[uint64]*DirectedChannel) error, reset func()) error {
+
+	// TODO(elle): undo the below for now? keep simple as v1.
 
 	type nodeCachedBatchData struct {
 		features      map[int64][]int
@@ -3032,7 +3035,8 @@ func forEachNodeDirectedChannel(ctx context.Context, db SQLQueries,
 // and executes the provided callback for each node. It does so via pagination
 // along with batch loading of the node feature bits.
 func forEachNodeCacheable(ctx context.Context, cfg *sqldb.QueryConfig,
-	db SQLQueries, processNode func(nodeID int64, nodePub route.Vertex,
+	db SQLQueries, v lnwire.GossipVersion, processNode func(nodeID int64,
+		nodePub route.Vertex,
 		features *lnwire.FeatureVector) error) error {
 
 	handleNode := func(_ context.Context,
@@ -3057,7 +3061,7 @@ func forEachNodeCacheable(ctx context.Context, cfg *sqldb.QueryConfig,
 
 		return db.ListNodeIDsAndPubKeys(
 			ctx, sqlc.ListNodeIDsAndPubKeysParams{
-				Version: int16(lnwire.GossipVersion1),
+				Version: int16(v),
 				ID:      lastID,
 				Limit:   limit,
 			},

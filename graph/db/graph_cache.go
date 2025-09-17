@@ -89,7 +89,7 @@ func NewGraphCache(preAllocNumNodes int) *GraphCache {
 }
 
 type graphCacheDB interface {
-	ForEachNodeCacheable(ctx context.Context,
+	ForEachNodeCacheable(ctx context.Context, v lnwire.GossipVersion,
 		cb func(route.Vertex, *lnwire.FeatureVector) error,
 		reset func()) error
 
@@ -103,13 +103,14 @@ func (c *GraphCache) PopulateFromDB(ctx context.Context, db graphCacheDB) error 
 	log.Info("Populating in-memory channel graph, this might take a " +
 		"while...")
 
-	err := db.ForEachNodeCacheable(ctx, func(node route.Vertex,
-		features *lnwire.FeatureVector) error {
+	err := db.ForEachNodeCacheable(ctx, lnwire.GossipVersion1,
+		func(node route.Vertex,
+			features *lnwire.FeatureVector) error {
 
-		c.AddNodeFeatures(node, features)
+			c.AddNodeFeatures(node, features)
 
-		return nil
-	}, func() {})
+			return nil
+		}, func() {})
 	if err != nil {
 		return err
 	}

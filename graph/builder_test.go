@@ -355,7 +355,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 	// Give time to process new blocks.
 	time.Sleep(time.Millisecond * 500)
 
-	selfNode, err := ctx.graph.SourceNode(t.Context())
+	selfNode, err := ctx.graph.SourceNode(t.Context(), lnwire.GossipVersion1)
 	require.NoError(t, err)
 
 	// Create new router with same graph database.
@@ -1468,7 +1468,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 			source = dbNode
 
 			// Set the selected source node.
-			if err := graph.SetSourceNode(ctx, source); err != nil {
+			if err := graph.SetSourceNode(ctx, lnwire.GossipVersion1, source); err != nil {
 				return nil, err
 			}
 
@@ -1804,7 +1804,7 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 		// With the node fully parsed, add it as a vertex within the
 		// graph.
 		if alias == source {
-			err = graph.SetSourceNode(ctx, dbNode)
+			err = graph.SetSourceNode(ctx, lnwire.GossipVersion1, dbNode)
 			require.NoError(t, err)
 		} else {
 			err := graph.AddNode(ctx, dbNode)

@@ -84,7 +84,7 @@ func (d *dbNode) Addrs() []net.Addr {
 func (d *databaseChannelGraph) ForEachNode(ctx context.Context,
 	cb func(context.Context, Node) error, reset func()) error {
 
-	return d.db.ForEachNode(ctx, func(n *models.Node) error {
+	return d.db.ForEachNode(ctx, lnwire.GossipVersion1, func(n *models.Node) error {
 		// We'll skip over any node that doesn't have any advertised
 		// addresses. As we won't be able to reach them to actually
 		// open any channels.
@@ -112,7 +112,8 @@ func (d *databaseChannelGraph) ForEachNodesChannels(ctx context.Context,
 	reset func()) error {
 
 	return d.db.ForEachNodeCached(
-		ctx, true, func(ctx context.Context, node route.Vertex,
+		ctx, lnwire.GossipVersion1, true,
+		func(ctx context.Context, node route.Vertex,
 			addrs []net.Addr,
 			chans map[uint64]*graphdb.DirectedChannel) error {
 
@@ -196,21 +197,22 @@ func (nc dbNodeCached) Addrs() []net.Addr {
 func (dc *databaseChannelGraphCached) ForEachNode(ctx context.Context,
 	cb func(context.Context, Node) error, reset func()) error {
 
-	return dc.db.ForEachNodeCached(ctx, false, func(ctx context.Context,
-		n route.Vertex, _ []net.Addr,
-		channels map[uint64]*graphdb.DirectedChannel) error {
+	return dc.db.ForEachNodeCached(ctx, lnwire.GossipVersion1, false,
+		func(ctx context.Context,
+			n route.Vertex, _ []net.Addr,
+			channels map[uint64]*graphdb.DirectedChannel) error {
 
-		if len(channels) > 0 {
-			node := dbNodeCached{
-				node:     n,
-				channels: channels,
+			if len(channels) > 0 {
+				node := dbNodeCached{
+					node:     n,
+					channels: channels,
+				}
+
+				return cb(ctx, node)
 			}
 
-			return cb(ctx, node)
-		}
-
-		return nil
-	}, reset)
+			return nil
+		}, reset)
 }
 
 // ForEachNodesChannels iterates through all connected nodes, and for each node,
@@ -223,32 +225,33 @@ func (dc *databaseChannelGraphCached) ForEachNodesChannels(ctx context.Context,
 	cb func(context.Context, Node, []*ChannelEdge) error,
 	reset func()) error {
 
-	return dc.db.ForEachNodeCached(ctx, false, func(ctx context.Context,
-		n route.Vertex, _ []net.Addr,
-		channels map[uint64]*graphdb.DirectedChannel) error {
+	return dc.db.ForEachNodeCached(ctx, lnwire.GossipVersion1, false,
+		func(ctx context.Context,
+			n route.Vertex, _ []net.Addr,
+			channels map[uint64]*graphdb.DirectedChannel) error {
 
-		edges := make([]*ChannelEdge, 0, len(channels))
-		for cid, channel := range channels {
-			edges = append(edges, &ChannelEdge{
-				ChanID:   lnwire.NewShortChanIDFromInt(cid),
-				Capacity: channel.Capacity,
-				Peer:     channel.OtherNode,
-			})
-		}
-
-		if len(channels) > 0 {
-			node := dbNodeCached{
-				node:     n,
-				channels: channels,
+			edges := make([]*ChannelEdge, 0, len(channels))
+			for cid, channel := range channels {
+				edges = append(edges, &ChannelEdge{
+					ChanID:   lnwire.NewShortChanIDFromInt(cid),
+					Capacity: channel.Capacity,
+					Peer:     channel.OtherNode,
+				})
 			}
 
-			if err := cb(ctx, node, edges); err != nil {
-				return err
-			}
-		}
+			if len(channels) > 0 {
+				node := dbNodeCached{
+					node:     n,
+					channels: channels,
+				}
 
-		return nil
-	}, reset)
+				if err := cb(ctx, node, edges); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		}, reset)
 }
 
 // memNode is a purely in-memory implementation of the autopilot.Node

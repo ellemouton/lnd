@@ -309,7 +309,7 @@ func testNodeInsertionAndDeletion(t *testing.T, v lnwire.GossipVersion,
 	// Also check that the withAddr param of ForEachNodeCached correctly
 	// returns the addresses we expect for this node.
 	err = graph.ForEachNodeCached(
-		ctx, true, func(ctx context.Context, node route.Vertex,
+		ctx, lnwire.GossipVersion1, true, func(ctx context.Context, node route.Vertex,
 			addrs []net.Addr,
 			chans map[uint64]*DirectedChannel) error {
 
@@ -1381,7 +1381,7 @@ func TestForEachSourceNodeChannel(t *testing.T) {
 
 	// Now, we'll use the ForEachSourceNodeChannel and assert that it
 	// returns the expected data in the call-back.
-	err := graph.ForEachSourceNodeChannel(ctx, func(chanPoint wire.OutPoint,
+	err := graph.ForEachSourceNodeChannel(ctx, lnwire.GossipVersion1, func(chanPoint wire.OutPoint,
 		havePolicy bool, otherNode *models.Node) error {
 
 		require.Contains(t, expectedSrcChans, chanPoint)
@@ -1423,7 +1423,7 @@ func TestGraphTraversal(t *testing.T) {
 	// set of channels (to force the fall back), we should find all the
 	// channel as well as the nodes included.
 	graph.graphCache = nil
-	err := graph.ForEachNodeCached(ctx, false, func(_ context.Context,
+	err := graph.ForEachNodeCached(ctx, lnwire.GossipVersion1, false, func(_ context.Context,
 		node route.Vertex, _ []net.Addr,
 		chans map[uint64]*DirectedChannel) error {
 
@@ -1516,7 +1516,7 @@ func TestGraphTraversalCacheable(t *testing.T) {
 	// Create a map of all nodes with the iteration we know works (because
 	// it is tested in another test).
 	nodeMap := make(map[route.Vertex]struct{})
-	err := graph.ForEachNode(ctx, func(n *models.Node) error {
+	err := graph.ForEachNode(ctx, lnwire.GossipVersion1, func(n *models.Node) error {
 		nodeMap[n.PubKeyBytes] = struct{}{}
 
 		return nil
@@ -1528,7 +1528,7 @@ func TestGraphTraversalCacheable(t *testing.T) {
 	// iterating over each node, once again if the map is empty that
 	// indicates that all edges have properly been reached.
 	var nodes []route.Vertex
-	err = graph.ForEachNodeCacheable(ctx, func(node route.Vertex,
+	err = graph.ForEachNodeCacheable(ctx, lnwire.GossipVersion1, func(node route.Vertex,
 		features *lnwire.FeatureVector) error {
 
 		delete(nodeMap, node)
@@ -1648,7 +1648,7 @@ func fillTestGraph(t testing.TB, graph *ChannelGraph, numNodes,
 
 	// Iterate over each node as returned by the graph, if all nodes are
 	// reached, then the map created above should be empty.
-	err := graph.ForEachNode(ctx, func(n *models.Node) error {
+	err := graph.ForEachNode(ctx, lnwire.GossipVersion1, func(n *models.Node) error {
 		delete(nodeIndex, n.Alias.UnwrapOr(""))
 		return nil
 	}, func() {})
@@ -1757,7 +1757,7 @@ func assertNumChans(t *testing.T, graph *ChannelGraph, n int) {
 
 func assertNumNodes(t *testing.T, graph *ChannelGraph, n int) {
 	numNodes := 0
-	err := graph.ForEachNode(t.Context(),
+	err := graph.ForEachNode(t.Context(), lnwire.GossipVersion1,
 		func(_ *models.Node) error {
 			numNodes++
 
@@ -4302,7 +4302,7 @@ func BenchmarkForEachChannel(b *testing.B) {
 		)
 
 		var nodes []route.Vertex
-		err := graph.ForEachNodeCacheable(ctx, func(node route.Vertex,
+		err := graph.ForEachNodeCacheable(ctx, lnwire.GossipVersion1, func(node route.Vertex,
 			vector *lnwire.FeatureVector) error {
 
 			nodes = append(nodes, node)
