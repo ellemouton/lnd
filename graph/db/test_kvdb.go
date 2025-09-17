@@ -9,8 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var isSQLDB = false
+
 // NewTestDB is a helper function that creates an BBolt database for testing.
-func NewTestDB(t testing.TB) V1Store {
+func NewTestDB(t testing.TB) Store {
 	backend, backendCleanup, err := kvdb.GetTestBackend(t.TempDir(), "cgr")
 	require.NoError(t, err)
 

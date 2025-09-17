@@ -83,16 +83,16 @@ func createTestNode(t *testing.T) *models.Node {
 	require.NoError(t, err)
 
 	pub := priv.PubKey().SerializeCompressed()
-	n := &models.Node{
-		HaveNodeAnnouncement: true,
-		LastUpdate:           time.Unix(updateTime, 0),
-		Addresses:            testAddrs,
-		Color:                color.RGBA{1, 2, 3, 0},
-		Alias:                "kek" + hex.EncodeToString(pub),
-		AuthSigBytes:         testSig.Serialize(),
-		Features:             testFeatures,
-	}
-	copy(n.PubKeyBytes[:], pub)
+	var pubKey [33]byte
+	copy(pubKey[:], pub)
+	n := models.NewV1Node(pubKey, &models.NodeV1Fields{
+		LastUpdate:   time.Unix(updateTime, 0),
+		Addresses:    testAddrs,
+		Color:        color.RGBA{1, 2, 3, 0},
+		Alias:        "kek" + hex.EncodeToString(pub),
+		AuthSigBytes: testSig.Serialize(),
+		Features:     testFeatures.RawFeatureVector,
+	})
 
 	return n
 }
@@ -447,23 +447,26 @@ func TestEdgeUpdateNotification(t *testing.T) {
 
 	// Finally, to conclude our test set up, we'll create a channel
 	// update to announce the created channel between the two nodes.
-	edge := &models.ChannelEdgeInfo{
-		ChannelID:     chanID.ToUint64(),
-		NodeKey1Bytes: node1.PubKeyBytes,
-		NodeKey2Bytes: node2.PubKeyBytes,
-		AuthProof: &models.ChannelAuthProof{
+	edge := models.NewChannelEdge(
+		lnwire.GossipVersion1, chanID.ToUint64(),
+		chainhash.Hash{}, // Default empty chain hash
+		node1.PubKeyBytes, node2.PubKeyBytes,
+		models.WithChannelPoint(*chanPoint),
+		models.WithCapacity(chanValue),
+		models.WithBitcoinKeys(
+			route.Vertex(bitcoinKey1.SerializeCompressed()),
+			route.Vertex(bitcoinKey2.SerializeCompressed()),
+		),
+		models.WithChanProof(&models.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
 			BitcoinSig2Bytes: testSig.Serialize(),
+		}),
+		func(e *models.ChannelEdgeInfo) {
+			e.FundingScript = fn.Some(script)
 		},
-		Features:      lnwire.EmptyFeatureVector(),
-		ChannelPoint:  *chanPoint,
-		Capacity:      chanValue,
-		FundingScript: fn.Some(script),
-	}
-	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
-	copy(edge.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
+	)
 
 	if err := ctx.builder.AddEdge(ctxb, edge); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
@@ -471,7 +474,7 @@ func TestEdgeUpdateNotification(t *testing.T) {
 
 	// With the channel edge now in place, we'll subscribe for topology
 	// notifications.
-	ntfnClient, err := ctx.graph.SubscribeTopology()
+	ntfnClient, err := ctx.builder.SubscribeTopology()
 	require.NoError(t, err, "unable to subscribe for channel notifications")
 
 	// Create random policy edges that are stemmed to the channel id
@@ -492,7 +495,7 @@ func TestEdgeUpdateNotification(t *testing.T) {
 	}
 
 	assertEdgeCorrect := func(t *testing.T,
-		edgeUpdate *graphdb.ChannelEdgeUpdate,
+		edgeUpdate *ChannelEdgeUpdate,
 		edgeAnn *models.ChannelEdgePolicy) {
 
 		if edgeUpdate.ChanID != edgeAnn.ChannelID {
@@ -641,21 +644,24 @@ func TestNodeUpdateNotification(t *testing.T) {
 	testFeaturesBuf := new(bytes.Buffer)
 	require.NoError(t, testFeatures.Encode(testFeaturesBuf))
 
-	edge := &models.ChannelEdgeInfo{
-		ChannelID:     chanID.ToUint64(),
-		NodeKey1Bytes: node1.PubKeyBytes,
-		NodeKey2Bytes: node2.PubKeyBytes,
-		Features:      lnwire.EmptyFeatureVector(),
-		AuthProof: &models.ChannelAuthProof{
+	edge := models.NewChannelEdge(
+		lnwire.GossipVersion1, chanID.ToUint64(),
+		chainhash.Hash{}, // Default empty chain hash
+		node1.PubKeyBytes, node2.PubKeyBytes,
+		models.WithBitcoinKeys(
+			route.Vertex(bitcoinKey1.SerializeCompressed()),
+			route.Vertex(bitcoinKey2.SerializeCompressed()),
+		),
+		models.WithChanProof(&models.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
 			BitcoinSig2Bytes: testSig.Serialize(),
+		}),
+		func(e *models.ChannelEdgeInfo) {
+			e.FundingScript = fn.Some(script)
 		},
-		FundingScript: fn.Some(script),
-	}
-	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
-	copy(edge.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
+	)
 
 	// Adding the edge will add the nodes to the graph, but with no info
 	// except the pubkey known.
@@ -664,7 +670,7 @@ func TestNodeUpdateNotification(t *testing.T) {
 	}
 
 	// Create a new client to receive notifications.
-	ntfnClient, err := ctx.graph.SubscribeTopology()
+	ntfnClient, err := ctx.builder.SubscribeTopology()
 	require.NoError(t, err, "unable to subscribe for channel notifications")
 
 	// Change network topology by adding the updated info for the two nodes
@@ -677,7 +683,7 @@ func TestNodeUpdateNotification(t *testing.T) {
 	}
 
 	assertNodeNtfnCorrect := func(t *testing.T, ann *models.Node,
-		nodeUpdate *graphdb.NetworkNodeUpdate) {
+		nodeUpdate *NetworkNodeUpdate) {
 
 		nodeKey, _ := ann.PubKey()
 
@@ -700,13 +706,13 @@ func TestNodeUpdateNotification(t *testing.T) {
 			t, testFeaturesBuf.Bytes(), featuresBuf.Bytes(),
 		)
 
-		if nodeUpdate.Alias != ann.Alias {
+		if nodeUpdate.Alias != ann.Alias.UnwrapOr("") {
 			t.Fatalf("node alias doesn't match: expected %v, got %v",
 				ann.Alias, nodeUpdate.Alias)
 		}
-		if nodeUpdate.Color != graphdb.EncodeHexColor(ann.Color) {
+		if nodeUpdate.Color != graphdb.EncodeHexColor(ann.Color.UnwrapOr(color.RGBA{})) {
 			t.Fatalf("node color doesn't match: expected %v, "+
-				"got %v", graphdb.EncodeHexColor(ann.Color),
+				"got %v", graphdb.EncodeHexColor(ann.Color.UnwrapOr(color.RGBA{})),
 				nodeUpdate.Color)
 		}
 	}
@@ -800,7 +806,7 @@ func TestNotificationCancellation(t *testing.T) {
 	ctx := createTestCtxSingleNode(t, startingBlockHeight)
 
 	// Create a new client to receive notifications.
-	ntfnClient, err := ctx.graph.SubscribeTopology()
+	ntfnClient, err := ctx.builder.SubscribeTopology()
 	require.NoError(t, err, "unable to subscribe for channel notifications")
 
 	// We'll create the utxo for a new channel.
@@ -830,23 +836,26 @@ func TestNotificationCancellation(t *testing.T) {
 	// to the client.
 	ntfnClient.Cancel()
 
-	edge := &models.ChannelEdgeInfo{
-		ChannelID:     chanID.ToUint64(),
-		NodeKey1Bytes: node1.PubKeyBytes,
-		NodeKey2Bytes: node2.PubKeyBytes,
-		AuthProof: &models.ChannelAuthProof{
+	edge := models.NewChannelEdge(
+		lnwire.GossipVersion1, chanID.ToUint64(),
+		chainhash.Hash{}, // Default empty chain hash
+		node1.PubKeyBytes, node2.PubKeyBytes,
+		models.WithChannelPoint(*chanPoint),
+		models.WithCapacity(chanValue),
+		models.WithBitcoinKeys(
+			route.Vertex(bitcoinKey1.SerializeCompressed()),
+			route.Vertex(bitcoinKey2.SerializeCompressed()),
+		),
+		models.WithChanProof(&models.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
 			BitcoinSig2Bytes: testSig.Serialize(),
+		}),
+		func(e *models.ChannelEdgeInfo) {
+			e.FundingScript = fn.Some(script)
 		},
-		Features:      lnwire.EmptyFeatureVector(),
-		ChannelPoint:  *chanPoint,
-		Capacity:      chanValue,
-		FundingScript: fn.Some(script),
-	}
-	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
-	copy(edge.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
+	)
 	if err := ctx.builder.AddEdge(ctxb, edge); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
@@ -906,30 +915,33 @@ func TestChannelCloseNotification(t *testing.T) {
 
 	// Finally, to conclude our test set up, we'll create a channel
 	// announcement to announce the created channel between the two nodes.
-	edge := &models.ChannelEdgeInfo{
-		ChannelID:     chanID.ToUint64(),
-		NodeKey1Bytes: node1.PubKeyBytes,
-		NodeKey2Bytes: node2.PubKeyBytes,
-		AuthProof: &models.ChannelAuthProof{
+	edge := models.NewChannelEdge(
+		lnwire.GossipVersion1, chanID.ToUint64(),
+		chainhash.Hash{}, // Default empty chain hash
+		node1.PubKeyBytes, node2.PubKeyBytes,
+		models.WithChannelPoint(*chanUtxo),
+		models.WithCapacity(chanValue),
+		models.WithBitcoinKeys(
+			route.Vertex(bitcoinKey1.SerializeCompressed()),
+			route.Vertex(bitcoinKey2.SerializeCompressed()),
+		),
+		models.WithChanProof(&models.ChannelAuthProof{
 			NodeSig1Bytes:    testSig.Serialize(),
 			NodeSig2Bytes:    testSig.Serialize(),
 			BitcoinSig1Bytes: testSig.Serialize(),
 			BitcoinSig2Bytes: testSig.Serialize(),
+		}),
+		func(e *models.ChannelEdgeInfo) {
+			e.FundingScript = fn.Some(script)
 		},
-		Features:      lnwire.EmptyFeatureVector(),
-		ChannelPoint:  *chanUtxo,
-		Capacity:      chanValue,
-		FundingScript: fn.Some(script),
-	}
-	copy(edge.BitcoinKey1Bytes[:], bitcoinKey1.SerializeCompressed())
-	copy(edge.BitcoinKey2Bytes[:], bitcoinKey2.SerializeCompressed())
+	)
 	if err := ctx.builder.AddEdge(ctxb, edge); err != nil {
 		t.Fatalf("unable to add edge: %v", err)
 	}
 
 	// With the channel edge now in place, we'll subscribe for topology
 	// notifications.
-	ntfnClient, err := ctx.graph.SubscribeTopology()
+	ntfnClient, err := ctx.builder.SubscribeTopology()
 	require.NoError(t, err, "unable to subscribe for channel notifications")
 
 	// Next, we'll simulate the closure of our channel by generating a new
@@ -1066,7 +1078,9 @@ func createTestCtxSingleNode(t *testing.T,
 	sourceNode := createTestNode(t)
 
 	require.NoError(t,
-		graph.SetSourceNode(t.Context(), sourceNode),
+		graph.SetSourceNode(
+			t.Context(), lnwire.GossipVersion1, sourceNode,
+		),
 		"failed to set source node",
 	)
 
@@ -1082,7 +1096,7 @@ func createTestCtxSingleNode(t *testing.T,
 func (c *testCtx) RestartBuilder(t *testing.T) {
 	c.chainView.Reset()
 
-	selfNode, err := c.graph.SourceNode(t.Context())
+	selfNode, err := c.graph.SourceNode(t.Context(), lnwire.GossipVersion1)
 	require.NoError(t, err)
 
 	// With the chainView reset, we'll now re-create the builder itself, and
@@ -1155,7 +1169,9 @@ func createTestCtxFromGraphInstanceAssumeValid(t *testing.T,
 		ConfChan:  make(chan *chainntnfs.TxConfirmation),
 	}
 
-	selfnode, err := graphInstance.graph.SourceNode(t.Context())
+	selfnode, err := graphInstance.graph.SourceNode(
+		t.Context(), lnwire.GossipVersion1,
+	)
 	require.NoError(t, err)
 
 	graphBuilder, err := NewBuilder(&Config{

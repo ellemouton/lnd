@@ -224,17 +224,8 @@ func (s *Server) ImportGraph(ctx context.Context,
 	// Obtain the pointer to the global singleton channel graph.
 	graphDB := s.cfg.GraphDB
 
-	var err error
 	for _, rpcNode := range graph.Nodes {
-		node := &models.Node{
-			HaveNodeAnnouncement: true,
-			LastUpdate: time.Unix(
-				int64(rpcNode.LastUpdate), 0,
-			),
-			Alias: rpcNode.Alias,
-		}
-
-		node.PubKeyBytes, err = parsePubKey(rpcNode.PubKey)
+		pubKeyBytes, err := parsePubKey(rpcNode.PubKey)
 		if err != nil {
 			return nil, err
 		}
@@ -251,14 +242,20 @@ func (s *Server) ImportGraph(ctx context.Context,
 		}
 
 		featureVector := lnwire.NewRawFeatureVector(featureBits...)
-		node.Features = lnwire.NewFeatureVector(
-			featureVector, featureNames,
-		)
 
-		node.Color, err = lncfg.ParseHexColor(rpcNode.Color)
+		nodeColor, err := lncfg.ParseHexColor(rpcNode.Color)
 		if err != nil {
 			return nil, err
 		}
+
+		node := models.NewV1Node(pubKeyBytes, &models.NodeV1Fields{
+			LastUpdate: time.Unix(
+				int64(rpcNode.LastUpdate), 0,
+			),
+			Alias:    rpcNode.Alias,
+			Features: featureVector,
+			Color:    nodeColor,
+		})
 
 		if err := graphDB.AddNode(ctx, node); err != nil {
 			return nil, fmt.Errorf("unable to add node %v: %w",
@@ -271,18 +268,12 @@ func (s *Server) ImportGraph(ctx context.Context,
 	for _, rpcEdge := range graph.Edges {
 		rpcEdge := rpcEdge
 
-		edge := &models.ChannelEdgeInfo{
-			ChannelID: rpcEdge.ChannelId,
-			ChainHash: *s.cfg.ActiveNetParams.GenesisHash,
-			Capacity:  btcutil.Amount(rpcEdge.Capacity),
-		}
-
-		edge.NodeKey1Bytes, err = parsePubKey(rpcEdge.Node1Pub)
+		node1, err := parsePubKey(rpcEdge.Node1Pub)
 		if err != nil {
 			return nil, err
 		}
 
-		edge.NodeKey2Bytes, err = parsePubKey(rpcEdge.Node2Pub)
+		node2, err := parsePubKey(rpcEdge.Node2Pub)
 		if err != nil {
 			return nil, err
 		}
@@ -291,9 +282,17 @@ func (s *Server) ImportGraph(ctx context.Context,
 		if err != nil {
 			return nil, err
 		}
-		edge.ChannelPoint = *channelPoint
 
-		if err := graphDB.AddChannelEdge(ctx, edge); err != nil {
+		edge := models.NewChannelEdge(
+			lnwire.GossipVersion1,
+			rpcEdge.ChannelId,
+			*s.cfg.ActiveNetParams.GenesisHash,
+			node1, node2,
+			models.WithCapacity(btcutil.Amount(rpcEdge.Capacity)),
+			models.WithChannelPoint(*channelPoint),
+		)
+
+		if err := graphDB.AddEdge(ctx, edge); err != nil {
 			return nil, fmt.Errorf("unable to add edge %v: %w",
 				rpcEdge.ChanPoint, err)
 		}
@@ -331,7 +330,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 		if rpcEdge.Node1Policy != nil {
 			policy := makePolicy(rpcEdge.Node1Policy)
 			policy.ChannelFlags = 0
-			err := graphDB.UpdateEdgePolicy(ctx, policy)
+			err := graphDB.UpdateEdge(ctx, policy)
 			if err != nil {
 				return nil, fmt.Errorf(
 					"unable to update policy: %v", err)
@@ -341,7 +340,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 		if rpcEdge.Node2Policy != nil {
 			policy := makePolicy(rpcEdge.Node2Policy)
 			policy.ChannelFlags = 1
-			err := graphDB.UpdateEdgePolicy(ctx, policy)
+			err := graphDB.UpdateEdge(ctx, policy)
 			if err != nil {
 				return nil, fmt.Errorf(
 					"unable to update policy: %v", err)

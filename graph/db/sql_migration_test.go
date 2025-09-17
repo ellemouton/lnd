@@ -25,6 +25,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btclog/v2"
+	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/kvdb/sqlbase"
@@ -137,6 +138,7 @@ var (
 func TestMigrateGraphToSQL(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
+	v := lnwire.GossipVersion1
 
 	dbFixture := NewTestDBFixture(t)
 
@@ -224,7 +226,7 @@ func TestMigrateGraphToSQL(t *testing.T) {
 				node, ok := object.(*models.Node)
 				require.True(t, ok)
 
-				err := db.SetSourceNode(ctx, node)
+				err := db.SetSourceNode(ctx, v, node)
 				require.NoError(t, err)
 			},
 			objects: []any{
@@ -369,7 +371,7 @@ func TestMigrateGraphToSQL(t *testing.T) {
 
 				switch obj := object.(type) {
 				case *models.Node:
-					err = db.SetSourceNode(ctx, obj)
+					err = db.SetSourceNode(ctx, v, obj)
 				default:
 					height, ok := obj.(uint32)
 					require.True(t, ok)
@@ -384,10 +386,7 @@ func TestMigrateGraphToSQL(t *testing.T) {
 				// The PruneGraph call requires that the source
 				// node be set. So that is the first object
 				// we will write.
-				&models.Node{
-					HaveNodeAnnouncement: false,
-					PubKeyBytes:          testPub,
-				},
+				models.NewV1ShellNode(testPub),
 				// Now we add some block heights to prune
 				// the graph at.
 				uint32(1), uint32(2), uint32(20), uint32(3),
@@ -422,6 +421,7 @@ func TestMigrateGraphToSQL(t *testing.T) {
 				require.True(t, ok)
 
 				err := db.MarkEdgeZombie(
+					lnwire.GossipVersion1,
 					obj.scid, obj.pubKey1, obj.pubKey2,
 				)
 				require.NoError(t, err)
@@ -527,11 +527,11 @@ func assertInSync(t *testing.T, kvDB *KVStore, sqlDB *SQLStore,
 
 // fetchAllNodes retrieves all nodes from the given store and returns them
 // sorted by their public key.
-func fetchAllNodes(t *testing.T, store V1Store) []*models.Node {
+func fetchAllNodes(t *testing.T, store Store) []*models.Node {
 	nodes := make([]*models.Node, 0)
 
 	err := store.ForEachNode(t.Context(),
-		func(node *models.Node) error {
+		lnwire.GossipVersion1, func(node *models.Node) error {
 			// Call PubKey to ensure the objects cached pubkey is
 			// set so that the objects can be compared as a whole.
 			_, err := node.PubKey()
@@ -558,8 +558,8 @@ func fetchAllNodes(t *testing.T, store V1Store) []*models.Node {
 }
 
 // fetchSourceNode retrieves the source node from the given store.
-func fetchSourceNode(t *testing.T, store V1Store) *models.Node {
-	node, err := store.SourceNode(t.Context())
+func fetchSourceNode(t *testing.T, store Store) *models.Node {
+	node, err := store.SourceNode(t.Context(), v1)
 	if errors.Is(err, ErrSourceNodeNotSet) {
 		return nil
 	} else {
@@ -596,31 +596,33 @@ func (c chanSet) CountPolicies() int {
 
 // fetchAllChannelsAndPolicies retrieves all channels and their policies
 // from the given store and returns them sorted by their channel ID.
-func fetchAllChannelsAndPolicies(t *testing.T, store V1Store) chanSet {
+func fetchAllChannelsAndPolicies(t *testing.T, store Store) chanSet {
 	ctx := t.Context()
 	channels := make(chanSet, 0)
-	err := store.ForEachChannel(ctx, func(info *models.ChannelEdgeInfo,
-		p1 *models.ChannelEdgePolicy,
-		p2 *models.ChannelEdgePolicy) error {
+	err := store.ForEachChannel(ctx, lnwire.GossipVersion1,
+		func(info *models.ChannelEdgeInfo,
 
-		if len(info.ExtraOpaqueData) == 0 {
-			info.ExtraOpaqueData = nil
-		}
-		if p1 != nil && len(p1.ExtraOpaqueData) == 0 {
-			p1.ExtraOpaqueData = nil
-		}
-		if p2 != nil && len(p2.ExtraOpaqueData) == 0 {
-			p2.ExtraOpaqueData = nil
-		}
+			p1 *models.ChannelEdgePolicy,
+			p2 *models.ChannelEdgePolicy) error {
 
-		channels = append(channels, chanInfo{
-			edgeInfo: info,
-			policy1:  p1,
-			policy2:  p2,
-		})
+			if len(info.ExtraOpaqueData) == 0 {
+				info.ExtraOpaqueData = nil
+			}
+			if p1 != nil && len(p1.ExtraOpaqueData) == 0 {
+				p1.ExtraOpaqueData = nil
+			}
+			if p2 != nil && len(p2.ExtraOpaqueData) == 0 {
+				p2.ExtraOpaqueData = nil
+			}
 
-		return nil
-	}, func() {})
+			channels = append(channels, chanInfo{
+				edgeInfo: info,
+				policy1:  p1,
+				policy2:  p2,
+			})
+
+			return nil
+		}, func() {})
 	require.NoError(t, err)
 
 	// Sort the channels by their channel ID to ensure a consistent order.
@@ -699,7 +701,9 @@ func checkZombieIndex(t *testing.T, kv kvdb.Backend, sql *SQLStore) {
 		isClosed, err := sql.IsClosedScid(scid)
 		require.NoError(t, err)
 
-		isZombie, _, _, err := sql.IsZombieEdge(chanID)
+		isZombie, _, _, err := sql.IsZombieEdge(
+			lnwire.GossipVersion1, chanID,
+		)
 		require.NoError(t, err)
 
 		if isClosed {
@@ -747,17 +751,15 @@ type testNodeOpt func(*models.Node)
 // makeTestNode can be used to create a test models.Node. The
 // functional options can be used to modify the node's attributes.
 func makeTestNode(t *testing.T, opts ...testNodeOpt) *models.Node {
-	n := &models.Node{
-		HaveNodeAnnouncement: true,
-		AuthSigBytes:         testSigBytes,
-		LastUpdate:           testTime,
-		Color:                testColor,
-		Alias:                "kek",
-		Features:             testFeatures,
-		Addresses:            testAddrs,
-		ExtraOpaqueData:      testExtraData,
-		PubKeyBytes:          genPubKey(t),
-	}
+	n := models.NewV1Node(genPubKey(t), &models.NodeV1Fields{
+		AuthSigBytes:    testSigBytes,
+		LastUpdate:      testTime,
+		Color:           testColor,
+		Alias:           "kek",
+		Features:        testFeatures.RawFeatureVector,
+		Addresses:       testAddrs,
+		ExtraOpaqueData: testExtraData,
+	})
 
 	for _, opt := range opts {
 		opt(n)
@@ -776,12 +778,7 @@ func makeTestNode(t *testing.T, opts ...testNodeOpt) *models.Node {
 func makeTestShellNode(t *testing.T,
 	opts ...testNodeOpt) *models.Node {
 
-	n := &models.Node{
-		HaveNodeAnnouncement: false,
-		PubKeyBytes:          genPubKey(t),
-		Features:             testEmptyFeatures,
-		LastUpdate:           time.Unix(0, 0),
-	}
+	n := models.NewV1ShellNode(genPubKey(t))
 
 	for _, opt := range opts {
 		opt(n)
@@ -804,12 +801,13 @@ func makeTestChannel(t *testing.T,
 	opts ...testChanOpt) *models.ChannelEdgeInfo {
 
 	c := &models.ChannelEdgeInfo{
+		Version:          lnwire.GossipVersion1,
 		ChannelID:        prand.Uint64(),
 		ChainHash:        testChain,
 		NodeKey1Bytes:    genPubKey(t),
 		NodeKey2Bytes:    genPubKey(t),
-		BitcoinKey1Bytes: genPubKey(t),
-		BitcoinKey2Bytes: genPubKey(t),
+		BitcoinKey1Bytes: fn.Some(genPubKey(t)),
+		BitcoinKey2Bytes: fn.Some(genPubKey(t)),
 		Features:         testFeatures,
 		AuthProof:        testAuthProof,
 		ChannelPoint: wire.OutPoint{
@@ -1226,10 +1224,14 @@ func TestSQLMigrationEdgeCases(t *testing.T) {
 
 		populateKV := func(t *testing.T, db *KVStore) {
 			// Mark both channels as zombies.
-			err := db.MarkEdgeZombie(cID1, n1, n2)
+			err := db.MarkEdgeZombie(
+				lnwire.GossipVersion1, cID1, n1, n2,
+			)
 			require.NoError(t, err)
 
-			err = db.MarkEdgeZombie(cID2, n1, n2)
+			err = db.MarkEdgeZombie(
+				lnwire.GossipVersion1, cID2, n1, n2,
+			)
 			require.NoError(t, err)
 
 			// Mark channel 1 as closed.
@@ -1398,14 +1400,16 @@ func assertResultState(t *testing.T, sql *SQLStore, expState dbState) {
 
 		// Any closed SCID should NOT be in the zombie
 		// index.
-		isZombie, _, _, err := sql.IsZombieEdge(closed)
+		isZombie, _, _, err := sql.IsZombieEdge(
+			lnwire.GossipVersion1, closed,
+		)
 		require.NoError(t, err)
 		require.False(t, isZombie)
 	}
 
 	for _, zombie := range expState.zombies {
 		isZombie, _, _, err := sql.IsZombieEdge(
-			zombie,
+			lnwire.GossipVersion1, zombie,
 		)
 		require.NoError(t, err)
 		require.True(t, isZombie)
@@ -1675,12 +1679,13 @@ func genRandomChannel(rt *rapid.T,
 	}
 
 	info := &models.ChannelEdgeInfo{
+		Version:          lnwire.GossipVersion1,
 		ChannelID:        chanID,
 		ChainHash:        testChain,
 		NodeKey1Bytes:    nodeKey1Bytes,
 		NodeKey2Bytes:    nodeKey2Bytes,
-		BitcoinKey1Bytes: bitcoinKey1Bytes,
-		BitcoinKey2Bytes: bitcoinKey2Bytes,
+		BitcoinKey1Bytes: fn.Some(bitcoinKey1Bytes),
+		BitcoinKey2Bytes: fn.Some(bitcoinKey2Bytes),
 		Features:         features,
 		AuthProof:        authProof,
 		ChannelPoint:     outpoint,
@@ -1816,19 +1821,15 @@ func genRandomNode(t *rapid.T) *models.Node {
 		extraOpaqueData = nil
 	}
 
-	node := &models.Node{
-		HaveNodeAnnouncement: true,
-		AuthSigBytes:         sigBytes,
-		LastUpdate:           randTime,
-		Color:                randColor,
-		Alias:                alias.String(),
-		Features: lnwire.NewFeatureVector(
-			features, lnwire.Features,
-		),
+	node := models.NewV1Node(pubKeyBytes, &models.NodeV1Fields{
+		AuthSigBytes:    sigBytes,
+		LastUpdate:      randTime,
+		Color:           randColor,
+		Alias:           alias.String(),
+		Features:        features,
 		Addresses:       addrs,
 		ExtraOpaqueData: extraOpaqueData,
-		PubKeyBytes:     pubKeyBytes,
-	}
+	})
 
 	// We call this method so that the internal pubkey field is populated
 	// which then lets us to proper struct comparison later on.

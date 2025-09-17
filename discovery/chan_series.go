@@ -92,7 +92,7 @@ func NewChanSeries(graph *graphdb.ChannelGraph) *ChanSeries {
 func (c *ChanSeries) HighestChanID(ctx context.Context,
 	_ chainhash.Hash) (*lnwire.ShortChannelID, error) {
 
-	chanID, err := c.graph.HighestChanID(ctx)
+	chanID, err := c.graph.HighestChanID(ctx, lnwire.GossipVersion1)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +203,7 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 
 	for _, nodeAnn := range nodeAnnsInHorizon {
 		// If this node has not been seen in the above channels, we can
-		// skip sending its NodeAnnouncement.
+		// skip sending its NodeAnnouncement1.
 		if _, seen := nodesFromChan[nodeAnn.PubKeyBytes]; !seen {
 			log.Debugf("Skipping forwarding as node %x not found "+
 				"in channel announcement", nodeAnn.PubKeyBytes)
@@ -212,7 +212,9 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 
 		// Ensure we only forward nodes that are publicly advertised to
 		// prevent leaking information about nodes.
-		isNodePublic, err := c.graph.IsPublicNode(nodeAnn.PubKeyBytes)
+		isNodePublic, err := c.graph.IsPublicNode(
+			lnwire.GossipVersion1, nodeAnn.PubKeyBytes,
+		)
 		if err != nil {
 			log.Errorf("Unable to determine if node %x is "+
 				"advertised: %v", nodeAnn.PubKeyBytes, err)
@@ -254,7 +256,9 @@ func (c *ChanSeries) FilterKnownChanIDs(_ chainhash.Hash,
 	isZombieChan func(time.Time, time.Time) bool) (
 	[]lnwire.ShortChannelID, error) {
 
-	newChanIDs, err := c.graph.FilterKnownChanIDs(superSet, isZombieChan)
+	newChanIDs, err := c.graph.FilterKnownChanIDs(
+		lnwire.GossipVersion1, superSet, isZombieChan,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -300,7 +304,7 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 		chanIDs = append(chanIDs, chanID.ToUint64())
 	}
 
-	channels, err := c.graph.FetchChanInfos(chanIDs)
+	channels, err := c.graph.FetchChanInfos(lnwire.GossipVersion1, chanIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -334,7 +338,7 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 			// If this edge has a validated node announcement, that
 			// we haven't yet sent, then we'll send that as well.
 			nodePub := channel.Node2.PubKeyBytes
-			hasNodeAnn := channel.Node2.HaveNodeAnnouncement
+			hasNodeAnn := channel.Node2.HaveAnnouncement()
 			if _, ok := nodePubsSent[nodePub]; !ok && hasNodeAnn {
 				nodeAnn, err := channel.Node2.NodeAnnouncement(
 					true,
@@ -347,7 +351,8 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 				if err != nil {
 					log.Debugf("Skipping forwarding "+
 						"invalid node announcement "+
-						"%x: %v", nodeAnn.NodeID, err)
+						"%x: %v", nodeAnn.NodePub(),
+						err)
 				} else {
 					chanAnns = append(chanAnns, nodeAnn)
 					nodePubsSent[nodePub] = struct{}{}
@@ -360,7 +365,7 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 			// If this edge has a validated node announcement, that
 			// we haven't yet sent, then we'll send that as well.
 			nodePub := channel.Node1.PubKeyBytes
-			hasNodeAnn := channel.Node1.HaveNodeAnnouncement
+			hasNodeAnn := channel.Node1.HaveAnnouncement()
 			if _, ok := nodePubsSent[nodePub]; !ok && hasNodeAnn {
 				nodeAnn, err := channel.Node1.NodeAnnouncement(
 					true,
@@ -373,7 +378,8 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 				if err != nil {
 					log.Debugf("Skipping forwarding "+
 						"invalid node announcement "+
-						"%x: %v", nodeAnn.NodeID, err)
+						"%x: %v", nodeAnn.NodePub(),
+						err)
 				} else {
 					chanAnns = append(chanAnns, nodeAnn)
 					nodePubsSent[nodePub] = struct{}{}
@@ -394,7 +400,7 @@ func (c *ChanSeries) FetchChanUpdates(chain chainhash.Hash,
 	shortChanID lnwire.ShortChannelID) ([]*lnwire.ChannelUpdate1, error) {
 
 	chanInfo, e1, e2, err := c.graph.FetchChannelEdgesByID(
-		shortChanID.ToUint64(),
+		lnwire.GossipVersion1, shortChanID.ToUint64(),
 	)
 	if err != nil {
 		return nil, err

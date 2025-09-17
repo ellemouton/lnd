@@ -5,7 +5,7 @@ package devrpc
 
 import (
 	"github.com/btcsuite/btcd/chaincfg"
-	graphdb "github.com/lightningnetwork/lnd/graph/db"
+	"github.com/lightningnetwork/lnd/graph"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 )
 
@@ -16,6 +16,6 @@ import (
 // also be specified.
 type Config struct {
 	ActiveNetParams *chaincfg.Params
-	GraphDB         *graphdb.ChannelGraph
+	GraphDB         *graph.Builder
 	Switch          *htlcswitch.Switch
 }

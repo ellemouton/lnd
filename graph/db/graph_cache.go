@@ -1,8 +1,10 @@
 package graphdb
 
 import (
+	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/lightningnetwork/lnd/graph/db/models"
@@ -84,6 +86,51 @@ func NewGraphCache(preAllocNumNodes int) *GraphCache {
 			preAllocNumNodes,
 		),
 	}
+}
+
+type graphCacheDB interface {
+	ForEachNodeCacheable(ctx context.Context, v lnwire.GossipVersion,
+		cb func(route.Vertex, *lnwire.FeatureVector) error,
+		reset func()) error
+
+	ForEachChannelCacheable(v lnwire.GossipVersion, cb func(*models.CachedEdgeInfo,
+		*models.CachedEdgePolicy, *models.CachedEdgePolicy) error,
+		reset func()) error
+}
+
+func (c *GraphCache) PopulateFromDB(ctx context.Context, db graphCacheDB) error {
+	startTime := time.Now()
+	log.Info("Populating in-memory channel graph, this might take a " +
+		"while...")
+
+	err := db.ForEachNodeCacheable(ctx, lnwire.GossipVersion1,
+		func(node route.Vertex,
+			features *lnwire.FeatureVector) error {
+
+			c.AddNodeFeatures(node, features)
+
+			return nil
+		}, func() {})
+	if err != nil {
+		return err
+	}
+
+	err = db.ForEachChannelCacheable(lnwire.GossipVersion1,
+		func(info *models.CachedEdgeInfo,
+			policy1, policy2 *models.CachedEdgePolicy) error {
+
+			c.AddChannel(info, policy1, policy2)
+
+			return nil
+		}, func() {})
+	if err != nil {
+		return err
+	}
+
+	log.Infof("Finished populating in-memory channel graph (took %v, %s)",
+		time.Since(startTime), c.Stats())
+
+	return nil
 }
 
 // Stats returns statistics about the current cache size.

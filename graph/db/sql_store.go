@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	color "image/color"
 	"maps"
 	"math"
 	"net"
@@ -31,20 +32,6 @@ import (
 	"github.com/lightningnetwork/lnd/tor"
 )
 
-// ProtocolVersion is an enum that defines the gossip protocol version of a
-// message.
-type ProtocolVersion uint8
-
-const (
-	// ProtocolV1 is the gossip protocol version defined in BOLT #7.
-	ProtocolV1 ProtocolVersion = 1
-)
-
-// String returns a string representation of the protocol version.
-func (v ProtocolVersion) String() string {
-	return fmt.Sprintf("V%d", v)
-}
-
 // SQLQueries is a subset of the sqlc.Querier interface that can be used to
 // execute queries against the SQL graph tables.
 //
@@ -61,9 +48,12 @@ type SQLQueries interface {
 	ListNodesPaginated(ctx context.Context, arg sqlc.ListNodesPaginatedParams) ([]sqlc.GraphNode, error)
 	ListNodeIDsAndPubKeys(ctx context.Context, arg sqlc.ListNodeIDsAndPubKeysParams) ([]sqlc.ListNodeIDsAndPubKeysRow, error)
 	IsPublicV1Node(ctx context.Context, pubKey []byte) (bool, error)
+	IsPublicV2Node(ctx context.Context, pubKey []byte) (bool, error)
 	DeleteUnconnectedNodes(ctx context.Context) ([][]byte, error)
 	DeleteNodeByPubKey(ctx context.Context, arg sqlc.DeleteNodeByPubKeyParams) (sql.Result, error)
 	DeleteNode(ctx context.Context, id int64) error
+	ListNodesPaginatedAllVersions(ctx context.Context, arg sqlc.ListNodesPaginatedAllVersionsParams) ([]sqlc.ListNodesPaginatedAllVersionsRow, error)
+	GetAllNodeVersionsByPubKeys(ctx context.Context, pubKeys [][]byte) ([]sqlc.GetAllNodeVersionsByPubKeysRow, error)
 
 	GetExtraNodeTypes(ctx context.Context, nodeID int64) ([]sqlc.GraphNodeExtraType, error)
 	GetNodeExtraTypesBatch(ctx context.Context, ids []int64) ([]sqlc.GraphNodeExtraType, error)
@@ -78,7 +68,8 @@ type SQLQueries interface {
 	InsertNodeFeature(ctx context.Context, arg sqlc.InsertNodeFeatureParams) error
 	GetNodeFeatures(ctx context.Context, nodeID int64) ([]sqlc.GraphNodeFeature, error)
 	GetNodeFeaturesBatch(ctx context.Context, ids []int64) ([]sqlc.GraphNodeFeature, error)
-	GetNodeFeaturesByPubKey(ctx context.Context, arg sqlc.GetNodeFeaturesByPubKeyParams) ([]int32, error)
+	GetNodeFeaturesByPubKey(ctx context.Context, pubKey []byte) ([]int32, error)
+	GetNodeFeaturesByPubKeyAndVersion(ctx context.Context, arg sqlc.GetNodeFeaturesByPubKeyAndVersionParams) ([]int32, error)
 	DeleteNodeFeature(ctx context.Context, arg sqlc.DeleteNodeFeatureParams) error
 
 	/*
@@ -101,7 +92,7 @@ type SQLQueries interface {
 	GetChannelsByIDs(ctx context.Context, ids []int64) ([]sqlc.GetChannelsByIDsRow, error)
 	GetChannelAndNodesBySCID(ctx context.Context, arg sqlc.GetChannelAndNodesBySCIDParams) (sqlc.GetChannelAndNodesBySCIDRow, error)
 	HighestSCID(ctx context.Context, version int16) ([]byte, error)
-	ListChannelsByNodeID(ctx context.Context, arg sqlc.ListChannelsByNodeIDParams) ([]sqlc.ListChannelsByNodeIDRow, error)
+	ListChannelsByNodeID(ctx context.Context, id int64) ([]sqlc.ListChannelsByNodeIDRow, error)
 	ListChannelsForNodeIDs(ctx context.Context, arg sqlc.ListChannelsForNodeIDsParams) ([]sqlc.ListChannelsForNodeIDsRow, error)
 	ListChannelsWithPoliciesPaginated(ctx context.Context, arg sqlc.ListChannelsWithPoliciesPaginatedParams) ([]sqlc.ListChannelsWithPoliciesPaginatedRow, error)
 	ListChannelsWithPoliciesForCachePaginated(ctx context.Context, arg sqlc.ListChannelsWithPoliciesForCachePaginatedParams) ([]sqlc.ListChannelsWithPoliciesForCachePaginatedRow, error)
@@ -167,6 +158,21 @@ type SQLQueries interface {
 	InsertEdgePolicyMig(ctx context.Context, arg sqlc.InsertEdgePolicyMigParams) (int64, error)
 }
 
+const (
+	v1 = lnwire.GossipVersion1
+	v2 = lnwire.GossipVersion2
+)
+
+var knownGossipVersions = map[lnwire.GossipVersion]struct{}{
+	v1: {},
+	v2: {},
+}
+
+func isKnownGossipVersion(v lnwire.GossipVersion) bool {
+	_, ok := knownGossipVersions[v]
+	return ok
+}
+
 // BatchedSQLQueries is a version of SQLQueries that's capable of batched
 // database operations.
 type BatchedSQLQueries interface {
@@ -174,7 +180,7 @@ type BatchedSQLQueries interface {
 	sqldb.BatchedTx[SQLQueries]
 }
 
-// SQLStore is an implementation of the V1Store interface that uses a SQL
+// SQLStore is an implementation of the Store interface that uses a SQL
 // database as the backend.
 type SQLStore struct {
 	cfg *SQLStoreConfig
@@ -190,13 +196,13 @@ type SQLStore struct {
 	chanScheduler batch.Scheduler[SQLQueries]
 	nodeScheduler batch.Scheduler[SQLQueries]
 
-	srcNodes  map[ProtocolVersion]*srcNodeInfo
+	srcNodes  map[lnwire.GossipVersion]*srcNodeInfo
 	srcNodeMu sync.Mutex
 }
 
-// A compile-time assertion to ensure that SQLStore implements the V1Store
+// A compile-time assertion to ensure that SQLStore implements the Store
 // interface.
-var _ V1Store = (*SQLStore)(nil)
+var _ Store = (*SQLStore)(nil)
 
 // SQLStoreConfig holds the configuration for the SQLStore.
 type SQLStoreConfig struct {
@@ -228,7 +234,7 @@ func NewSQLStore(cfg *SQLStoreConfig, db BatchedSQLQueries,
 		db:          db,
 		rejectCache: newRejectCache(opts.RejectCacheSize),
 		chanCache:   newChannelCache(opts.ChannelCacheSize),
-		srcNodes:    make(map[ProtocolVersion]*srcNodeInfo),
+		srcNodes:    make(map[lnwire.GossipVersion]*srcNodeInfo),
 	}
 
 	s.chanScheduler = batch.NewTimeScheduler(
@@ -246,9 +252,13 @@ func NewSQLStore(cfg *SQLStoreConfig, db BatchedSQLQueries,
 // graph. If it is present from before, this will update that node's
 // information.
 //
-// NOTE: part of the V1Store interface.
+// NOTE: part of the Store interface.
 func (s *SQLStore) AddNode(ctx context.Context,
 	node *models.Node, opts ...batch.SchedulerOption) error {
+
+	if !isKnownGossipVersion(node.Version) {
+		return fmt.Errorf("unknown gossip version: %d", node.Version)
+	}
 
 	r := &batch.Request[SQLQueries]{
 		Opts: batch.NewSchedulerOptions(opts...),
@@ -265,14 +275,16 @@ func (s *SQLStore) AddNode(ctx context.Context,
 // key. If the node isn't found in the database, then ErrGraphNodeNotFound is
 // returned.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) FetchNode(ctx context.Context,
+// NOTE: part of the Store interface.
+func (s *SQLStore) FetchNode(ctx context.Context, v lnwire.GossipVersion,
 	pubKey route.Vertex) (*models.Node, error) {
 
 	var node *models.Node
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		var err error
-		_, node, err = getNodeByPubKey(ctx, s.cfg.QueryCfg, db, pubKey)
+		_, node, err = getNodeByPubKey(
+			ctx, s.cfg.QueryCfg, db, v, pubKey,
+		)
 
 		return err
 	}, sqldb.NoOpReset)
@@ -289,18 +301,15 @@ func (s *SQLStore) FetchNode(ctx context.Context,
 // with a true boolean. Otherwise, an empty time.Time is returned with a false
 // boolean.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) HasNode(ctx context.Context,
-	pubKey [33]byte) (time.Time, bool, error) {
+// NOTE: part of the Store interface.
+func (s *SQLStore) HasNode(ctx context.Context, v lnwire.GossipVersion,
+	pubKey [33]byte) (bool, error) {
 
-	var (
-		exists     bool
-		lastUpdate time.Time
-	)
+	var exists bool
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		dbNode, err := db.GetNodeByPubKey(
+		_, err := db.GetNodeByPubKey(
 			ctx, sqlc.GetNodeByPubKeyParams{
-				Version: int16(ProtocolV1),
+				Version: int16(v),
 				PubKey:  pubKey[:],
 			},
 		)
@@ -312,27 +321,23 @@ func (s *SQLStore) HasNode(ctx context.Context,
 
 		exists = true
 
-		if dbNode.LastUpdate.Valid {
-			lastUpdate = time.Unix(dbNode.LastUpdate.Int64, 0)
-		}
-
 		return nil
 	}, sqldb.NoOpReset)
 	if err != nil {
-		return time.Time{}, false,
-			fmt.Errorf("unable to fetch node: %w", err)
+		return false, fmt.Errorf("unable to fetch node: %w", err)
 	}
 
-	return lastUpdate, exists, nil
+	return exists, nil
 }
 
 // AddrsForNode returns all known addresses for the target node public key
 // that the graph DB is aware of. The returned boolean indicates if the
 // given node is unknown to the graph DB or not.
 //
-// NOTE: part of the V1Store interface.
+// NOTE: part of the Store interface.
 func (s *SQLStore) AddrsForNode(ctx context.Context,
-	nodePub *btcec.PublicKey) (bool, []net.Addr, error) {
+	v lnwire.GossipVersion, nodePub *btcec.PublicKey) (bool, []net.Addr,
+	error) {
 
 	var (
 		addresses []net.Addr
@@ -343,7 +348,7 @@ func (s *SQLStore) AddrsForNode(ctx context.Context,
 		// does.
 		dbID, err := db.GetNodeIDByPubKey(
 			ctx, sqlc.GetNodeIDByPubKeyParams{
-				Version: int16(ProtocolV1),
+				Version: int16(v),
 				PubKey:  nodePub.SerializeCompressed(),
 			},
 		)
@@ -372,14 +377,14 @@ func (s *SQLStore) AddrsForNode(ctx context.Context,
 // DeleteNode starts a new database transaction to remove a vertex/node
 // from the database according to the node's public key.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) DeleteNode(ctx context.Context,
+// NOTE: part of the Store interface.
+func (s *SQLStore) DeleteNode(ctx context.Context, v lnwire.GossipVersion,
 	pubKey route.Vertex) error {
 
 	err := s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
 		res, err := db.DeleteNodeByPubKey(
 			ctx, sqlc.DeleteNodeByPubKeyParams{
-				Version: int16(ProtocolV1),
+				Version: int16(v),
 				PubKey:  pubKey[:],
 			},
 		)
@@ -419,11 +424,19 @@ func (s *SQLStore) FetchNodeFeatures(nodePub route.Vertex) (
 	return fetchNodeFeatures(ctx, s.db, nodePub)
 }
 
+func (s *SQLStore) FetchVersionedNodeFeatures(v lnwire.GossipVersion,
+	nodePub route.Vertex) (*lnwire.FeatureVector, error) {
+
+	ctx := context.TODO()
+
+	return fetchVersionedNodeFeatures(ctx, s.db, v, nodePub)
+}
+
 // DisabledChannelIDs returns the channel ids of disabled channels.
 // A channel is disabled when two of the associated ChanelEdgePolicies
 // have their disabled bit on.
 //
-// NOTE: part of the V1Store interface.
+// NOTE: part of the Store interface.
 func (s *SQLStore) DisabledChannelIDs() ([]uint64, error) {
 	var (
 		ctx     = context.TODO()
@@ -450,15 +463,15 @@ func (s *SQLStore) DisabledChannelIDs() ([]uint64, error) {
 
 // LookupAlias attempts to return the alias as advertised by the target node.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) LookupAlias(ctx context.Context,
+// NOTE: part of the Store interface.
+func (s *SQLStore) LookupAlias(ctx context.Context, v lnwire.GossipVersion,
 	pub *btcec.PublicKey) (string, error) {
 
 	var alias string
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		dbNode, err := db.GetNodeByPubKey(
 			ctx, sqlc.GetNodeByPubKeyParams{
-				Version: int16(ProtocolV1),
+				Version: int16(v),
 				PubKey:  pub.SerializeCompressed(),
 			},
 		)
@@ -488,19 +501,21 @@ func (s *SQLStore) LookupAlias(ctx context.Context,
 // a path finding algorithm in order to explore the reachability of another
 // node based off the source node.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) SourceNode(ctx context.Context) (*models.Node,
-	error) {
+// NOTE: part of the Store interface.
+func (s *SQLStore) SourceNode(ctx context.Context, v lnwire.GossipVersion) (
+	*models.Node, error) {
 
 	var node *models.Node
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		_, nodePub, err := s.getSourceNode(ctx, db, ProtocolV1)
+		_, nodePub, err := s.getSourceNode(ctx, db, v)
 		if err != nil {
 			return fmt.Errorf("unable to fetch V1 source node: %w",
 				err)
 		}
 
-		_, node, err = getNodeByPubKey(ctx, s.cfg.QueryCfg, db, nodePub)
+		_, node, err = getNodeByPubKey(
+			ctx, s.cfg.QueryCfg, db, v, nodePub,
+		)
 
 		return err
 	}, sqldb.NoOpReset)
@@ -515,8 +530,8 @@ func (s *SQLStore) SourceNode(ctx context.Context) (*models.Node,
 // node is to be used as the center of a star-graph within path finding
 // algorithms.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) SetSourceNode(ctx context.Context,
+// NOTE: part of the Store interface.
+func (s *SQLStore) SetSourceNode(ctx context.Context, v lnwire.GossipVersion,
 	node *models.Node) error {
 
 	return s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
@@ -528,7 +543,7 @@ func (s *SQLStore) SetSourceNode(ctx context.Context,
 
 		// Make sure that if a source node for this version is already
 		// set, then the ID is the same as the one we are about to set.
-		dbSourceNodeID, _, err := s.getSourceNode(ctx, db, ProtocolV1)
+		dbSourceNodeID, _, err := s.getSourceNode(ctx, db, v)
 		if err != nil && !errors.Is(err, ErrSourceNodeNotSet) {
 			return fmt.Errorf("unable to fetch source node: %w",
 				err)
@@ -551,13 +566,13 @@ func (s *SQLStore) SetSourceNode(ctx context.Context,
 // nodes to quickly determine if they have the same set of up to date node
 // announcements.
 //
-// NOTE: This is part of the V1Store interface.
+// NOTE: This is part of the Store interface.
 func (s *SQLStore) NodeUpdatesInHorizon(startTime,
-	endTime time.Time) ([]models.Node, error) {
+	endTime time.Time) ([]*models.Node, error) {
 
 	ctx := context.TODO()
 
-	var nodes []models.Node
+	var nodes []*models.Node
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		dbNodes, err := db.GetNodesByLastUpdateRange(
 			ctx, sqlc.GetNodesByLastUpdateRangeParams{
@@ -572,7 +587,7 @@ func (s *SQLStore) NodeUpdatesInHorizon(startTime,
 		err = forEachNodeInBatch(
 			ctx, s.cfg.QueryCfg, db, dbNodes,
 			func(_ int64, node *models.Node) error {
-				nodes = append(nodes, *node)
+				nodes = append(nodes, node)
 
 				return nil
 			},
@@ -597,9 +612,13 @@ func (s *SQLStore) NodeUpdatesInHorizon(startTime,
 // supports. The chanPoint and chanID are used to uniquely identify the edge
 // globally within the database.
 //
-// NOTE: part of the V1Store interface.
+// NOTE: part of the Store interface.
 func (s *SQLStore) AddChannelEdge(ctx context.Context,
 	edge *models.ChannelEdgeInfo, opts ...batch.SchedulerOption) error {
+
+	if !isKnownGossipVersion(edge.Version) {
+		return fmt.Errorf("unknown gossip version: %d", edge.Version)
+	}
 
 	var alreadyExists bool
 	r := &batch.Request[SQLQueries]{
@@ -618,7 +637,7 @@ func (s *SQLStore) AddChannelEdge(ctx context.Context,
 			_, err := tx.GetChannelBySCID(
 				ctx, sqlc.GetChannelBySCIDParams{
 					Scid:    chanIDB,
-					Version: int16(ProtocolV1),
+					Version: int16(edge.Version),
 				},
 			)
 			if err == nil {
@@ -652,11 +671,13 @@ func (s *SQLStore) AddChannelEdge(ctx context.Context,
 // This represents the "newest" channel from the PoV of the chain. This method
 // can be used by peers to quickly determine if their graphs are in sync.
 //
-// NOTE: This is part of the V1Store interface.
-func (s *SQLStore) HighestChanID(ctx context.Context) (uint64, error) {
+// NOTE: This is part of the Store interface.
+func (s *SQLStore) HighestChanID(ctx context.Context,
+	v lnwire.GossipVersion) (uint64, error) {
+
 	var highestChanID uint64
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		chanID, err := db.HighestSCID(ctx, int16(ProtocolV1))
+		chanID, err := db.HighestSCID(ctx, int16(v))
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		} else if err != nil {
@@ -683,10 +704,13 @@ func (s *SQLStore) HighestChanID(ctx context.Context) (uint64, error) {
 // determined by the lexicographical ordering of the identity public keys of the
 // nodes on either side of the channel.
 //
-// NOTE: part of the V1Store interface.
+// NOTE: part of the Store interface.
 func (s *SQLStore) UpdateEdgePolicy(ctx context.Context,
 	edge *models.ChannelEdgePolicy,
 	opts ...batch.SchedulerOption) (route.Vertex, route.Vertex, error) {
+
+	//if !isKnownGossipVersion(edge.Version) {
+	//}
 
 	var (
 		isUpdate1    bool
@@ -773,13 +797,14 @@ func (s *SQLStore) updateEdgeCache(e *models.ChannelEdgePolicy,
 // channel's outpoint, whether we have a policy for the channel and the channel
 // peer's node information.
 //
-// NOTE: part of the V1Store interface.
+// NOTE: part of the Store interface.
 func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
-	cb func(chanPoint wire.OutPoint, havePolicy bool,
+	v lnwire.GossipVersion, cb func(chanPoint wire.OutPoint,
+		havePolicy bool,
 		otherNode *models.Node) error, reset func()) error {
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		nodeID, nodePub, err := s.getSourceNode(ctx, db, ProtocolV1)
+		nodeID, nodePub, err := s.getSourceNode(ctx, db, v)
 		if err != nil {
 			return fmt.Errorf("unable to fetch source node: %w",
 				err)
@@ -808,7 +833,8 @@ func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
 				}
 
 				_, otherNode, err := getNodeByPubKey(
-					ctx, s.cfg.QueryCfg, db, otherNodePub,
+					ctx, s.cfg.QueryCfg, db, v,
+					otherNodePub,
 				)
 				if err != nil {
 					return fmt.Errorf("unable to fetch "+
@@ -830,14 +856,14 @@ func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
 // returns an error, then the transaction is aborted and the iteration stops
 // early.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) ForEachNode(ctx context.Context,
+// NOTE: part of the Store interface.
+func (s *SQLStore) ForEachNode(ctx context.Context, v lnwire.GossipVersion,
 	cb func(node *models.Node) error, reset func()) error {
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		return forEachNodePaginated(
-			ctx, s.cfg.QueryCfg, db,
-			ProtocolV1, func(_ context.Context, _ int64,
+			ctx, s.cfg.QueryCfg, db, v,
+			func(_ context.Context, _ int64,
 				node *models.Node) error {
 
 				return cb(node)
@@ -854,13 +880,16 @@ func (s *SQLStore) ForEachNode(ctx context.Context,
 // Unknown policies are passed into the callback as nil values.
 //
 // NOTE: this is part of the graphdb.NodeTraverser interface.
-func (s *SQLStore) ForEachNodeDirectedChannel(nodePub route.Vertex,
-	cb func(channel *DirectedChannel) error, reset func()) error {
+func (s *SQLStore) ForEachNodeDirectedChannel(v lnwire.GossipVersion,
+	nodePub route.Vertex, cb func(channel *DirectedChannel) error,
+	reset func()) error {
 
 	var ctx = context.TODO()
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		return forEachNodeDirectedChannel(ctx, db, nodePub, cb)
+		return forEachNodeDirectedChannel(
+			ctx, db, v, nodePub, cb,
+		)
 	}, reset)
 }
 
@@ -869,12 +898,13 @@ func (s *SQLStore) ForEachNodeDirectedChannel(nodePub route.Vertex,
 // callback returns an error, then the transaction is aborted and the iteration
 // stops early.
 func (s *SQLStore) ForEachNodeCacheable(ctx context.Context,
+	v lnwire.GossipVersion,
 	cb func(route.Vertex, *lnwire.FeatureVector) error,
 	reset func()) error {
 
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		return forEachNodeCacheable(
-			ctx, s.cfg.QueryCfg, db,
+			ctx, s.cfg.QueryCfg, db, v,
 			func(_ int64, nodePub route.Vertex,
 				features *lnwire.FeatureVector) error {
 
@@ -898,15 +928,16 @@ func (s *SQLStore) ForEachNodeCacheable(ctx context.Context,
 //
 // Unknown policies are passed into the callback as nil values.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) ForEachNodeChannel(ctx context.Context, nodePub route.Vertex,
+// NOTE: part of the Store interface.
+func (s *SQLStore) ForEachNodeChannel(ctx context.Context,
+	v lnwire.GossipVersion, nodePub route.Vertex,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error, reset func()) error {
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		dbNode, err := db.GetNodeByPubKey(
 			ctx, sqlc.GetNodeByPubKeyParams{
-				Version: int16(ProtocolV1),
+				Version: int16(v),
 				PubKey:  nodePub[:],
 			},
 		)
@@ -923,7 +954,7 @@ func (s *SQLStore) ForEachNodeChannel(ctx context.Context, nodePub route.Vertex,
 // ChanUpdatesInHorizon returns all the known channel edges which have at least
 // one edge that has an update timestamp within the specified horizon.
 //
-// NOTE: This is part of the V1Store interface.
+// NOTE: This is part of the Store interface.
 func (s *SQLStore) ChanUpdatesInHorizon(startTime,
 	endTime time.Time) ([]ChannelEdge, error) {
 
@@ -932,6 +963,7 @@ func (s *SQLStore) ChanUpdatesInHorizon(startTime,
 
 	var (
 		ctx = context.TODO()
+		v   = v1
 		// To ensure we don't return duplicate ChannelEdges, we'll use
 		// an additional map to keep track of the edges already seen to
 		// prevent re-adding it.
@@ -944,7 +976,7 @@ func (s *SQLStore) ChanUpdatesInHorizon(startTime,
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		rows, err := db.GetChannelsByPolicyLastUpdateRange(
 			ctx, sqlc.GetChannelsByPolicyLastUpdateRangeParams{
-				Version:   int16(ProtocolV1),
+				Version:   int16(v),
 				StartTime: sqldb.SQLInt64(startTime.Unix()),
 				EndTime:   sqldb.SQLInt64(endTime.Unix()),
 			},
@@ -1034,88 +1066,102 @@ func (s *SQLStore) ChanUpdatesInHorizon(startTime,
 // result in an additional round-trip to the database, so it should only be used
 // if the addresses are actually needed.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) ForEachNodeCached(ctx context.Context, withAddrs bool,
+// NOTE: part of the Store interface.
+func (s *SQLStore) ForEachNodeCached(ctx context.Context,
+	v lnwire.GossipVersion, withAddrs bool,
 	cb func(ctx context.Context, node route.Vertex, addrs []net.Addr,
 		chans map[uint64]*DirectedChannel) error, reset func()) error {
+
+	// TODO(elle): undo the below for now? keep simple as v1.
 
 	type nodeCachedBatchData struct {
 		features      map[int64][]int
 		addrs         map[int64][]nodeAddress
 		chanBatchData *batchChannelData
 		chanMap       map[int64][]sqlc.ListChannelsForNodeIDsRow
+		nodesByPubKey map[string][]sqlc.GetAllNodeVersionsByPubKeysRow
 	}
 
-	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		// pageQueryFunc is used to query the next page of nodes.
-		pageQueryFunc := func(ctx context.Context, lastID int64,
-			limit int32) ([]sqlc.ListNodeIDsAndPubKeysRow, error) {
+	// Track processed pub_keys globally across all pages
+	processedPubKeys := make(map[string]bool)
 
-			return db.ListNodeIDsAndPubKeys(
-				ctx, sqlc.ListNodeIDsAndPubKeysParams{
-					Version: int16(ProtocolV1),
-					ID:      lastID,
-					Limit:   limit,
-				},
-			)
+	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+		// pageQueryFunc gets all nodes (all versions)
+		pageQueryFunc := func(ctx context.Context, lastID int64, limit int32) ([]sqlc.ListNodesPaginatedAllVersionsRow, error) {
+			return db.ListNodesPaginatedAllVersions(ctx, sqlc.ListNodesPaginatedAllVersionsParams{
+				ID:    lastID,
+				Limit: limit,
+			})
 		}
 
-		// batchDataFunc is then used to batch load the data required
-		// for each page of nodes.
-		batchDataFunc := func(ctx context.Context,
-			nodeIDs []int64) (*nodeCachedBatchData, error) {
-
-			// Batch load node features.
-			nodeFeatures, err := batchLoadNodeFeaturesHelper(
-				ctx, s.cfg.QueryCfg, db, nodeIDs,
-			)
-			if err != nil {
-				return nil, fmt.Errorf("unable to batch load "+
-					"node features: %w", err)
-			}
-
-			// Maybe fetch the node's addresses if requested.
-			var nodeAddrs map[int64][]nodeAddress
-			if withAddrs {
-				nodeAddrs, err = batchLoadNodeAddressesHelper(
-					ctx, s.cfg.QueryCfg, db, nodeIDs,
-				)
-				if err != nil {
-					return nil, fmt.Errorf("unable to "+
-						"batch load node "+
-						"addresses: %w", err)
+		// batchDataFunc loads data for nodes in the page, including all versions of unique pub_keys
+		batchDataFunc := func(ctx context.Context, nodeRows []sqlc.ListNodesPaginatedAllVersionsRow) (*nodeCachedBatchData, error) {
+			// Extract unique pub_keys from this page that we haven't processed yet
+			uniquePubKeysInPage := make(map[string][]byte)
+			for _, nodeRow := range nodeRows {
+				pubKeyHex := hex.EncodeToString(nodeRow.PubKey)
+				if !processedPubKeys[pubKeyHex] {
+					uniquePubKeysInPage[pubKeyHex] = nodeRow.PubKey
 				}
 			}
 
-			// Batch load ALL unique channels for ALL nodes in this
-			// page.
-			allChannels, err := db.ListChannelsForNodeIDs(
-				ctx, sqlc.ListChannelsForNodeIDsParams{
-					Version:  int16(ProtocolV1),
-					Node1Ids: nodeIDs,
-					Node2Ids: nodeIDs,
-				},
-			)
-			if err != nil {
-				return nil, fmt.Errorf("unable to batch "+
-					"fetch channels for nodes: %w", err)
+			// Get ALL versions of the unique pub_keys in this page
+			var pubKeysToQuery [][]byte
+			for _, pubKey := range uniquePubKeysInPage {
+				pubKeysToQuery = append(pubKeysToQuery, pubKey)
 			}
 
-			// Deduplicate channels and collect IDs.
+			var allNodeVersions []sqlc.GetAllNodeVersionsByPubKeysRow
+			if len(pubKeysToQuery) > 0 {
+				var err error
+				allNodeVersions, err = db.GetAllNodeVersionsByPubKeys(
+					ctx, pubKeysToQuery,
+				)
+				if err != nil {
+					return nil, fmt.Errorf("unable to get all node versions: %w", err)
+				}
+			}
+
+			// Extract all node IDs for batch loading
+			var allNodeIDs []int64
+			for _, nodeVersion := range allNodeVersions {
+				allNodeIDs = append(allNodeIDs, nodeVersion.ID)
+			}
+
+			// Batch load features for ALL node versions
+			nodeFeatures, err := batchLoadNodeFeaturesHelper(ctx, s.cfg.QueryCfg, db, allNodeIDs)
+			if err != nil {
+				return nil, fmt.Errorf("unable to batch load node features: %w", err)
+			}
+
+			// Batch load addresses if requested
+			var nodeAddrs map[int64][]nodeAddress
+			if withAddrs {
+				nodeAddrs, err = batchLoadNodeAddressesHelper(ctx, s.cfg.QueryCfg, db, allNodeIDs)
+				if err != nil {
+					return nil, fmt.Errorf("unable to batch load node addresses: %w", err)
+				}
+			}
+
+			// Batch load channels for ALL node versions
+			allChannels, err := db.ListChannelsForNodeIDs(ctx, sqlc.ListChannelsForNodeIDsParams{
+				Node1Ids: allNodeIDs,
+				Node2Ids: allNodeIDs,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("unable to batch fetch channels: %w", err)
+			}
+
+			// Process channels - deduplicate and collect policy IDs
 			var (
 				allChannelIDs []int64
 				allPolicyIDs  []int64
 			)
-			uniqueChannels := make(
-				map[int64]sqlc.ListChannelsForNodeIDsRow,
-			)
+			uniqueChannels := make(map[int64]sqlc.ListChannelsForNodeIDsRow)
 
 			for _, channel := range allChannels {
 				channelID := channel.GraphChannel.ID
-
-				// Only process each unique channel once.
-				_, exists := uniqueChannels[channelID]
-				if exists {
+				if _, exists := uniqueChannels[channelID]; exists {
 					continue
 				}
 
@@ -1123,54 +1169,34 @@ func (s *SQLStore) ForEachNodeCached(ctx context.Context, withAddrs bool,
 				allChannelIDs = append(allChannelIDs, channelID)
 
 				if channel.Policy1ID.Valid {
-					allPolicyIDs = append(
-						allPolicyIDs,
-						channel.Policy1ID.Int64,
-					)
+					allPolicyIDs = append(allPolicyIDs, channel.Policy1ID.Int64)
 				}
 				if channel.Policy2ID.Valid {
-					allPolicyIDs = append(
-						allPolicyIDs,
-						channel.Policy2ID.Int64,
-					)
+					allPolicyIDs = append(allPolicyIDs, channel.Policy2ID.Int64)
 				}
 			}
 
-			// Batch load channel data for all unique channels.
-			channelBatchData, err := batchLoadChannelData(
-				ctx, s.cfg.QueryCfg, db, allChannelIDs,
-				allPolicyIDs,
-			)
+			// Batch load channel data
+			channelBatchData, err := batchLoadChannelData(ctx, s.cfg.QueryCfg, db, allChannelIDs, allPolicyIDs)
 			if err != nil {
-				return nil, fmt.Errorf("unable to batch "+
-					"load channel data: %w", err)
+				return nil, fmt.Errorf("unable to batch load channel data: %w", err)
 			}
 
-			// Create map of node ID to channels that involve this
-			// node.
-			nodeIDSet := make(map[int64]bool)
-			for _, nodeID := range nodeIDs {
-				nodeIDSet[nodeID] = true
-			}
-
-			nodeChannelMap := make(
-				map[int64][]sqlc.ListChannelsForNodeIDsRow,
-			)
+			// Create node ID -> channels mapping
+			nodeChannelMap := make(map[int64][]sqlc.ListChannelsForNodeIDsRow)
 			for _, channel := range uniqueChannels {
-				// Add channel to both nodes if they're in our
-				// current page.
 				node1 := channel.GraphChannel.NodeID1
-				if nodeIDSet[node1] {
-					nodeChannelMap[node1] = append(
-						nodeChannelMap[node1], channel,
-					)
-				}
 				node2 := channel.GraphChannel.NodeID2
-				if nodeIDSet[node2] {
-					nodeChannelMap[node2] = append(
-						nodeChannelMap[node2], channel,
-					)
-				}
+
+				nodeChannelMap[node1] = append(nodeChannelMap[node1], channel)
+				nodeChannelMap[node2] = append(nodeChannelMap[node2], channel)
+			}
+
+			// Group node versions by pub_key for easy lookup
+			nodesByPubKey := make(map[string][]sqlc.GetAllNodeVersionsByPubKeysRow)
+			for _, nodeVersion := range allNodeVersions {
+				pubKeyHex := hex.EncodeToString(nodeVersion.PubKey)
+				nodesByPubKey[pubKeyHex] = append(nodesByPubKey[pubKeyHex], nodeVersion)
 			}
 
 			return &nodeCachedBatchData{
@@ -1178,71 +1204,135 @@ func (s *SQLStore) ForEachNodeCached(ctx context.Context, withAddrs bool,
 				addrs:         nodeAddrs,
 				chanBatchData: channelBatchData,
 				chanMap:       nodeChannelMap,
+				nodesByPubKey: nodesByPubKey,
 			}, nil
 		}
 
-		// processItem is used to process each node in the current page.
-		processItem := func(ctx context.Context,
-			nodeData sqlc.ListNodeIDsAndPubKeysRow,
-			batchData *nodeCachedBatchData) error {
+		// processItem handles deduplication and combining of node versions
+		processItem := func(ctx context.Context, nodeRow sqlc.ListNodesPaginatedAllVersionsRow, batchData *nodeCachedBatchData) error {
+			pubKeyHex := hex.EncodeToString(nodeRow.PubKey)
 
-			// Build feature vector for this node.
-			fv := lnwire.EmptyFeatureVector()
-			features, exists := batchData.features[nodeData.ID]
-			if exists {
-				for _, bit := range features {
-					fv.Set(lnwire.FeatureBit(bit))
-				}
+			// Skip if we've already processed this pub_key
+			if processedPubKeys[pubKeyHex] {
+				return nil
+			}
+
+			// Mark this pub_key as processed
+			processedPubKeys[pubKeyHex] = true
+
+			// Get all versions from the pre-loaded data
+			allNodeVersions := batchData.nodesByPubKey[pubKeyHex]
+			if len(allNodeVersions) == 0 {
+				return nil // Skip if no versions found
 			}
 
 			var nodePub route.Vertex
-			copy(nodePub[:], nodeData.PubKey)
+			copy(nodePub[:], nodeRow.PubKey)
 
-			nodeChannels := batchData.chanMap[nodeData.ID]
+			// Combine features from all versions
+			allFeatures := make(map[int]bool)
+			for _, nodeVersion := range allNodeVersions {
+				if features, exists := batchData.features[nodeVersion.ID]; exists {
+					for _, bit := range features {
+						allFeatures[bit] = true
+					}
+				}
+			}
+
+			// Build combined feature vector
+			fv := lnwire.EmptyFeatureVector()
+			for bit := range allFeatures {
+				fv.Set(lnwire.FeatureBit(bit))
+			}
+
+			// Combine addresses from all versions
+			var allAddresses []nodeAddress
+			if withAddrs {
+				for _, nodeVersion := range allNodeVersions {
+					if addrs, exists := batchData.addrs[nodeVersion.ID]; exists {
+						allAddresses = append(allAddresses, addrs...)
+					}
+				}
+			}
+
+			type channelWithVersion struct {
+				channel sqlc.ListChannelsForNodeIDsRow
+				version int16
+			}
+
+			// Combine channels from all versions, preferring newer versions
+			channelsByChannelID := make(map[uint64]channelWithVersion)
+
+			for _, nodeVersion := range allNodeVersions {
+				nodeChannels := batchData.chanMap[nodeVersion.ID]
+
+				for _, channelRow := range nodeChannels {
+					channelSCID := extractChannelIDFromSCID(channelRow.GraphChannel.Scid)
+					currentVersion := channelRow.GraphChannel.Version
+
+					// If we haven't seen this channel or this version is newer, use it
+					if existing, exists := channelsByChannelID[channelSCID]; !exists || currentVersion > existing.version {
+						channelsByChannelID[channelSCID] = channelWithVersion{
+							channel: channelRow,
+							version: currentVersion,
+						}
+					}
+				}
+			}
 
 			toNodeCallback := func() route.Vertex {
 				return nodePub
 			}
 
-			// Build cached channels map for this node.
+			// Build final channels map using the preferred version of each channel
 			channels := make(map[uint64]*DirectedChannel)
-			for _, channelRow := range nodeChannels {
+			for channelID, chanWithVer := range channelsByChannelID {
+				// Use the primary node (first in the sorted list) for building the directed channel
+				primaryNodeID := allNodeVersions[0].ID
+
 				directedChan, err := buildDirectedChannel(
-					s.cfg.ChainHash, nodeData.ID, nodePub,
-					channelRow, batchData.chanBatchData, fv,
+					s.cfg.ChainHash, primaryNodeID, nodePub,
+					chanWithVer.channel, batchData.chanBatchData, fv,
 					toNodeCallback,
 				)
 				if err != nil {
-					return err
+					return fmt.Errorf("unable to build directed channel: %w", err)
 				}
 
-				channels[directedChan.ChannelID] = directedChan
+				channels[channelID] = directedChan
 			}
 
-			addrs, err := buildNodeAddresses(
-				batchData.addrs[nodeData.ID],
-			)
+			// Build addresses
+			addrs, err := buildNodeAddresses(allAddresses)
 			if err != nil {
-				return fmt.Errorf("unable to build node "+
-					"addresses: %w", err)
+				return fmt.Errorf("unable to build node addresses: %w", err)
 			}
 
+			// Call the callback once per unique pub_key
 			return cb(ctx, nodePub, addrs, channels)
 		}
 
+		// Use existing helper
 		return sqldb.ExecuteCollectAndBatchWithSharedDataQuery(
-			ctx, s.cfg.QueryCfg, int64(-1), pageQueryFunc,
-			func(node sqlc.ListNodeIDsAndPubKeysRow) int64 {
+			ctx, s.cfg.QueryCfg, int64(-1),
+			pageQueryFunc,
+			func(node sqlc.ListNodesPaginatedAllVersionsRow) int64 {
 				return node.ID
 			},
-			func(node sqlc.ListNodeIDsAndPubKeysRow) (int64,
-				error) {
-
-				return node.ID, nil
+			func(node sqlc.ListNodesPaginatedAllVersionsRow) (sqlc.ListNodesPaginatedAllVersionsRow, error) {
+				return node, nil
 			},
-			batchDataFunc, processItem,
+			func(ctx context.Context, nodeRows []sqlc.ListNodesPaginatedAllVersionsRow) (*nodeCachedBatchData, error) {
+				return batchDataFunc(ctx, nodeRows)
+			},
+			processItem,
 		)
 	}, reset)
+}
+
+// Helper function to extract channel ID from SCID bytes
+func extractChannelIDFromSCID(scidBytes []byte) uint64 {
+	return byteOrder.Uint64(scidBytes)
 }
 
 // ForEachChannelCacheable iterates through all the channel edges stored
@@ -1257,8 +1347,9 @@ func (s *SQLStore) ForEachNodeCached(ctx context.Context, withAddrs bool,
 //
 // NOTE: this method is like ForEachChannel but fetches only the data
 // required for the graph cache.
-func (s *SQLStore) ForEachChannelCacheable(cb func(*models.CachedEdgeInfo,
-	*models.CachedEdgePolicy, *models.CachedEdgePolicy) error,
+func (s *SQLStore) ForEachChannelCacheable(v lnwire.GossipVersion,
+	cb func(*models.CachedEdgeInfo,
+		*models.CachedEdgePolicy, *models.CachedEdgePolicy) error,
 	reset func()) error {
 
 	ctx := context.TODO()
@@ -1306,7 +1397,7 @@ func (s *SQLStore) ForEachChannelCacheable(cb func(*models.CachedEdgeInfo,
 
 			return db.ListChannelsWithPoliciesForCachePaginated(
 				ctx, sqlc.ListChannelsWithPoliciesForCachePaginatedParams{
-					Version: int16(ProtocolV1),
+					Version: int16(v),
 					ID:      lastID,
 					Limit:   limit,
 				},
@@ -1330,13 +1421,13 @@ func (s *SQLStore) ForEachChannelCacheable(cb func(*models.CachedEdgeInfo,
 // for that particular channel edge routing policy will be passed into the
 // callback.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) ForEachChannel(ctx context.Context,
+// NOTE: part of the Store interface.
+func (s *SQLStore) ForEachChannel(ctx context.Context, v lnwire.GossipVersion,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error, reset func()) error {
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		return forEachChannelWithPolicies(ctx, db, s.cfg, cb)
+		return forEachChannelWithPolicies(ctx, db, s.cfg, v, cb)
 	}, reset)
 }
 
@@ -1348,12 +1439,13 @@ func (s *SQLStore) ForEachChannel(ctx context.Context,
 // timestamp info of the latest received channel update messages of the channel
 // will be included in the response.
 //
-// NOTE: This is part of the V1Store interface.
+// NOTE: This is part of the Store interface.
 func (s *SQLStore) FilterChannelRange(startHeight, endHeight uint32,
 	withTimestamps bool) ([]BlockChannelRange, error) {
 
 	var (
 		ctx       = context.TODO()
+		v         = v1
 		startSCID = &lnwire.ShortChannelID{
 			BlockHeight: startHeight,
 		}
@@ -1404,7 +1496,7 @@ func (s *SQLStore) FilterChannelRange(startHeight, endHeight uint32,
 			//nolint:ll
 			node1Policy, err := db.GetChannelPolicyByChannelAndNode(
 				ctx, sqlc.GetChannelPolicyByChannelAndNodeParams{
-					Version:   int16(ProtocolV1),
+					Version:   int16(v),
 					ChannelID: dbChan.ID,
 					NodeID:    dbChan.NodeID1,
 				},
@@ -1421,7 +1513,7 @@ func (s *SQLStore) FilterChannelRange(startHeight, endHeight uint32,
 			//nolint:ll
 			node2Policy, err := db.GetChannelPolicyByChannelAndNode(
 				ctx, sqlc.GetChannelPolicyByChannelAndNodeParams{
-					Version:   int16(ProtocolV1),
+					Version:   int16(v),
 					ChannelID: dbChan.ID,
 					NodeID:    dbChan.NodeID2,
 				},
@@ -1468,8 +1560,8 @@ func (s *SQLStore) FilterChannelRange(startHeight, endHeight uint32,
 // zombie. This method is used on an ad-hoc basis, when channels need to be
 // marked as zombies outside the normal pruning cycle.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) MarkEdgeZombie(chanID uint64,
+// NOTE: part of the Store interface.
+func (s *SQLStore) MarkEdgeZombie(v lnwire.GossipVersion, chanID uint64,
 	pubKey1, pubKey2 [33]byte) error {
 
 	ctx := context.TODO()
@@ -1482,7 +1574,7 @@ func (s *SQLStore) MarkEdgeZombie(chanID uint64,
 	err := s.db.ExecTx(ctx, sqldb.WriteTxOpt(), func(db SQLQueries) error {
 		return db.UpsertZombieChannel(
 			ctx, sqlc.UpsertZombieChannelParams{
-				Version:  int16(ProtocolV1),
+				Version:  int16(v),
 				Scid:     chanIDB,
 				NodeKey1: pubKey1[:],
 				NodeKey2: pubKey2[:],
@@ -1502,8 +1594,8 @@ func (s *SQLStore) MarkEdgeZombie(chanID uint64,
 
 // MarkEdgeLive clears an edge from our zombie index, deeming it as live.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) MarkEdgeLive(chanID uint64) error {
+// NOTE: part of the Store interface.
+func (s *SQLStore) MarkEdgeLive(v lnwire.GossipVersion, chanID uint64) error {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
 
@@ -1516,7 +1608,7 @@ func (s *SQLStore) MarkEdgeLive(chanID uint64) error {
 		res, err := db.DeleteZombieChannel(
 			ctx, sqlc.DeleteZombieChannelParams{
 				Scid:    chanIDB,
-				Version: int16(ProtocolV1),
+				Version: int16(v),
 			},
 		)
 		if err != nil {
@@ -1553,9 +1645,9 @@ func (s *SQLStore) MarkEdgeLive(chanID uint64) error {
 // zombie, then the two node public keys corresponding to this edge are also
 // returned.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) IsZombieEdge(chanID uint64) (bool, [33]byte, [33]byte,
-	error) {
+// NOTE: part of the Store interface.
+func (s *SQLStore) IsZombieEdge(v lnwire.GossipVersion, chanID uint64) (bool,
+	[33]byte, [33]byte, error) {
 
 	var (
 		ctx              = context.TODO()
@@ -1568,7 +1660,7 @@ func (s *SQLStore) IsZombieEdge(chanID uint64) (bool, [33]byte, [33]byte,
 		zombie, err := db.GetZombieChannel(
 			ctx, sqlc.GetZombieChannelParams{
 				Scid:    chanIDB,
-				Version: int16(ProtocolV1),
+				Version: int16(v),
 			},
 		)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1596,14 +1688,14 @@ func (s *SQLStore) IsZombieEdge(chanID uint64) (bool, [33]byte, [33]byte,
 
 // NumZombies returns the current number of zombie channels in the graph.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) NumZombies() (uint64, error) {
+// NOTE: part of the Store interface.
+func (s *SQLStore) NumZombies(v lnwire.GossipVersion) (uint64, error) {
 	var (
 		ctx        = context.TODO()
 		numZombies uint64
 	)
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		count, err := db.CountZombieChannels(ctx, int16(ProtocolV1))
+		count, err := db.CountZombieChannels(ctx, int16(v))
 		if err != nil {
 			return fmt.Errorf("unable to count zombie channels: %w",
 				err)
@@ -1629,8 +1721,9 @@ func (s *SQLStore) NumZombies() (uint64, error) {
 // that resurrects the channel from its zombie state. The markZombie bool
 // denotes whether to mark the channel as a zombie.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
+// NOTE: part of the Store interface.
+func (s *SQLStore) DeleteChannelEdges(v lnwire.GossipVersion,
+	strictZombiePruning, markZombie bool,
 	chanIDs ...uint64) ([]*models.ChannelEdgeInfo, error) {
 
 	s.cacheMu.Lock()
@@ -1664,7 +1757,7 @@ func (s *SQLStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 		}
 
 		err := s.forEachChanWithPoliciesInSCIDList(
-			ctx, db, chanCallBack, chanIDs,
+			ctx, db, v, chanCallBack, chanIDs,
 		)
 		if err != nil {
 			return err
@@ -1734,9 +1827,9 @@ func (s *SQLStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 // within the database. In this case, the ChannelEdgePolicy's will be nil, and
 // the ChannelEdgeInfo will only include the public keys of each node.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) FetchChannelEdgesByID(chanID uint64) (
-	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+// NOTE: part of the Store interface.
+func (s *SQLStore) FetchChannelEdgesByID(v lnwire.GossipVersion,
+	chanID uint64) (*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
 	var (
@@ -1749,7 +1842,7 @@ func (s *SQLStore) FetchChannelEdgesByID(chanID uint64) (
 		row, err := db.GetChannelBySCIDWithPolicies(
 			ctx, sqlc.GetChannelBySCIDWithPoliciesParams{
 				Scid:    chanIDB,
-				Version: int16(ProtocolV1),
+				Version: int16(v),
 			},
 		)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1758,7 +1851,7 @@ func (s *SQLStore) FetchChannelEdgesByID(chanID uint64) (
 			zombie, err := db.GetZombieChannel(
 				ctx, sqlc.GetZombieChannelParams{
 					Scid:    chanIDB,
-					Version: int16(ProtocolV1),
+					Version: int16(v),
 				},
 			)
 			if errors.Is(err, sql.ErrNoRows) {
@@ -1773,9 +1866,13 @@ func (s *SQLStore) FetchChannelEdgesByID(chanID uint64) (
 			// populate the edge info with the public keys of each
 			// party as this is the only information we have about
 			// it.
-			edge = &models.ChannelEdgeInfo{}
-			copy(edge.NodeKey1Bytes[:], zombie.NodeKey1)
-			copy(edge.NodeKey2Bytes[:], zombie.NodeKey2)
+			var nodeKey1, nodeKey2 route.Vertex
+			copy(nodeKey1[:], zombie.NodeKey1)
+			copy(nodeKey2[:], zombie.NodeKey2)
+
+			edge = models.NewChannelEdge(
+				v, chanID, s.cfg.ChainHash, nodeKey1, nodeKey2,
+			)
 
 			return ErrZombieEdge
 		} else if err != nil {
@@ -1831,8 +1928,9 @@ func (s *SQLStore) FetchChannelEdgesByID(chanID uint64) (
 // information for the channel itself is returned as well as two structs that
 // contain the routing policies for the channel in either direction.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
+// NOTE: part of the Store interface.
+func (s *SQLStore) FetchChannelEdgesByOutpoint(v lnwire.GossipVersion,
+	op *wire.OutPoint) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
@@ -1845,7 +1943,7 @@ func (s *SQLStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 		row, err := db.GetChannelByOutpointWithPolicies(
 			ctx, sqlc.GetChannelByOutpointWithPoliciesParams{
 				Outpoint: op.String(),
-				Version:  int16(ProtocolV1),
+				Version:  int16(v),
 			},
 		)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1901,13 +1999,14 @@ func (s *SQLStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 // it is not found, then the zombie index is checked and its result is returned
 // as the second boolean.
 //
-// NOTE: part of the V1Store interface.
+// NOTE: part of the Store interface.
 func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 	bool, error) {
 
 	ctx := context.TODO()
 
 	var (
+		v               = v1
 		exists          bool
 		isZombie        bool
 		node1LastUpdate time.Time
@@ -1946,7 +2045,7 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 		channel, err := db.GetChannelBySCID(
 			ctx, sqlc.GetChannelBySCIDParams{
 				Scid:    chanIDB,
-				Version: int16(ProtocolV1),
+				Version: int16(v),
 			},
 		)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1954,7 +2053,7 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 			isZombie, err = db.IsZombieChannel(
 				ctx, sqlc.IsZombieChannelParams{
 					Scid:    chanIDB,
-					Version: int16(ProtocolV1),
+					Version: int16(v),
 				},
 			)
 			if err != nil {
@@ -1971,7 +2070,7 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 
 		policy1, err := db.GetChannelPolicyByChannelAndNode(
 			ctx, sqlc.GetChannelPolicyByChannelAndNodeParams{
-				Version:   int16(ProtocolV1),
+				Version:   int16(v),
 				ChannelID: channel.ID,
 				NodeID:    channel.NodeID1,
 			},
@@ -1985,7 +2084,7 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 
 		policy2, err := db.GetChannelPolicyByChannelAndNode(
 			ctx, sqlc.GetChannelPolicyByChannelAndNodeParams{
-				Version:   int16(ProtocolV1),
+				Version:   int16(v),
 				ChannelID: channel.ID,
 				NodeID:    channel.NodeID2,
 			},
@@ -2017,8 +2116,10 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 // passed channel point (outpoint). If the passed channel doesn't exist within
 // the database, then ErrEdgeNotFound is returned.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) ChannelID(chanPoint *wire.OutPoint) (uint64, error) {
+// NOTE: part of the Store interface.
+func (s *SQLStore) ChannelID(v lnwire.GossipVersion,
+	chanPoint *wire.OutPoint) (uint64, error) {
+
 	var (
 		ctx       = context.TODO()
 		channelID uint64
@@ -2027,7 +2128,7 @@ func (s *SQLStore) ChannelID(chanPoint *wire.OutPoint) (uint64, error) {
 		chanID, err := db.GetSCIDByOutpoint(
 			ctx, sqlc.GetSCIDByOutpointParams{
 				Outpoint: chanPoint.String(),
-				Version:  int16(ProtocolV1),
+				Version:  int16(v),
 			},
 		)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -2052,14 +2153,23 @@ func (s *SQLStore) ChannelID(chanPoint *wire.OutPoint) (uint64, error) {
 // given public key is seen as a public node in the graph from the graph's
 // source node's point of view.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) IsPublicNode(pubKey [33]byte) (bool, error) {
+// NOTE: part of the Store interface.
+func (s *SQLStore) IsPublicNode(v lnwire.GossipVersion, pubKey [33]byte) (bool,
+	error) {
+
 	ctx := context.TODO()
 
 	var isPublic bool
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		var err error
-		isPublic, err = db.IsPublicV1Node(ctx, pubKey[:])
+		switch v {
+		case v1:
+			isPublic, err = db.IsPublicV1Node(ctx, pubKey[:])
+		case v2:
+			isPublic, err = db.IsPublicV2Node(ctx, pubKey[:])
+		default:
+			return fmt.Errorf("unknown gossip version: %d", v)
+		}
 
 		return err
 	}, sqldb.NoOpReset)
@@ -2077,8 +2187,10 @@ func (s *SQLStore) IsPublicNode(pubKey [33]byte) (bool, error) {
 // of the query. This can be used to respond to peer queries that are seeking to
 // fill in gaps in their view of the channel graph.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
+// NOTE: part of the Store interface.
+func (s *SQLStore) FetchChanInfos(v lnwire.GossipVersion,
+	chanIDs []uint64) ([]ChannelEdge, error) {
+
 	var (
 		ctx   = context.TODO()
 		edges = make(map[uint64]ChannelEdge)
@@ -2094,7 +2206,7 @@ func (s *SQLStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 		}
 
 		err := s.forEachChanWithPoliciesInSCIDList(
-			ctx, db, chanCallBack, chanIDs,
+			ctx, db, v, chanCallBack, chanIDs,
 		)
 		if err != nil {
 			return err
@@ -2142,7 +2254,7 @@ func (s *SQLStore) FetchChanInfos(chanIDs []uint64) ([]ChannelEdge, error) {
 // GetChannelsBySCIDWithPolicies query that allows us to iterate through
 // channels in a paginated manner.
 func (s *SQLStore) forEachChanWithPoliciesInSCIDList(ctx context.Context,
-	db SQLQueries, cb func(ctx context.Context,
+	db SQLQueries, v lnwire.GossipVersion, cb func(ctx context.Context,
 		row sqlc.GetChannelsBySCIDWithPoliciesRow) error,
 	chanIDs []uint64) error {
 
@@ -2152,7 +2264,7 @@ func (s *SQLStore) forEachChanWithPoliciesInSCIDList(ctx context.Context,
 
 		return db.GetChannelsBySCIDWithPolicies(
 			ctx, sqlc.GetChannelsBySCIDWithPoliciesParams{
-				Version: int16(ProtocolV1),
+				Version: int16(v),
 				Scids:   scids,
 			},
 		)
@@ -2171,9 +2283,9 @@ func (s *SQLStore) forEachChanWithPoliciesInSCIDList(ctx context.Context,
 // channels another peer knows of that we don't. The ChannelUpdateInfos for the
 // known zombies is also returned.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo) ([]uint64,
-	[]ChannelUpdateInfo, error) {
+// NOTE: part of the Store interface.
+func (s *SQLStore) FilterKnownChanIDs(v lnwire.GossipVersion,
+	chansInfo []ChannelUpdateInfo) ([]uint64, []ChannelUpdateInfo, error) {
 
 	var (
 		ctx          = context.TODO()
@@ -2203,7 +2315,7 @@ func (s *SQLStore) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo) ([]uint64,
 			return nil
 		}
 
-		err := s.forEachChanInSCIDList(ctx, db, cb, chansInfo)
+		err := s.forEachChanInSCIDList(ctx, db, v, cb, chansInfo)
 		if err != nil {
 			return fmt.Errorf("unable to iterate through "+
 				"channels: %w", err)
@@ -2221,8 +2333,8 @@ func (s *SQLStore) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo) ([]uint64,
 
 			isZombie, err := db.IsZombieChannel(
 				ctx, sqlc.IsZombieChannelParams{
+					Version: int16(v),
 					Scid:    channelIDToBytes(channelID),
-					Version: int16(ProtocolV1),
 				},
 			)
 			if err != nil {
@@ -2261,7 +2373,8 @@ func (s *SQLStore) FilterKnownChanIDs(chansInfo []ChannelUpdateInfo) ([]uint64,
 // ChannelUpdateInfo slice. The callback function is called for each channel
 // that is found.
 func (s *SQLStore) forEachChanInSCIDList(ctx context.Context, db SQLQueries,
-	cb func(ctx context.Context, channel sqlc.GraphChannel) error,
+	v lnwire.GossipVersion, cb func(ctx context.Context,
+		channel sqlc.GraphChannel) error,
 	chansInfo []ChannelUpdateInfo) error {
 
 	queryWrapper := func(ctx context.Context,
@@ -2269,7 +2382,7 @@ func (s *SQLStore) forEachChanInSCIDList(ctx context.Context, db SQLQueries,
 
 		return db.GetChannelsBySCIDs(
 			ctx, sqlc.GetChannelsBySCIDsParams{
-				Version: int16(ProtocolV1),
+				Version: int16(v),
 				Scids:   scids,
 			},
 		)
@@ -2295,7 +2408,7 @@ func (s *SQLStore) forEachChanInSCIDList(ctx context.Context, db SQLQueries,
 // NOTE: this prunes nodes across protocol versions. It will never prune the
 // source nodes.
 //
-// NOTE: part of the V1Store interface.
+// NOTE: part of the Store interface.
 func (s *SQLStore) PruneGraphNodes() ([]route.Vertex, error) {
 	var ctx = context.TODO()
 
@@ -2324,7 +2437,7 @@ func (s *SQLStore) PruneGraphNodes() ([]route.Vertex, error) {
 // the target block along with any pruned nodes are returned if the function
 // succeeds without error.
 //
-// NOTE: part of the V1Store interface.
+// NOTE: part of the Store interface.
 func (s *SQLStore) PruneGraph(spentOutputs []*wire.OutPoint,
 	blockHash *chainhash.Hash, blockHeight uint32) (
 	[]*models.ChannelEdgeInfo, []route.Vertex, error) {
@@ -2479,8 +2592,8 @@ func (s *SQLStore) deleteChannels(ctx context.Context, db SQLQueries,
 // returned are the ones that need to be watched on chain to detect channel
 // closes on the resident blockchain.
 //
-// NOTE: part of the V1Store interface.
-func (s *SQLStore) ChannelView() ([]EdgePoint, error) {
+// NOTE: part of the Store interface.
+func (s *SQLStore) ChannelView(v lnwire.GossipVersion) ([]EdgePoint, error) {
 	var (
 		ctx        = context.TODO()
 		edgePoints []EdgePoint
@@ -2515,7 +2628,7 @@ func (s *SQLStore) ChannelView() ([]EdgePoint, error) {
 
 			return db.ListChannelsPaginated(
 				ctx, sqlc.ListChannelsPaginatedParams{
-					Version: int16(ProtocolV1),
+					Version: int16(v),
 					ID:      lastID,
 					Limit:   limit,
 				},
@@ -2545,7 +2658,7 @@ func (s *SQLStore) ChannelView() ([]EdgePoint, error) {
 // to tell if the graph is currently in sync with the current best known UTXO
 // state.
 //
-// NOTE: part of the V1Store interface.
+// NOTE: part of the Store interface.
 func (s *SQLStore) PruneTip() (*chainhash.Hash, uint32, error) {
 	var (
 		ctx       = context.TODO()
@@ -2607,7 +2720,7 @@ func (s *SQLStore) pruneGraphNodes(ctx context.Context,
 // Channels that were removed from the graph resulting from the
 // disconnected block are returned.
 //
-// NOTE: part of the V1Store interface.
+// NOTE: part of the Store interface.
 func (s *SQLStore) DisconnectBlockAtHeight(height uint32) (
 	[]*models.ChannelEdgeInfo, error) {
 
@@ -2693,7 +2806,7 @@ func (s *SQLStore) DisconnectBlockAtHeight(height uint32) (
 
 // AddEdgeProof sets the proof of an existing edge in the graph database.
 //
-// NOTE: part of the V1Store interface.
+// NOTE: part of the Store interface.
 func (s *SQLStore) AddEdgeProof(scid lnwire.ShortChannelID,
 	proof *models.ChannelAuthProof) error {
 
@@ -2743,7 +2856,7 @@ func (s *SQLStore) AddEdgeProof(scid lnwire.ShortChannelID,
 // that we can ignore channel announcements that we know to be closed without
 // having to validate them and fetch a block.
 //
-// NOTE: part of the V1Store interface.
+// NOTE: part of the Store interface.
 func (s *SQLStore) PutClosedScid(scid lnwire.ShortChannelID) error {
 	var (
 		ctx     = context.TODO()
@@ -2758,7 +2871,7 @@ func (s *SQLStore) PutClosedScid(scid lnwire.ShortChannelID) error {
 // IsClosedScid checks whether a channel identified by the passed in scid is
 // closed. This helps avoid having to perform expensive validation checks.
 //
-// NOTE: part of the V1Store interface.
+// NOTE: part of the Store interface.
 func (s *SQLStore) IsClosedScid(scid lnwire.ShortChannelID) (bool, error) {
 	var (
 		ctx      = context.TODO()
@@ -2786,7 +2899,7 @@ func (s *SQLStore) IsClosedScid(scid lnwire.ShortChannelID) (bool, error) {
 // GraphSession will provide the call-back with access to a NodeTraverser
 // instance which can be used to perform queries against the channel graph.
 //
-// NOTE: part of the V1Store interface.
+// NOTE: part of the Store interface.
 func (s *SQLStore) GraphSession(cb func(graph NodeTraverser) error,
 	reset func()) error {
 
@@ -2822,12 +2935,13 @@ func newSQLNodeTraverser(db SQLQueries,
 // node.
 //
 // NOTE: Part of the NodeTraverser interface.
-func (s *sqlNodeTraverser) ForEachNodeDirectedChannel(nodePub route.Vertex,
-	cb func(channel *DirectedChannel) error, _ func()) error {
+func (s *sqlNodeTraverser) ForEachNodeDirectedChannel(v lnwire.GossipVersion,
+	nodePub route.Vertex, cb func(channel *DirectedChannel) error,
+	_ func()) error {
 
 	ctx := context.TODO()
 
-	return forEachNodeDirectedChannel(ctx, s.db, nodePub, cb)
+	return forEachNodeDirectedChannel(ctx, s.db, v, nodePub, cb)
 }
 
 // FetchNodeFeatures returns the features of the given node. If the node is
@@ -2847,7 +2961,8 @@ func (s *sqlNodeTraverser) FetchNodeFeatures(nodePub route.Vertex) (
 // channel and its incoming policy. If the node is not found, no error is
 // returned.
 func forEachNodeDirectedChannel(ctx context.Context, db SQLQueries,
-	nodePub route.Vertex, cb func(channel *DirectedChannel) error) error {
+	v lnwire.GossipVersion, nodePub route.Vertex,
+	cb func(channel *DirectedChannel) error) error {
 
 	toNodeCallback := func() route.Vertex {
 		return nodePub
@@ -2855,7 +2970,7 @@ func forEachNodeDirectedChannel(ctx context.Context, db SQLQueries,
 
 	dbID, err := db.GetNodeIDByPubKey(
 		ctx, sqlc.GetNodeIDByPubKeyParams{
-			Version: int16(ProtocolV1),
+			Version: int16(v),
 			PubKey:  nodePub[:],
 		},
 	)
@@ -2865,12 +2980,7 @@ func forEachNodeDirectedChannel(ctx context.Context, db SQLQueries,
 		return fmt.Errorf("unable to fetch node: %w", err)
 	}
 
-	rows, err := db.ListChannelsByNodeID(
-		ctx, sqlc.ListChannelsByNodeIDParams{
-			Version: int16(ProtocolV1),
-			NodeID1: dbID,
-		},
-	)
+	rows, err := db.ListChannelsByNodeID(ctx, dbID)
 	if err != nil {
 		return fmt.Errorf("unable to fetch channels: %w", err)
 	}
@@ -2958,7 +3068,8 @@ func forEachNodeDirectedChannel(ctx context.Context, db SQLQueries,
 // and executes the provided callback for each node. It does so via pagination
 // along with batch loading of the node feature bits.
 func forEachNodeCacheable(ctx context.Context, cfg *sqldb.QueryConfig,
-	db SQLQueries, processNode func(nodeID int64, nodePub route.Vertex,
+	db SQLQueries, v lnwire.GossipVersion, processNode func(nodeID int64,
+		nodePub route.Vertex,
 		features *lnwire.FeatureVector) error) error {
 
 	handleNode := func(_ context.Context,
@@ -2983,7 +3094,7 @@ func forEachNodeCacheable(ctx context.Context, cfg *sqldb.QueryConfig,
 
 		return db.ListNodeIDsAndPubKeys(
 			ctx, sqlc.ListNodeIDsAndPubKeysParams{
-				Version: int16(ProtocolV1),
+				Version: int16(v),
 				ID:      lastID,
 				Limit:   limit,
 			},
@@ -3019,13 +3130,8 @@ func forEachNodeChannel(ctx context.Context, db SQLQueries,
 		*models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
 
-	// Get all the V1 channels for this node.
-	rows, err := db.ListChannelsByNodeID(
-		ctx, sqlc.ListChannelsByNodeIDParams{
-			Version: int16(ProtocolV1),
-			NodeID1: id,
-		},
-	)
+	// Get all channels for this node.
+	rows, err := db.ListChannelsByNodeID(ctx, id)
 	if err != nil {
 		return fmt.Errorf("unable to fetch channels: %w", err)
 	}
@@ -3112,6 +3218,7 @@ func updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 	error) {
 
 	var (
+		v                  = lnwire.GossipVersion1
 		node1Pub, node2Pub route.Vertex
 		isNode1            bool
 		chanIDB            = channelIDToBytes(edge.ChannelID)
@@ -3124,7 +3231,7 @@ func updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 	dbChan, err := tx.GetChannelAndNodesBySCID(
 		ctx, sqlc.GetChannelAndNodesBySCIDParams{
 			Scid:    chanIDB,
-			Version: int16(ProtocolV1),
+			Version: int16(v),
 		},
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -3154,7 +3261,7 @@ func updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 	})
 
 	id, err := tx.UpsertEdgePolicy(ctx, sqlc.UpsertEdgePolicyParams{
-		Version:     int16(ProtocolV1),
+		Version:     int16(v),
 		ChannelID:   dbChan.ID,
 		NodeID:      nodeID,
 		Timelock:    int32(edge.TimeLockDelta),
@@ -3201,11 +3308,12 @@ func updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 
 // getNodeByPubKey attempts to look up a target node by its public key.
 func getNodeByPubKey(ctx context.Context, cfg *sqldb.QueryConfig, db SQLQueries,
-	pubKey route.Vertex) (int64, *models.Node, error) {
+	v lnwire.GossipVersion, pubKey route.Vertex) (int64, *models.Node,
+	error) {
 
 	dbNode, err := db.GetNodeByPubKey(
 		ctx, sqlc.GetNodeByPubKeyParams{
-			Version: int16(ProtocolV1),
+			Version: int16(v),
 			PubKey:  pubKey[:],
 		},
 	)
@@ -3258,36 +3366,39 @@ func buildNode(ctx context.Context, cfg *sqldb.QueryConfig, db SQLQueries,
 func buildNodeWithBatchData(dbNode sqlc.GraphNode,
 	batchData *batchNodeData) (*models.Node, error) {
 
-	if dbNode.Version != int16(ProtocolV1) {
-		return nil, fmt.Errorf("unsupported node version: %d",
-			dbNode.Version)
-	}
-
 	var pub [33]byte
 	copy(pub[:], dbNode.PubKey)
 
-	node := &models.Node{
-		PubKeyBytes: pub,
-		Features:    lnwire.EmptyFeatureVector(),
-		LastUpdate:  time.Unix(0, 0),
-	}
+	version := lnwire.GossipVersion(dbNode.Version)
+
+	node := models.NewShellNode(version, pub)
 
 	if len(dbNode.Signature) == 0 {
 		return node, nil
 	}
 
-	node.HaveNodeAnnouncement = true
 	node.AuthSigBytes = dbNode.Signature
-	node.Alias = dbNode.Alias.String
-	node.LastUpdate = time.Unix(dbNode.LastUpdate.Int64, 0)
+
+	if dbNode.Alias.Valid {
+		node.Alias = fn.Some(dbNode.Alias.String)
+	}
+	if dbNode.LastUpdate.Valid {
+		node.LastUpdate = time.Unix(dbNode.LastUpdate.Int64, 0)
+	}
+
+	if dbNode.BlockHeight.Valid {
+		node.LastBlockHeight = uint32(dbNode.BlockHeight.Int64)
+	}
 
 	var err error
 	if dbNode.Color.Valid {
-		node.Color, err = DecodeHexColor(dbNode.Color.String)
+		nodeColor, err := DecodeHexColor(dbNode.Color.String)
 		if err != nil {
 			return nil, fmt.Errorf("unable to decode color: %w",
 				err)
 		}
+
+		node.Color = fn.Some(nodeColor)
 	}
 
 	// Use preloaded features.
@@ -3316,8 +3427,12 @@ func buildNodeWithBatchData(dbNode sqlc.GraphNode,
 			return nil, fmt.Errorf("unable to serialize extra "+
 				"signed fields: %w", err)
 		}
-		if len(recs) != 0 {
-			node.ExtraOpaqueData = recs
+		if version == v1 {
+			if len(recs) != 0 {
+				node.ExtraOpaqueData = recs
+			}
+		} else {
+			node.ExtraSignedFields = extraFields
 		}
 	}
 
@@ -3385,14 +3500,34 @@ func upsertNode(ctx context.Context, db SQLQueries,
 	node *models.Node) (int64, error) {
 
 	params := sqlc.UpsertNodeParams{
-		Version: int16(ProtocolV1),
+		Version: int16(node.Version),
 		PubKey:  node.PubKeyBytes[:],
 	}
 
-	if node.HaveNodeAnnouncement {
-		params.LastUpdate = sqldb.SQLInt64(node.LastUpdate.Unix())
-		params.Color = sqldb.SQLStrValid(EncodeHexColor(node.Color))
-		params.Alias = sqldb.SQLStrValid(node.Alias)
+	if node.HaveAnnouncement() {
+		switch node.Version {
+		case v1:
+			params.LastUpdate = sqldb.SQLInt64(
+				node.LastUpdate.Unix(),
+			)
+
+		case v2:
+			params.BlockHeight = sqldb.SQLInt64(
+				int32(node.LastBlockHeight),
+			)
+
+		default:
+			return 0, fmt.Errorf("unknown gossip version: %d",
+				node.Version)
+		}
+
+		node.Color.WhenSome(func(rgba color.RGBA) {
+			params.Color = sqldb.SQLStrValid(EncodeHexColor(rgba))
+		})
+		node.Alias.WhenSome(func(s string) {
+			params.Alias = sqldb.SQLStrValid(s)
+		})
+
 		params.Signature = node.AuthSigBytes
 	}
 
@@ -3403,7 +3538,7 @@ func upsertNode(ctx context.Context, db SQLQueries,
 	}
 
 	// We can exit here if we don't have the announcement yet.
-	if !node.HaveNodeAnnouncement {
+	if !node.HaveAnnouncement() {
 		return nodeID, nil
 	}
 
@@ -3421,10 +3556,13 @@ func upsertNode(ctx context.Context, db SQLQueries,
 
 	// Convert the flat extra opaque data into a map of TLV types to
 	// values.
-	extra, err := marshalExtraOpaqueData(node.ExtraOpaqueData)
-	if err != nil {
-		return 0, fmt.Errorf("unable to marshal extra opaque data: %w",
-			err)
+	extra := node.ExtraSignedFields
+	if node.Version == v1 {
+		extra, err = marshalExtraOpaqueData(node.ExtraOpaqueData)
+		if err != nil {
+			return 0, fmt.Errorf("unable to marshal extra opaque "+
+				"data: %w", err)
+		}
 	}
 
 	// Update the node's extra signed fields.
@@ -3498,13 +3636,34 @@ func upsertNodeFeatures(ctx context.Context, db SQLQueries, nodeID int64,
 }
 
 // fetchNodeFeatures fetches the features for a node with the given public key.
+//
+// NOTE: this merge merges feature bits across node announcements (ie across
+// gossip versions)!!.
 func fetchNodeFeatures(ctx context.Context, queries SQLQueries,
 	nodePub route.Vertex) (*lnwire.FeatureVector, error) {
 
-	rows, err := queries.GetNodeFeaturesByPubKey(
-		ctx, sqlc.GetNodeFeaturesByPubKeyParams{
+	rows, err := queries.GetNodeFeaturesByPubKey(ctx, nodePub[:])
+	if err != nil {
+		return nil, fmt.Errorf("unable to get node(%s) features: %w",
+			nodePub, err)
+	}
+
+	features := lnwire.EmptyFeatureVector()
+	for _, bit := range rows {
+		features.Set(lnwire.FeatureBit(bit))
+	}
+
+	return features, nil
+}
+
+func fetchVersionedNodeFeatures(ctx context.Context, queries SQLQueries,
+	v lnwire.GossipVersion, nodePub route.Vertex) (*lnwire.FeatureVector,
+	error) {
+
+	rows, err := queries.GetNodeFeaturesByPubKeyAndVersion(
+		ctx, sqlc.GetNodeFeaturesByPubKeyAndVersionParams{
 			PubKey:  nodePub[:],
-			Version: int16(ProtocolV1),
+			Version: int16(v),
 		},
 	)
 	if err != nil {
@@ -3739,7 +3898,7 @@ type srcNodeInfo struct {
 // sourceNode returns the DB node ID and pub key of the source node for the
 // specified protocol version.
 func (s *SQLStore) getSourceNode(ctx context.Context, db SQLQueries,
-	version ProtocolVersion) (int64, route.Vertex, error) {
+	version lnwire.GossipVersion) (int64, route.Vertex, error) {
 
 	s.srcNodeMu.Lock()
 	defer s.srcNodeMu.Unlock()
@@ -3808,14 +3967,16 @@ func marshalExtraOpaqueData(data []byte) (map[uint64][]byte, error) {
 func insertChannel(ctx context.Context, db SQLQueries,
 	edge *models.ChannelEdgeInfo) error {
 
+	v := edge.Version
+
 	// Make sure that at least a "shell" entry for each node is present in
 	// the nodes table.
-	node1DBID, err := maybeCreateShellNode(ctx, db, edge.NodeKey1Bytes)
+	node1DBID, err := maybeCreateShellNode(ctx, db, v, edge.NodeKey1Bytes)
 	if err != nil {
 		return fmt.Errorf("unable to create shell node: %w", err)
 	}
 
-	node2DBID, err := maybeCreateShellNode(ctx, db, edge.NodeKey2Bytes)
+	node2DBID, err := maybeCreateShellNode(ctx, db, v, edge.NodeKey2Bytes)
 	if err != nil {
 		return fmt.Errorf("unable to create shell node: %w", err)
 	}
@@ -3826,15 +3987,26 @@ func insertChannel(ctx context.Context, db SQLQueries,
 	}
 
 	createParams := sqlc.CreateChannelParams{
-		Version:     int16(ProtocolV1),
-		Scid:        channelIDToBytes(edge.ChannelID),
-		NodeID1:     node1DBID,
-		NodeID2:     node2DBID,
-		Outpoint:    edge.ChannelPoint.String(),
-		Capacity:    capacity,
-		BitcoinKey1: edge.BitcoinKey1Bytes[:],
-		BitcoinKey2: edge.BitcoinKey2Bytes[:],
+		Version:  int16(v),
+		Scid:     channelIDToBytes(edge.ChannelID),
+		NodeID1:  node1DBID,
+		NodeID2:  node2DBID,
+		Outpoint: edge.ChannelPoint.String(),
+		Capacity: capacity,
 	}
+	edge.BitcoinKey1Bytes.WhenSome(func(vertex route.Vertex) {
+		createParams.BitcoinKey1 = vertex[:]
+	})
+	edge.BitcoinKey2Bytes.WhenSome(func(vertex route.Vertex) {
+		createParams.BitcoinKey2 = vertex[:]
+	})
+
+	edge.FundingScript.WhenSome(func(script []byte) {
+		createParams.FundingPkScript = script
+	})
+	edge.MerkleRootHash.WhenSome(func(hash chainhash.Hash) {
+		createParams.MerkleRootHash = hash[:]
+	})
 
 	if edge.AuthProof != nil {
 		proof := edge.AuthProof
@@ -3843,6 +4015,7 @@ func insertChannel(ctx context.Context, db SQLQueries,
 		createParams.Node2Signature = proof.NodeSig2Bytes
 		createParams.Bitcoin1Signature = proof.BitcoinSig1Bytes
 		createParams.Bitcoin2Signature = proof.BitcoinSig2Bytes
+		createParams.Signature = proof.Signature
 	}
 
 	// Insert the new channel record.
@@ -3866,10 +4039,13 @@ func insertChannel(ctx context.Context, db SQLQueries,
 	}
 
 	// Finally, insert any extra TLV fields in the channel announcement.
-	extra, err := marshalExtraOpaqueData(edge.ExtraOpaqueData)
-	if err != nil {
-		return fmt.Errorf("unable to marshal extra opaque data: %w",
-			err)
+	extra := edge.ExtraSignedFields
+	if v == v1 {
+		extra, err = marshalExtraOpaqueData(edge.ExtraOpaqueData)
+		if err != nil {
+			return fmt.Errorf("unable to marshal extra opaque "+
+				"data: %w", err)
+		}
 	}
 
 	for tlvType, value := range extra {
@@ -3895,12 +4071,12 @@ func insertChannel(ctx context.Context, db SQLQueries,
 // created. The ID of the node is returned. A shell node only has a protocol
 // version and public key persisted.
 func maybeCreateShellNode(ctx context.Context, db SQLQueries,
-	pubKey route.Vertex) (int64, error) {
+	v lnwire.GossipVersion, pubKey route.Vertex) (int64, error) {
 
 	dbNode, err := db.GetNodeByPubKey(
 		ctx, sqlc.GetNodeByPubKeyParams{
 			PubKey:  pubKey[:],
-			Version: int16(ProtocolV1),
+			Version: int16(v),
 		},
 	)
 	// The node exists. Return the ID.
@@ -3913,7 +4089,7 @@ func maybeCreateShellNode(ctx context.Context, db SQLQueries,
 	// Otherwise, the node does not exist, so we create a shell entry for
 	// it.
 	id, err := db.UpsertNode(ctx, sqlc.UpsertNodeParams{
-		Version: int16(ProtocolV1),
+		Version: int16(v),
 		PubKey:  pubKey[:],
 	})
 	if err != nil {
@@ -3977,14 +4153,11 @@ func getAndBuildEdgeInfo(ctx context.Context, cfg *SQLStoreConfig,
 }
 
 // buildEdgeInfoWithBatchData builds edge info using pre-loaded batch data.
-func buildEdgeInfoWithBatchData(chain chainhash.Hash,
-	dbChan sqlc.GraphChannel, node1, node2 route.Vertex,
+func buildEdgeInfoWithBatchData(chain chainhash.Hash, dbChan sqlc.GraphChannel,
+	node1, node2 route.Vertex,
 	batchData *batchChannelData) (*models.ChannelEdgeInfo, error) {
 
-	if dbChan.Version != int16(ProtocolV1) {
-		return nil, fmt.Errorf("unsupported channel version: %d",
-			dbChan.Version)
-	}
+	version := lnwire.GossipVersion(dbChan.Version)
 
 	// Use pre-loaded features and extras types.
 	fv := lnwire.EmptyFeatureVector()
@@ -4007,30 +4180,49 @@ func buildEdgeInfoWithBatchData(chain chainhash.Hash,
 		return nil, err
 	}
 
-	recs, err := lnwire.CustomRecords(extras).Serialize()
-	if err != nil {
-		return nil, fmt.Errorf("unable to serialize extra signed "+
-			"fields: %w", err)
-	}
-	if recs == nil {
-		recs = make([]byte, 0)
-	}
-
-	var btcKey1, btcKey2 route.Vertex
-	copy(btcKey1[:], dbChan.BitcoinKey1)
-	copy(btcKey2[:], dbChan.BitcoinKey2)
-
 	channel := &models.ChannelEdgeInfo{
-		ChainHash:        chain,
-		ChannelID:        byteOrder.Uint64(dbChan.Scid),
-		NodeKey1Bytes:    node1,
-		NodeKey2Bytes:    node2,
-		BitcoinKey1Bytes: btcKey1,
-		BitcoinKey2Bytes: btcKey2,
-		ChannelPoint:     *op,
-		Capacity:         btcutil.Amount(dbChan.Capacity.Int64),
-		Features:         fv,
-		ExtraOpaqueData:  recs,
+		Version:       version,
+		ChainHash:     chain,
+		ChannelID:     byteOrder.Uint64(dbChan.Scid),
+		NodeKey1Bytes: node1,
+		NodeKey2Bytes: node2,
+		ChannelPoint:  *op,
+		Capacity:      btcutil.Amount(dbChan.Capacity.Int64),
+		Features:      fv,
+	}
+
+	if len(dbChan.BitcoinKey1) > 0 {
+		var btcKey1 route.Vertex
+		copy(btcKey1[:], dbChan.BitcoinKey1)
+		channel.BitcoinKey1Bytes = fn.Some(btcKey1)
+	}
+	if len(dbChan.BitcoinKey2) > 0 {
+		var btcKey2 route.Vertex
+		copy(btcKey2[:], dbChan.BitcoinKey2)
+		channel.BitcoinKey2Bytes = fn.Some(btcKey2)
+	}
+	if len(dbChan.MerkleRootHash) > 0 {
+		var merkleRoot chainhash.Hash
+		copy(merkleRoot[:], dbChan.MerkleRootHash)
+		channel.MerkleRootHash = fn.Some(merkleRoot)
+	}
+	if len(dbChan.FundingPkScript) > 0 {
+		channel.FundingScript = fn.Some(dbChan.FundingPkScript)
+	}
+
+	if version == v1 {
+		recs, err := lnwire.CustomRecords(extras).Serialize()
+		if err != nil {
+			return nil, fmt.Errorf("unable to serialize extra "+
+				"signed fields: %w", err)
+		}
+		if recs == nil {
+			recs = make([]byte, 0)
+		} else {
+			channel.ExtraOpaqueData = recs
+		}
+	} else {
+		channel.ExtraSignedFields = extras
 	}
 
 	// We always set all the signatures at the same time, so we can
@@ -4042,6 +4234,10 @@ func buildEdgeInfoWithBatchData(chain chainhash.Hash,
 			NodeSig2Bytes:    dbChan.Node2Signature,
 			BitcoinSig1Bytes: dbChan.Bitcoin1Signature,
 			BitcoinSig2Bytes: dbChan.Bitcoin2Signature,
+		}
+	} else if len(dbChan.Signature) > 0 {
+		channel.AuthProof = &models.ChannelAuthProof{
+			Signature: dbChan.Signature,
 		}
 	}
 
@@ -5062,7 +5258,7 @@ func batchLoadChannelPolicyExtrasHelper(ctx context.Context,
 // graph. It uses the provided SQLQueries interface to fetch nodes in batches
 // and applies the provided processNode function to each node.
 func forEachNodePaginated(ctx context.Context, cfg *sqldb.QueryConfig,
-	db SQLQueries, protocol ProtocolVersion,
+	db SQLQueries, protocol lnwire.GossipVersion,
 	processNode func(context.Context, int64,
 		*models.Node) error) error {
 
@@ -5113,7 +5309,8 @@ func forEachNodePaginated(ctx context.Context, cfg *sqldb.QueryConfig,
 // forEachChannelWithPolicies executes a paginated query to process each channel
 // with policies in the graph.
 func forEachChannelWithPolicies(ctx context.Context, db SQLQueries,
-	cfg *SQLStoreConfig, processChannel func(*models.ChannelEdgeInfo,
+	cfg *SQLStoreConfig, v lnwire.GossipVersion,
+	processChannel func(*models.ChannelEdgeInfo,
 		*models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
 
@@ -5128,7 +5325,7 @@ func forEachChannelWithPolicies(ctx context.Context, db SQLQueries,
 
 		return db.ListChannelsWithPoliciesPaginated(
 			ctx, sqlc.ListChannelsWithPoliciesPaginatedParams{
-				Version: int16(ProtocolV1),
+				Version: int16(v),
 				ID:      lastID,
 				Limit:   limit,
 			},
@@ -5501,7 +5698,7 @@ func handleZombieMarking(ctx context.Context, db SQLQueries,
 
 	return db.UpsertZombieChannel(
 		ctx, sqlc.UpsertZombieChannelParams{
-			Version:  int16(ProtocolV1),
+			Version:  int16(row.GraphChannel.Version),
 			Scid:     channelIDToBytes(scid),
 			NodeKey1: nodeKey1[:],
 			NodeKey2: nodeKey2[:],

@@ -12,6 +12,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -412,13 +413,14 @@ func (d *testDBGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 				return nil, err
 			}
 
-			dbNode, err := d.db.FetchNode(ctx, vertex)
+			dbNode, err := d.db.FetchNode(ctx, lnwire.GossipVersion1, vertex)
 			switch {
 			case errors.Is(err, graphdb.ErrGraphNodeNotFound):
 				fallthrough
 			case errors.Is(err, graphdb.ErrGraphNotFound):
-				graphNode := &models.Node{
-					HaveNodeAnnouncement: true,
+				var pubKey [33]byte
+				copy(pubKey[:], pub.SerializeCompressed())
+				graphNode := models.NewV1Node(pubKey, &models.NodeV1Fields{
 					Addresses: []net.Addr{&net.TCPAddr{
 						IP: bytes.Repeat(
 							[]byte("a"), 16,
@@ -426,10 +428,9 @@ func (d *testDBGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 					}},
 					Features: lnwire.NewFeatureVector(
 						nil, lnwire.Features,
-					),
+					).RawFeatureVector,
 					AuthSigBytes: testSig.Serialize(),
-				}
-				graphNode.AddPubKey(pub)
+				})
 				err := d.db.AddNode(
 					context.Background(), graphNode,
 				)
@@ -447,8 +448,9 @@ func (d *testDBGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 		if err != nil {
 			return nil, err
 		}
-		dbNode := &models.Node{
-			HaveNodeAnnouncement: true,
+		var pubKey [33]byte
+		copy(pubKey[:], nodeKey.SerializeCompressed())
+		dbNode := models.NewV1Node(pubKey, &models.NodeV1Fields{
 			Addresses: []net.Addr{
 				&net.TCPAddr{
 					IP: bytes.Repeat([]byte("a"), 16),
@@ -456,10 +458,9 @@ func (d *testDBGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 			},
 			Features: lnwire.NewFeatureVector(
 				nil, lnwire.Features,
-			),
+			).RawFeatureVector,
 			AuthSigBytes: testSig.Serialize(),
-		}
-		dbNode.AddPubKey(nodeKey)
+		})
 		if err := d.db.AddNode(
 			context.Background(), dbNode,
 		); err != nil {
@@ -489,12 +490,18 @@ func (d *testDBGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 	}
 
 	chanID := randChanID()
-	edge := &models.ChannelEdgeInfo{
-		ChannelID: chanID.ToUint64(),
-		Capacity:  capacity,
-		Features:  lnwire.EmptyFeatureVector(),
-	}
-	edge.AddNodeKeys(lnNode1, lnNode2, lnNode1, lnNode2)
+	edge := models.NewChannelEdge(
+		lnwire.GossipVersion1, chanID.ToUint64(),
+		chainhash.Hash{}, // Default empty chain hash
+		route.Vertex(lnNode1.SerializeCompressed()),
+		route.Vertex(lnNode2.SerializeCompressed()),
+		models.WithCapacity(capacity),
+		models.WithBitcoinKeys(
+			route.Vertex(lnNode1.SerializeCompressed()),
+			route.Vertex(lnNode2.SerializeCompressed()),
+		),
+	)
+
 	if err := d.db.AddChannelEdge(ctx, edge); err != nil {
 		return nil, nil, err
 	}
@@ -548,8 +555,9 @@ func (d *testDBGraph) addRandNode() (*btcec.PublicKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	dbNode := &models.Node{
-		HaveNodeAnnouncement: true,
+	var pubKey [33]byte
+	copy(pubKey[:], nodeKey.SerializeCompressed())
+	dbNode := models.NewV1Node(pubKey, &models.NodeV1Fields{
 		Addresses: []net.Addr{
 			&net.TCPAddr{
 				IP: bytes.Repeat([]byte("a"), 16),
@@ -557,10 +565,9 @@ func (d *testDBGraph) addRandNode() (*btcec.PublicKey, error) {
 		},
 		Features: lnwire.NewFeatureVector(
 			nil, lnwire.Features,
-		),
+		).RawFeatureVector,
 		AuthSigBytes: testSig.Serialize(),
-	}
-	dbNode.AddPubKey(nodeKey)
+	})
 	err = d.db.AddNode(context.Background(), dbNode)
 	if err != nil {
 		return nil, err

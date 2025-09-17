@@ -185,6 +185,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 	*testGraphInstance, error) {
 
 	ctx := t.Context()
+	v := lnwire.GossipVersion1
 
 	graphJSON, err := os.ReadFile(path)
 	if err != nil {
@@ -228,15 +229,15 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 			return nil, err
 		}
 
-		dbNode := &models.Node{
-			HaveNodeAnnouncement: true,
-			AuthSigBytes:         testSig.Serialize(),
-			LastUpdate:           testTime,
-			Addresses:            testAddrs,
-			Alias:                node.Alias,
-			Features:             testFeatures,
-		}
-		copy(dbNode.PubKeyBytes[:], pubBytes)
+		var pubKey [33]byte
+		copy(pubKey[:], pubBytes)
+		dbNode := models.NewV1Node(pubKey, &models.NodeV1Fields{
+			AuthSigBytes: testSig.Serialize(),
+			LastUpdate:   testTime,
+			Addresses:    testAddrs,
+			Alias:        node.Alias,
+			Features:     testFeatures.RawFeatureVector,
+		})
 
 		// We require all aliases within the graph to be unique for our
 		// tests.
@@ -307,7 +308,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 
 	if source != nil {
 		// Set the selected source node
-		if err := graph.SetSourceNode(ctx, source); err != nil {
+		if err := graph.SetSourceNode(ctx, v, source); err != nil {
 			return nil, err
 		}
 	}
@@ -344,18 +345,18 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 
 		// We first insert the existence of the edge between the two
 		// nodes.
-		edgeInfo := models.ChannelEdgeInfo{
-			ChannelID:    edge.ChannelID,
-			AuthProof:    &testAuthProof,
-			ChannelPoint: fundingPoint,
-			Features:     lnwire.EmptyFeatureVector(),
-			Capacity:     btcutil.Amount(edge.Capacity),
-		}
-
-		copy(edgeInfo.NodeKey1Bytes[:], node1Bytes)
-		copy(edgeInfo.NodeKey2Bytes[:], node2Bytes)
-		copy(edgeInfo.BitcoinKey1Bytes[:], node1Bytes)
-		copy(edgeInfo.BitcoinKey2Bytes[:], node2Bytes)
+		edgeInfo := *models.NewChannelEdge(
+			lnwire.GossipVersion1, edge.ChannelID,
+			chainhash.Hash{}, // Default empty chain hash
+			route.Vertex(node1Bytes), route.Vertex(node2Bytes),
+			models.WithChannelPoint(fundingPoint),
+			models.WithCapacity(btcutil.Amount(edge.Capacity)),
+			models.WithBitcoinKeys(
+				route.Vertex(node1Bytes),
+				route.Vertex(node2Bytes),
+			),
+			models.WithChanProof(&testAuthProof),
+		)
 
 		shortID := lnwire.NewShortChanIDFromInt(edge.ChannelID)
 		links[shortID] = &mockLink{
@@ -565,14 +566,15 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 			features = lnwire.EmptyFeatureVector()
 		}
 
-		dbNode := &models.Node{
-			HaveNodeAnnouncement: true,
-			AuthSigBytes:         testSig.Serialize(),
-			LastUpdate:           testTime,
-			Addresses:            testAddrs,
-			Alias:                alias,
-			Features:             features,
-		}
+		var pubKeyBytes [33]byte
+		copy(pubKeyBytes[:], pubKey.SerializeCompressed())
+		dbNode := models.NewV1Node(pubKeyBytes, &models.NodeV1Fields{
+			AuthSigBytes: testSig.Serialize(),
+			LastUpdate:   testTime,
+			Addresses:    testAddrs,
+			Alias:        alias,
+			Features:     features.RawFeatureVector,
+		})
 
 		copy(dbNode.PubKeyBytes[:], pubKey.SerializeCompressed())
 
@@ -581,7 +583,9 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 		// With the node fully parsed, add it as a vertex within the
 		// graph.
 		if alias == source {
-			err = graph.SetSourceNode(ctx, dbNode)
+			err = graph.SetSourceNode(
+				ctx, lnwire.GossipVersion1, dbNode,
+			)
 			require.NoError(t, err)
 		} else {
 			err := graph.AddNode(ctx, dbNode)
@@ -673,18 +677,15 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 
 		// We first insert the existence of the edge between the two
 		// nodes.
-		edgeInfo := models.ChannelEdgeInfo{
-			ChannelID:    channelID,
-			AuthProof:    &testAuthProof,
-			ChannelPoint: *fundingPoint,
-			Capacity:     testChannel.Capacity,
-			Features:     lnwire.EmptyFeatureVector(),
-
-			NodeKey1Bytes:    node1Vertex,
-			BitcoinKey1Bytes: node1Vertex,
-			NodeKey2Bytes:    node2Vertex,
-			BitcoinKey2Bytes: node2Vertex,
-		}
+		edgeInfo := *models.NewChannelEdge(
+			lnwire.GossipVersion1, channelID,
+			chainhash.Hash{}, // Default empty chain hash
+			node1Vertex, node2Vertex,
+			models.WithChannelPoint(*fundingPoint),
+			models.WithCapacity(testChannel.Capacity),
+			models.WithBitcoinKeys(node1Vertex, node2Vertex),
+			models.WithChanProof(&testAuthProof),
+		)
 
 		err = graph.AddChannelEdge(ctx, &edgeInfo)
 		if err != nil && !errors.Is(err, graphdb.ErrEdgeAlreadyExist) {
@@ -1095,7 +1096,7 @@ func testBasicGraphPathFindingCase(t *testing.T, graphInstance *testGraphInstanc
 	expectedHops := test.expectedHops
 	expectedHopCount := len(expectedHops)
 
-	sourceNode, err := graphInstance.graph.SourceNode(ctx)
+	sourceNode, err := graphInstance.graph.SourceNode(ctx, lnwire.GossipVersion1)
 	require.NoError(t, err, "unable to fetch source node")
 	sourceVertex := route.Vertex(sourceNode.PubKeyBytes)
 
@@ -1237,7 +1238,7 @@ func runPathFindingWithAdditionalEdges(t *testing.T, useCache bool) {
 
 	ctx := t.Context()
 
-	sourceNode, err := graph.graph.SourceNode(ctx)
+	sourceNode, err := graph.graph.SourceNode(ctx, lnwire.GossipVersion1)
 	require.NoError(t, err, "unable to fetch source node")
 
 	paymentAmt := lnwire.NewMSatFromSatoshis(100)
@@ -1250,13 +1251,12 @@ func runPathFindingWithAdditionalEdges(t *testing.T, useCache bool) {
 	dogePubKeyHex := "03dd46ff29a6941b4a2607525b043ec9b020b3f318a1bf281536fd7011ec59c882"
 	dogePubKeyBytes, err := hex.DecodeString(dogePubKeyHex)
 	require.NoError(t, err, "unable to decode public key")
-	dogePubKey, err := btcec.ParsePubKey(dogePubKeyBytes)
-	require.NoError(t, err, "unable to parse public key from bytes")
 
-	doge := &models.Node{}
-	doge.AddPubKey(dogePubKey)
-	doge.Alias = "doge"
-	copy(doge.PubKeyBytes[:], dogePubKeyBytes)
+	var pubKey [33]byte
+	copy(pubKey[:], dogePubKeyBytes[:])
+	doge := models.NewV1Node(pubKey, &models.NodeV1Fields{
+		Alias: "doge",
+	})
 	graph.aliasMap["doge"] = doge.PubKeyBytes
 
 	// Create the channel edge going from songoku to doge and include it in
@@ -1322,7 +1322,7 @@ func runPathFindingWithBlindedPathDuplicateHop(t *testing.T, useCache bool) {
 
 	ctx := t.Context()
 
-	sourceNode, err := graph.graph.SourceNode(ctx)
+	sourceNode, err := graph.graph.SourceNode(ctx, lnwire.GossipVersion1)
 	require.NoError(t, err, "unable to fetch source node")
 
 	paymentAmt := lnwire.NewMSatFromSatoshis(100)
@@ -1809,7 +1809,7 @@ func runPathNotAvailable(t *testing.T, useCache bool) {
 
 	ctx := t.Context()
 
-	sourceNode, err := graph.graph.SourceNode(ctx)
+	sourceNode, err := graph.graph.SourceNode(ctx, lnwire.GossipVersion1)
 	require.NoError(t, err, "unable to fetch source node")
 
 	// With the test graph loaded, we'll test that queries for target that
@@ -1865,7 +1865,9 @@ func runDestTLVGraphFallback(t *testing.T, useCache bool) {
 
 	ctx := newPathFindingTestContext(t, useCache, testChannels, "roasbeef")
 
-	sourceNode, err := ctx.graph.SourceNode(t.Context())
+	sourceNode, err := ctx.graph.SourceNode(
+		t.Context(), lnwire.GossipVersion1,
+	)
 	require.NoError(t, err, "unable to fetch source node")
 
 	find := func(r *RestrictParams,
@@ -2084,7 +2086,7 @@ func runPathInsufficientCapacity(t *testing.T, useCache bool) {
 	require.NoError(t, err, "unable to create graph")
 
 	ctx := t.Context()
-	sourceNode, err := graph.graph.SourceNode(ctx)
+	sourceNode, err := graph.graph.SourceNode(ctx, lnwire.GossipVersion1)
 	require.NoError(t, err, "unable to fetch source node")
 
 	// Next, test that attempting to find a path in which the current
@@ -2115,7 +2117,7 @@ func runRouteFailMinHTLC(t *testing.T, useCache bool) {
 	require.NoError(t, err, "unable to create graph")
 
 	ctx := t.Context()
-	sourceNode, err := graph.graph.SourceNode(ctx)
+	sourceNode, err := graph.graph.SourceNode(ctx, lnwire.GossipVersion1)
 	require.NoError(t, err, "unable to fetch source node")
 
 	// We'll not attempt to route an HTLC of 10 SAT from roasbeef to Son
@@ -2174,7 +2176,9 @@ func runRouteFailMaxHTLC(t *testing.T, useCache bool) {
 	// Next, update the middle edge policy to only allow payments up to 100k
 	// msat.
 	graph := ctx.testGraphInstance.graph
-	_, midEdge, _, err := graph.FetchChannelEdgesByID(firstToSecondID)
+	_, midEdge, _, err := graph.FetchChannelEdgesByID(
+		lnwire.GossipVersion1, firstToSecondID,
+	)
 	require.NoError(t, err, "unable to fetch channel edges by ID")
 	midEdge.MessageFlags = 1
 	midEdge.MaxHTLC = payAmt - 1
@@ -2200,7 +2204,7 @@ func runRouteFailDisabledEdge(t *testing.T, useCache bool) {
 	require.NoError(t, err, "unable to create graph")
 
 	ctx := t.Context()
-	sourceNode, err := graph.graph.SourceNode(ctx)
+	sourceNode, err := graph.graph.SourceNode(ctx, lnwire.GossipVersion1)
 	require.NoError(t, err, "unable to fetch source node")
 
 	// First, we'll try to route from roasbeef -> sophon. This should
@@ -2218,7 +2222,9 @@ func runRouteFailDisabledEdge(t *testing.T, useCache bool) {
 	// path finding, as we don't consider the disable flag for local
 	// channels (and roasbeef is the source).
 	roasToPham := uint64(999991)
-	_, e1, e2, err := graph.graph.FetchChannelEdgesByID(roasToPham)
+	_, e1, e2, err := graph.graph.FetchChannelEdgesByID(
+		lnwire.GossipVersion1, roasToPham,
+	)
 	require.NoError(t, err, "unable to fetch edge")
 	e1.ChannelFlags |= lnwire.ChanUpdateDisabled
 	e1.LastUpdate = e1.LastUpdate.Add(time.Second)
@@ -2241,7 +2247,9 @@ func runRouteFailDisabledEdge(t *testing.T, useCache bool) {
 	// Now, we'll modify the edge from phamnuwen -> sophon, to read that
 	// it's disabled.
 	phamToSophon := uint64(99999)
-	_, e, _, err := graph.graph.FetchChannelEdgesByID(phamToSophon)
+	_, e, _, err := graph.graph.FetchChannelEdgesByID(
+		lnwire.GossipVersion1, phamToSophon,
+	)
 	require.NoError(t, err, "unable to fetch edge")
 	e.ChannelFlags |= lnwire.ChanUpdateDisabled
 	e.LastUpdate = e.LastUpdate.Add(time.Second)
@@ -2269,7 +2277,7 @@ func runPathSourceEdgesBandwidth(t *testing.T, useCache bool) {
 	require.NoError(t, err, "unable to create graph")
 
 	ctx := t.Context()
-	sourceNode, err := graph.graph.SourceNode(ctx)
+	sourceNode, err := graph.graph.SourceNode(ctx, lnwire.GossipVersion1)
 	require.NoError(t, err, "unable to fetch source node")
 
 	// First, we'll try to route from roasbeef -> sophon. This should
@@ -2324,7 +2332,9 @@ func runPathSourceEdgesBandwidth(t *testing.T, useCache bool) {
 	// Finally, set the roasbeef->songoku bandwidth, but also set its
 	// disable flag.
 	bandwidths.hints[roasToSongoku] = 2 * payAmt
-	_, e1, e2, err := graph.graph.FetchChannelEdgesByID(roasToSongoku)
+	_, e1, e2, err := graph.graph.FetchChannelEdgesByID(
+		lnwire.GossipVersion1, roasToSongoku,
+	)
 	require.NoError(t, err, "unable to fetch edge")
 	e1.ChannelFlags |= lnwire.ChanUpdateDisabled
 	e1.LastUpdate = e1.LastUpdate.Add(time.Second)
@@ -3202,7 +3212,7 @@ func newPathFindingTestContext(t *testing.T, useCache bool,
 	require.NoError(t, err, "unable to create graph")
 
 	sourceNode, err := testGraphInstance.graph.SourceNode(
-		t.Context(),
+		t.Context(), lnwire.GossipVersion1,
 	)
 	require.NoError(t, err, "unable to fetch source node")
 
@@ -3285,7 +3295,7 @@ func dbFindPath(graph *graphdb.ChannelGraph,
 	finalHtlcExpiry int32) ([]*unifiedEdge, error) {
 
 	ctx := context.Background()
-	sourceNode, err := graph.SourceNode(ctx)
+	sourceNode, err := graph.SourceNode(ctx, lnwire.GossipVersion1)
 	if err != nil {
 		return nil, err
 	}
@@ -3318,7 +3328,9 @@ func dbFindPath(graph *graphdb.ChannelGraph,
 func dbFindBlindedPaths(graph *graphdb.ChannelGraph,
 	restrictions *blindedPathRestrictions) ([][]blindedHop, error) {
 
-	sourceNode, err := graph.SourceNode(context.Background())
+	sourceNode, err := graph.SourceNode(
+		context.Background(), lnwire.GossipVersion1,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -73,19 +73,19 @@ var (
 // and a function to open the connection.
 type dbConnection struct {
 	name string
-	open func(testing.TB) V1Store
+	open func(testing.TB) Store
 }
 
 // This var block defines the various database connections that we will use
 // for testing. Each connection is defined as a dbConnection struct that
 // contains a name and an open function. The open function is used to create
-// a new V1Store instance for the given database type.
+// a new Store instance for the given database type.
 var (
 	// kvdbBBoltConn is a connection to a kvdb-bbolt database called
 	// channel.db.
 	kvdbBBoltConn = dbConnection{
 		name: "kvdb-bbolt",
-		open: func(b testing.TB) V1Store {
+		open: func(b testing.TB) Store {
 			return connectBBoltDB(b, bboltDBPath, kvdbBBoltFile)
 		},
 	}
@@ -94,7 +94,7 @@ var (
 	// channel.sqlite.
 	kvdbSqliteConn = dbConnection{
 		name: "kvdb-sqlite",
-		open: func(b testing.TB) V1Store {
+		open: func(b testing.TB) Store {
 			return connectKVDBSqlite(
 				b, kvdbSqlitePath, kvdbSqliteFile,
 			)
@@ -105,7 +105,7 @@ var (
 	// called lnd.sqlite.
 	nativeSQLSqliteConn = dbConnection{
 		name: "native-sqlite",
-		open: func(b testing.TB) V1Store {
+		open: func(b testing.TB) Store {
 			return connectNativeSQLite(
 				b, sqldb.DefaultSQLiteConfig(),
 				nativeSQLSqlitePath, nativeSQLSqliteFile,
@@ -117,7 +117,7 @@ var (
 	// using a postgres connection string.
 	kvdbPostgresConn = dbConnection{
 		name: "kvdb-postgres",
-		open: func(b testing.TB) V1Store {
+		open: func(b testing.TB) Store {
 			return connectKVDBPostgres(b, kvdbPostgresDNS)
 		},
 	}
@@ -126,7 +126,7 @@ var (
 	// database using a postgres connection string.
 	nativeSQLPostgresConn = dbConnection{
 		name: "native-postgres",
-		open: func(b testing.TB) V1Store {
+		open: func(b testing.TB) Store {
 			return connectNativePostgres(
 				b, sqldb.DefaultPostgresConfig(),
 				nativeSQLPostgresDNS,
@@ -135,10 +135,10 @@ var (
 	}
 )
 
-// connectNativePostgres creates a V1Store instance backed by a native Postgres
+// connectNativePostgres creates a Store instance backed by a native Postgres
 // database for testing purposes.
 func connectNativePostgres(t testing.TB, cfg *sqldb.QueryConfig,
-	dsn string) V1Store {
+	dsn string) Store {
 
 	return newSQLStore(t, cfg, sqlPostgres(t, dsn))
 }
@@ -158,10 +158,10 @@ func sqlPostgres(t testing.TB, dsn string) BatchedSQLQueries {
 	return newSQLExecutor(t, store)
 }
 
-// connectNativeSQLite creates a V1Store instance backed by a native SQLite
+// connectNativeSQLite creates a Store instance backed by a native SQLite
 // database for testing purposes.
 func connectNativeSQLite(t testing.TB, cfg *sqldb.QueryConfig, dbPath,
-	file string) V1Store {
+	file string) Store {
 
 	return newSQLStore(t, cfg, sqlSQLite(t, dbPath, file))
 }
@@ -206,9 +206,9 @@ func kvdbPostgres(t testing.TB, dsn string) kvdb.Backend {
 	return kvStore
 }
 
-// connectKVDBPostgres creates a V1Store instance backed by a kvdb-postgres
+// connectKVDBPostgres creates a Store instance backed by a kvdb-postgres
 // database for testing purposes.
-func connectKVDBPostgres(t testing.TB, dsn string) V1Store {
+func connectKVDBPostgres(t testing.TB, dsn string) Store {
 	return newKVStore(t, kvdbPostgres(t, dsn))
 }
 
@@ -232,14 +232,14 @@ func kvdbSqlite(t testing.TB, dbPath, fileName string) kvdb.Backend {
 	return kvStore
 }
 
-// connectKVDBSqlite creates a V1Store instance backed by a kvdb-sqlite
+// connectKVDBSqlite creates a Store instance backed by a kvdb-sqlite
 // database for testing purposes.
-func connectKVDBSqlite(t testing.TB, dbPath, fileName string) V1Store {
+func connectKVDBSqlite(t testing.TB, dbPath, fileName string) Store {
 	return newKVStore(t, kvdbSqlite(t, dbPath, fileName))
 }
 
 // connectBBoltDB creates a new BBolt database connection for testing.
-func connectBBoltDB(t testing.TB, dbPath, fileName string) V1Store {
+func connectBBoltDB(t testing.TB, dbPath, fileName string) Store {
 	return newKVStore(t, kvdbBBolt(t, dbPath, fileName))
 }
 
@@ -262,7 +262,7 @@ func kvdbBBolt(t testing.TB, dbPath, fileName string) kvdb.Backend {
 
 // newKVStore creates a new KVStore instance for testing using a provided
 // kvdb.Backend instance.
-func newKVStore(t testing.TB, backend kvdb.Backend) V1Store {
+func newKVStore(t testing.TB, backend kvdb.Backend) Store {
 	store, err := NewKVStore(backend, testStoreOptions...)
 	require.NoError(t, err)
 
@@ -287,7 +287,7 @@ func newSQLExecutor(t testing.TB, db sqldb.DB) BatchedSQLQueries {
 // newSQLStore creates a new SQLStore instance for testing using a provided
 // sqldb.DB instance.
 func newSQLStore(t testing.TB, cfg *sqldb.QueryConfig,
-	db BatchedSQLQueries) V1Store {
+	db BatchedSQLQueries) Store {
 
 	store, err := NewSQLStore(
 		&SQLStoreConfig{
@@ -318,6 +318,7 @@ func newSQLStore(t testing.TB, cfg *sqldb.QueryConfig,
 func TestPopulateDBs(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
+	v := lnwire.GossipVersion1
 
 	// NOTE: uncomment the line below to run this test locally, then provide
 	// the desired source database (and make sure the destination Postgres
@@ -350,7 +351,7 @@ func TestPopulateDBs(t *testing.T) {
 	countNodes := func(graph *ChannelGraph) int {
 		numNodes := 0
 		err := graph.ForEachNode(
-			ctx, func(node *models.Node) error {
+			ctx, lnwire.GossipVersion1, func(node *models.Node) error {
 				numNodes++
 
 				return nil
@@ -371,7 +372,7 @@ func TestPopulateDBs(t *testing.T) {
 			numPolicies = 0
 		)
 		err := graph.ForEachChannel(
-			ctx, func(info *models.ChannelEdgeInfo,
+			ctx, v, func(info *models.ChannelEdgeInfo,
 				policy,
 				policy2 *models.ChannelEdgePolicy) error {
 
@@ -587,7 +588,7 @@ func syncGraph(t *testing.T, src, dest *ChannelGraph) {
 	}
 
 	var wgNodes sync.WaitGroup
-	err := src.ForEachNode(ctx, func(node *models.Node) error {
+	err := src.ForEachNode(ctx, lnwire.GossipVersion1, func(node *models.Node) error {
 		wgNodes.Add(1)
 		go func() {
 			defer wgNodes.Done()
@@ -629,48 +630,49 @@ func syncGraph(t *testing.T, src, dest *ChannelGraph) {
 	}
 
 	var wgChans sync.WaitGroup
-	err = src.ForEachChannel(ctx, func(info *models.ChannelEdgeInfo,
-		policy1, policy2 *models.ChannelEdgePolicy) error {
+	err = src.ForEachChannel(ctx, lnwire.GossipVersion1,
+		func(info *models.ChannelEdgeInfo,
+			policy1, policy2 *models.ChannelEdgePolicy) error {
 
-		// Add each channel & policy. We do this in a goroutine to
-		// take advantage of batch processing.
-		wgChans.Add(1)
-		go func() {
-			defer wgChans.Done()
+			// Add each channel & policy. We do this in a goroutine to
+			// take advantage of batch processing.
+			wgChans.Add(1)
+			go func() {
+				defer wgChans.Done()
 
-			err := dest.AddChannelEdge(
-				ctx, info, batch.LazyAdd(),
-			)
-			if !errors.Is(err, ErrEdgeAlreadyExist) {
-				require.NoError(t, err)
-			}
-
-			if policy1 != nil {
-				err = dest.UpdateEdgePolicy(
-					ctx, policy1, batch.LazyAdd(),
+				err := dest.AddChannelEdge(
+					ctx, info, batch.LazyAdd(),
 				)
-				require.NoError(t, err)
-			}
+				if !errors.Is(err, ErrEdgeAlreadyExist) {
+					require.NoError(t, err)
+				}
 
-			if policy2 != nil {
-				err = dest.UpdateEdgePolicy(
-					ctx, policy2, batch.LazyAdd(),
-				)
-				require.NoError(t, err)
-			}
+				if policy1 != nil {
+					err = dest.UpdateEdgePolicy(
+						ctx, policy1, batch.LazyAdd(),
+					)
+					require.NoError(t, err)
+				}
 
-			mu.Lock()
-			total++
-			chunk++
-			s.Do(func() {
-				reportChanStats()
-				chunk = 0
-			})
-			mu.Unlock()
-		}()
+				if policy2 != nil {
+					err = dest.UpdateEdgePolicy(
+						ctx, policy2, batch.LazyAdd(),
+					)
+					require.NoError(t, err)
+				}
 
-		return nil
-	}, func() {})
+				mu.Lock()
+				total++
+				chunk++
+				s.Do(func() {
+					reportChanStats()
+					chunk = 0
+				})
+				mu.Unlock()
+			}()
+
+			return nil
+		}, func() {})
 	require.NoError(t, err)
 
 	wgChans.Wait()
@@ -713,13 +715,16 @@ func BenchmarkCacheLoading(b *testing.B) {
 				require.NoError(b, err)
 				b.StartTimer()
 
-				require.NoError(b, graph.populateCache(ctx))
+				err = graph.graphCache.PopulateFromDB(
+					ctx, store,
+				)
+				require.NoError(b, err)
 			}
 		})
 	}
 }
 
-// BenchmarkGraphReadMethods benchmarks various read calls of various V1Store
+// BenchmarkGraphReadMethods benchmarks various read calls of various Store
 // implementations.
 //
 // NOTE: this is to be run against a local graph database. It can be run
@@ -746,13 +751,13 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 
 	tests := []struct {
 		name string
-		fn   func(b testing.TB, store V1Store)
+		fn   func(b testing.TB, store Store)
 	}{
 		{
 			name: "ForEachNode",
-			fn: func(b testing.TB, store V1Store) {
+			fn: func(b testing.TB, store Store) {
 				err := store.ForEachNode(
-					ctx,
+					ctx, lnwire.GossipVersion1,
 					func(_ *models.Node) error {
 						// Increment the counter to
 						// ensure the callback is doing
@@ -767,10 +772,11 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 		},
 		{
 			name: "ForEachChannel",
-			fn: func(b testing.TB, store V1Store) {
+			fn: func(b testing.TB, store Store) {
 				//nolint:ll
 				err := store.ForEachChannel(
-					ctx, func(_ *models.ChannelEdgeInfo,
+					ctx, lnwire.GossipVersion1,
+					func(_ *models.ChannelEdgeInfo,
 						_ *models.ChannelEdgePolicy,
 						_ *models.ChannelEdgePolicy) error {
 
@@ -787,7 +793,7 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 		},
 		{
 			name: "NodeUpdatesInHorizon",
-			fn: func(b testing.TB, store V1Store) {
+			fn: func(b testing.TB, store Store) {
 				_, err := store.NodeUpdatesInHorizon(
 					time.Unix(0, 0), time.Now(),
 				)
@@ -796,9 +802,9 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 		},
 		{
 			name: "ForEachNodeCacheable",
-			fn: func(b testing.TB, store V1Store) {
+			fn: func(b testing.TB, store Store) {
 				err := store.ForEachNodeCacheable(
-					ctx, func(_ route.Vertex,
+					ctx, lnwire.GossipVersion1, func(_ route.Vertex,
 						_ *lnwire.FeatureVector) error {
 
 						// Increment the counter to
@@ -814,10 +820,10 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 		},
 		{
 			name: "ForEachNodeCached",
-			fn: func(b testing.TB, store V1Store) {
+			fn: func(b testing.TB, store Store) {
 				//nolint:ll
 				err := store.ForEachNodeCached(
-					ctx, false, func(context.Context,
+					ctx, lnwire.GossipVersion1, false, func(context.Context,
 						route.Vertex,
 						[]net.Addr,
 						map[uint64]*DirectedChannel) error {
@@ -835,7 +841,7 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 		},
 		{
 			name: "ChanUpdatesInHorizon",
-			fn: func(b testing.TB, store V1Store) {
+			fn: func(b testing.TB, store Store) {
 				_, err := store.ChanUpdatesInHorizon(
 					time.Unix(0, 0), time.Now(),
 				)
@@ -940,7 +946,7 @@ func BenchmarkFindOptimalSQLQueryConfig(b *testing.B) {
 					)
 
 					err := store.ForEachNode(
-						ctx,
+						ctx, lnwire.GossipVersion1,
 						func(_ *models.Node) error {
 							numNodes++
 
@@ -951,7 +957,7 @@ func BenchmarkFindOptimalSQLQueryConfig(b *testing.B) {
 
 					//nolint:ll
 					err = store.ForEachChannel(
-						ctx,
+						ctx, lnwire.GossipVersion1,
 						func(_ *models.ChannelEdgeInfo,
 							_,
 							_ *models.ChannelEdgePolicy) error {

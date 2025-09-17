@@ -18,6 +18,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/davecgh/go-spew/spew"
@@ -296,7 +297,7 @@ func (r *mockGraphSource) GetChannelByID(chanID lnwire.ShortChannelID) (
 }
 
 func (r *mockGraphSource) FetchNode(_ context.Context,
-	nodePub route.Vertex) (*models.Node, error) {
+	_ lnwire.GossipVersion, nodePub route.Vertex) (*models.Node, error) {
 
 	for _, node := range r.nodes {
 		if bytes.Equal(nodePub[:], node.PubKeyBytes[:]) {
@@ -338,7 +339,9 @@ func (r *mockGraphSource) IsStaleNode(_ context.Context,
 
 // IsPublicNode determines whether the given vertex is seen as a public node in
 // the graph from the graph's source node's point of view.
-func (r *mockGraphSource) IsPublicNode(node route.Vertex) (bool, error) {
+func (r *mockGraphSource) IsPublicNode(_ lnwire.GossipVersion,
+	node route.Vertex) (bool, error) {
+
 	for _, info := range r.infos {
 		if !bytes.Equal(node[:], info.NodeKey1Bytes[:]) &&
 			!bytes.Equal(node[:], info.NodeKey2Bytes[:]) {
@@ -492,8 +495,8 @@ func (m *mockNotifier) Stop() error {
 }
 
 type annBatch struct {
-	nodeAnn1 *lnwire.NodeAnnouncement
-	nodeAnn2 *lnwire.NodeAnnouncement
+	nodeAnn1 *lnwire.NodeAnnouncement1
+	nodeAnn2 *lnwire.NodeAnnouncement1
 
 	chanAnn *lnwire.ChannelAnnouncement1
 
@@ -577,7 +580,7 @@ func (ctx *testCtx) createAnnouncements(blockHeight uint32, key1,
 }
 
 func createNodeAnnouncement(priv *btcec.PrivateKey,
-	timestamp uint32, extraBytes ...[]byte) (*lnwire.NodeAnnouncement, error) {
+	timestamp uint32, extraBytes ...[]byte) (*lnwire.NodeAnnouncement1, error) {
 
 	var err error
 	k := hex.EncodeToString(priv.Serialize())
@@ -586,7 +589,7 @@ func createNodeAnnouncement(priv *btcec.PrivateKey,
 		return nil, err
 	}
 
-	a := &lnwire.NodeAnnouncement{
+	a := &lnwire.NodeAnnouncement1{
 		Timestamp: timestamp,
 		Addresses: testAddrs,
 		Alias:     alias,
@@ -620,6 +623,7 @@ func createUpdateAnnouncement(blockHeight uint32,
 
 	htlcMinMsat := lnwire.MilliSatoshi(100)
 	a := &lnwire.ChannelUpdate1{
+		ChainHash: *chaincfg.MainNetParams.GenesisHash,
 		ShortChannelID: lnwire.ShortChannelID{
 			BlockHeight: blockHeight,
 		},
@@ -772,6 +776,7 @@ func (ctx *testCtx) createAnnouncementWithoutProof(blockHeight uint32,
 	}
 
 	a := &lnwire.ChannelAnnouncement1{
+		ChainHash: *chaincfg.MainNetParams.GenesisHash,
 		ShortChannelID: lnwire.ShortChannelID{
 			BlockHeight: blockHeight,
 			TxIndex:     0,
@@ -938,8 +943,9 @@ func createTestCtx(t *testing.T, startHeight uint32, isChanPeer bool) (
 	}
 
 	gossiper := New(Config{
-		ChainIO:  chain,
-		Notifier: notifier,
+		ChainIO:     chain,
+		ChainParams: &chaincfg.MainNetParams,
+		Notifier:    notifier,
 		Broadcast: func(senders map[route.Vertex]struct{},
 			msgs ...lnwire.Message) error {
 
@@ -962,15 +968,15 @@ func createTestCtx(t *testing.T, startHeight uint32, isChanPeer bool) (
 			c := make(chan struct{})
 			return c
 		},
-		FetchSelfAnnouncement: func() lnwire.NodeAnnouncement {
-			return lnwire.NodeAnnouncement{
+		FetchSelfAnnouncement: func() lnwire.NodeAnnouncement1 {
+			return lnwire.NodeAnnouncement1{
 				Timestamp: testTimestamp,
 			}
 		},
-		UpdateSelfAnnouncement: func() (lnwire.NodeAnnouncement,
+		UpdateSelfAnnouncement: func() (lnwire.NodeAnnouncement1,
 			error) {
 
-			return lnwire.NodeAnnouncement{
+			return lnwire.NodeAnnouncement1{
 				Timestamp: testTimestamp,
 			}, nil
 		},
@@ -1669,6 +1675,7 @@ func TestSignatureAnnouncementRetryAtStartup(t *testing.T) {
 
 	//nolint:ll
 	gossiper := New(Config{
+		ChainParams:            &chaincfg.MainNetParams,
 		Notifier:               tCtx.gossiper.cfg.Notifier,
 		Broadcast:              tCtx.gossiper.cfg.Broadcast,
 		NotifyWhenOnline:       tCtx.gossiper.reliableSender.cfg.NotifyWhenOnline,
@@ -2280,7 +2287,7 @@ func TestForwardPrivateNodeAnnouncement(t *testing.T) {
 	case <-time.After(2 * trickleDelay):
 	}
 
-	// Now, we'll attempt to forward the NodeAnnouncement for the same node
+	// Now, we'll attempt to forward the NodeAnnouncement1 for the same node
 	// by opening a public channel on the network. We'll create a
 	// ChannelAnnouncement and hand it off to the gossiper in order to
 	// process it.
@@ -2307,8 +2314,8 @@ func TestForwardPrivateNodeAnnouncement(t *testing.T) {
 		t.Fatal("gossiper should have broadcast the channel announcement")
 	}
 
-	// We'll recreate the NodeAnnouncement with an updated timestamp to
-	// prevent a stale update. The NodeAnnouncement should now be forwarded.
+	// We'll recreate the NodeAnnouncement1 with an updated timestamp to
+	// prevent a stale update. The NodeAnnouncement1 should now be forwarded.
 	nodeAnn, err = createNodeAnnouncement(remoteKeyPriv1, timestamp+1)
 	require.NoError(t, err, "unable to create node announcement")
 
@@ -2892,7 +2899,7 @@ func TestExtraDataChannelUpdateValidation(t *testing.T) {
 }
 
 // TestExtraDataNodeAnnouncementValidation tests that we're able to properly
-// validate a NodeAnnouncement that includes opaque bytes that we don't
+// validate a NodeAnnouncement1 that includes opaque bytes that we don't
 // currently know of.
 func TestExtraDataNodeAnnouncementValidation(t *testing.T) {
 	t.Parallel()
@@ -3039,7 +3046,7 @@ func TestRetransmit(t *testing.T) {
 				chanAnn++
 			case *lnwire.ChannelUpdate1:
 				chanUpd++
-			case *lnwire.NodeAnnouncement:
+			case *lnwire.NodeAnnouncement1:
 				nodeAnn++
 			}
 		}
@@ -4711,6 +4718,7 @@ func TestChanAnnBanningNonChanPeer(t *testing.T) {
 
 	// Remove the scid from the reject cache.
 	key := newRejectCacheKey(
+		ca.GossipVersion(),
 		ca.ShortChannelID.ToUint64(),
 		sourceToPub(nodePeer2.IdentityKey()),
 	)

@@ -13,6 +13,7 @@ import (
 type Querier interface {
 	AddSourceNode(ctx context.Context, nodeID int64) error
 	AddV1ChannelProof(ctx context.Context, arg AddV1ChannelProofParams) (sql.Result, error)
+	AddV2ChannelProof(ctx context.Context, arg AddV2ChannelProofParams) (sql.Result, error)
 	ClearKVInvoiceHashIndex(ctx context.Context) error
 	CountZombieChannels(ctx context.Context, version int16) (int64, error)
 	CreateChannel(ctx context.Context, arg CreateChannelParams) (int64, error)
@@ -33,6 +34,7 @@ type Querier interface {
 	FetchSettledAMPSubInvoices(ctx context.Context, arg FetchSettledAMPSubInvoicesParams) ([]FetchSettledAMPSubInvoicesRow, error)
 	FilterInvoices(ctx context.Context, arg FilterInvoicesParams) ([]Invoice, error)
 	GetAMPInvoiceID(ctx context.Context, setID []byte) (int64, error)
+	GetAllNodeVersionsByPubKeys(ctx context.Context, pubKeys [][]byte) ([]GetAllNodeVersionsByPubKeysRow, error)
 	GetChannelAndNodesBySCID(ctx context.Context, arg GetChannelAndNodesBySCIDParams) (GetChannelAndNodesBySCIDRow, error)
 	GetChannelByOutpointWithPolicies(ctx context.Context, arg GetChannelByOutpointWithPoliciesParams) (GetChannelByOutpointWithPoliciesRow, error)
 	GetChannelBySCID(ctx context.Context, arg GetChannelBySCIDParams) (GraphChannel, error)
@@ -67,7 +69,8 @@ type Querier interface {
 	GetNodeExtraTypesBatch(ctx context.Context, ids []int64) ([]GraphNodeExtraType, error)
 	GetNodeFeatures(ctx context.Context, nodeID int64) ([]GraphNodeFeature, error)
 	GetNodeFeaturesBatch(ctx context.Context, ids []int64) ([]GraphNodeFeature, error)
-	GetNodeFeaturesByPubKey(ctx context.Context, arg GetNodeFeaturesByPubKeyParams) ([]int32, error)
+	GetNodeFeaturesByPubKey(ctx context.Context, pubKey []byte) ([]int32, error)
+	GetNodeFeaturesByPubKeyAndVersion(ctx context.Context, arg GetNodeFeaturesByPubKeyAndVersionParams) ([]int32, error)
 	GetNodeIDByPubKey(ctx context.Context, arg GetNodeIDByPubKeyParams) (int64, error)
 	GetNodesByIDs(ctx context.Context, ids []int64) ([]GraphNode, error)
 	GetNodesByLastUpdateRange(ctx context.Context, arg GetNodesByLastUpdateRangeParams) ([]GraphNode, error)
@@ -75,6 +78,7 @@ type Querier interface {
 	GetPruneHashByHeight(ctx context.Context, blockHeight int64) ([]byte, error)
 	GetPruneTip(ctx context.Context) (GraphPruneLog, error)
 	GetPublicV1ChannelsBySCID(ctx context.Context, arg GetPublicV1ChannelsBySCIDParams) ([]GraphChannel, error)
+	GetPublicV2ChannelsBySCID(ctx context.Context, arg GetPublicV2ChannelsBySCIDParams) ([]GraphChannel, error)
 	GetSCIDByOutpoint(ctx context.Context, arg GetSCIDByOutpointParams) ([]byte, error)
 	GetSourceNodesByVersion(ctx context.Context, version int16) ([]GetSourceNodesByVersionRow, error)
 	// NOTE: this is V1 specific since for V1, disabled is a
@@ -82,6 +86,8 @@ type Querier interface {
 	// structure will have a more complex disabled bit vector
 	// and so the query for V2 may differ.
 	GetV1DisabledSCIDs(ctx context.Context) ([][]byte, error)
+	// NOTE: this is V2 specific since for V2, disabled is a ...
+	GetV2DisabledSCIDs(ctx context.Context) ([][]byte, error)
 	GetZombieChannel(ctx context.Context, arg GetZombieChannelParams) (GraphZombieChannel, error)
 	GetZombieChannelsSCIDs(ctx context.Context, arg GetZombieChannelsSCIDsParams) ([]GraphZombieChannel, error)
 	HighestSCID(ctx context.Context, version int16) ([]byte, error)
@@ -116,14 +122,16 @@ type Querier interface {
 	InsertNodeMig(ctx context.Context, arg InsertNodeMigParams) (int64, error)
 	IsClosedChannel(ctx context.Context, scid []byte) (bool, error)
 	IsPublicV1Node(ctx context.Context, pubKey []byte) (bool, error)
+	IsPublicV2Node(ctx context.Context, pubKey []byte) (bool, error)
 	IsZombieChannel(ctx context.Context, arg IsZombieChannelParams) (bool, error)
-	ListChannelsByNodeID(ctx context.Context, arg ListChannelsByNodeIDParams) ([]ListChannelsByNodeIDRow, error)
+	ListChannelsByNodeID(ctx context.Context, nodeID1 int64) ([]ListChannelsByNodeIDRow, error)
 	ListChannelsForNodeIDs(ctx context.Context, arg ListChannelsForNodeIDsParams) ([]ListChannelsForNodeIDsRow, error)
 	ListChannelsPaginated(ctx context.Context, arg ListChannelsPaginatedParams) ([]ListChannelsPaginatedRow, error)
 	ListChannelsWithPoliciesForCachePaginated(ctx context.Context, arg ListChannelsWithPoliciesForCachePaginatedParams) ([]ListChannelsWithPoliciesForCachePaginatedRow, error)
 	ListChannelsWithPoliciesPaginated(ctx context.Context, arg ListChannelsWithPoliciesPaginatedParams) ([]ListChannelsWithPoliciesPaginatedRow, error)
 	ListNodeIDsAndPubKeys(ctx context.Context, arg ListNodeIDsAndPubKeysParams) ([]ListNodeIDsAndPubKeysRow, error)
 	ListNodesPaginated(ctx context.Context, arg ListNodesPaginatedParams) ([]GraphNode, error)
+	ListNodesPaginatedAllVersions(ctx context.Context, arg ListNodesPaginatedAllVersionsParams) ([]ListNodesPaginatedAllVersionsRow, error)
 	NextInvoiceSettleIndex(ctx context.Context) (int64, error)
 	OnAMPSubInvoiceCanceled(ctx context.Context, arg OnAMPSubInvoiceCanceledParams) error
 	OnAMPSubInvoiceCreated(ctx context.Context, arg OnAMPSubInvoiceCreatedParams) error

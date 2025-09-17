@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"image/color"
 	"io"
 	"maps"
 	"math"
@@ -48,6 +49,7 @@ import (
 	"github.com/lightningnetwork/lnd/feature"
 	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/funding"
+	"github.com/lightningnetwork/lnd/graph"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
@@ -693,7 +695,7 @@ func (r *rpcServer) addDeps(ctx context.Context, s *server,
 	invoiceHtlcModifier *invoices.HtlcModificationInterceptor) error {
 
 	// Set up router rpc backend.
-	selfNode, err := s.graphDB.SourceNode(ctx)
+	selfNode, err := s.graphDB.SourceNode(ctx, lnwire.GossipVersion1)
 	if err != nil {
 		return err
 	}
@@ -705,7 +707,10 @@ func (r *rpcServer) addDeps(ctx context.Context, s *server,
 		FetchChannelCapacity: func(chanID uint64) (btcutil.Amount,
 			error) {
 
-			info, _, _, err := graph.FetchChannelEdgesByID(chanID)
+			// TODO(elle): update for v2.
+			info, _, _, err := graph.FetchChannelEdgesByID(
+				lnwire.GossipVersion1, chanID,
+			)
 			if err != nil {
 				return 0, err
 			}
@@ -722,8 +727,9 @@ func (r *rpcServer) addDeps(ctx context.Context, s *server,
 		FetchChannelEndpoints: func(chanID uint64) (route.Vertex,
 			route.Vertex, error) {
 
+			// TODO(elle): update for v2.
 			info, _, _, err := graph.FetchChannelEdgesByID(
-				chanID,
+				lnwire.GossipVersion1, chanID,
 			)
 			if err != nil {
 				return route.Vertex{}, route.Vertex{},
@@ -799,7 +805,7 @@ func (r *rpcServer) addDeps(ctx context.Context, s *server,
 	err = subServerCgs.PopulateDependencies(
 		r.cfg, s.cc, r.cfg.networkDir, macService, atpl, invoiceRegistry,
 		s.htlcSwitch, r.cfg.ActiveNetParams.Params, s.chanRouter,
-		routerBackend, s.nodeSigner, s.graphDB, s.chanStateDB,
+		routerBackend, s.nodeSigner, s.graphBuilder, s.chanStateDB,
 		s.sweeper, tower, s.towerClientMgr, r.cfg.net.ResolveTCPAddr,
 		genInvoiceFeatures, genAmpInvoiceFeatures,
 		s.getNodeAnnouncement, s.updateAndBroadcastSelfNode, parseAddr,
@@ -1783,7 +1789,8 @@ func (r *rpcServer) VerifyMessage(ctx context.Context,
 	//
 	// TODO(phlip9): Require valid nodes to have capital in active channels.
 	graph := r.server.graphDB
-	_, active, err := graph.HasNode(ctx, pub)
+	// TODO(elle): update for v2.
+	active, err := graph.HasNode(ctx, lnwire.GossipVersion1, pub)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query graph: %w", err)
 	}
@@ -3150,7 +3157,7 @@ func abandonChanFromGraph(chanGraph *graphdb.ChannelGraph,
 	// First, we'll obtain the channel ID. If we can't locate this, then
 	// it's the case that the channel may have already been removed from
 	// the graph, so we'll return a nil error.
-	chanID, err := chanGraph.ChannelID(chanPoint)
+	chanID, err := chanGraph.ChannelID(lnwire.GossipVersion1, chanPoint)
 	switch {
 	case errors.Is(err, graphdb.ErrEdgeNotFound):
 		return nil
@@ -3160,7 +3167,10 @@ func abandonChanFromGraph(chanGraph *graphdb.ChannelGraph,
 
 	// If the channel ID is still in the graph, then that means the channel
 	// is still open, so we'll now move to purge it from the graph.
-	return chanGraph.DeleteChannelEdges(false, true, chanID)
+	// TODO(elle): update for v2.
+	return chanGraph.DeleteChannelEdges(
+		lnwire.GossipVersion1, false, true, chanID,
+	)
 }
 
 // abandonChan removes a channel from the database, graph and contract court.
@@ -4938,7 +4948,10 @@ func createRPCOpenChannel(ctx context.Context, r *rpcServer,
 
 	// Look up our channel peer's node alias if the caller requests it.
 	if peerAliasLookup {
-		peerAlias, err := r.server.graphDB.LookupAlias(ctx, nodePub)
+		// TODO(elle): update for V2.
+		peerAlias, err := r.server.graphDB.LookupAlias(
+			ctx, lnwire.GossipVersion1, nodePub,
+		)
 		if err != nil {
 			peerAlias = fmt.Sprintf("unable to lookup "+
 				"peer alias: %v", err)
@@ -6358,7 +6371,7 @@ func (r *rpcServer) AddInvoice(ctx context.Context,
 		NodeSigner:        r.server.nodeSigner,
 		DefaultCLTVExpiry: defaultDelta,
 		ChanDB:            r.server.chanStateDB,
-		Graph:             r.server.graphDB,
+		Graph:             r.server.graphBuilder,
 		GenInvoiceFeatures: func() *lnwire.FeatureVector {
 			v := r.server.featureMgr.Get(feature.SetInvoice)
 
@@ -6798,15 +6811,16 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// First iterate through all the known nodes (connected or unconnected
 	// within the graph), collating their current state into the RPC
 	// response.
-	err := graph.ForEachNode(ctx, func(node *models.Node) error {
-		lnNode := marshalNode(node)
+	err := graph.ForEachNode(ctx, lnwire.GossipVersion1,
+		func(node *models.Node) error {
+			lnNode := marshalNode(node)
 
-		resp.Nodes = append(resp.Nodes, lnNode)
+			resp.Nodes = append(resp.Nodes, lnNode)
 
-		return nil
-	}, func() {
-		resp.Nodes = nil
-	})
+			return nil
+		}, func() {
+			resp.Nodes = nil
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -6814,24 +6828,25 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 	// Next, for each active channel we know of within the graph, create a
 	// similar response which details both the edge information as well as
 	// the routing policies of th nodes connecting the two edges.
-	err = graph.ForEachChannel(ctx, func(edgeInfo *models.ChannelEdgeInfo,
-		c1, c2 *models.ChannelEdgePolicy) error {
+	err = graph.ForEachChannel(ctx, lnwire.GossipVersion1,
+		func(edgeInfo *models.ChannelEdgeInfo,
+			c1, c2 *models.ChannelEdgePolicy) error {
 
-		// Do not include unannounced channels unless specifically
-		// requested. Unannounced channels include both private channels as
-		// well as public channels whose authentication proof were not
-		// confirmed yet, hence were not announced.
-		if !includeUnannounced && edgeInfo.AuthProof == nil {
+			// Do not include unannounced channels unless specifically
+			// requested. Unannounced channels include both private channels as
+			// well as public channels whose authentication proof were not
+			// confirmed yet, hence were not announced.
+			if !includeUnannounced && edgeInfo.AuthProof == nil {
+				return nil
+			}
+
+			edge := marshalDBEdge(edgeInfo, c1, c2, req.IncludeAuthProof)
+			resp.Edges = append(resp.Edges, edge)
+
 			return nil
-		}
-
-		edge := marshalDBEdge(edgeInfo, c1, c2, req.IncludeAuthProof)
-		resp.Edges = append(resp.Edges, edge)
-
-		return nil
-	}, func() {
-		resp.Edges = nil
-	})
+		}, func() {
+			resp.Edges = nil
+		})
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
 		return nil, err
 	}
@@ -7038,7 +7053,7 @@ func (r *rpcServer) GetChanInfo(_ context.Context,
 	switch {
 	case in.ChanId != 0:
 		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByID(
-			in.ChanId,
+			lnwire.GossipVersion1, in.ChanId,
 		)
 
 	case in.ChanPoint != "":
@@ -7048,7 +7063,7 @@ func (r *rpcServer) GetChanInfo(_ context.Context,
 			return nil, err
 		}
 		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByOutpoint(
-			chanPoint,
+			lnwire.GossipVersion1, chanPoint,
 		)
 
 	default:
@@ -7093,7 +7108,8 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 	// With the public key decoded, attempt to fetch the node corresponding
 	// to this public key. If the node cannot be found, then an error will
 	// be returned.
-	node, err := graph.FetchNode(ctx, pubKey)
+	// TODO(elle): update for V2.
+	node, err := graph.FetchNode(ctx, lnwire.GossipVersion1, pubKey)
 	switch {
 	case errors.Is(err, graphdb.ErrGraphNodeNotFound):
 		return nil, status.Error(codes.NotFound, err.Error())
@@ -7110,7 +7126,7 @@ func (r *rpcServer) GetNodeInfo(ctx context.Context,
 	)
 
 	err = graph.ForEachNodeChannel(
-		ctx, node.PubKeyBytes,
+		ctx, lnwire.GossipVersion1, node.PubKeyBytes,
 		func(edge *models.ChannelEdgeInfo,
 			c1, c2 *models.ChannelEdgePolicy) error {
 
@@ -7172,8 +7188,8 @@ func marshalNode(node *models.Node) *lnrpc.LightningNode {
 		LastUpdate:    uint32(node.LastUpdate.Unix()),
 		PubKey:        hex.EncodeToString(node.PubKeyBytes[:]),
 		Addresses:     nodeAddrs,
-		Alias:         node.Alias,
-		Color:         graphdb.EncodeHexColor(node.Color),
+		Alias:         node.Alias.UnwrapOr(""),
+		Color:         graphdb.EncodeHexColor(node.Color.UnwrapOr(color.RGBA{})),
 		Features:      features,
 		CustomRecords: customRecords,
 	}
@@ -7224,75 +7240,76 @@ func (r *rpcServer) GetNetworkInfo(ctx context.Context,
 	// network, tallying up the total number of nodes, and also gathering
 	// each node so we can measure the graph diameter and degree stats
 	// below.
-	err := graph.ForEachNodeCached(ctx, false, func(ctx context.Context,
-		node route.Vertex, _ []net.Addr,
-		edges map[uint64]*graphdb.DirectedChannel) error {
+	err := graph.ForEachNodeCached(ctx, lnwire.GossipVersion1, false,
+		func(ctx context.Context,
+			node route.Vertex, _ []net.Addr,
+			edges map[uint64]*graphdb.DirectedChannel) error {
 
-		// Increment the total number of nodes with each iteration.
-		numNodes++
+			// Increment the total number of nodes with each iteration.
+			numNodes++
 
-		// For each channel we'll compute the out degree of each node,
-		// and also update our running tallies of the min/max channel
-		// capacity, as well as the total channel capacity. We pass
-		// through the db transaction from the outer view so we can
-		// re-use it within this inner view.
-		var outDegree uint32
-		for _, edge := range edges {
-			// Bump up the out degree for this node for each
-			// channel encountered.
-			outDegree++
+			// For each channel we'll compute the out degree of each node,
+			// and also update our running tallies of the min/max channel
+			// capacity, as well as the total channel capacity. We pass
+			// through the db transaction from the outer view so we can
+			// re-use it within this inner view.
+			var outDegree uint32
+			for _, edge := range edges {
+				// Bump up the out degree for this node for each
+				// channel encountered.
+				outDegree++
 
-			// If we've already seen this channel, then we'll
-			// return early to ensure that we don't double-count
-			// stats.
-			if _, ok := seenChans[edge.ChannelID]; ok {
-				return nil
+				// If we've already seen this channel, then we'll
+				// return early to ensure that we don't double-count
+				// stats.
+				if _, ok := seenChans[edge.ChannelID]; ok {
+					return nil
+				}
+
+				// Compare the capacity of this channel against the
+				// running min/max to see if we should update the
+				// extrema.
+				chanCapacity := edge.Capacity
+				if chanCapacity < minChannelSize {
+					minChannelSize = chanCapacity
+				}
+				if chanCapacity > maxChannelSize {
+					maxChannelSize = chanCapacity
+				}
+
+				// Accumulate the total capacity of this channel to the
+				// network wide-capacity.
+				totalNetworkCapacity += chanCapacity
+
+				numChannels++
+
+				seenChans[edge.ChannelID] = struct{}{}
+				allChans = append(allChans, edge.Capacity)
 			}
 
-			// Compare the capacity of this channel against the
-			// running min/max to see if we should update the
-			// extrema.
-			chanCapacity := edge.Capacity
-			if chanCapacity < minChannelSize {
-				minChannelSize = chanCapacity
-			}
-			if chanCapacity > maxChannelSize {
-				maxChannelSize = chanCapacity
+			// Finally, if the out degree of this node is greater than what
+			// we've seen so far, update the maxChanOut variable.
+			if outDegree > maxChanOut {
+				maxChanOut = outDegree
 			}
 
-			// Accumulate the total capacity of this channel to the
-			// network wide-capacity.
-			totalNetworkCapacity += chanCapacity
-
-			numChannels++
-
-			seenChans[edge.ChannelID] = struct{}{}
-			allChans = append(allChans, edge.Capacity)
-		}
-
-		// Finally, if the out degree of this node is greater than what
-		// we've seen so far, update the maxChanOut variable.
-		if outDegree > maxChanOut {
-			maxChanOut = outDegree
-		}
-
-		return nil
-	}, func() {
-		numChannels = 0
-		numNodes = 0
-		maxChanOut = 0
-		totalNetworkCapacity = 0
-		minChannelSize = math.MaxInt64
-		maxChannelSize = 0
-		allChans = nil
-		clear(seenChans)
-	})
+			return nil
+		}, func() {
+			numChannels = 0
+			numNodes = 0
+			maxChanOut = 0
+			totalNetworkCapacity = 0
+			minChannelSize = math.MaxInt64
+			maxChannelSize = 0
+			allChans = nil
+			clear(seenChans)
+		})
 	if err != nil {
 		return nil, err
 	}
 
 	// Query the graph for the current number of zombie channels.
-	numZombies, err := graph.NumZombies()
+	numZombies, err := graph.NumZombies(lnwire.GossipVersion1)
 	if err != nil {
 		return nil, err
 	}
@@ -7381,7 +7398,7 @@ func (r *rpcServer) SubscribeChannelGraph(req *lnrpc.GraphTopologySubscription,
 
 	// First, we start by subscribing to a new intent to receive
 	// notifications from the channel router.
-	client, err := r.server.graphDB.SubscribeTopology()
+	client, err := r.server.graphBuilder.SubscribeTopology()
 	if err != nil {
 		return err
 	}
@@ -7434,7 +7451,7 @@ func (r *rpcServer) SubscribeChannelGraph(req *lnrpc.GraphTopologySubscription,
 // returned by the router to the form of notifications expected by the current
 // gRPC service.
 func marshallTopologyChange(
-	topChange *graphdb.TopologyChange) *lnrpc.GraphTopologyUpdate {
+	topChange *graph.TopologyChange) *lnrpc.GraphTopologyUpdate {
 
 	// encodeKey is a simple helper function that converts a live public
 	// key into a hex-encoded version of the compressed serialization for
@@ -7846,14 +7863,14 @@ func (r *rpcServer) FeeReport(ctx context.Context,
 	_ *lnrpc.FeeReportRequest) (*lnrpc.FeeReportResponse, error) {
 
 	channelGraph := r.server.graphDB
-	selfNode, err := channelGraph.SourceNode(ctx)
+	selfNode, err := channelGraph.SourceNode(ctx, lnwire.GossipVersion1)
 	if err != nil {
 		return nil, err
 	}
 
 	var feeReports []*lnrpc.ChannelFeeReport
 	err = channelGraph.ForEachNodeChannel(
-		ctx, selfNode.PubKeyBytes,
+		ctx, lnwire.GossipVersion1, selfNode.PubKeyBytes,
 		func(chanInfo *models.ChannelEdgeInfo,
 			edgePolicy, _ *models.ChannelEdgePolicy) error {
 
@@ -8234,15 +8251,18 @@ func (r *rpcServer) ForwardingHistory(ctx context.Context,
 			return "", err
 		}
 
-		peer, err := r.server.graphDB.FetchNode(ctx, vertex)
+		// TODO(elle): update for V2.
+		peer, err := r.server.graphDB.FetchNode(
+			ctx, lnwire.GossipVersion1, vertex,
+		)
 		if err != nil {
 			return "", err
 		}
 
 		// Cache the peer alias.
-		chanToPeerAlias[chanID] = peer.Alias
+		chanToPeerAlias[chanID] = peer.Alias.UnwrapOr("")
 
-		return peer.Alias, nil
+		return peer.Alias.UnwrapOr(""), nil
 	}
 
 	// TODO(roasbeef): add settlement latency?

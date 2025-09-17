@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"image/color"
 	"math/big"
 	prand "math/rand"
 	"net"
@@ -400,7 +401,7 @@ type server struct {
 	// currentNodeAnn is the node announcement that has been broadcast to
 	// the network upon startup, if the attributes of the node (us) has
 	// changed since last start.
-	currentNodeAnn *lnwire.NodeAnnouncement
+	currentNodeAnn *lnwire.NodeAnnouncement1
 
 	// chansToRestore is the set of channels that upon starting, the server
 	// should attempt to restore/recover.
@@ -440,7 +441,7 @@ type server struct {
 // updatePersistentPeerAddrs subscribes to topology changes and stores
 // advertised addresses for any NodeAnnouncements from our persisted peers.
 func (s *server) updatePersistentPeerAddrs() error {
-	graphSub, err := s.graphDB.SubscribeTopology()
+	graphSub, err := s.graphBuilder.SubscribeTopology()
 	if err != nil {
 		return err
 	}
@@ -671,14 +672,11 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		HtlcInterceptor:             invoiceHtlcModifier,
 	}
 
-	addrSource := channeldb.NewMultiAddrSource(dbs.ChanStateDB, dbs.GraphDB)
-
 	s := &server{
 		cfg:            cfg,
 		implCfg:        implCfg,
 		graphDB:        dbs.GraphDB,
 		chanStateDB:    dbs.ChanStateDB.ChannelStateDB(),
-		addrSource:     addrSource,
 		miscDB:         dbs.ChanStateDB,
 		invoicesDB:     dbs.InvoiceDB,
 		paymentsDB:     dbs.PaymentsDB,
@@ -993,7 +991,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		MinProbability: routingConfig.MinRouteProbability,
 	}
 
-	sourceNode, err := dbs.GraphDB.SourceNode(ctx)
+	sourceNode, err := dbs.GraphDB.SourceNode(ctx, lnwire.GossipVersion1)
 	if err != nil {
 		return nil, fmt.Errorf("error getting source node: %w", err)
 	}
@@ -1026,6 +1024,9 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	if err != nil {
 		return nil, fmt.Errorf("can't create graph builder: %w", err)
 	}
+	s.addrSource = channeldb.NewMultiAddrSource(
+		dbs.ChanStateDB, s.graphBuilder,
+	)
 
 	s.chanRouter, err = routing.New(routing.Config{
 		SelfNode:           nodePubKey,
@@ -1063,13 +1064,13 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		Graph:                 s.graphBuilder,
 		ChainIO:               s.cc.ChainIO,
 		Notifier:              s.cc.ChainNotifier,
-		ChainHash:             *s.cfg.ActiveNetParams.GenesisHash,
+		ChainParams:           s.cfg.ActiveNetParams.Params,
 		Broadcast:             s.BroadcastMessage,
 		ChanSeries:            chanSeries,
 		NotifyWhenOnline:      s.NotifyWhenOnline,
 		NotifyWhenOffline:     s.NotifyWhenOffline,
 		FetchSelfAnnouncement: s.getNodeAnnouncement,
-		UpdateSelfAnnouncement: func() (lnwire.NodeAnnouncement,
+		UpdateSelfAnnouncement: func() (lnwire.NodeAnnouncement1,
 			error) {
 
 			return s.genNodeAnnouncement(nil)
@@ -1136,7 +1137,8 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 				*models.ChannelEdgePolicy) error,
 			reset func()) error {
 
-			return s.graphDB.ForEachNodeChannel(ctx, selfVertex,
+			return s.graphDB.ForEachNodeChannel(
+				ctx, lnwire.GossipVersion1, selfVertex,
 				func(c *models.ChannelEdgeInfo,
 					e *models.ChannelEdgePolicy,
 					_ *models.ChannelEdgePolicy) error {
@@ -1392,8 +1394,9 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	deleteAliasEdge := func(scid lnwire.ShortChannelID) (
 		*models.ChannelEdgePolicy, error) {
 
+		// TODO(elle): update for v2.
 		info, e1, e2, err := s.graphDB.FetchChannelEdgesByID(
-			scid.ToUint64(),
+			lnwire.GossipVersion1, scid.ToUint64(),
 		)
 		if errors.Is(err, graphdb.ErrEdgeNotFound) {
 			// This is unlikely but there is a slim chance of this
@@ -1421,9 +1424,11 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 			return nil, fmt.Errorf("we don't have an edge")
 		}
 
+		// TODO(elle): update for v2.
 		err = s.graphDB.DeleteChannelEdges(
-			false, false, scid.ToUint64(),
+			lnwire.GossipVersion1, false, false, scid.ToUint64(),
 		)
+
 		return ourPolicy, err
 	}
 
@@ -1466,7 +1471,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		ChannelDB:    s.chanStateDB,
 		FeeEstimator: cc.FeeEstimator,
 		SignMessage:  cc.MsgSigner.SignMessage,
-		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement,
+		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement1,
 			error) {
 
 			return s.genNodeAnnouncement(nil)
@@ -1795,7 +1800,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 			AdvertisedIPs: advertisedIPs,
 			AnnounceNewIPs: netann.IPAnnouncer(
 				func(modifier ...netann.NodeAnnModifier) (
-					lnwire.NodeAnnouncement, error) {
+					lnwire.NodeAnnouncement1, error) {
 
 					return s.genNodeAnnouncement(
 						nil, modifier...,
@@ -3305,7 +3310,7 @@ func (s *server) createNewHiddenService(ctx context.Context) error {
 	// Now that the onion service has been created, we'll add the onion
 	// address it can be reached at to our list of advertised addresses.
 	newNodeAnn, err := s.genNodeAnnouncement(
-		nil, func(currentAnn *lnwire.NodeAnnouncement) {
+		nil, func(currentAnn *lnwire.NodeAnnouncement1) {
 			currentAnn.Addresses = append(currentAnn.Addresses, addr)
 		},
 	)
@@ -3316,19 +3321,21 @@ func (s *server) createNewHiddenService(ctx context.Context) error {
 
 	// Finally, we'll update the on-disk version of our announcement so it
 	// will eventually propagate to nodes in the network.
-	selfNode := &models.Node{
-		HaveNodeAnnouncement: true,
-		LastUpdate:           time.Unix(int64(newNodeAnn.Timestamp), 0),
-		Addresses:            newNodeAnn.Addresses,
-		Alias:                newNodeAnn.Alias.String(),
-		Features: lnwire.NewFeatureVector(
-			newNodeAnn.Features, lnwire.Features,
-		),
-		Color:        newNodeAnn.RGBColor,
-		AuthSigBytes: newNodeAnn.Signature.ToSignatureBytes(),
-	}
-	copy(selfNode.PubKeyBytes[:], s.identityECDH.PubKey().SerializeCompressed())
-	if err := s.graphDB.SetSourceNode(ctx, selfNode); err != nil {
+	var nodePub route.Vertex
+	copy(nodePub[:], s.identityECDH.PubKey().SerializeCompressed())
+	selfNode := models.NewV1Node(
+		nodePub, &models.NodeV1Fields{
+			Addresses:    newNodeAnn.Addresses,
+			Features:     newNodeAnn.Features,
+			AuthSigBytes: newNodeAnn.Signature.ToSignatureBytes(),
+			Color:        newNodeAnn.RGBColor,
+			Alias:        newNodeAnn.Alias.String(),
+			LastUpdate:   time.Unix(int64(newNodeAnn.Timestamp), 0),
+		},
+	)
+
+	err = s.graphDB.SetSourceNode(ctx, lnwire.GossipVersion1, selfNode)
+	if err != nil {
 		return fmt.Errorf("can't set self node: %w", err)
 	}
 
@@ -3356,7 +3363,7 @@ func (s *server) findChannel(node *btcec.PublicKey, chanID lnwire.ChannelID) (
 }
 
 // getNodeAnnouncement fetches the current, fully signed node announcement.
-func (s *server) getNodeAnnouncement() lnwire.NodeAnnouncement {
+func (s *server) getNodeAnnouncement() lnwire.NodeAnnouncement1 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -3367,7 +3374,7 @@ func (s *server) getNodeAnnouncement() lnwire.NodeAnnouncement {
 // announcement. The time stamp of the announcement will be updated in order
 // to ensure it propagates through the network.
 func (s *server) genNodeAnnouncement(features *lnwire.RawFeatureVector,
-	modifiers ...netann.NodeAnnModifier) (lnwire.NodeAnnouncement, error) {
+	modifiers ...netann.NodeAnnModifier) (lnwire.NodeAnnouncement1, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -3385,7 +3392,7 @@ func (s *server) genNodeAnnouncement(features *lnwire.RawFeatureVector,
 		}
 		err := s.featureMgr.UpdateFeatureSets(proposedFeatures)
 		if err != nil {
-			return lnwire.NodeAnnouncement{}, err
+			return lnwire.NodeAnnouncement1{}, err
 		}
 
 		// If we could successfully update our feature manager, add
@@ -3410,7 +3417,7 @@ func (s *server) genNodeAnnouncement(features *lnwire.RawFeatureVector,
 		s.nodeSigner, s.identityKeyLoc, &newNodeAnn,
 	)
 	if err != nil {
-		return lnwire.NodeAnnouncement{}, err
+		return lnwire.NodeAnnouncement1{}, err
 	}
 
 	// If signing succeeds, update the current announcement.
@@ -3436,22 +3443,22 @@ func (s *server) updateAndBroadcastSelfNode(ctx context.Context,
 	// Update the on-disk version of our announcement.
 	// Load and modify self node istead of creating anew instance so we
 	// don't risk overwriting any existing values.
-	selfNode, err := s.graphDB.SourceNode(ctx)
+	selfNode, err := s.graphDB.SourceNode(ctx, lnwire.GossipVersion1)
 	if err != nil {
 		return fmt.Errorf("unable to get current source node: %w", err)
 	}
 
-	selfNode.HaveNodeAnnouncement = true
 	selfNode.LastUpdate = time.Unix(int64(newNodeAnn.Timestamp), 0)
 	selfNode.Addresses = newNodeAnn.Addresses
-	selfNode.Alias = newNodeAnn.Alias.String()
+	selfNode.Alias = fn.Some(newNodeAnn.Alias.String())
 	selfNode.Features = s.featureMgr.Get(feature.SetNodeAnn)
-	selfNode.Color = newNodeAnn.RGBColor
+	selfNode.Color = fn.Some(newNodeAnn.RGBColor)
 	selfNode.AuthSigBytes = newNodeAnn.Signature.ToSignatureBytes()
 
 	copy(selfNode.PubKeyBytes[:], s.identityECDH.PubKey().SerializeCompressed())
 
-	if err := s.graphDB.SetSourceNode(ctx, selfNode); err != nil {
+	err = s.graphDB.SetSourceNode(ctx, lnwire.GossipVersion1, selfNode)
+	if err != nil {
 		return fmt.Errorf("can't set self node: %w", err)
 	}
 
@@ -3500,7 +3507,7 @@ func (s *server) establishPersistentConnections(ctx context.Context) error {
 
 	// After checking our previous connections for addresses to connect to,
 	// iterate through the nodes in our channel graph to find addresses
-	// that have been added via NodeAnnouncement messages.
+	// that have been added via NodeAnnouncement1 messages.
 	// TODO(roasbeef): instead iterate over link nodes and query graph for
 	// each of the nodes.
 	graphAddrs := make(map[string]*nodeAddresses)
@@ -3573,7 +3580,7 @@ func (s *server) establishPersistentConnections(ctx context.Context) error {
 		return nil
 	}
 	err = s.graphDB.ForEachSourceNodeChannel(
-		ctx, forEachSrcNodeChan, func() {
+		ctx, lnwire.GossipVersion1, forEachSrcNodeChan, func() {
 			clear(graphAddrs)
 		},
 	)
@@ -4393,7 +4400,7 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 		TowerClient:             towerClient,
 		DisconnectPeer:          s.DisconnectPeer,
 		GenNodeAnnouncement: func(...netann.NodeAnnModifier) (
-			lnwire.NodeAnnouncement, error) {
+			lnwire.NodeAnnouncement1, error) {
 
 			return s.genNodeAnnouncement(nil)
 		},
@@ -5208,7 +5215,8 @@ func (s *server) fetchNodeAdvertisedAddrs(ctx context.Context,
 		return nil, err
 	}
 
-	node, err := s.graphDB.FetchNode(ctx, vertex)
+	// TODO(elle): update for V2.
+	node, err := s.graphDB.FetchNode(ctx, lnwire.GossipVersion1, vertex)
 	if err != nil {
 		return nil, err
 	}
@@ -5227,7 +5235,10 @@ func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
 
 	ourPubKey := s.identityECDH.PubKey().SerializeCompressed()
 	return func(cid lnwire.ShortChannelID) (*lnwire.ChannelUpdate1, error) {
-		info, edge1, edge2, err := s.graphBuilder.GetChannelByID(cid)
+		// TODO(elle): update for V2.
+		info, edge1, edge2, err := s.graphBuilder.GetChannelByID(
+			lnwire.GossipVersion1, cid,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -5571,7 +5582,7 @@ func (s *server) setSelfNode(ctx context.Context, nodePub route.Vertex,
 	// Parse the color from config. We will update this later if the config
 	// color is not changed from default (#3399FF) and we have a value in
 	// the source node.
-	color, err := lncfg.ParseHexColor(s.cfg.Color)
+	nodeColor, err := lncfg.ParseHexColor(s.cfg.Color)
 	if err != nil {
 		return fmt.Errorf("unable to parse color: %w", err)
 	}
@@ -5581,7 +5592,7 @@ func (s *server) setSelfNode(ctx context.Context, nodePub route.Vertex,
 		nodeLastUpdate = time.Now()
 	)
 
-	srcNode, err := s.graphDB.SourceNode(ctx)
+	srcNode, err := s.graphDB.SourceNode(ctx, lnwire.GossipVersion1)
 	switch {
 	case err == nil:
 		// If we have a source node persisted in the DB already, then we
@@ -5595,13 +5606,17 @@ func (s *server) setSelfNode(ctx context.Context, nodePub route.Vertex,
 		// didn't specify a different color in the config. We'll use the
 		// source node's color.
 		if s.cfg.Color == defaultColor {
-			color = srcNode.Color
+			srcNode.Color.WhenSome(func(rgba color.RGBA) {
+				nodeColor = rgba
+			})
 		}
 
 		// If an alias is not specified in the config, we'll use the
 		// source node's alias.
 		if alias == "" {
-			alias = srcNode.Alias
+			srcNode.Alias.WhenSome(func(s string) {
+				alias = s
+			})
 		}
 
 		// Append unique addresses from the source node to the address
@@ -5634,23 +5649,35 @@ func (s *server) setSelfNode(ctx context.Context, nodePub route.Vertex,
 
 	// TODO(abdulkbk): potentially find a way to use the source node's
 	// features in the self node.
-	selfNode := &models.Node{
-		HaveNodeAnnouncement: true,
-		LastUpdate:           nodeLastUpdate,
-		Addresses:            addrs,
-		Alias:                nodeAlias.String(),
-		Color:                color,
-		Features:             s.featureMgr.Get(feature.SetNodeAnn),
-	}
-
-	copy(selfNode.PubKeyBytes[:], nodePub[:])
+	selfNode := models.NewV1Node(
+		nodePub,
+		&models.NodeV1Fields{
+			Alias:      nodeAlias.String(),
+			Color:      nodeColor,
+			LastUpdate: nodeLastUpdate,
+			Addresses:  addrs,
+			Features:   s.featureMgr.GetRaw(feature.SetNodeAnn),
+			// NOTE: just a workaround to pass the below call to
+			// NodeAnnouncement which would otherwise fail because of
+			// missing AuthSigBytes. The AutSigBytes is set properly
+			// when SigneAnnouncement is called below.
+			AuthSigBytes: []byte{0},
+		},
+	)
 
 	// Based on the disk representation of the node announcement generated
 	// above, we'll generate a node announcement that can go out on the
 	// network so we can properly sign it.
-	nodeAnn, err := selfNode.NodeAnnouncement(false)
+	ann, err := selfNode.NodeAnnouncement(false)
 	if err != nil {
 		return fmt.Errorf("unable to gen self node ann: %w", err)
+	}
+
+	// TODO(elle): update for V2.
+	nodeAnn, ok := ann.(*lnwire.NodeAnnouncement1)
+	if !ok {
+		return fmt.Errorf("expected *lnwire.NodeAnnouncement1, got %T",
+			ann)
 	}
 
 	// With the announcement generated, we'll sign it to properly
@@ -5673,7 +5700,8 @@ func (s *server) setSelfNode(ctx context.Context, nodePub route.Vertex,
 
 	// Finally, we'll update the representation on disk, and update our
 	// cached in-memory version as well.
-	if err := s.graphDB.SetSourceNode(ctx, selfNode); err != nil {
+	err = s.graphDB.SetSourceNode(ctx, lnwire.GossipVersion1, selfNode)
+	if err != nil {
 		return fmt.Errorf("can't set self node: %w", err)
 	}
 
