@@ -55,6 +55,22 @@ func (q *Queries) AddV1ChannelProof(ctx context.Context, arg AddV1ChannelProofPa
 	)
 }
 
+const addV2ChannelProof = `-- name: AddV2ChannelProof :execresult
+UPDATE graph_channels
+SET signature = $2
+WHERE scid = $1
+  AND version = 2
+`
+
+type AddV2ChannelProofParams struct {
+	Scid      []byte
+	Signature []byte
+}
+
+func (q *Queries) AddV2ChannelProof(ctx context.Context, arg AddV2ChannelProofParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, addV2ChannelProof, arg.Scid, arg.Signature)
+}
+
 const countZombieChannels = `-- name: CountZombieChannels :one
 SELECT COUNT(*)
 FROM graph_zombie_channels
@@ -78,9 +94,9 @@ INSERT INTO graph_channels (
     version, scid, node_id_1, node_id_2,
     outpoint, capacity, bitcoin_key_1, bitcoin_key_2,
     node_1_signature, node_2_signature, bitcoin_1_signature,
-    bitcoin_2_signature
+    bitcoin_2_signature, signature, funding_pk_script, merkle_root_hash
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 )
 RETURNING id
 `
@@ -98,6 +114,9 @@ type CreateChannelParams struct {
 	Node2Signature    []byte
 	Bitcoin1Signature []byte
 	Bitcoin2Signature []byte
+	Signature         []byte
+	FundingPkScript   []byte
+	MerkleRootHash    []byte
 }
 
 func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (int64, error) {
@@ -114,6 +133,9 @@ func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (i
 		arg.Node2Signature,
 		arg.Bitcoin1Signature,
 		arg.Bitcoin2Signature,
+		arg.Signature,
+		arg.FundingPkScript,
+		arg.MerkleRootHash,
 	)
 	var id int64
 	err := row.Scan(&id)
@@ -415,6 +437,8 @@ SELECT
     cp1.id AS policy_1_id,
     cp1.node_id AS policy_1_node_id,
     cp1.version AS policy_1_version,
+    cp1.block_height AS policy_1_block_height,
+    cp1.disable_flags AS policy_1_disable_flags,
     cp1.timelock AS policy_1_timelock,
     cp1.fee_ppm AS policy_1_fee_ppm,
     cp1.base_fee_msat AS policy_1_base_fee_msat,
@@ -432,6 +456,8 @@ SELECT
     cp2.id AS policy_2_id,
     cp2.node_id AS policy_2_node_id,
     cp2.version AS policy_2_version,
+    cp2.block_height AS policy_2_block_height,
+    cp2.disable_flags AS policy_2_disable_flags,
     cp2.timelock AS policy_2_timelock,
     cp2.fee_ppm AS policy_2_fee_ppm,
     cp2.base_fee_msat AS policy_2_base_fee_msat,
@@ -466,6 +492,8 @@ type GetChannelByOutpointWithPoliciesRow struct {
 	Policy1ID                      sql.NullInt64
 	Policy1NodeID                  sql.NullInt64
 	Policy1Version                 sql.NullInt16
+	Policy1BlockHeight             sql.NullInt32
+	Policy1DisableFlags            sql.NullInt16
 	Policy1Timelock                sql.NullInt32
 	Policy1FeePpm                  sql.NullInt64
 	Policy1BaseFeeMsat             sql.NullInt64
@@ -481,6 +509,8 @@ type GetChannelByOutpointWithPoliciesRow struct {
 	Policy2ID                      sql.NullInt64
 	Policy2NodeID                  sql.NullInt64
 	Policy2Version                 sql.NullInt16
+	Policy2BlockHeight             sql.NullInt32
+	Policy2DisableFlags            sql.NullInt16
 	Policy2Timelock                sql.NullInt32
 	Policy2FeePpm                  sql.NullInt64
 	Policy2BaseFeeMsat             sql.NullInt64
@@ -520,6 +550,8 @@ func (q *Queries) GetChannelByOutpointWithPolicies(ctx context.Context, arg GetC
 		&i.Policy1ID,
 		&i.Policy1NodeID,
 		&i.Policy1Version,
+		&i.Policy1BlockHeight,
+		&i.Policy1DisableFlags,
 		&i.Policy1Timelock,
 		&i.Policy1FeePpm,
 		&i.Policy1BaseFeeMsat,
@@ -535,6 +567,8 @@ func (q *Queries) GetChannelByOutpointWithPolicies(ctx context.Context, arg GetC
 		&i.Policy2ID,
 		&i.Policy2NodeID,
 		&i.Policy2Version,
+		&i.Policy2BlockHeight,
+		&i.Policy2DisableFlags,
 		&i.Policy2Timelock,
 		&i.Policy2FeePpm,
 		&i.Policy2BaseFeeMsat,
@@ -595,6 +629,8 @@ SELECT
     cp1.id AS policy1_id,
     cp1.node_id AS policy1_node_id,
     cp1.version AS policy1_version,
+    cp1.block_height AS policy_1_block_height,
+    cp1.disable_flags AS policy_1_disable_flags,
     cp1.timelock AS policy1_timelock,
     cp1.fee_ppm AS policy1_fee_ppm,
     cp1.base_fee_msat AS policy1_base_fee_msat,
@@ -612,6 +648,8 @@ SELECT
     cp2.id AS policy2_id,
     cp2.node_id AS policy2_node_id,
     cp2.version AS policy2_version,
+    cp2.block_height AS policy_2_block_height,
+    cp2.disable_flags AS policy_2_disable_flags,
     cp2.timelock AS policy2_timelock,
     cp2.fee_ppm AS policy2_fee_ppm,
     cp2.base_fee_msat AS policy2_base_fee_msat,
@@ -648,6 +686,8 @@ type GetChannelBySCIDWithPoliciesRow struct {
 	Policy1ID                      sql.NullInt64
 	Policy1NodeID                  sql.NullInt64
 	Policy1Version                 sql.NullInt16
+	Policy1BlockHeight             sql.NullInt32
+	Policy1DisableFlags            sql.NullInt16
 	Policy1Timelock                sql.NullInt32
 	Policy1FeePpm                  sql.NullInt64
 	Policy1BaseFeeMsat             sql.NullInt64
@@ -663,6 +703,8 @@ type GetChannelBySCIDWithPoliciesRow struct {
 	Policy2ID                      sql.NullInt64
 	Policy2NodeID                  sql.NullInt64
 	Policy2Version                 sql.NullInt16
+	Policy2BlockHeight             sql.NullInt32
+	Policy2DisableFlags            sql.NullInt16
 	Policy2Timelock                sql.NullInt32
 	Policy2FeePpm                  sql.NullInt64
 	Policy2BaseFeeMsat             sql.NullInt64
@@ -716,6 +758,8 @@ func (q *Queries) GetChannelBySCIDWithPolicies(ctx context.Context, arg GetChann
 		&i.Policy1ID,
 		&i.Policy1NodeID,
 		&i.Policy1Version,
+		&i.Policy1BlockHeight,
+		&i.Policy1DisableFlags,
 		&i.Policy1Timelock,
 		&i.Policy1FeePpm,
 		&i.Policy1BaseFeeMsat,
@@ -731,6 +775,8 @@ func (q *Queries) GetChannelBySCIDWithPolicies(ctx context.Context, arg GetChann
 		&i.Policy2ID,
 		&i.Policy2NodeID,
 		&i.Policy2Version,
+		&i.Policy2BlockHeight,
+		&i.Policy2DisableFlags,
 		&i.Policy2Timelock,
 		&i.Policy2FeePpm,
 		&i.Policy2BaseFeeMsat,
@@ -935,6 +981,8 @@ SELECT
     cp1.id AS policy1_id,
     cp1.node_id AS policy1_node_id,
     cp1.version AS policy1_version,
+    cp1.block_height AS policy_1_block_height,
+    cp1.disable_flags AS policy_1_disable_flags,
     cp1.timelock AS policy1_timelock,
     cp1.fee_ppm AS policy1_fee_ppm,
     cp1.base_fee_msat AS policy1_base_fee_msat,
@@ -952,6 +1000,8 @@ SELECT
     cp2.id AS policy2_id,
     cp2.node_id AS policy2_node_id,
     cp2.version AS policy2_version,
+    cp2.block_height AS policy_2_block_height,
+    cp2.disable_flags AS policy_2_disable_flags,
     cp2.timelock AS policy2_timelock,
     cp2.fee_ppm AS policy2_fee_ppm,
     cp2.base_fee_msat AS policy2_base_fee_msat,
@@ -984,6 +1034,8 @@ type GetChannelsByIDsRow struct {
 	Policy1ID                      sql.NullInt64
 	Policy1NodeID                  sql.NullInt64
 	Policy1Version                 sql.NullInt16
+	Policy1BlockHeight             sql.NullInt32
+	Policy1DisableFlags            sql.NullInt16
 	Policy1Timelock                sql.NullInt32
 	Policy1FeePpm                  sql.NullInt64
 	Policy1BaseFeeMsat             sql.NullInt64
@@ -999,6 +1051,8 @@ type GetChannelsByIDsRow struct {
 	Policy2ID                      sql.NullInt64
 	Policy2NodeID                  sql.NullInt64
 	Policy2Version                 sql.NullInt16
+	Policy2BlockHeight             sql.NullInt32
+	Policy2DisableFlags            sql.NullInt16
 	Policy2Timelock                sql.NullInt32
 	Policy2FeePpm                  sql.NullInt64
 	Policy2BaseFeeMsat             sql.NullInt64
@@ -1056,6 +1110,8 @@ func (q *Queries) GetChannelsByIDs(ctx context.Context, ids []int64) ([]GetChann
 			&i.Policy1ID,
 			&i.Policy1NodeID,
 			&i.Policy1Version,
+			&i.Policy1BlockHeight,
+			&i.Policy1DisableFlags,
 			&i.Policy1Timelock,
 			&i.Policy1FeePpm,
 			&i.Policy1BaseFeeMsat,
@@ -1071,6 +1127,8 @@ func (q *Queries) GetChannelsByIDs(ctx context.Context, ids []int64) ([]GetChann
 			&i.Policy2ID,
 			&i.Policy2NodeID,
 			&i.Policy2Version,
+			&i.Policy2BlockHeight,
+			&i.Policy2DisableFlags,
 			&i.Policy2Timelock,
 			&i.Policy2FeePpm,
 			&i.Policy2BaseFeeMsat,
@@ -1177,6 +1235,8 @@ SELECT
     cp1.id AS policy1_id,
     cp1.node_id AS policy1_node_id,
     cp1.version AS policy1_version,
+    cp1.block_height AS policy_1_block_height,
+    cp1.disable_flags AS policy_1_disable_flags,
     cp1.timelock AS policy1_timelock,
     cp1.fee_ppm AS policy1_fee_ppm,
     cp1.base_fee_msat AS policy1_base_fee_msat,
@@ -1194,6 +1254,8 @@ SELECT
     cp2.id AS policy2_id,
     cp2.node_id AS policy2_node_id,
     cp2.version AS policy2_version,
+    cp2.block_height AS policy_2_block_height,
+    cp2.disable_flags AS policy_2_disable_flags,
     cp2.timelock AS policy2_timelock,
     cp2.fee_ppm AS policy2_fee_ppm,
     cp2.base_fee_msat AS policy2_base_fee_msat,
@@ -1241,6 +1303,8 @@ type GetChannelsByPolicyLastUpdateRangeRow struct {
 	Policy1ID                      sql.NullInt64
 	Policy1NodeID                  sql.NullInt64
 	Policy1Version                 sql.NullInt16
+	Policy1BlockHeight             sql.NullInt32
+	Policy1DisableFlags            sql.NullInt16
 	Policy1Timelock                sql.NullInt32
 	Policy1FeePpm                  sql.NullInt64
 	Policy1BaseFeeMsat             sql.NullInt64
@@ -1256,6 +1320,8 @@ type GetChannelsByPolicyLastUpdateRangeRow struct {
 	Policy2ID                      sql.NullInt64
 	Policy2NodeID                  sql.NullInt64
 	Policy2Version                 sql.NullInt16
+	Policy2BlockHeight             sql.NullInt32
+	Policy2DisableFlags            sql.NullInt16
 	Policy2Timelock                sql.NullInt32
 	Policy2FeePpm                  sql.NullInt64
 	Policy2BaseFeeMsat             sql.NullInt64
@@ -1315,6 +1381,8 @@ func (q *Queries) GetChannelsByPolicyLastUpdateRange(ctx context.Context, arg Ge
 			&i.Policy1ID,
 			&i.Policy1NodeID,
 			&i.Policy1Version,
+			&i.Policy1BlockHeight,
+			&i.Policy1DisableFlags,
 			&i.Policy1Timelock,
 			&i.Policy1FeePpm,
 			&i.Policy1BaseFeeMsat,
@@ -1330,6 +1398,8 @@ func (q *Queries) GetChannelsByPolicyLastUpdateRange(ctx context.Context, arg Ge
 			&i.Policy2ID,
 			&i.Policy2NodeID,
 			&i.Policy2Version,
+			&i.Policy2BlockHeight,
+			&i.Policy2DisableFlags,
 			&i.Policy2Timelock,
 			&i.Policy2FeePpm,
 			&i.Policy2BaseFeeMsat,
@@ -1430,6 +1500,8 @@ SELECT
     cp1.id AS policy1_id,
     cp1.node_id AS policy1_node_id,
     cp1.version AS policy1_version,
+    cp1.block_height AS policy_1_block_height,
+    cp1.disable_flags AS policy_1_disable_flags,
     cp1.timelock AS policy1_timelock,
     cp1.fee_ppm AS policy1_fee_ppm,
     cp1.base_fee_msat AS policy1_base_fee_msat,
@@ -1448,6 +1520,8 @@ SELECT
     cp2.node_id AS policy2_node_id,
     cp2.version AS policy2_version,
     cp2.timelock AS policy2_timelock,
+    cp2.block_height AS policy_2_block_height,
+    cp2.disable_flags AS policy_2_disable_flags,
     cp2.fee_ppm AS policy2_fee_ppm,
     cp2.base_fee_msat AS policy2_base_fee_msat,
     cp2.min_htlc_msat AS policy2_min_htlc_msat,
@@ -1484,6 +1558,8 @@ type GetChannelsBySCIDWithPoliciesRow struct {
 	Policy1ID                      sql.NullInt64
 	Policy1NodeID                  sql.NullInt64
 	Policy1Version                 sql.NullInt16
+	Policy1BlockHeight             sql.NullInt32
+	Policy1DisableFlags            sql.NullInt16
 	Policy1Timelock                sql.NullInt32
 	Policy1FeePpm                  sql.NullInt64
 	Policy1BaseFeeMsat             sql.NullInt64
@@ -1500,6 +1576,8 @@ type GetChannelsBySCIDWithPoliciesRow struct {
 	Policy2NodeID                  sql.NullInt64
 	Policy2Version                 sql.NullInt16
 	Policy2Timelock                sql.NullInt32
+	Policy2BlockHeight             sql.NullInt32
+	Policy2DisableFlags            sql.NullInt16
 	Policy2FeePpm                  sql.NullInt64
 	Policy2BaseFeeMsat             sql.NullInt64
 	Policy2MinHtlcMsat             sql.NullInt64
@@ -1569,6 +1647,8 @@ func (q *Queries) GetChannelsBySCIDWithPolicies(ctx context.Context, arg GetChan
 			&i.Policy1ID,
 			&i.Policy1NodeID,
 			&i.Policy1Version,
+			&i.Policy1BlockHeight,
+			&i.Policy1DisableFlags,
 			&i.Policy1Timelock,
 			&i.Policy1FeePpm,
 			&i.Policy1BaseFeeMsat,
@@ -1585,6 +1665,8 @@ func (q *Queries) GetChannelsBySCIDWithPolicies(ctx context.Context, arg GetChan
 			&i.Policy2NodeID,
 			&i.Policy2Version,
 			&i.Policy2Timelock,
+			&i.Policy2BlockHeight,
+			&i.Policy2DisableFlags,
 			&i.Policy2FeePpm,
 			&i.Policy2BaseFeeMsat,
 			&i.Policy2MinHtlcMsat,
@@ -2254,6 +2336,59 @@ func (q *Queries) GetPublicV1ChannelsBySCID(ctx context.Context, arg GetPublicV1
 	return items, nil
 }
 
+const getPublicV2ChannelsBySCID = `-- name: GetPublicV2ChannelsBySCID :many
+SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity, bitcoin_key_1, bitcoin_key_2, node_1_signature, node_2_signature, bitcoin_1_signature, bitcoin_2_signature, signature, funding_pk_script, merkle_root_hash
+FROM graph_channels
+WHERE signature IS NOT NULL
+  AND scid >= $1
+  AND scid < $2
+`
+
+type GetPublicV2ChannelsBySCIDParams struct {
+	StartScid []byte
+	EndScid   []byte
+}
+
+func (q *Queries) GetPublicV2ChannelsBySCID(ctx context.Context, arg GetPublicV2ChannelsBySCIDParams) ([]GraphChannel, error) {
+	rows, err := q.db.QueryContext(ctx, getPublicV2ChannelsBySCID, arg.StartScid, arg.EndScid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GraphChannel
+	for rows.Next() {
+		var i GraphChannel
+		if err := rows.Scan(
+			&i.ID,
+			&i.Version,
+			&i.Scid,
+			&i.NodeID1,
+			&i.NodeID2,
+			&i.Outpoint,
+			&i.Capacity,
+			&i.BitcoinKey1,
+			&i.BitcoinKey2,
+			&i.Node1Signature,
+			&i.Node2Signature,
+			&i.Bitcoin1Signature,
+			&i.Bitcoin2Signature,
+			&i.Signature,
+			&i.FundingPkScript,
+			&i.MerkleRootHash,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getSCIDByOutpoint = `-- name: GetSCIDByOutpoint :one
 SELECT scid from graph_channels
 WHERE outpoint = $1 AND version = $2
@@ -2322,6 +2457,40 @@ HAVING COUNT(*) > 1
 // and so the query for V2 may differ.
 func (q *Queries) GetV1DisabledSCIDs(ctx context.Context) ([][]byte, error) {
 	rows, err := q.db.QueryContext(ctx, getV1DisabledSCIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items [][]byte
+	for rows.Next() {
+		var scid []byte
+		if err := rows.Scan(&scid); err != nil {
+			return nil, err
+		}
+		items = append(items, scid)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getV2DisabledSCIDs = `-- name: GetV2DisabledSCIDs :many
+SELECT c.scid
+FROM graph_channels c
+         JOIN graph_channel_policies cp ON cp.channel_id = c.id
+WHERE cp.disable_flags>0
+  AND c.version = 2
+GROUP BY c.scid
+HAVING COUNT(*) > 1
+`
+
+// NOTE: this is V2 specific since for V2, disabled is a ...
+func (q *Queries) GetV2DisabledSCIDs(ctx context.Context) ([][]byte, error) {
+	rows, err := q.db.QueryContext(ctx, getV2DisabledSCIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -2791,6 +2960,8 @@ SELECT c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity
     cp1.id AS policy1_id,
     cp1.node_id AS policy1_node_id,
     cp1.version AS policy1_version,
+    cp1.block_height AS policy_1_block_height,
+    cp1.disable_flags AS policy_1_disable_flags,
     cp1.timelock AS policy1_timelock,
     cp1.fee_ppm AS policy1_fee_ppm,
     cp1.base_fee_msat AS policy1_base_fee_msat,
@@ -2808,6 +2979,8 @@ SELECT c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity
     cp2.id AS policy2_id,
     cp2.node_id AS policy2_node_id,
     cp2.version AS policy2_version,
+    cp2.block_height AS policy_2_block_height,
+    cp2.disable_flags AS policy_2_disable_flags,
     cp2.timelock AS policy2_timelock,
     cp2.fee_ppm AS policy2_fee_ppm,
     cp2.base_fee_msat AS policy2_base_fee_msat,
@@ -2838,6 +3011,8 @@ type ListChannelsByNodeIDRow struct {
 	Policy1ID                      sql.NullInt64
 	Policy1NodeID                  sql.NullInt64
 	Policy1Version                 sql.NullInt16
+	Policy1BlockHeight             sql.NullInt32
+	Policy1DisableFlags            sql.NullInt16
 	Policy1Timelock                sql.NullInt32
 	Policy1FeePpm                  sql.NullInt64
 	Policy1BaseFeeMsat             sql.NullInt64
@@ -2853,6 +3028,8 @@ type ListChannelsByNodeIDRow struct {
 	Policy2ID                      sql.NullInt64
 	Policy2NodeID                  sql.NullInt64
 	Policy2Version                 sql.NullInt16
+	Policy2BlockHeight             sql.NullInt32
+	Policy2DisableFlags            sql.NullInt16
 	Policy2Timelock                sql.NullInt32
 	Policy2FeePpm                  sql.NullInt64
 	Policy2BaseFeeMsat             sql.NullInt64
@@ -2898,6 +3075,8 @@ func (q *Queries) ListChannelsByNodeID(ctx context.Context, nodeID1 int64) ([]Li
 			&i.Policy1ID,
 			&i.Policy1NodeID,
 			&i.Policy1Version,
+			&i.Policy1BlockHeight,
+			&i.Policy1DisableFlags,
 			&i.Policy1Timelock,
 			&i.Policy1FeePpm,
 			&i.Policy1BaseFeeMsat,
@@ -2913,6 +3092,8 @@ func (q *Queries) ListChannelsByNodeID(ctx context.Context, nodeID1 int64) ([]Li
 			&i.Policy2ID,
 			&i.Policy2NodeID,
 			&i.Policy2Version,
+			&i.Policy2BlockHeight,
+			&i.Policy2DisableFlags,
 			&i.Policy2Timelock,
 			&i.Policy2FeePpm,
 			&i.Policy2BaseFeeMsat,
@@ -2951,6 +3132,8 @@ SELECT c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity
        cp1.id AS policy1_id,
        cp1.node_id AS policy1_node_id,
        cp1.version AS policy1_version,
+       cp1.block_height AS policy_1_block_height,
+       cp1.disable_flags AS policy_1_disable_flags,
        cp1.timelock AS policy1_timelock,
        cp1.fee_ppm AS policy1_fee_ppm,
        cp1.base_fee_msat AS policy1_base_fee_msat,
@@ -2968,6 +3151,8 @@ SELECT c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity
        cp2.id AS policy2_id,
        cp2.node_id AS policy2_node_id,
        cp2.version AS policy2_version,
+       cp2.block_height AS policy_2_block_height,
+       cp2.disable_flags AS policy_2_disable_flags,
        cp2.timelock AS policy2_timelock,
        cp2.fee_ppm AS policy2_fee_ppm,
        cp2.base_fee_msat AS policy2_base_fee_msat,
@@ -3004,6 +3189,8 @@ type ListChannelsForNodeIDsRow struct {
 	Policy1ID                      sql.NullInt64
 	Policy1NodeID                  sql.NullInt64
 	Policy1Version                 sql.NullInt16
+	Policy1BlockHeight             sql.NullInt32
+	Policy1DisableFlags            sql.NullInt16
 	Policy1Timelock                sql.NullInt32
 	Policy1FeePpm                  sql.NullInt64
 	Policy1BaseFeeMsat             sql.NullInt64
@@ -3019,6 +3206,8 @@ type ListChannelsForNodeIDsRow struct {
 	Policy2ID                      sql.NullInt64
 	Policy2NodeID                  sql.NullInt64
 	Policy2Version                 sql.NullInt16
+	Policy2BlockHeight             sql.NullInt32
+	Policy2DisableFlags            sql.NullInt16
 	Policy2Timelock                sql.NullInt32
 	Policy2FeePpm                  sql.NullInt64
 	Policy2BaseFeeMsat             sql.NullInt64
@@ -3082,6 +3271,8 @@ func (q *Queries) ListChannelsForNodeIDs(ctx context.Context, arg ListChannelsFo
 			&i.Policy1ID,
 			&i.Policy1NodeID,
 			&i.Policy1Version,
+			&i.Policy1BlockHeight,
+			&i.Policy1DisableFlags,
 			&i.Policy1Timelock,
 			&i.Policy1FeePpm,
 			&i.Policy1BaseFeeMsat,
@@ -3097,6 +3288,8 @@ func (q *Queries) ListChannelsForNodeIDs(ctx context.Context, arg ListChannelsFo
 			&i.Policy2ID,
 			&i.Policy2NodeID,
 			&i.Policy2Version,
+			&i.Policy2BlockHeight,
+			&i.Policy2DisableFlags,
 			&i.Policy2Timelock,
 			&i.Policy2FeePpm,
 			&i.Policy2BaseFeeMsat,
@@ -3313,6 +3506,8 @@ SELECT
     cp1.id AS policy_1_id,
     cp1.node_id AS policy_1_node_id,
     cp1.version AS policy_1_version,
+    cp1.block_height AS policy_1_block_height,
+    cp1.disable_flags AS policy_1_disable_flags,
     cp1.timelock AS policy_1_timelock,
     cp1.fee_ppm AS policy_1_fee_ppm,
     cp1.base_fee_msat AS policy_1_base_fee_msat,
@@ -3330,6 +3525,8 @@ SELECT
     cp2.id AS policy_2_id,
     cp2.node_id AS policy_2_node_id,
     cp2.version AS policy_2_version,
+    cp2.block_height AS policy_2_block_height,
+    cp2.disable_flags AS policy_2_disable_flags,
     cp2.timelock AS policy_2_timelock,
     cp2.fee_ppm AS policy_2_fee_ppm,
     cp2.base_fee_msat AS policy_2_base_fee_msat,
@@ -3368,6 +3565,8 @@ type ListChannelsWithPoliciesPaginatedRow struct {
 	Policy1ID                      sql.NullInt64
 	Policy1NodeID                  sql.NullInt64
 	Policy1Version                 sql.NullInt16
+	Policy1BlockHeight             sql.NullInt32
+	Policy1DisableFlags            sql.NullInt16
 	Policy1Timelock                sql.NullInt32
 	Policy1FeePpm                  sql.NullInt64
 	Policy1BaseFeeMsat             sql.NullInt64
@@ -3383,6 +3582,8 @@ type ListChannelsWithPoliciesPaginatedRow struct {
 	Policy2ID                      sql.NullInt64
 	Policy2NodeID                  sql.NullInt64
 	Policy2Version                 sql.NullInt16
+	Policy2BlockHeight             sql.NullInt32
+	Policy2DisableFlags            sql.NullInt16
 	Policy2Timelock                sql.NullInt32
 	Policy2FeePpm                  sql.NullInt64
 	Policy2BaseFeeMsat             sql.NullInt64
@@ -3428,6 +3629,8 @@ func (q *Queries) ListChannelsWithPoliciesPaginated(ctx context.Context, arg Lis
 			&i.Policy1ID,
 			&i.Policy1NodeID,
 			&i.Policy1Version,
+			&i.Policy1BlockHeight,
+			&i.Policy1DisableFlags,
 			&i.Policy1Timelock,
 			&i.Policy1FeePpm,
 			&i.Policy1BaseFeeMsat,
@@ -3443,6 +3646,8 @@ func (q *Queries) ListChannelsWithPoliciesPaginated(ctx context.Context, arg Lis
 			&i.Policy2ID,
 			&i.Policy2NodeID,
 			&i.Policy2Version,
+			&i.Policy2BlockHeight,
+			&i.Policy2DisableFlags,
 			&i.Policy2Timelock,
 			&i.Policy2FeePpm,
 			&i.Policy2BaseFeeMsat,
@@ -3665,13 +3870,13 @@ const upsertEdgePolicy = `-- name: UpsertEdgePolicy :one
 */
 
 INSERT INTO graph_channel_policies (
-    version, channel_id, node_id, timelock, fee_ppm,
-    base_fee_msat, min_htlc_msat, last_update, disabled,
+    version, channel_id, node_id, timelock, block_height, fee_ppm,
+    base_fee_msat, min_htlc_msat, last_update, disabled, disable_flags,
     max_htlc_msat, inbound_base_fee_msat,
     inbound_fee_rate_milli_msat, message_flags, channel_flags,
     signature
 ) VALUES  (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
 )
 ON CONFLICT (channel_id, node_id, version)
     -- Update the following fields if a conflict occurs on channel_id,
@@ -3680,6 +3885,8 @@ ON CONFLICT (channel_id, node_id, version)
         timelock = EXCLUDED.timelock,
         fee_ppm = EXCLUDED.fee_ppm,
         base_fee_msat = EXCLUDED.base_fee_msat,
+        block_height = EXCLUDED.block_height,
+        disable_flags = EXCLUDED.disable_flags,
         min_htlc_msat = EXCLUDED.min_htlc_msat,
         last_update = EXCLUDED.last_update,
         disabled = EXCLUDED.disabled,
@@ -3689,7 +3896,10 @@ ON CONFLICT (channel_id, node_id, version)
         message_flags = EXCLUDED.message_flags,
         channel_flags = EXCLUDED.channel_flags,
         signature = EXCLUDED.signature
-WHERE EXCLUDED.last_update > graph_channel_policies.last_update
+WHERE (graph_channel_policies.last_update IS NULL
+    OR EXCLUDED.last_update > graph_channel_policies.last_update)
+AND (graph_channel_policies.block_height IS NULL
+    OR EXCLUDED.block_height >= graph_channel_policies.block_height)
 RETURNING id
 `
 
@@ -3698,11 +3908,13 @@ type UpsertEdgePolicyParams struct {
 	ChannelID               int64
 	NodeID                  int64
 	Timelock                int32
+	BlockHeight             sql.NullInt32
 	FeePpm                  int64
 	BaseFeeMsat             int64
 	MinHtlcMsat             int64
 	LastUpdate              sql.NullInt64
 	Disabled                sql.NullBool
+	DisableFlags            sql.NullInt16
 	MaxHtlcMsat             sql.NullInt64
 	InboundBaseFeeMsat      sql.NullInt64
 	InboundFeeRateMilliMsat sql.NullInt64
@@ -3717,11 +3929,13 @@ func (q *Queries) UpsertEdgePolicy(ctx context.Context, arg UpsertEdgePolicyPara
 		arg.ChannelID,
 		arg.NodeID,
 		arg.Timelock,
+		arg.BlockHeight,
 		arg.FeePpm,
 		arg.BaseFeeMsat,
 		arg.MinHtlcMsat,
 		arg.LastUpdate,
 		arg.Disabled,
+		arg.DisableFlags,
 		arg.MaxHtlcMsat,
 		arg.InboundBaseFeeMsat,
 		arg.InboundFeeRateMilliMsat,

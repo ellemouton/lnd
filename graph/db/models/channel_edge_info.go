@@ -45,6 +45,8 @@ type ChannelEdgeInfo struct {
 	// BitcoinKey2Bytes is the raw public key of the first node.
 	BitcoinKey2Bytes route.Vertex
 
+	MerkleRootHash fn.Option[chainhash.Hash]
+
 	// Features is the list of protocol features supported by this channel
 	// edge.
 	Features *lnwire.FeatureVector
@@ -75,6 +77,8 @@ type ChannelEdgeInfo struct {
 	// and ensure we're able to make upgrades to the network in a forwards
 	// compatible manner.
 	ExtraOpaqueData []byte
+
+	ExtraSignedFields map[uint64][]byte
 }
 
 func NewChannelEdge(v lnwire.GossipVersion, chanID uint64,
