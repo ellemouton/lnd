@@ -1403,7 +1403,7 @@ func TestForEachSourceNodeChannel(t *testing.T) {
 func TestGraphTraversal(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-
+	v := lnwire.GossipVersion1
 	graph := MakeTestGraph(t)
 
 	// We'd like to test some of the graph traversal capabilities within
@@ -1460,7 +1460,7 @@ func TestGraphTraversal(t *testing.T) {
 	numNodeChans := 0
 	firstNode, secondNode := nodeList[0], nodeList[1]
 	err = graph.ForEachNodeChannel(
-		ctx, firstNode.PubKeyBytes,
+		ctx, v, firstNode.PubKeyBytes,
 		func(_ *models.ChannelEdgeInfo, outEdge,
 			inEdge *models.ChannelEdgePolicy) error {
 
@@ -3194,7 +3194,7 @@ func TestFetchChanInfos(t *testing.T) {
 func TestIncompleteChannelPolicies(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-
+	v := lnwire.GossipVersion1
 	graph := MakeTestGraph(t)
 
 	// Create two nodes.
@@ -3221,7 +3221,7 @@ func TestIncompleteChannelPolicies(t *testing.T) {
 
 		calls := 0
 		err := graph.ForEachNodeChannel(
-			ctx, node.PubKeyBytes,
+			ctx, v, node.PubKeyBytes,
 			func(_ *models.ChannelEdgeInfo, outEdge,
 				inEdge *models.ChannelEdgePolicy) error {
 
@@ -4285,8 +4285,9 @@ func TestBatchedUpdateEdgePolicy(t *testing.T) {
 // BenchmarkForEachChannel is a benchmark test that measures the number of
 // allocations and the total memory consumed by the full graph traversal.
 func BenchmarkForEachChannel(b *testing.B) {
-	graph := MakeTestGraph(b)
 	ctx := b.Context()
+	graph := MakeTestGraph(b)
+	v := lnwire.GossipVersion1
 
 	const numNodes = 100
 	const numChannels = 4
@@ -4329,7 +4330,9 @@ func BenchmarkForEachChannel(b *testing.B) {
 				return nil
 			}
 
-			err := graph.ForEachNodeChannel(ctx, n, cb, func() {})
+			err := graph.ForEachNodeChannel(
+				ctx, v, n, cb, func() {},
+			)
 			require.NoError(b, err)
 		}
 	}

@@ -906,14 +906,15 @@ func (s *SQLStore) ForEachNodeCacheable(ctx context.Context,
 // Unknown policies are passed into the callback as nil values.
 //
 // NOTE: part of the Store interface.
-func (s *SQLStore) ForEachNodeChannel(ctx context.Context, nodePub route.Vertex,
+func (s *SQLStore) ForEachNodeChannel(ctx context.Context,
+	v lnwire.GossipVersion, nodePub route.Vertex,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error, reset func()) error {
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		dbNode, err := db.GetNodeByPubKey(
 			ctx, sqlc.GetNodeByPubKeyParams{
-				Version: int16(lnwire.GossipVersion1),
+				Version: int16(v),
 				PubKey:  nodePub[:],
 			},
 		)

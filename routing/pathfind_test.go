@@ -185,6 +185,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 	*testGraphInstance, error) {
 
 	ctx := t.Context()
+	v := lnwire.GossipVersion1
 
 	graphJSON, err := os.ReadFile(path)
 	if err != nil {
@@ -307,7 +308,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 
 	if source != nil {
 		// Set the selected source node
-		if err := graph.SetSourceNode(ctx, source); err != nil {
+		if err := graph.SetSourceNode(ctx, v, source); err != nil {
 			return nil, err
 		}
 	}
@@ -582,7 +583,9 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 		// With the node fully parsed, add it as a vertex within the
 		// graph.
 		if alias == source {
-			err = graph.SetSourceNode(ctx, dbNode)
+			err = graph.SetSourceNode(
+				ctx, lnwire.GossipVersion1, dbNode,
+			)
 			require.NoError(t, err)
 		} else {
 			err := graph.AddNode(ctx, dbNode)

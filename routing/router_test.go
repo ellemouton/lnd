@@ -131,7 +131,9 @@ func createTestCtxFromGraphInstanceAssumeValid(t *testing.T,
 	)
 	require.NoError(t, err)
 
-	sourceNode, err := graphInstance.graph.SourceNode(t.Context())
+	sourceNode, err := graphInstance.graph.SourceNode(
+		t.Context(), lnwire.GossipVersion1,
+	)
 	require.NoError(t, err)
 	sessionSource := &SessionSource{
 		GraphSessionFactory: graphInstance.graph,
@@ -1201,7 +1203,9 @@ func TestFindPathFeeWeighting(t *testing.T) {
 	var preImage [32]byte
 	copy(preImage[:], bytes.Repeat([]byte{9}, 32))
 
-	sourceNode, err := ctx.graph.SourceNode(t.Context())
+	sourceNode, err := ctx.graph.SourceNode(
+		t.Context(), lnwire.GossipVersion1,
+	)
 	require.NoError(t, err, "unable to fetch source node")
 
 	amt := lnwire.MilliSatoshi(100)
