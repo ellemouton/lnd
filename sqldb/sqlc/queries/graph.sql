@@ -643,8 +643,7 @@ FROM graph_channels c
     ON cp1.channel_id = c.id AND cp1.node_id = c.node_id_1 AND cp1.version = c.version
     LEFT JOIN graph_channel_policies cp2
     ON cp2.channel_id = c.id AND cp2.node_id = c.node_id_2 AND cp2.version = c.version
-WHERE c.version = $1
-  AND (c.node_id_1 = $2 OR c.node_id_2 = $2);
+WHERE (c.node_id_1 = $1 OR c.node_id_2 = $1);
 
 -- name: GetPublicV1ChannelsBySCID :many
 SELECT *

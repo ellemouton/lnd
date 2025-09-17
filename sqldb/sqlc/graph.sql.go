@@ -2828,14 +2828,8 @@ FROM graph_channels c
     ON cp1.channel_id = c.id AND cp1.node_id = c.node_id_1 AND cp1.version = c.version
     LEFT JOIN graph_channel_policies cp2
     ON cp2.channel_id = c.id AND cp2.node_id = c.node_id_2 AND cp2.version = c.version
-WHERE c.version = $1
-  AND (c.node_id_1 = $2 OR c.node_id_2 = $2)
+WHERE (c.node_id_1 = $1 OR c.node_id_2 = $1)
 `
-
-type ListChannelsByNodeIDParams struct {
-	Version int16
-	NodeID1 int64
-}
 
 type ListChannelsByNodeIDRow struct {
 	GraphChannel                   GraphChannel
@@ -2873,8 +2867,8 @@ type ListChannelsByNodeIDRow struct {
 	Policy2Signature               []byte
 }
 
-func (q *Queries) ListChannelsByNodeID(ctx context.Context, arg ListChannelsByNodeIDParams) ([]ListChannelsByNodeIDRow, error) {
-	rows, err := q.db.QueryContext(ctx, listChannelsByNodeID, arg.Version, arg.NodeID1)
+func (q *Queries) ListChannelsByNodeID(ctx context.Context, nodeID1 int64) ([]ListChannelsByNodeIDRow, error) {
+	rows, err := q.db.QueryContext(ctx, listChannelsByNodeID, nodeID1)
 	if err != nil {
 		return nil, err
 	}

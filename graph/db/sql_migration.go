@@ -1543,18 +1543,20 @@ type dbChanInfo struct {
 func insertChannelMig(ctx context.Context, db SQLQueries,
 	edge *models.ChannelEdgeInfo) (*dbChanInfo, error) {
 
+	v := lnwire.GossipVersion1
+
 	// Make sure that at least a "shell" entry for each node is present in
 	// the nodes table.
 	//
 	// NOTE: we need this even during the SQL migration where nodes are
 	// migrated first because there are cases were some nodes may have
 	// been skipped due to invalid TLV data.
-	node1DBID, err := maybeCreateShellNode(ctx, db, edge.NodeKey1Bytes)
+	node1DBID, err := maybeCreateShellNode(ctx, db, v, edge.NodeKey1Bytes)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create shell node: %w", err)
 	}
 
-	node2DBID, err := maybeCreateShellNode(ctx, db, edge.NodeKey2Bytes)
+	node2DBID, err := maybeCreateShellNode(ctx, db, v, edge.NodeKey2Bytes)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create shell node: %w", err)
 	}
@@ -1565,7 +1567,7 @@ func insertChannelMig(ctx context.Context, db SQLQueries,
 	}
 
 	createParams := sqlc.InsertChannelMigParams{
-		Version:     int16(lnwire.GossipVersion1),
+		Version:     int16(v),
 		Scid:        channelIDToBytes(edge.ChannelID),
 		NodeID1:     node1DBID,
 		NodeID2:     node2DBID,
