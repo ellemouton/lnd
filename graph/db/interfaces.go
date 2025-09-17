@@ -221,7 +221,8 @@ type Store interface { //nolint:interfacebloat
 	// graph. This represents the "newest" channel from the PoV of the
 	// chain. This method can be used by peers to quickly determine if
 	// they're graphs are in sync.
-	HighestChanID(ctx context.Context) (uint64, error)
+	HighestChanID(ctx context.Context, v lnwire.GossipVersion) (uint64,
+		error)
 
 	// ChanUpdatesInHorizon returns all the known channel edges which have
 	// at least one edge that has an update timestamp within the specified
@@ -265,7 +266,7 @@ type Store interface { //nolint:interfacebloat
 	// houses the general information for the channel itself is returned as
 	// well as two structs that contain the routing policies for the channel
 	// in either direction.
-	FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
+	FetchChannelEdgesByOutpoint(v lnwire.GossipVersion, op *wire.OutPoint) (
 		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy, error)
 
@@ -288,7 +289,7 @@ type Store interface { //nolint:interfacebloat
 	// channel within the known channel graph. The set of UTXO's (along with
 	// their scripts) returned are the ones that need to be watched on chain
 	// to detect channel closes on the resident blockchain.
-	ChannelView() ([]EdgePoint, error)
+	ChannelView(v lnwire.GossipVersion) ([]EdgePoint, error)
 
 	// MarkEdgeZombie attempts to mark a channel identified by its channel
 	// ID as a zombie. This method is used on an ad-hoc basis, when channels

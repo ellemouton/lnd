@@ -2025,7 +2025,9 @@ func getChanID(tx kvdb.RTx, chanPoint *wire.OutPoint) (uint64, error) {
 // HighestChanID returns the "highest" known channel ID in the channel graph.
 // This represents the "newest" channel from the PoV of the chain. This method
 // can be used by peers to quickly determine if they're graphs are in sync.
-func (c *KVStore) HighestChanID(_ context.Context) (uint64, error) {
+func (c *KVStore) HighestChanID(_ context.Context,
+	v lnwire.GossipVersion) (uint64, error) {
+
 	var cid uint64
 
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
@@ -3475,9 +3477,13 @@ func computeEdgePolicyKeys(info *models.ChannelEdgeInfo) ([]byte, []byte) {
 // found, then ErrEdgeNotFound is returned. A struct which houses the general
 // information for the channel itself is returned as well as two structs that
 // contain the routing policies for the channel in either direction.
-func (c *KVStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
-	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+func (c *KVStore) FetchChannelEdgesByOutpoint(v lnwire.GossipVersion,
+	op *wire.OutPoint) (*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
+
+	if v != lnwire.GossipVersion1 {
+		return nil, nil, nil, ErrGossipV1OnlyForKVDB
+	}
 
 	var (
 		edgeInfo *models.ChannelEdgeInfo
@@ -3747,7 +3753,11 @@ func (e *EdgePoint) String() string {
 // within the known channel graph. The set of UTXO's (along with their scripts)
 // returned are the ones that need to be watched on chain to detect channel
 // closes on the resident blockchain.
-func (c *KVStore) ChannelView() ([]EdgePoint, error) {
+func (c *KVStore) ChannelView(v lnwire.GossipVersion) ([]EdgePoint, error) {
+	if v != lnwire.GossipVersion1 {
+		return nil, ErrGossipV1OnlyForKVDB
+	}
+
 	var edgePoints []EdgePoint
 	if err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		// We're going to iterate over the entire channel index, so

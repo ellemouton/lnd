@@ -7062,7 +7062,7 @@ func (r *rpcServer) GetChanInfo(_ context.Context,
 			return nil, err
 		}
 		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByOutpoint(
-			chanPoint,
+			lnwire.GossipVersion1, chanPoint,
 		)
 
 	default:

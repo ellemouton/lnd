@@ -596,7 +596,7 @@ func testEdgeInsertionDeletion(t *testing.T, v lnwire.GossipVersion) {
 
 	// Ensure that any query attempts to lookup the delete channel edge are
 	// properly deleted.
-	_, _, _, err = graph.FetchChannelEdgesByOutpoint(&outpoint)
+	_, _, _, err = graph.FetchChannelEdgesByOutpoint(v, &outpoint)
 	require.ErrorIs(t, err, ErrEdgeNotFound)
 
 	// Assert that if the edge is a zombie, then FetchChannelEdgesByID
@@ -986,7 +986,7 @@ func TestEdgeInfoUpdates(t *testing.T) {
 	// Next, attempt to query the channel edges according to the outpoint
 	// of the channel.
 	dbEdgeInfo, dbEdge1, dbEdge2, err = graph.FetchChannelEdgesByOutpoint(
-		&outpoint,
+		v, &outpoint,
 	)
 	require.NoError(t, err, "unable to fetch channel by ID")
 	if err := compareEdgePolicies(dbEdge1, edge1); err != nil {
@@ -1954,7 +1954,7 @@ func TestGraphPruning(t *testing.T) {
 
 	// With all the channel points added, we'll consult the graph to ensure
 	// it has the same channel view as the one we just constructed.
-	channelView, err := graph.ChannelView()
+	channelView, err := graph.ChannelView(v)
 	require.NoError(t, err, "unable to get graph channel view")
 	assertChanViewEqual(t, channelView, edgePoints)
 
@@ -1982,7 +1982,7 @@ func TestGraphPruning(t *testing.T) {
 	assertNumChans(t, graph, 2)
 
 	// Those channels should also be missing from the channel view.
-	channelView, err = graph.ChannelView()
+	channelView, err = graph.ChannelView(v)
 	require.NoError(t, err, "unable to get graph channel view")
 	assertChanViewEqualChanPoints(t, channelView, channelPoints[2:])
 
@@ -2036,7 +2036,7 @@ func TestGraphPruning(t *testing.T) {
 	// Finally, the channel view at this point in the graph should now be
 	// completely empty.  Those channels should also be missing from the
 	// channel view.
-	channelView, err = graph.ChannelView()
+	channelView, err = graph.ChannelView(v)
 	require.NoError(t, err, "unable to get graph channel view")
 	if len(channelView) != 0 {
 		t.Fatalf("channel view should be empty, instead have: %v",
@@ -2055,7 +2055,7 @@ func TestHighestChanID(t *testing.T) {
 
 	// If we don't yet have any channels in the database, then we should
 	// get a channel ID of zero if we ask for the highest channel ID.
-	bestID, err := graph.HighestChanID(ctx)
+	bestID, err := graph.HighestChanID(ctx, v)
 	require.NoError(t, err, "unable to get highest ID")
 	if bestID != 0 {
 		t.Fatalf("best ID w/ no chan should be zero, is instead: %v",
@@ -2081,7 +2081,7 @@ func TestHighestChanID(t *testing.T) {
 
 	// Now that the edges has been inserted, we'll query for the highest
 	// known channel ID in the database.
-	bestID, err = graph.HighestChanID(ctx)
+	bestID, err = graph.HighestChanID(ctx, v)
 	require.NoError(t, err, "unable to get highest ID")
 
 	if bestID != chanID2.ToUint64() {
@@ -2095,7 +2095,7 @@ func TestHighestChanID(t *testing.T) {
 	if err := graph.AddChannelEdge(ctx, &edge3); err != nil {
 		t.Fatalf("unable to create channel edge: %v", err)
 	}
-	bestID, err = graph.HighestChanID(ctx)
+	bestID, err = graph.HighestChanID(ctx, v)
 	require.NoError(t, err, "unable to get highest ID")
 
 	if bestID != chanID3.ToUint64() {

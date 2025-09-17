@@ -242,7 +242,10 @@ func (b *Builder) Start() error {
 		// FilteredChainView instance.  We do this before, as otherwise
 		// we may miss on-chain events as the filter hasn't properly
 		// been applied.
-		channelView, err := b.cfg.Graph.ChannelView()
+		// TODO(elle): update for v2.
+		channelView, err := b.cfg.Graph.ChannelView(
+			lnwire.GossipVersion1,
+		)
 		if err != nil && !errors.Is(
 			err, graphdb.ErrGraphNoEdgesFound,
 		) {

@@ -672,9 +672,8 @@ func (s *SQLStore) AddChannelEdge(ctx context.Context,
 // can be used by peers to quickly determine if their graphs are in sync.
 //
 // NOTE: This is part of the Store interface.
-func (s *SQLStore) HighestChanID(ctx context.Context) (uint64, error) {
-
-	v := lnwire.GossipVersion1
+func (s *SQLStore) HighestChanID(ctx context.Context,
+	v lnwire.GossipVersion) (uint64, error) {
 
 	var highestChanID uint64
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
@@ -1932,13 +1931,13 @@ func (s *SQLStore) FetchChannelEdgesByID(v lnwire.GossipVersion,
 // contain the routing policies for the channel in either direction.
 //
 // NOTE: part of the Store interface.
-func (s *SQLStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
+func (s *SQLStore) FetchChannelEdgesByOutpoint(v lnwire.GossipVersion,
+	op *wire.OutPoint) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
 	var (
 		ctx              = context.TODO()
-		v                = lnwire.GossipVersion1
 		edge             *models.ChannelEdgeInfo
 		policy1, policy2 *models.ChannelEdgePolicy
 	)
@@ -2594,10 +2593,9 @@ func (s *SQLStore) deleteChannels(ctx context.Context, db SQLQueries,
 // closes on the resident blockchain.
 //
 // NOTE: part of the Store interface.
-func (s *SQLStore) ChannelView() ([]EdgePoint, error) {
+func (s *SQLStore) ChannelView(v lnwire.GossipVersion) ([]EdgePoint, error) {
 	var (
 		ctx        = context.TODO()
-		v          = lnwire.GossipVersion1
 		edgePoints []EdgePoint
 	)
 

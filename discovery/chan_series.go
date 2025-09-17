@@ -92,7 +92,7 @@ func NewChanSeries(graph *graphdb.ChannelGraph) *ChanSeries {
 func (c *ChanSeries) HighestChanID(ctx context.Context,
 	_ chainhash.Hash) (*lnwire.ShortChannelID, error) {
 
-	chanID, err := c.graph.HighestChanID(ctx)
+	chanID, err := c.graph.HighestChanID(ctx, lnwire.GossipVersion1)
 	if err != nil {
 		return nil, err
 	}
