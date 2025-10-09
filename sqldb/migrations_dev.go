@@ -2,4 +2,9 @@
 
 package sqldb
 
-var migrationAdditions []MigrationConfig
+var migrationAdditions = []MigrationConfig{
+	{
+		Version:       11,
+		SchemaVersion: 9,
+	},
+}
