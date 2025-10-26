@@ -282,14 +282,14 @@ func (s *SQLStore) FetchNode(ctx context.Context,
 	return node, nil
 }
 
-// HasNode determines if the graph has a vertex identified by the
+// HasV1Node determines if the graph has a vertex identified by the
 // target node identity public key. If the node exists in the database, a
 // timestamp of when the data for the node was lasted updated is returned along
 // with a true boolean. Otherwise, an empty time.Time is returned with a false
 // boolean.
 //
 // NOTE: part of the Store interface.
-func (s *SQLStore) HasNode(ctx context.Context,
+func (s *SQLStore) HasV1Node(ctx context.Context,
 	pubKey [33]byte) (time.Time, bool, error) {
 
 	var (
@@ -323,6 +323,39 @@ func (s *SQLStore) HasNode(ctx context.Context,
 	}
 
 	return lastUpdate, exists, nil
+}
+
+// HasNode determines if the graph has a vertex identified by the
+// target node identity public key.
+//
+// NOTE: part of the Store interface.
+func (s *SQLStore) HasNode(ctx context.Context, pubKey [33]byte) (bool, error) {
+	var (
+		v      = lnwire.GossipVersion1
+		exists bool
+	)
+	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+		_, err := db.GetNodeByPubKey(
+			ctx, sqlc.GetNodeByPubKeyParams{
+				Version: int16(v),
+				PubKey:  pubKey[:],
+			},
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("unable to fetch node: %w", err)
+		}
+
+		exists = true
+
+		return nil
+	}, sqldb.NoOpReset)
+	if err != nil {
+		return false, fmt.Errorf("unable to fetch node: %w", err)
+	}
+
+	return exists, nil
 }
 
 // AddrsForNode returns all known addresses for the target node public key
