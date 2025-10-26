@@ -92,6 +92,10 @@ var (
 			// schema. This is optional and can be disabled by the
 			// user if necessary.
 		},
+		{
+			Version:       11,
+			SchemaVersion: 9,
+		},
 	}, migrationAdditions...)
 
 	// ErrMigrationMismatch is returned when a migrated record does not
