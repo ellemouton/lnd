@@ -618,13 +618,6 @@ func (c *ChannelGraph) ForEachNodeCacheable(ctx context.Context,
 	return c.db.ForEachNodeCacheable(ctx, cb, reset)
 }
 
-// LookupAlias attempts to return the alias as advertised by the target node.
-func (c *ChannelGraph) LookupAlias(ctx context.Context,
-	pub *btcec.PublicKey) (string, error) {
-
-	return c.db.LookupAlias(ctx, lnwire.GossipVersion1, pub)
-}
-
 // NodeUpdatesInHorizon returns all known lightning nodes with updates in the
 // range.
 func (c *ChannelGraph) NodeUpdatesInHorizon(startTime, endTime time.Time,
@@ -754,11 +747,6 @@ func (c *ChannelGraph) IsClosedScid(scid lnwire.ShortChannelID) (bool, error) {
 	return c.db.IsClosedScid(scid)
 }
 
-// SourceNode returns the source node of the graph.
-func (c *ChannelGraph) SourceNode(ctx context.Context) (*models.Node, error) {
-	return c.db.SourceNode(ctx, lnwire.GossipVersion1)
-}
-
 // SetSourceNode sets the source node within the graph database.
 func (c *ChannelGraph) SetSourceNode(ctx context.Context,
 	node *models.Node) error {
@@ -825,6 +813,18 @@ func (c *VersionedReader) HasNode(ctx context.Context, nodePub [33]byte) (bool,
 	error) {
 
 	return c.db.HasNode(ctx, c.v, nodePub)
+}
+
+// LookupAlias attempts to return the alias as advertised by the target node.
+func (c *VersionedReader) LookupAlias(ctx context.Context,
+	pub *btcec.PublicKey) (string, error) {
+
+	return c.db.LookupAlias(ctx, c.v, pub)
+}
+
+// SourceNode returns the source node of the graph.
+func (c *VersionedReader) SourceNode(ctx context.Context) (*models.Node, error) {
+	return c.db.SourceNode(ctx, c.v)
 }
 
 // MakeTestGraph creates a new instance of the ChannelGraph for testing

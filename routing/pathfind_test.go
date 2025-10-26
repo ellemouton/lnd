@@ -417,7 +417,10 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 	}
 
 	return &testGraphInstance{
-		graph:      graph,
+		graph: graph,
+		graphReader: graphdb.NewVersionedReader(
+			graph, lnwire.GossipVersion1,
+		),
 		mcBackend:  mcBackend,
 		aliasMap:   aliasMap,
 		privKeyMap: privKeyMap,
@@ -486,8 +489,9 @@ type testChannel struct {
 }
 
 type testGraphInstance struct {
-	graph     *graphdb.ChannelGraph
-	mcBackend kvdb.Backend
+	graph       *graphdb.ChannelGraph
+	graphReader *graphdb.VersionedReader
+	mcBackend   kvdb.Backend
 
 	// aliasMap is a map from a node's alias to its public key. This type is
 	// provided in order to allow easily look up from the human memorable alias
@@ -781,7 +785,10 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 	}
 
 	return &testGraphInstance{
-		graph:      graph,
+		graph: graph,
+		graphReader: graphdb.NewVersionedReader(
+			graph, lnwire.GossipVersion1,
+		),
 		mcBackend:  graphBackend,
 		aliasMap:   aliasMap,
 		privKeyMap: privKeyMap,
@@ -1095,7 +1102,7 @@ func testBasicGraphPathFindingCase(t *testing.T, graphInstance *testGraphInstanc
 	expectedHops := test.expectedHops
 	expectedHopCount := len(expectedHops)
 
-	sourceNode, err := graphInstance.graph.SourceNode(ctx)
+	sourceNode, err := graphInstance.graphReader.SourceNode(ctx)
 	require.NoError(t, err, "unable to fetch source node")
 	sourceVertex := route.Vertex(sourceNode.PubKeyBytes)
 
@@ -1107,7 +1114,7 @@ func testBasicGraphPathFindingCase(t *testing.T, graphInstance *testGraphInstanc
 	paymentAmt := lnwire.NewMSatFromSatoshis(test.paymentAmt)
 	target := graphInstance.aliasMap[test.target]
 	path, err := dbFindPath(
-		graphInstance.graph, nil, &mockBandwidthHints{},
+		graphInstance.graphReader, nil, &mockBandwidthHints{},
 		&RestrictParams{
 			FeeLimit:          test.feeLimit,
 			ProbabilitySource: noProbabilitySource,
@@ -1237,7 +1244,7 @@ func runPathFindingWithAdditionalEdges(t *testing.T, useCache bool) {
 
 	ctx := t.Context()
 
-	sourceNode, err := graph.graph.SourceNode(ctx)
+	sourceNode, err := graph.graphReader.SourceNode(ctx)
 	require.NoError(t, err, "unable to fetch source node")
 
 	paymentAmt := lnwire.NewMSatFromSatoshis(100)
@@ -1282,7 +1289,8 @@ func runPathFindingWithAdditionalEdges(t *testing.T, useCache bool) {
 		[]*unifiedEdge, error) {
 
 		return dbFindPath(
-			graph.graph, additionalEdges, &mockBandwidthHints{},
+			graph.graphReader, additionalEdges,
+			&mockBandwidthHints{},
 			r, testPathFindingConfig,
 			sourceNode.PubKeyBytes, doge.PubKeyBytes, paymentAmt,
 			0, 0,
@@ -1322,7 +1330,7 @@ func runPathFindingWithBlindedPathDuplicateHop(t *testing.T, useCache bool) {
 
 	ctx := t.Context()
 
-	sourceNode, err := graph.graph.SourceNode(ctx)
+	sourceNode, err := graph.graphReader.SourceNode(ctx)
 	require.NoError(t, err, "unable to fetch source node")
 
 	paymentAmt := lnwire.NewMSatFromSatoshis(100)
@@ -1396,7 +1404,7 @@ func runPathFindingWithBlindedPathDuplicateHop(t *testing.T, useCache bool) {
 		[]*unifiedEdge, error) {
 
 		return dbFindPath(
-			graph.graph, blindedPath, &mockBandwidthHints{},
+			graph.graphReader, blindedPath, &mockBandwidthHints{},
 			r, testPathFindingConfig,
 			sourceNode.PubKeyBytes, dummyTarget, paymentAmt,
 			0, 0,
@@ -1456,7 +1464,7 @@ func runPathFindingWithRedundantAdditionalEdges(t *testing.T, useCache bool) {
 	}
 
 	path, err := dbFindPath(
-		ctx.graph, additionalEdges, ctx.bandwidthHints,
+		ctx.graphReader, additionalEdges, ctx.bandwidthHints,
 		&ctx.restrictParams, &ctx.pathFindingConfig, ctx.source, target,
 		paymentAmt, ctx.timePref, 0,
 	)
@@ -1809,7 +1817,7 @@ func runPathNotAvailable(t *testing.T, useCache bool) {
 
 	ctx := t.Context()
 
-	sourceNode, err := graph.graph.SourceNode(ctx)
+	sourceNode, err := graph.graphReader.SourceNode(ctx)
 	require.NoError(t, err, "unable to fetch source node")
 
 	// With the test graph loaded, we'll test that queries for target that
@@ -1822,7 +1830,7 @@ func runPathNotAvailable(t *testing.T, useCache bool) {
 	copy(unknownNode[:], unknownNodeBytes)
 
 	_, err = dbFindPath(
-		graph.graph, nil, &mockBandwidthHints{},
+		graph.graphReader, nil, &mockBandwidthHints{},
 		noRestrictions, testPathFindingConfig,
 		sourceNode.PubKeyBytes, unknownNode, 100, 0, 0,
 	)
@@ -1865,14 +1873,14 @@ func runDestTLVGraphFallback(t *testing.T, useCache bool) {
 
 	ctx := newPathFindingTestContext(t, useCache, testChannels, "roasbeef")
 
-	sourceNode, err := ctx.graph.SourceNode(t.Context())
+	sourceNode, err := ctx.graphReader.SourceNode(t.Context())
 	require.NoError(t, err, "unable to fetch source node")
 
 	find := func(r *RestrictParams,
 		target route.Vertex) ([]*unifiedEdge, error) {
 
 		return dbFindPath(
-			ctx.graph, nil, &mockBandwidthHints{},
+			ctx.graphReader, nil, &mockBandwidthHints{},
 			r, testPathFindingConfig,
 			sourceNode.PubKeyBytes, target, 100, 0, 0,
 		)
@@ -2084,7 +2092,7 @@ func runPathInsufficientCapacity(t *testing.T, useCache bool) {
 	require.NoError(t, err, "unable to create graph")
 
 	ctx := t.Context()
-	sourceNode, err := graph.graph.SourceNode(ctx)
+	sourceNode, err := graph.graphReader.SourceNode(ctx)
 	require.NoError(t, err, "unable to fetch source node")
 
 	// Next, test that attempting to find a path in which the current
@@ -2099,7 +2107,7 @@ func runPathInsufficientCapacity(t *testing.T, useCache bool) {
 
 	payAmt := lnwire.NewMSatFromSatoshis(btcutil.SatoshiPerBitcoin)
 	_, err = dbFindPath(
-		graph.graph, nil, &mockBandwidthHints{},
+		graph.graphReader, nil, &mockBandwidthHints{},
 		noRestrictions, testPathFindingConfig,
 		sourceNode.PubKeyBytes, target, payAmt, 0, 0,
 	)
@@ -2115,7 +2123,7 @@ func runRouteFailMinHTLC(t *testing.T, useCache bool) {
 	require.NoError(t, err, "unable to create graph")
 
 	ctx := t.Context()
-	sourceNode, err := graph.graph.SourceNode(ctx)
+	sourceNode, err := graph.graphReader.SourceNode(ctx)
 	require.NoError(t, err, "unable to fetch source node")
 
 	// We'll not attempt to route an HTLC of 10 SAT from roasbeef to Son
@@ -2124,7 +2132,7 @@ func runRouteFailMinHTLC(t *testing.T, useCache bool) {
 	target := graph.aliasMap["songoku"]
 	payAmt := lnwire.MilliSatoshi(10)
 	_, err = dbFindPath(
-		graph.graph, nil, &mockBandwidthHints{},
+		graph.graphReader, nil, &mockBandwidthHints{},
 		noRestrictions, testPathFindingConfig,
 		sourceNode.PubKeyBytes, target, payAmt, 0, 0,
 	)
@@ -2200,7 +2208,7 @@ func runRouteFailDisabledEdge(t *testing.T, useCache bool) {
 	require.NoError(t, err, "unable to create graph")
 
 	ctx := t.Context()
-	sourceNode, err := graph.graph.SourceNode(ctx)
+	sourceNode, err := graph.graphReader.SourceNode(ctx)
 	require.NoError(t, err, "unable to fetch source node")
 
 	// First, we'll try to route from roasbeef -> sophon. This should
@@ -2208,7 +2216,7 @@ func runRouteFailDisabledEdge(t *testing.T, useCache bool) {
 	target := graph.aliasMap["sophon"]
 	payAmt := lnwire.NewMSatFromSatoshis(105000)
 	_, err = dbFindPath(
-		graph.graph, nil, &mockBandwidthHints{},
+		graph.graphReader, nil, &mockBandwidthHints{},
 		noRestrictions, testPathFindingConfig,
 		sourceNode.PubKeyBytes, target, payAmt, 0, 0,
 	)
@@ -2232,7 +2240,7 @@ func runRouteFailDisabledEdge(t *testing.T, useCache bool) {
 	}
 
 	_, err = dbFindPath(
-		graph.graph, nil, &mockBandwidthHints{},
+		graph.graphReader, nil, &mockBandwidthHints{},
 		noRestrictions, testPathFindingConfig,
 		sourceNode.PubKeyBytes, target, payAmt, 0, 0,
 	)
@@ -2252,7 +2260,7 @@ func runRouteFailDisabledEdge(t *testing.T, useCache bool) {
 	// If we attempt to route through that edge, we should get a failure as
 	// it is no longer eligible.
 	_, err = dbFindPath(
-		graph.graph, nil, &mockBandwidthHints{},
+		graph.graphReader, nil, &mockBandwidthHints{},
 		noRestrictions, testPathFindingConfig,
 		sourceNode.PubKeyBytes, target, payAmt, 0, 0,
 	)
@@ -2269,7 +2277,7 @@ func runPathSourceEdgesBandwidth(t *testing.T, useCache bool) {
 	require.NoError(t, err, "unable to create graph")
 
 	ctx := t.Context()
-	sourceNode, err := graph.graph.SourceNode(ctx)
+	sourceNode, err := graph.graphReader.SourceNode(ctx)
 	require.NoError(t, err, "unable to fetch source node")
 
 	// First, we'll try to route from roasbeef -> sophon. This should
@@ -2278,7 +2286,7 @@ func runPathSourceEdgesBandwidth(t *testing.T, useCache bool) {
 	target := graph.aliasMap["sophon"]
 	payAmt := lnwire.NewMSatFromSatoshis(50000)
 	path, err := dbFindPath(
-		graph.graph, nil, &mockBandwidthHints{},
+		graph.graphReader, nil, &mockBandwidthHints{},
 		noRestrictions, testPathFindingConfig,
 		sourceNode.PubKeyBytes, target, payAmt, 0, 0,
 	)
@@ -2299,7 +2307,7 @@ func runPathSourceEdgesBandwidth(t *testing.T, useCache bool) {
 	// Since both these edges has a bandwidth of zero, no path should be
 	// found.
 	_, err = dbFindPath(
-		graph.graph, nil, bandwidths,
+		graph.graphReader, nil, bandwidths,
 		noRestrictions, testPathFindingConfig,
 		sourceNode.PubKeyBytes, target, payAmt, 0, 0,
 	)
@@ -2314,7 +2322,7 @@ func runPathSourceEdgesBandwidth(t *testing.T, useCache bool) {
 	// Now, if we attempt to route again, we should find the path via
 	// phamnuven, as the other source edge won't be considered.
 	path, err = dbFindPath(
-		graph.graph, nil, bandwidths,
+		graph.graphReader, nil, bandwidths,
 		noRestrictions, testPathFindingConfig,
 		sourceNode.PubKeyBytes, target, payAmt, 0, 0,
 	)
@@ -2340,7 +2348,7 @@ func runPathSourceEdgesBandwidth(t *testing.T, useCache bool) {
 	// Since we ignore disable flags for local channels, a path should
 	// still be found.
 	path, err = dbFindPath(
-		graph.graph, nil, bandwidths,
+		graph.graphReader, nil, bandwidths,
 		noRestrictions, testPathFindingConfig,
 		sourceNode.PubKeyBytes, target, payAmt, 0, 0,
 	)
@@ -3184,6 +3192,7 @@ func runInboundFees(t *testing.T, useCache bool) {
 type pathFindingTestContext struct {
 	t                 *testing.T
 	graph             *graphdb.ChannelGraph
+	graphReader       *graphdb.VersionedReader
 	restrictParams    RestrictParams
 	bandwidthHints    bandwidthHints
 	pathFindingConfig PathFindingConfig
@@ -3201,7 +3210,7 @@ func newPathFindingTestContext(t *testing.T, useCache bool,
 	)
 	require.NoError(t, err, "unable to create graph")
 
-	sourceNode, err := testGraphInstance.graph.SourceNode(
+	sourceNode, err := testGraphInstance.graphReader.SourceNode(
 		t.Context(),
 	)
 	require.NoError(t, err, "unable to fetch source node")
@@ -3212,6 +3221,7 @@ func newPathFindingTestContext(t *testing.T, useCache bool,
 		source:            route.Vertex(sourceNode.PubKeyBytes),
 		pathFindingConfig: *testPathFindingConfig,
 		graph:             testGraphInstance.graph,
+		graphReader:       testGraphInstance.graphReader,
 		restrictParams:    *noRestrictions,
 		bandwidthHints:    &mockBandwidthHints{},
 	}
@@ -3247,7 +3257,7 @@ func (c *pathFindingTestContext) findPath(target route.Vertex,
 	error) {
 
 	return dbFindPath(
-		c.graph, nil, c.bandwidthHints, &c.restrictParams,
+		c.graphReader, nil, c.bandwidthHints, &c.restrictParams,
 		&c.pathFindingConfig, c.source, target, amt, c.timePref, 0,
 	)
 }
@@ -3255,7 +3265,7 @@ func (c *pathFindingTestContext) findPath(target route.Vertex,
 func (c *pathFindingTestContext) findBlindedPaths(
 	restrictions *blindedPathRestrictions) ([][]blindedHop, error) {
 
-	return dbFindBlindedPaths(c.graph, restrictions)
+	return dbFindBlindedPaths(c.graphReader, restrictions)
 }
 
 func (c *pathFindingTestContext) assertPath(path []*unifiedEdge,
@@ -3277,7 +3287,7 @@ func (c *pathFindingTestContext) assertPath(path []*unifiedEdge,
 
 // dbFindPath calls findPath after getting a db transaction from the database
 // graph.
-func dbFindPath(graph *graphdb.ChannelGraph,
+func dbFindPath(graph *graphdb.VersionedReader,
 	additionalEdges map[route.Vertex][]AdditionalEdge,
 	bandwidthHints bandwidthHints,
 	r *RestrictParams, cfg *PathFindingConfig,
@@ -3315,7 +3325,7 @@ func dbFindPath(graph *graphdb.ChannelGraph,
 
 // dbFindBlindedPaths calls findBlindedPaths after getting a db transaction from
 // the database graph.
-func dbFindBlindedPaths(graph *graphdb.ChannelGraph,
+func dbFindBlindedPaths(graph *graphdb.VersionedReader,
 	restrictions *blindedPathRestrictions) ([][]blindedHop, error) {
 
 	sourceNode, err := graph.SourceNode(context.Background())
