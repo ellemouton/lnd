@@ -556,7 +556,7 @@ func fetchAllNodes(t *testing.T, store Store) []*models.Node {
 
 // fetchSourceNode retrieves the source node from the given store.
 func fetchSourceNode(t *testing.T, store Store) *models.Node {
-	node, err := store.SourceNode(t.Context())
+	node, err := store.SourceNode(t.Context(), lnwire.GossipVersion1)
 	if errors.Is(err, ErrSourceNodeNotSet) {
 		return nil
 	} else {
