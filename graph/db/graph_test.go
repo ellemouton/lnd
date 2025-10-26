@@ -69,28 +69,54 @@ var (
 	}
 )
 
-func createNode(priv *btcec.PrivateKey) *models.Node {
+func createNode(t testing.TB, v lnwire.GossipVersion,
+	priv *btcec.PrivateKey) *models.Node {
+
 	pubKey := route.NewVertex(priv.PubKey())
 
-	return models.NewV1Node(
-		pubKey, &models.NodeV1Fields{
-			LastUpdate:   nextUpdateTime(),
-			Color:        color.RGBA{1, 2, 3, 0},
-			Alias:        "kek" + hex.EncodeToString(pubKey[:]),
-			Addresses:    testAddrs,
-			Features:     testFeatures.RawFeatureVector,
-			AuthSigBytes: testSig.Serialize(),
-		},
-	)
+	switch v {
+	case lnwire.GossipVersion1:
+		return models.NewV1Node(
+			pubKey, &models.NodeV1Fields{
+				LastUpdate: nextUpdateTime(),
+				Color:      color.RGBA{1, 2, 3, 0},
+				Alias: "kek" + hex.EncodeToString(
+					pubKey[:],
+				),
+				Addresses:    testAddrs,
+				Features:     testFeatures.RawFeatureVector,
+				AuthSigBytes: testSig.Serialize(),
+			},
+		)
+	case lnwire.GossipVersion2:
+		return models.NewV2Node(
+			pubKey, &models.NodeV2Fields{
+				Signature:       testSig.Serialize(),
+				LastBlockHeight: nextBlockHeight(),
+				Color: fn.Some(
+					color.RGBA{1, 2, 3, 0},
+				),
+				Alias: fn.Some(
+					"kek" + hex.EncodeToString(pubKey[:]),
+				),
+				Features: testFeatures.
+					RawFeatureVector,
+				Addresses: testAddrs,
+			},
+		)
+	}
+
+	t.Fatalf("unknown gossip version: %v", v)
+	return nil
 }
 
-func createTestVertex(t testing.TB) *models.Node {
+func createTestVertex(t testing.TB, v lnwire.GossipVersion) *models.Node {
 	t.Helper()
 
 	priv, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 
-	return createNode(priv)
+	return createNode(t, v, priv)
 }
 
 // TestNodeInsertionAndDeletion tests the CRUD operations for a Node.
@@ -349,7 +375,7 @@ func TestAliasLookup(t *testing.T) {
 
 	// We'd like to test the alias index within the database, so first
 	// create a new test node.
-	testNode := createTestVertex(t)
+	testNode := createTestVertex(t, lnwire.GossipVersion1)
 
 	// Add the node to the graph's database, this should also insert an
 	// entry into the alias index for this node.
@@ -364,7 +390,7 @@ func TestAliasLookup(t *testing.T) {
 	require.Equal(t, testNode.Alias.UnwrapOr(""), dbAlias)
 
 	// Ensure that looking up a non-existent alias results in an error.
-	node := createTestVertex(t)
+	node := createTestVertex(t, lnwire.GossipVersion1)
 	nodePub, err = node.PubKey()
 	require.NoError(t, err, "unable to generate pubkey")
 	_, err = graph.LookupAlias(ctx, nodePub)
@@ -380,7 +406,7 @@ func TestSourceNode(t *testing.T) {
 
 	// We'd like to test the setting/getting of the source node, so we
 	// first create a fake node to use within the test.
-	testNode := createTestVertex(t)
+	testNode := createTestVertex(t, lnwire.GossipVersion1)
 
 	// Attempt to fetch the source node, this should return an error as the
 	// source node hasn't yet been set.
@@ -407,8 +433,8 @@ func TestEdgeInsertionDeletion(t *testing.T) {
 
 	// We'd like to test the insertion/deletion of edges, so we create two
 	// vertexes to connect.
-	node1 := createTestVertex(t)
-	node2 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 
 	// In addition to the fake vertexes we create some fake channel
 	// identifiers.
@@ -530,15 +556,15 @@ func TestDisconnectBlockAtHeight(t *testing.T) {
 
 	graph := MakeTestGraph(t)
 
-	sourceNode := createTestVertex(t)
+	sourceNode := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.SetSourceNode(ctx, sourceNode); err != nil {
 		t.Fatalf("unable to set source node: %v", err)
 	}
 
 	// We'd like to test the insertion/deletion of edges, so we create two
 	// vertexes to connect.
-	node1 := createTestVertex(t)
-	node2 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 
 	// In addition to the fake vertexes we create some fake channel
 	// identifiers.
@@ -823,12 +849,12 @@ func TestEdgeInfoUpdates(t *testing.T) {
 
 	// We'd like to test the update of edges inserted into the database, so
 	// we create two vertexes to connect.
-	node1 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.AddNode(ctx, node1); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
 	assertNodeInCache(t, graph, node1, testFeatures)
-	node2 := createTestVertex(t)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.AddNode(ctx, node2); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
@@ -917,8 +943,8 @@ func TestEdgePolicyCRUD(t *testing.T) {
 
 	graph := MakeTestGraph(t)
 
-	node1 := createTestVertex(t)
-	node2 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 
 	// Create an edge. Don't add it to the DB yet.
 	edgeInfo, edge1, edge2 := createChannelEdge(node1, node2)
@@ -1219,8 +1245,8 @@ func TestAddEdgeProof(t *testing.T) {
 	graph := MakeTestGraph(t)
 
 	// Add an edge with no proof.
-	node1 := createTestVertex(t)
-	node2 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 	edge1, _, _ := createChannelEdge(node1, node2, withSkipProofs())
 	require.NoError(t, graph.AddChannelEdge(ctx, edge1))
 
@@ -1278,7 +1304,7 @@ func TestForEachSourceNodeChannel(t *testing.T) {
 	graph := MakeTestGraph(t)
 
 	// Create a source node (A) and set it as such in the DB.
-	nodeA := createTestVertex(t)
+	nodeA := createTestVertex(t, lnwire.GossipVersion1)
 	require.NoError(t, graph.SetSourceNode(ctx, nodeA))
 
 	// Now, create a few more nodes (B, C, D) along with some channels
@@ -1294,9 +1320,9 @@ func TestForEachSourceNodeChannel(t *testing.T) {
 	// outgoing policy but for the A-C channel, we will set only an incoming
 	// policy.
 
-	nodeB := createTestVertex(t)
-	nodeC := createTestVertex(t)
-	nodeD := createTestVertex(t)
+	nodeB := createTestVertex(t, lnwire.GossipVersion1)
+	nodeC := createTestVertex(t, lnwire.GossipVersion1)
+	nodeD := createTestVertex(t, lnwire.GossipVersion1)
 
 	abEdge, abPolicy1, abPolicy2 := createChannelEdge(nodeA, nodeB)
 	require.NoError(t, graph.AddChannelEdge(ctx, abEdge))
@@ -1593,7 +1619,7 @@ func fillTestGraph(t testing.TB, graph *ChannelGraph, numNodes,
 	nodes := make([]*models.Node, numNodes)
 	nodeIndex := map[string]struct{}{}
 	for i := 0; i < numNodes; i++ {
-		node := createTestVertex(t)
+		node := createTestVertex(t, lnwire.GossipVersion1)
 
 		nodes[i] = node
 		nodeIndex[node.Alias.UnwrapOr("")] = struct{}{}
@@ -1782,7 +1808,7 @@ func TestGraphPruning(t *testing.T) {
 
 	graph := MakeTestGraph(t)
 
-	sourceNode := createTestVertex(t)
+	sourceNode := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.SetSourceNode(ctx, sourceNode); err != nil {
 		t.Fatalf("unable to set source node: %v", err)
 	}
@@ -1793,7 +1819,7 @@ func TestGraphPruning(t *testing.T) {
 	const numNodes = 5
 	graphNodes := make([]*models.Node, numNodes)
 	for i := 0; i < numNodes; i++ {
-		node := createTestVertex(t)
+		node := createTestVertex(t, lnwire.GossipVersion1)
 
 		if err := graph.AddNode(ctx, node); err != nil {
 			t.Fatalf("unable to add node: %v", err)
@@ -1984,8 +2010,8 @@ func TestHighestChanID(t *testing.T) {
 
 	// Next, we'll insert two channels into the database, with each channel
 	// connecting the same two nodes.
-	node1 := createTestVertex(t)
-	node2 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 
 	// The first channel with be at height 10, while the other will be at
 	// height 100.
@@ -2048,11 +2074,11 @@ func TestChanUpdatesInHorizon(t *testing.T) {
 	}
 
 	// We'll start by creating two nodes which will seed our test graph.
-	node1 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.AddNode(ctx, node1); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
-	node2 := createTestVertex(t)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.AddNode(ctx, node2); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
@@ -2213,7 +2239,7 @@ func TestNodeUpdatesInHorizon(t *testing.T) {
 	const numNodes = 10
 	nodeAnns := make([]models.Node, 0, numNodes)
 	for i := 0; i < numNodes; i++ {
-		nodeAnn := createTestVertex(t)
+		nodeAnn := createTestVertex(t, lnwire.GossipVersion1)
 
 		// The node ann will use the current end time as its last
 		// update them, then we'll add 10 seconds in order to create
@@ -2304,7 +2330,7 @@ func testNodeUpdatesWithBatchSize(t *testing.T, ctx context.Context,
 	var nodeAnns []models.Node
 
 	for i := 0; i < 25; i++ {
-		nodeAnn := createTestVertex(t)
+		nodeAnn := createTestVertex(t, lnwire.GossipVersion1)
 		nodeAnn.LastUpdate = startTime.Add(
 			time.Duration(i) * time.Hour,
 		)
@@ -2467,7 +2493,7 @@ func TestNodeUpdatesInHorizonEarlyTermination(t *testing.T) {
 	// one hour apart.
 	startTime := time.Unix(1234567890, 0)
 	for i := 0; i < 100; i++ {
-		nodeAnn := createTestVertex(t)
+		nodeAnn := createTestVertex(t, lnwire.GossipVersion1)
 		nodeAnn.LastUpdate = startTime.Add(time.Duration(i) * time.Hour)
 		require.NoError(t, graph.AddNode(ctx, nodeAnn))
 	}
@@ -2516,8 +2542,8 @@ func TestChanUpdatesInHorizonBoundaryConditions(t *testing.T) {
 			// Create a fresh graph for each test, then add two new
 			// nodes to the graph.
 			graph := MakeTestGraph(t)
-			node1 := createTestVertex(t)
-			node2 := createTestVertex(t)
+			node1 := createTestVertex(t, lnwire.GossipVersion1)
+			node2 := createTestVertex(t, lnwire.GossipVersion1)
 			require.NoError(t, graph.AddNode(ctx, node1))
 			require.NoError(t, graph.AddNode(ctx, node2))
 
@@ -2685,11 +2711,11 @@ func TestFilterKnownChanIDs(t *testing.T) {
 	}, filteredIDs)
 
 	// We'll start by creating two nodes which will seed our test graph.
-	node1 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.AddNode(ctx, node1); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
-	node2 := createTestVertex(t)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.AddNode(ctx, node2); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
@@ -2840,10 +2866,10 @@ func TestStressTestChannelGraphAPI(t *testing.T) {
 
 	graph := MakeTestGraph(t)
 
-	node1 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
 	require.NoError(t, graph.AddNode(ctx, node1))
 
-	node2 := createTestVertex(t)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 	require.NoError(t, graph.AddNode(ctx, node2))
 
 	// We need to update the node's timestamp since this call to
@@ -3132,10 +3158,10 @@ func TestFilterChannelRange(t *testing.T) {
 
 	// We'll first populate our graph with two nodes. All channels created
 	// below will be made between these two nodes.
-	node1 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
 	require.NoError(t, graph.AddNode(ctx, node1))
 
-	node2 := createTestVertex(t)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 	require.NoError(t, graph.AddNode(ctx, node2))
 
 	// If we try to filter a channel range before we have any channels
@@ -3351,11 +3377,11 @@ func TestFetchChanInfos(t *testing.T) {
 
 	// We'll first populate our graph with two nodes. All channels created
 	// below will be made between these two nodes.
-	node1 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.AddNode(ctx, node1); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
-	node2 := createTestVertex(t)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.AddNode(ctx, node2); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
@@ -3453,11 +3479,11 @@ func TestIncompleteChannelPolicies(t *testing.T) {
 	graph := MakeTestGraph(t)
 
 	// Create two nodes.
-	node1 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.AddNode(ctx, node1); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
-	node2 := createTestVertex(t)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.AddNode(ctx, node2); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
@@ -3551,18 +3577,18 @@ func TestChannelEdgePruningUpdateIndexDeletion(t *testing.T) {
 		t.Skipf("skipping test that is aimed at a bbolt graph DB")
 	}
 
-	sourceNode := createTestVertex(t)
+	sourceNode := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.SetSourceNode(ctx, sourceNode); err != nil {
 		t.Fatalf("unable to set source node: %v", err)
 	}
 
 	// We'll first populate our graph with two nodes. All channels created
 	// below will be made between these two nodes.
-	node1 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.AddNode(ctx, node1); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
-	node2 := createTestVertex(t)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.AddNode(ctx, node2); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
@@ -3695,7 +3721,7 @@ func TestPruneGraphNodes(t *testing.T) {
 
 	// We'll start off by inserting our source node, to ensure that it's
 	// the only node left after we prune the graph.
-	sourceNode := createTestVertex(t)
+	sourceNode := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.SetSourceNode(ctx, sourceNode); err != nil {
 		t.Fatalf("unable to set source node: %v", err)
 	}
@@ -3703,15 +3729,15 @@ func TestPruneGraphNodes(t *testing.T) {
 	// With the source node inserted, we'll now add three nodes to the
 	// channel graph, at the end of the scenario, only two of these nodes
 	// should still be in the graph.
-	node1 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.AddNode(ctx, node1); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
-	node2 := createTestVertex(t)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.AddNode(ctx, node2); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
-	node3 := createTestVertex(t)
+	node3 := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.AddNode(ctx, node3); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
@@ -3761,9 +3787,9 @@ func TestAddChannelEdgeShellNodes(t *testing.T) {
 
 	// To start, we'll create two nodes, and only add one of them to the
 	// channel graph.
-	node1 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
 	require.NoError(t, graph.SetSourceNode(ctx, node1))
-	node2 := createTestVertex(t)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 
 	// We'll now create an edge between the two nodes, as a result, node2
 	// should be inserted into the database as a shell node.
@@ -3800,7 +3826,7 @@ func TestNodePruningUpdateIndexDeletion(t *testing.T) {
 
 	// We'll first populate our graph with a single node that will be
 	// removed shortly.
-	node1 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.AddNode(ctx, node1); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
@@ -3878,19 +3904,19 @@ func TestNodeIsPublic(t *testing.T) {
 	// participant to replicate real-world scenarios (private edges being in
 	// some graphs but not others, etc.).
 	aliceGraph := MakeTestGraph(t)
-	aliceNode := createTestVertex(t)
+	aliceNode := createTestVertex(t, lnwire.GossipVersion1)
 	if err := aliceGraph.SetSourceNode(ctx, aliceNode); err != nil {
 		t.Fatalf("unable to set source node: %v", err)
 	}
 
 	bobGraph := MakeTestGraph(t)
-	bobNode := createTestVertex(t)
+	bobNode := createTestVertex(t, lnwire.GossipVersion1)
 	if err := bobGraph.SetSourceNode(ctx, bobNode); err != nil {
 		t.Fatalf("unable to set source node: %v", err)
 	}
 
 	carolGraph := MakeTestGraph(t)
-	carolNode := createTestVertex(t)
+	carolNode := createTestVertex(t, lnwire.GossipVersion1)
 	if err := carolGraph.SetSourceNode(ctx, carolNode); err != nil {
 		t.Fatalf("unable to set source node: %v", err)
 	}
@@ -4007,13 +4033,13 @@ func TestDisabledChannelIDs(t *testing.T) {
 	graph := MakeTestGraph(t)
 
 	// Create first node and add it to the graph.
-	node1 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.AddNode(ctx, node1); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
 
 	// Create second node and add it to the graph.
-	node2 := createTestVertex(t)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.AddNode(ctx, node2); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
@@ -4099,11 +4125,11 @@ func TestEdgePolicyMissingMaxHTLC(t *testing.T) {
 
 	// We'd like to test the update of edges inserted into the database, so
 	// we create two vertexes to connect.
-	node1 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.AddNode(ctx, node1); err != nil {
 		t.Fatalf("unable to add node: %v", err)
 	}
-	node2 := createTestVertex(t)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 
 	edgeInfo, edge1, edge2 := createChannelEdge(node1, node2)
 	if err := graph.AddNode(ctx, node2); err != nil {
@@ -4235,8 +4261,8 @@ func TestGraphZombieIndex(t *testing.T) {
 	// We'll start by creating our test graph along with a test edge.
 	graph := MakeTestGraph(t)
 
-	node1 := createTestVertex(t)
-	node2 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 
 	// Swap the nodes if the second's pubkey is smaller than the first.
 	// Without this, the comparisons at the end will fail probabilistically.
@@ -4384,7 +4410,7 @@ func TestLightningNodeSigVerification(t *testing.T) {
 	}
 
 	// Create a Node from the same private key.
-	node := createNode(priv)
+	node := createNode(t, lnwire.GossipVersion1, priv)
 
 	// And finally check that we can verify the same signature from the
 	// pubkey returned from the lightning node.
@@ -4421,13 +4447,13 @@ func TestBatchedAddChannelEdge(t *testing.T) {
 
 	graph := MakeTestGraph(t)
 
-	sourceNode := createTestVertex(t)
+	sourceNode := createTestVertex(t, lnwire.GossipVersion1)
 	require.Nil(t, graph.SetSourceNode(ctx, sourceNode))
 
 	// We'd like to test the insertion/deletion of edges, so we create two
 	// vertexes to connect.
-	node1 := createTestVertex(t)
-	node2 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 
 	// In addition to the fake vertexes we create some fake channel
 	// identifiers.
@@ -4500,9 +4526,9 @@ func TestBatchedUpdateEdgePolicy(t *testing.T) {
 
 	// We'd like to test the update of edges inserted into the database, so
 	// we create two vertexes to connect.
-	node1 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
 	require.NoError(t, graph.AddNode(ctx, node1))
-	node2 := createTestVertex(t)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 	require.NoError(t, graph.AddNode(ctx, node2))
 
 	// Create an edge and add it to the db.
@@ -4608,9 +4634,9 @@ func TestGraphCacheForEachNodeChannel(t *testing.T) {
 	// option turned off.
 	graph.graphCache = nil
 
-	node1 := createTestVertex(t)
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
 	require.NoError(t, graph.AddNode(ctx, node1))
-	node2 := createTestVertex(t)
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
 	require.NoError(t, graph.AddNode(ctx, node2))
 
 	// Create an edge and add it to the db.
