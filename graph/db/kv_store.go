@@ -3431,12 +3431,12 @@ func (c *KVStore) fetchLightningNode(tx kvdb.RTx,
 	return node, nil
 }
 
-// HasLightningNode determines if the graph has a vertex identified by the
+// HasV1Node determines if the graph has a vertex identified by the
 // target node identity public key. If the node exists in the database, a
 // timestamp of when the data for the node was lasted updated is returned along
 // with a true boolean. Otherwise, an empty time.Time is returned with a false
 // boolean.
-func (c *KVStore) HasNode(_ context.Context,
+func (c *KVStore) HasV1Node(_ context.Context,
 	nodePub [33]byte) (time.Time, bool, error) {
 
 	var (
@@ -3482,6 +3482,39 @@ func (c *KVStore) HasNode(_ context.Context,
 	}
 
 	return updateTime, exists, nil
+}
+
+// HasNode determines if the graph has a vertex identified by the target node
+// identity public key.
+func (c *KVStore) HasNode(_ context.Context, nodePub [33]byte) (bool, error) {
+	var exists bool
+	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
+		// First grab the nodes bucket which stores the mapping from
+		// pubKey to node information.
+		nodes := tx.ReadBucket(nodeBucket)
+		if nodes == nil {
+			return ErrGraphNotFound
+		}
+
+		// If a key for this serialized public key isn't found, we can
+		// exit early.
+		nodeBytes := nodes.Get(nodePub[:])
+		if nodeBytes == nil {
+			exists = false
+			return nil
+		}
+
+		exists = true
+
+		return nil
+	}, func() {
+		exists = false
+	})
+	if err != nil {
+		return exists, err
+	}
+
+	return exists, nil
 }
 
 // nodeTraversal is used to traverse all channels of a node given by its
