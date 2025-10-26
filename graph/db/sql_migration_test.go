@@ -524,7 +524,7 @@ func assertInSync(t *testing.T, kvDB *KVStore, sqlDB *SQLStore,
 
 // fetchAllNodes retrieves all nodes from the given store and returns them
 // sorted by their public key.
-func fetchAllNodes(t *testing.T, store V1Store) []*models.Node {
+func fetchAllNodes(t *testing.T, store Store) []*models.Node {
 	nodes := make([]*models.Node, 0)
 
 	err := store.ForEachNode(t.Context(),
@@ -555,7 +555,7 @@ func fetchAllNodes(t *testing.T, store V1Store) []*models.Node {
 }
 
 // fetchSourceNode retrieves the source node from the given store.
-func fetchSourceNode(t *testing.T, store V1Store) *models.Node {
+func fetchSourceNode(t *testing.T, store Store) *models.Node {
 	node, err := store.SourceNode(t.Context())
 	if errors.Is(err, ErrSourceNodeNotSet) {
 		return nil
@@ -593,7 +593,7 @@ func (c chanSet) CountPolicies() int {
 
 // fetchAllChannelsAndPolicies retrieves all channels and their policies
 // from the given store and returns them sorted by their channel ID.
-func fetchAllChannelsAndPolicies(t *testing.T, store V1Store) chanSet {
+func fetchAllChannelsAndPolicies(t *testing.T, store Store) chanSet {
 	ctx := t.Context()
 	channels := make(chanSet, 0)
 	err := store.ForEachChannel(ctx, func(info *models.ChannelEdgeInfo,
