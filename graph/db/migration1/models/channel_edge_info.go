@@ -30,9 +30,11 @@ type ChannelEdgeInfo struct {
 
 	// NodeKey1Bytes is the raw public key of the first node.
 	NodeKey1Bytes [33]byte
+	nodeKey1      *btcec.PublicKey
 
 	// NodeKey2Bytes is the raw public key of the first node.
 	NodeKey2Bytes [33]byte
+	nodeKey2      *btcec.PublicKey
 
 	// BitcoinKey1Bytes is the raw public key of the first node.
 	BitcoinKey1Bytes [33]byte
@@ -70,38 +72,6 @@ type ChannelEdgeInfo struct {
 	// and ensure we're able to make upgrades to the network in a forwards
 	// compatible manner.
 	ExtraOpaqueData []byte
-}
-
-// NodeKey1 is the identity public key of the "first" node that was involved in
-// the creation of this channel. A node is considered "first" if the
-// lexicographical ordering the its serialized public key is "smaller" than
-// that of the other node involved in channel creation.
-//
-// NOTE: By having this method to access an attribute, we ensure we only need
-// to fully deserialize the pubkey if absolutely necessary.
-func (c *ChannelEdgeInfo) NodeKey1() (*btcec.PublicKey, error) {
-	key, err := btcec.ParsePubKey(c.NodeKey1Bytes[:])
-	if err != nil {
-		return nil, err
-	}
-
-	return key, nil
-}
-
-// NodeKey2 is the identity public key of the "second" node that was involved in
-// the creation of this channel. A node is considered "second" if the
-// lexicographical ordering the its serialized public key is "larger" than that
-// of the other node involved in channel creation.
-//
-// NOTE: By having this method to access an attribute, we ensure we only need
-// to fully deserialize the pubkey if absolutely necessary.
-func (c *ChannelEdgeInfo) NodeKey2() (*btcec.PublicKey, error) {
-	key, err := btcec.ParsePubKey(c.NodeKey2Bytes[:])
-	if err != nil {
-		return nil, err
-	}
-
-	return key, nil
 }
 
 // OtherNodeKeyBytes returns the node key bytes of the other end of the channel.
