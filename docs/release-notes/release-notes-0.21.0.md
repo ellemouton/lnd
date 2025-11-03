@@ -54,6 +54,9 @@
 
 ## Database
 
+* Freeze the [graph SQL migration code]() to prevent the need for maintenance 
+  as the sqlc code evolves. 
+
 ## Code Health
 
 ## Tooling and Documentation
