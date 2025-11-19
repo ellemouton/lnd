@@ -507,6 +507,7 @@ func TestEdgeInsertionDeletion(t *testing.T) {
 	node2Pub, err := node2.PubKey()
 	require.NoError(t, err, "unable to generate node key")
 	edgeInfo := models.ChannelEdgeInfo{
+		Version:   lnwire.GossipVersion1,
 		ChannelID: chanID,
 		ChainHash: *chaincfg.MainNetParams.GenesisHash,
 		AuthProof: &models.ChannelAuthProof{
@@ -582,6 +583,7 @@ func createEdge(height, txIndex uint32, txPosition uint16, outPointIndex uint32,
 	node1Pub, _ := node1.PubKey()
 	node2Pub, _ := node2.PubKey()
 	edgeInfo := models.ChannelEdgeInfo{
+		Version:   lnwire.GossipVersion1,
 		ChannelID: shortChanID.ToUint64(),
 		ChainHash: *chaincfg.MainNetParams.GenesisHash,
 		AuthProof: &models.ChannelAuthProof{
@@ -838,6 +840,7 @@ func createChannelEdge(node1, node2 *models.Node,
 	// Add the new edge to the database, this should proceed without any
 	// errors.
 	edgeInfo := &models.ChannelEdgeInfo{
+		Version:      lnwire.GossipVersion1,
 		ChannelID:    chanID,
 		ChainHash:    *chaincfg.MainNetParams.GenesisHash,
 		ChannelPoint: outpoint,
@@ -1717,6 +1720,7 @@ func fillTestGraph(t testing.TB, graph *ChannelGraph, numNodes,
 			}
 
 			edgeInfo := models.ChannelEdgeInfo{
+				Version:   lnwire.GossipVersion1,
 				ChannelID: chanID,
 				ChainHash: *chaincfg.MainNetParams.GenesisHash,
 				AuthProof: &models.ChannelAuthProof{
@@ -1899,6 +1903,7 @@ func TestGraphPruning(t *testing.T) {
 		channelPoints = append(channelPoints, &op)
 
 		edgeInfo := models.ChannelEdgeInfo{
+			Version:   lnwire.GossipVersion1,
 			ChannelID: chanID,
 			ChainHash: *chaincfg.MainNetParams.GenesisHash,
 			AuthProof: &models.ChannelAuthProof{
