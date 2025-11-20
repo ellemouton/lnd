@@ -359,37 +359,6 @@ func (c *ChannelGraph) MarkEdgeLive(chanID uint64) error {
 	return nil
 }
 
-// DeleteChannelEdges removes edges with the given channel IDs from the
-// database and marks them as zombies. This ensures that we're unable to re-add
-// it to our database once again. If an edge does not exist within the
-// database, then ErrEdgeNotFound will be returned. If strictZombiePruning is
-// true, then when we mark these edges as zombies, we'll set up the keys such
-// that we require the node that failed to send the fresh update to be the one
-// that resurrects the channel from its zombie state. The markZombie bool
-// denotes whether to mark the channel as a zombie.
-func (c *ChannelGraph) DeleteChannelEdges(strictZombiePruning, markZombie bool,
-	chanIDs ...uint64) error {
-
-	infos, err := c.db.DeleteChannelEdges(
-		lnwire.GossipVersion1, strictZombiePruning, markZombie,
-		chanIDs...,
-	)
-	if err != nil {
-		return err
-	}
-
-	if c.graphCache != nil {
-		for _, info := range infos {
-			c.graphCache.RemoveChannel(
-				info.NodeKey1Bytes, info.NodeKey2Bytes,
-				info.ChannelID,
-			)
-		}
-	}
-
-	return err
-}
-
 // DisconnectBlockAtHeight is used to indicate that the block specified
 // by the passed height has been disconnected from the main chain. This
 // will "rewind" the graph back to the height below, deleting channels
@@ -729,13 +698,6 @@ func (c *ChannelGraph) FetchChannelEdgesByID(chanID uint64) (
 // ChannelView returns the verifiable edge information for each active channel.
 func (c *ChannelGraph) ChannelView() ([]EdgePoint, error) {
 	return c.db.ChannelView()
-}
-
-// IsZombieEdge returns whether the edge is considered zombie.
-func (c *ChannelGraph) IsZombieEdge(chanID uint64) (bool, [33]byte, [33]byte,
-	error) {
-
-	return c.db.IsZombieEdge(lnwire.GossipVersion1, chanID)
 }
 
 // NumZombies returns the current number of zombie channels in the graph.
