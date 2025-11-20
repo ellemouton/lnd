@@ -143,6 +143,10 @@ var versionedTests = []versionedTest{
 		test: testEdgeInsertionDeletion,
 	},
 	{
+		name: "add edge proof",
+		test: testAddEdgeProof,
+	},
+	{
 		name: "partial node",
 		test: testPartialNode,
 	},
@@ -855,6 +859,7 @@ func assertEdgeInfoEqual(t *testing.T, e1 *models.ChannelEdgeInfo,
 
 type createEdgeConfig struct {
 	skipProofs bool
+	version    lnwire.GossipVersion
 }
 
 type createEdgeOpt func(*createEdgeConfig)
@@ -867,13 +872,23 @@ func withSkipProofs() createEdgeOpt {
 	}
 }
 
+// withGossipVersion sets the gossip version to use when creating a channel
+// edge.
+func withGossipVersion(v lnwire.GossipVersion) createEdgeOpt {
+	return func(cfg *createEdgeConfig) {
+		cfg.version = v
+	}
+}
+
 func createChannelEdge(node1, node2 *models.Node,
 	options ...createEdgeOpt) (*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) {
 
-	var opts createEdgeConfig
+	cfg := createEdgeConfig{
+		version: lnwire.GossipVersion1,
+	}
 	for _, o := range options {
-		o(&opts)
+		o(&cfg)
 	}
 
 	var (
@@ -909,7 +924,23 @@ func createChannelEdge(node1, node2 *models.Node,
 	}
 
 	var edgeInfo *models.ChannelEdgeInfo
-	if opts.skipProofs {
+	switch cfg.version {
+	case lnwire.GossipVersion1:
+		modifiers := []models.EdgeModifier{
+			models.WithChannelPoint(outpoint),
+			models.WithCapacity(1000),
+		}
+		if !cfg.skipProofs {
+			modifiers = append(modifiers, models.WithChanProof(
+				models.NewV1ChannelAuthProof(
+					testSig.Serialize(),
+					testSig.Serialize(),
+					testSig.Serialize(),
+					testSig.Serialize(),
+				),
+			))
+		}
+
 		edgeInfo, _ = models.NewV1Channel(
 			chanID,
 			*chaincfg.MainNetParams.GenesisHash,
@@ -920,34 +951,54 @@ func createChannelEdge(node1, node2 *models.Node,
 				BitcoinKey2Bytes: node2Key,
 				ExtraOpaqueData:  extraData,
 			},
-			models.WithChannelPoint(outpoint),
-			models.WithCapacity(1000),
+			modifiers...,
 		)
 
-		return edgeInfo, nil, nil
+	case lnwire.GossipVersion2:
+		// Create a test merkle root hash and funding script.
+		var merkleRoot chainhash.Hash
+		copy(merkleRoot[:], bytes.Repeat([]byte{0xaa}, chainhash.HashSize))
+
+		fundingScript := []byte{0x00, 0x20}
+		fundingScript = append(
+			fundingScript, bytes.Repeat([]byte{0xbb}, 32)...,
+		)
+
+		modifiers := []models.EdgeModifier{
+			models.WithChannelPoint(outpoint),
+			models.WithCapacity(1000),
+		}
+		if !cfg.skipProofs {
+			modifiers = append(modifiers, models.WithChanProof(
+				models.NewV2ChannelAuthProof(testSig.Serialize()),
+			))
+		}
+
+		edgeInfo, _ = models.NewV2Channel(
+			chanID,
+			*chaincfg.MainNetParams.GenesisHash,
+			node1Key,
+			node2Key,
+			&models.ChannelV2Fields{
+				BitcoinKey1Bytes:  fn.Some(node1Key),
+				BitcoinKey2Bytes:  fn.Some(node2Key),
+				MerkleRootHash:    fn.Some(merkleRoot),
+				FundingScript:     fn.Some(fundingScript),
+				ExtraSignedFields: map[uint64][]byte{
+					20: {0x1, 0x2, 0x3},
+					21: {0x4, 0x5, 0x6, 0x7},
+				},
+			},
+			modifiers...,
+		)
+
+	default:
+		panic(fmt.Sprintf("unknown gossip version: %v", cfg.version))
 	}
 
-	proof := models.NewV1ChannelAuthProof(
-		testSig.Serialize(),
-		testSig.Serialize(),
-		testSig.Serialize(),
-		testSig.Serialize(),
-	)
-
-	edgeInfo, _ = models.NewV1Channel(
-		chanID,
-		*chaincfg.MainNetParams.GenesisHash,
-		node1Key,
-		node2Key,
-		&models.ChannelV1Fields{
-			BitcoinKey1Bytes: node1Key,
-			BitcoinKey2Bytes: node2Key,
-			ExtraOpaqueData:  extraData,
-		},
-		models.WithChanProof(proof),
-		models.WithChannelPoint(outpoint),
-		models.WithCapacity(1000),
-	)
+	if cfg.skipProofs {
+		return edgeInfo, nil, nil
+	}
 
 	edge1 := &models.ChannelEdgePolicy{
 		SigBytes:                  testSig.Serialize(),
@@ -1377,17 +1428,19 @@ func newEdgePolicy(chanID uint64, updateTime int64) *models.ChannelEdgePolicy {
 	}
 }
 
-// TestAddEdgeProof tests the ability to add an edge proof to an existing edge.
-func TestAddEdgeProof(t *testing.T) {
+// testAddEdgeProof tests the ability to add an edge proof to an existing edge.
+func testAddEdgeProof(t *testing.T, v lnwire.GossipVersion) {
 	t.Parallel()
 	ctx := t.Context()
 
-	graph := MakeTestGraph(t)
+	graph := NewVersionedGraph(MakeTestGraph(t), v)
 
 	// Add an edge with no proof.
-	node1 := createTestVertex(t, lnwire.GossipVersion1)
-	node2 := createTestVertex(t, lnwire.GossipVersion1)
-	edge1, _, _ := createChannelEdge(node1, node2, withSkipProofs())
+	node1 := createTestVertex(t, v)
+	node2 := createTestVertex(t, v)
+	edge1, _, _ := createChannelEdge(
+		node1, node2, withSkipProofs(), withGossipVersion(v),
+	)
 	require.NoError(t, graph.AddChannelEdge(ctx, edge1))
 
 	// Fetch the edge and assert that the proof is nil and that the rest
@@ -1398,19 +1451,27 @@ func TestAddEdgeProof(t *testing.T) {
 	require.Equal(t, edge1, dbEdge)
 
 	// Now, add the edge proof.
-	proof := models.NewV1ChannelAuthProof(
-		testSig.Serialize(),
-		testSig.Serialize(),
-		testSig.Serialize(),
-		testSig.Serialize(),
-	)
+	var proof *models.ChannelAuthProof
+	switch v {
+	case lnwire.GossipVersion1:
+		proof = models.NewV1ChannelAuthProof(
+			testSig.Serialize(),
+			testSig.Serialize(),
+			testSig.Serialize(),
+			testSig.Serialize(),
+		)
+	case lnwire.GossipVersion2:
+		proof = models.NewV2ChannelAuthProof(testSig.Serialize())
+	default:
+		t.Fatalf("unknown gossip version: %v", v)
+	}
 
 	// First, add the proof to the rest of the channel edge info and try
 	// to call AddChannelEdge again - this should fail due to the channel
 	// already existing.
 	edge1.AuthProof = proof
 	err = graph.AddChannelEdge(ctx, edge1)
-	require.Error(t, err, ErrEdgeAlreadyExist)
+	require.ErrorIs(t, err, ErrEdgeAlreadyExist)
 
 	// Now add just the proof.
 	scid1 := lnwire.NewShortChanIDFromInt(edge1.ChannelID)
@@ -1424,7 +1485,7 @@ func TestAddEdgeProof(t *testing.T) {
 
 	// For completeness, also test the case where we insert a new edge with
 	// an edge proof. Show that the proof is present from the get go.
-	edge2, _, _ := createChannelEdge(node1, node2)
+	edge2, _, _ := createChannelEdge(node1, node2, withGossipVersion(v))
 	require.NoError(t, graph.AddChannelEdge(ctx, edge2))
 
 	// Fetch the edge and assert that the proof is nil and that the rest
