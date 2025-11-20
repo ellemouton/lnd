@@ -980,10 +980,10 @@ func createChannelEdge(node1, node2 *models.Node,
 			node1Key,
 			node2Key,
 			&models.ChannelV2Fields{
-				BitcoinKey1Bytes:  fn.Some(node1Key),
-				BitcoinKey2Bytes:  fn.Some(node2Key),
-				MerkleRootHash:    fn.Some(merkleRoot),
-				FundingScript:     fn.Some(fundingScript),
+				BitcoinKey1Bytes: fn.Some(node1Key),
+				BitcoinKey2Bytes: fn.Some(node2Key),
+				MerkleRootHash:   fn.Some(merkleRoot),
+				FundingScript:    fn.Some(fundingScript),
 				ExtraSignedFields: map[uint64][]byte{
 					20: {0x1, 0x2, 0x3},
 					21: {0x4, 0x5, 0x6, 0x7},
@@ -2827,7 +2827,7 @@ func TestChanUpdatesInHorizonBoundaryConditions(t *testing.T) {
 func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 	t.Parallel()
 
-	graph := MakeTestGraph(t)
+	graph := NewVersionedGraph(MakeTestGraph(t), lnwire.GossipVersion1)
 
 	var (
 		scid1 = lnwire.ShortChannelID{BlockHeight: 1}
@@ -2895,7 +2895,7 @@ func TestFilterKnownChanIDs(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 
-	graph := MakeTestGraph(t)
+	graph := NewVersionedGraph(MakeTestGraph(t), lnwire.GossipVersion1)
 
 	isZombieUpdate := func(updateTime1 time.Time,
 		updateTime2 time.Time) bool {
@@ -3080,7 +3080,7 @@ func TestStressTestChannelGraphAPI(t *testing.T) {
 
 	ctx := t.Context()
 
-	graph := MakeTestGraph(t)
+	graph := NewVersionedGraph(MakeTestGraph(t), lnwire.GossipVersion1)
 
 	node1 := createTestVertex(t, lnwire.GossipVersion1)
 	require.NoError(t, graph.AddNode(ctx, node1))
@@ -3592,7 +3592,7 @@ func TestFetchChanInfos(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 
-	graph := MakeTestGraph(t)
+	graph := NewVersionedGraph(MakeTestGraph(t), lnwire.GossipVersion1)
 
 	// We'll first populate our graph with two nodes. All channels created
 	// below will be made between these two nodes.
@@ -4233,7 +4233,7 @@ func TestDisabledChannelIDs(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 
-	graph := MakeTestGraph(t)
+	graph := NewVersionedGraph(MakeTestGraph(t), lnwire.GossipVersion1)
 
 	// Create first node and add it to the graph.
 	node1 := createTestVertex(t, lnwire.GossipVersion1)
@@ -4444,7 +4444,7 @@ func putSerializedPolicy(t *testing.T, db kvdb.Backend, from []byte,
 
 // assertNumZombies queries the provided ChannelGraph for NumZombies, and
 // asserts that the returned number is equal to expZombies.
-func assertNumZombies(t *testing.T, graph *ChannelGraph, expZombies uint64) {
+func assertNumZombies(t *testing.T, graph *VersionedGraph, expZombies uint64) {
 	t.Helper()
 
 	numZombies, err := graph.NumZombies()
@@ -4462,7 +4462,7 @@ func TestGraphZombieIndex(t *testing.T) {
 	ctx := t.Context()
 
 	// We'll start by creating our test graph along with a test edge.
-	graph := MakeTestGraph(t)
+	graph := NewVersionedGraph(MakeTestGraph(t), lnwire.GossipVersion1)
 
 	node1 := createTestVertex(t, lnwire.GossipVersion1)
 	node2 := createTestVertex(t, lnwire.GossipVersion1)
