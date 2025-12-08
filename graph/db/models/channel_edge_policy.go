@@ -106,3 +106,32 @@ func (c *ChannelEdgePolicy) String() string {
 		"LastUpdate=%v", c.ChannelID, c.MessageFlags, c.ChannelFlags,
 		c.LastUpdate)
 }
+
+// ChanEdgePolicyFromWire constructs a ChannelEdgePolicy from a wire
+// ChannelUpdate message.
+func ChanEdgePolicyFromWire(scid uint64,
+	update lnwire.ChannelUpdate) (*ChannelEdgePolicy, error) {
+
+	switch upd := update.(type) {
+	case *lnwire.ChannelUpdate1:
+		//nolint:ll
+		return &ChannelEdgePolicy{
+			SigBytes:                  upd.Signature.ToSignatureBytes(),
+			ChannelID:                 scid,
+			LastUpdate:                time.Unix(int64(upd.Timestamp), 0),
+			MessageFlags:              upd.MessageFlags,
+			ChannelFlags:              upd.ChannelFlags,
+			TimeLockDelta:             upd.TimeLockDelta,
+			MinHTLC:                   upd.HtlcMinimumMsat,
+			MaxHTLC:                   upd.HtlcMaximumMsat,
+			FeeBaseMSat:               lnwire.MilliSatoshi(upd.BaseFee),
+			FeeProportionalMillionths: lnwire.MilliSatoshi(upd.FeeRate),
+			InboundFee:                upd.InboundFee.ValOpt(),
+			ExtraOpaqueData:           upd.ExtraOpaqueData,
+		}, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported channel update "+
+			"version: %T", update)
+	}
+}

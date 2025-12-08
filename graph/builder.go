@@ -920,6 +920,8 @@ func (b *Builder) MarkZombieEdge(chanID uint64) error {
 
 // ApplyChannelUpdate validates a channel update and if valid, applies it to the
 // database. It returns a bool indicating whether the updates were successful.
+//
+// TODO(elle): update to support v2 channel updates.
 func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 	ctx := context.TODO()
 
@@ -952,19 +954,12 @@ func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 		return false
 	}
 
-	update := &models.ChannelEdgePolicy{
-		SigBytes:                  msg.Signature.ToSignatureBytes(),
-		ChannelID:                 msg.ShortChannelID.ToUint64(),
-		LastUpdate:                time.Unix(int64(msg.Timestamp), 0),
-		MessageFlags:              msg.MessageFlags,
-		ChannelFlags:              msg.ChannelFlags,
-		TimeLockDelta:             msg.TimeLockDelta,
-		MinHTLC:                   msg.HtlcMinimumMsat,
-		MaxHTLC:                   msg.HtlcMaximumMsat,
-		FeeBaseMSat:               lnwire.MilliSatoshi(msg.BaseFee),
-		FeeProportionalMillionths: lnwire.MilliSatoshi(msg.FeeRate),
-		InboundFee:                msg.InboundFee.ValOpt(),
-		ExtraOpaqueData:           msg.ExtraOpaqueData,
+	update, err := models.ChanEdgePolicyFromWire(
+		msg.ShortChannelID.ToUint64(), msg,
+	)
+	if err != nil {
+		log.Errorf("Unable to convert channel update: %v", err)
+		return false
 	}
 
 	err = b.UpdateEdge(ctx, update)
