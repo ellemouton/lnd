@@ -795,6 +795,11 @@ func (s *SQLStore) UpdateEdgePolicy(ctx context.Context,
 		from, to     route.Vertex
 	)
 
+	if !isKnownGossipVersion(edge.Version) {
+		return from, to, fmt.Errorf("unsupported gossip version: %d",
+			edge.Version)
+	}
+
 	r := &batch.Request[SQLQueries]{
 		Opts: batch.NewSchedulerOptions(opts...),
 		Reset: func() {
@@ -3436,16 +3441,8 @@ func updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 	edge *models.ChannelEdgePolicy) (route.Vertex, route.Vertex, bool,
 	error) {
 
-	// TODO(elle): update to support v2 policies.
-	if edge.Version != lnwire.GossipVersion1 {
-		return route.Vertex{}, route.Vertex{}, false, fmt.Errorf(
-			"unsupported policy version: %d", edge.Version,
-		)
-	}
-
 	var (
 		node1Pub, node2Pub route.Vertex
-		isNode1            bool
 		chanIDB            = channelIDToBytes(edge.ChannelID)
 	)
 
@@ -3456,7 +3453,7 @@ func updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 	dbChan, err := tx.GetChannelAndNodesBySCID(
 		ctx, sqlc.GetChannelAndNodesBySCIDParams{
 			Scid:    chanIDB,
-			Version: int16(lnwire.GossipVersion1),
+			Version: int16(edge.Version),
 		},
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -3470,7 +3467,7 @@ func updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 	copy(node2Pub[:], dbChan.Node2PubKey)
 
 	// Figure out which node this edge is from.
-	isNode1 = edge.ChannelFlags&lnwire.ChanUpdateDirection == 0
+	isNode1 := edge.IsNode1()
 	nodeID := dbChan.NodeID1
 	if !isNode1 {
 		nodeID = dbChan.NodeID2
@@ -3485,29 +3482,39 @@ func updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 		inboundBase = sqldb.SQLInt64(fee.BaseFee)
 	})
 
-	id, err := tx.UpsertEdgePolicy(ctx, sqlc.UpsertEdgePolicyParams{
-		Version:     int16(lnwire.GossipVersion1),
-		ChannelID:   dbChan.ID,
-		NodeID:      nodeID,
-		Timelock:    int32(edge.TimeLockDelta),
-		FeePpm:      int64(edge.FeeProportionalMillionths),
-		BaseFeeMsat: int64(edge.FeeBaseMSat),
-		MinHtlcMsat: int64(edge.MinHTLC),
-		LastUpdate:  sqldb.SQLInt64(edge.LastUpdate.Unix()),
-		Disabled: sql.NullBool{
-			Valid: true,
-			Bool:  edge.IsDisabled(),
-		},
-		MaxHtlcMsat: sql.NullInt64{
-			Valid: edge.MessageFlags.HasMaxHtlc(),
-			Int64: int64(edge.MaxHTLC),
-		},
+	params := sqlc.UpsertEdgePolicyParams{
+		Version:                 int16(edge.Version),
+		ChannelID:               dbChan.ID,
+		NodeID:                  nodeID,
+		Timelock:                int32(edge.TimeLockDelta),
+		FeePpm:                  int64(edge.FeeProportionalMillionths),
+		BaseFeeMsat:             int64(edge.FeeBaseMSat),
+		MinHtlcMsat:             int64(edge.MinHTLC),
 		MessageFlags:            sqldb.SQLInt16(edge.MessageFlags),
 		ChannelFlags:            sqldb.SQLInt16(edge.ChannelFlags),
 		InboundBaseFeeMsat:      inboundBase,
 		InboundFeeRateMilliMsat: inboundRate,
 		Signature:               edge.SigBytes,
-	})
+	}
+
+	switch edge.Version {
+	case lnwire.GossipVersion1:
+		params.LastUpdate = sqldb.SQLInt64(edge.LastUpdate.Unix())
+		params.Disabled = sql.NullBool{
+			Valid: true,
+			Bool:  edge.IsDisabled(),
+		}
+		params.MaxHtlcMsat = sql.NullInt64{
+			Valid: edge.MessageFlags.HasMaxHtlc(),
+			Int64: int64(edge.MaxHTLC),
+		}
+	case lnwire.GossipVersion2:
+		params.BlockHeight = sqldb.SQLInt64(edge.LastBlockHeight)
+		params.DisableFlags = sqldb.SQLInt16(edge.DisableFlags)
+		params.MaxHtlcMsat = sqldb.SQLInt64(int64(edge.MaxHTLC))
+	}
+
+	id, err := tx.UpsertEdgePolicy(ctx, params)
 	if err != nil {
 		return node1Pub, node2Pub, isNode1,
 			fmt.Errorf("unable to upsert edge policy: %w", err)
@@ -3515,10 +3522,13 @@ func updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 
 	// Convert the flat extra opaque data into a map of TLV types to
 	// values.
-	extra, err := marshalExtraOpaqueData(edge.ExtraOpaqueData)
-	if err != nil {
-		return node1Pub, node2Pub, false, fmt.Errorf("unable to "+
-			"marshal extra opaque data: %w", err)
+	extra := edge.ExtraSignedFields
+	if edge.Version == lnwire.GossipVersion1 {
+		extra, err = marshalExtraOpaqueData(edge.ExtraOpaqueData)
+		if err != nil {
+			return node1Pub, node2Pub, false, fmt.Errorf("unable to "+
+				"marshal extra opaque data: %w", err)
+		}
 	}
 
 	// Update the channel policy's extra signed fields.
