@@ -391,7 +391,9 @@ SELECT
     cp1.min_htlc_msat AS policy_1_min_htlc_msat,
     cp1.max_htlc_msat AS policy_1_max_htlc_msat,
     cp1.last_update AS policy_1_last_update,
+    cp1.block_height AS policy_1_block_height,
     cp1.disabled AS policy_1_disabled,
+    cp1.disable_flags AS policy_1_disable_flags,
     cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
     cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
     cp1.message_flags AS policy_1_message_flags,
@@ -408,7 +410,9 @@ SELECT
     cp2.min_htlc_msat AS policy_2_min_htlc_msat,
     cp2.max_htlc_msat AS policy_2_max_htlc_msat,
     cp2.last_update AS policy_2_last_update,
+    cp2.block_height AS policy_2_block_height,
     cp2.disabled AS policy_2_disabled,
+    cp2.disable_flags AS policy_2_disable_flags,
     cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
     cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
     cp2.message_flags AS policy_2_message_flags,
@@ -442,7 +446,9 @@ type GetChannelByOutpointWithPoliciesRow struct {
 	Policy1MinHtlcMsat             sql.NullInt64
 	Policy1MaxHtlcMsat             sql.NullInt64
 	Policy1LastUpdate              sql.NullInt64
+	Policy1BlockHeight             sql.NullInt64
 	Policy1Disabled                sql.NullBool
+	Policy1DisableFlags            sql.NullInt16
 	Policy1InboundBaseFeeMsat      sql.NullInt64
 	Policy1InboundFeeRateMilliMsat sql.NullInt64
 	Policy1MessageFlags            sql.NullInt16
@@ -457,7 +463,9 @@ type GetChannelByOutpointWithPoliciesRow struct {
 	Policy2MinHtlcMsat             sql.NullInt64
 	Policy2MaxHtlcMsat             sql.NullInt64
 	Policy2LastUpdate              sql.NullInt64
+	Policy2BlockHeight             sql.NullInt64
 	Policy2Disabled                sql.NullBool
+	Policy2DisableFlags            sql.NullInt16
 	Policy2InboundBaseFeeMsat      sql.NullInt64
 	Policy2InboundFeeRateMilliMsat sql.NullInt64
 	Policy2MessageFlags            sql.NullInt16
@@ -496,7 +504,9 @@ func (q *Queries) GetChannelByOutpointWithPolicies(ctx context.Context, arg GetC
 		&i.Policy1MinHtlcMsat,
 		&i.Policy1MaxHtlcMsat,
 		&i.Policy1LastUpdate,
+		&i.Policy1BlockHeight,
 		&i.Policy1Disabled,
+		&i.Policy1DisableFlags,
 		&i.Policy1InboundBaseFeeMsat,
 		&i.Policy1InboundFeeRateMilliMsat,
 		&i.Policy1MessageFlags,
@@ -511,7 +521,9 @@ func (q *Queries) GetChannelByOutpointWithPolicies(ctx context.Context, arg GetC
 		&i.Policy2MinHtlcMsat,
 		&i.Policy2MaxHtlcMsat,
 		&i.Policy2LastUpdate,
+		&i.Policy2BlockHeight,
 		&i.Policy2Disabled,
+		&i.Policy2DisableFlags,
 		&i.Policy2InboundBaseFeeMsat,
 		&i.Policy2InboundFeeRateMilliMsat,
 		&i.Policy2MessageFlags,
@@ -571,7 +583,9 @@ SELECT
     cp1.min_htlc_msat AS policy1_min_htlc_msat,
     cp1.max_htlc_msat AS policy1_max_htlc_msat,
     cp1.last_update AS policy1_last_update,
+    cp1.block_height AS policy1_block_height,
     cp1.disabled AS policy1_disabled,
+    cp1.disable_flags AS policy1_disable_flags,
     cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
     cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
     cp1.message_flags AS policy1_message_flags,
@@ -588,7 +602,9 @@ SELECT
     cp2.min_htlc_msat AS policy2_min_htlc_msat,
     cp2.max_htlc_msat AS policy2_max_htlc_msat,
     cp2.last_update AS policy2_last_update,
+    cp2.block_height AS policy2_block_height,
     cp2.disabled AS policy2_disabled,
+    cp2.disable_flags AS policy2_disable_flags,
     cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
     cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
     cp2.message_flags AS policy_2_message_flags,
@@ -624,7 +640,9 @@ type GetChannelBySCIDWithPoliciesRow struct {
 	Policy1MinHtlcMsat             sql.NullInt64
 	Policy1MaxHtlcMsat             sql.NullInt64
 	Policy1LastUpdate              sql.NullInt64
+	Policy1BlockHeight             sql.NullInt64
 	Policy1Disabled                sql.NullBool
+	Policy1DisableFlags            sql.NullInt16
 	Policy1InboundBaseFeeMsat      sql.NullInt64
 	Policy1InboundFeeRateMilliMsat sql.NullInt64
 	Policy1MessageFlags            sql.NullInt16
@@ -639,7 +657,9 @@ type GetChannelBySCIDWithPoliciesRow struct {
 	Policy2MinHtlcMsat             sql.NullInt64
 	Policy2MaxHtlcMsat             sql.NullInt64
 	Policy2LastUpdate              sql.NullInt64
+	Policy2BlockHeight             sql.NullInt64
 	Policy2Disabled                sql.NullBool
+	Policy2DisableFlags            sql.NullInt16
 	Policy2InboundBaseFeeMsat      sql.NullInt64
 	Policy2InboundFeeRateMilliMsat sql.NullInt64
 	Policy2MessageFlags            sql.NullInt16
@@ -692,7 +712,9 @@ func (q *Queries) GetChannelBySCIDWithPolicies(ctx context.Context, arg GetChann
 		&i.Policy1MinHtlcMsat,
 		&i.Policy1MaxHtlcMsat,
 		&i.Policy1LastUpdate,
+		&i.Policy1BlockHeight,
 		&i.Policy1Disabled,
+		&i.Policy1DisableFlags,
 		&i.Policy1InboundBaseFeeMsat,
 		&i.Policy1InboundFeeRateMilliMsat,
 		&i.Policy1MessageFlags,
@@ -707,7 +729,9 @@ func (q *Queries) GetChannelBySCIDWithPolicies(ctx context.Context, arg GetChann
 		&i.Policy2MinHtlcMsat,
 		&i.Policy2MaxHtlcMsat,
 		&i.Policy2LastUpdate,
+		&i.Policy2BlockHeight,
 		&i.Policy2Disabled,
+		&i.Policy2DisableFlags,
 		&i.Policy2InboundBaseFeeMsat,
 		&i.Policy2InboundFeeRateMilliMsat,
 		&i.Policy2MessageFlags,
@@ -911,7 +935,9 @@ SELECT
     cp1.min_htlc_msat AS policy1_min_htlc_msat,
     cp1.max_htlc_msat AS policy1_max_htlc_msat,
     cp1.last_update AS policy1_last_update,
+    cp1.block_height AS policy1_block_height,
     cp1.disabled AS policy1_disabled,
+    cp1.disable_flags AS policy1_disable_flags,
     cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
     cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
     cp1.message_flags AS policy1_message_flags,
@@ -928,7 +954,9 @@ SELECT
     cp2.min_htlc_msat AS policy2_min_htlc_msat,
     cp2.max_htlc_msat AS policy2_max_htlc_msat,
     cp2.last_update AS policy2_last_update,
+    cp2.block_height AS policy2_block_height,
     cp2.disabled AS policy2_disabled,
+    cp2.disable_flags AS policy2_disable_flags,
     cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
     cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
     cp2.message_flags AS policy2_message_flags,
@@ -960,7 +988,9 @@ type GetChannelsByIDsRow struct {
 	Policy1MinHtlcMsat             sql.NullInt64
 	Policy1MaxHtlcMsat             sql.NullInt64
 	Policy1LastUpdate              sql.NullInt64
+	Policy1BlockHeight             sql.NullInt64
 	Policy1Disabled                sql.NullBool
+	Policy1DisableFlags            sql.NullInt16
 	Policy1InboundBaseFeeMsat      sql.NullInt64
 	Policy1InboundFeeRateMilliMsat sql.NullInt64
 	Policy1MessageFlags            sql.NullInt16
@@ -975,7 +1005,9 @@ type GetChannelsByIDsRow struct {
 	Policy2MinHtlcMsat             sql.NullInt64
 	Policy2MaxHtlcMsat             sql.NullInt64
 	Policy2LastUpdate              sql.NullInt64
+	Policy2BlockHeight             sql.NullInt64
 	Policy2Disabled                sql.NullBool
+	Policy2DisableFlags            sql.NullInt16
 	Policy2InboundBaseFeeMsat      sql.NullInt64
 	Policy2InboundFeeRateMilliMsat sql.NullInt64
 	Policy2MessageFlags            sql.NullInt16
@@ -1032,7 +1064,9 @@ func (q *Queries) GetChannelsByIDs(ctx context.Context, ids []int64) ([]GetChann
 			&i.Policy1MinHtlcMsat,
 			&i.Policy1MaxHtlcMsat,
 			&i.Policy1LastUpdate,
+			&i.Policy1BlockHeight,
 			&i.Policy1Disabled,
+			&i.Policy1DisableFlags,
 			&i.Policy1InboundBaseFeeMsat,
 			&i.Policy1InboundFeeRateMilliMsat,
 			&i.Policy1MessageFlags,
@@ -1047,7 +1081,9 @@ func (q *Queries) GetChannelsByIDs(ctx context.Context, ids []int64) ([]GetChann
 			&i.Policy2MinHtlcMsat,
 			&i.Policy2MaxHtlcMsat,
 			&i.Policy2LastUpdate,
+			&i.Policy2BlockHeight,
 			&i.Policy2Disabled,
+			&i.Policy2DisableFlags,
 			&i.Policy2InboundBaseFeeMsat,
 			&i.Policy2InboundFeeRateMilliMsat,
 			&i.Policy2MessageFlags,
@@ -1153,7 +1189,9 @@ SELECT
     cp1.min_htlc_msat AS policy1_min_htlc_msat,
     cp1.max_htlc_msat AS policy1_max_htlc_msat,
     cp1.last_update AS policy1_last_update,
+    cp1.block_height AS policy1_block_height,
     cp1.disabled AS policy1_disabled,
+    cp1.disable_flags AS policy1_disable_flags,
     cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
     cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
     cp1.message_flags AS policy1_message_flags,
@@ -1170,7 +1208,9 @@ SELECT
     cp2.min_htlc_msat AS policy2_min_htlc_msat,
     cp2.max_htlc_msat AS policy2_max_htlc_msat,
     cp2.last_update AS policy2_last_update,
+    cp2.block_height AS policy2_block_height,
     cp2.disabled AS policy2_disabled,
+    cp2.disable_flags AS policy2_disable_flags,
     cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
     cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
     cp2.message_flags AS policy2_message_flags,
@@ -1238,7 +1278,9 @@ type GetChannelsByPolicyLastUpdateRangeRow struct {
 	Policy1MinHtlcMsat             sql.NullInt64
 	Policy1MaxHtlcMsat             sql.NullInt64
 	Policy1LastUpdate              sql.NullInt64
+	Policy1BlockHeight             sql.NullInt64
 	Policy1Disabled                sql.NullBool
+	Policy1DisableFlags            sql.NullInt16
 	Policy1InboundBaseFeeMsat      sql.NullInt64
 	Policy1InboundFeeRateMilliMsat sql.NullInt64
 	Policy1MessageFlags            sql.NullInt16
@@ -1253,7 +1295,9 @@ type GetChannelsByPolicyLastUpdateRangeRow struct {
 	Policy2MinHtlcMsat             sql.NullInt64
 	Policy2MaxHtlcMsat             sql.NullInt64
 	Policy2LastUpdate              sql.NullInt64
+	Policy2BlockHeight             sql.NullInt64
 	Policy2Disabled                sql.NullBool
+	Policy2DisableFlags            sql.NullInt16
 	Policy2InboundBaseFeeMsat      sql.NullInt64
 	Policy2InboundFeeRateMilliMsat sql.NullInt64
 	Policy2MessageFlags            sql.NullInt16
@@ -1319,7 +1363,9 @@ func (q *Queries) GetChannelsByPolicyLastUpdateRange(ctx context.Context, arg Ge
 			&i.Policy1MinHtlcMsat,
 			&i.Policy1MaxHtlcMsat,
 			&i.Policy1LastUpdate,
+			&i.Policy1BlockHeight,
 			&i.Policy1Disabled,
+			&i.Policy1DisableFlags,
 			&i.Policy1InboundBaseFeeMsat,
 			&i.Policy1InboundFeeRateMilliMsat,
 			&i.Policy1MessageFlags,
@@ -1334,7 +1380,9 @@ func (q *Queries) GetChannelsByPolicyLastUpdateRange(ctx context.Context, arg Ge
 			&i.Policy2MinHtlcMsat,
 			&i.Policy2MaxHtlcMsat,
 			&i.Policy2LastUpdate,
+			&i.Policy2BlockHeight,
 			&i.Policy2Disabled,
+			&i.Policy2DisableFlags,
 			&i.Policy2InboundBaseFeeMsat,
 			&i.Policy2InboundFeeRateMilliMsat,
 			&i.Policy2MessageFlags,
@@ -1434,7 +1482,9 @@ SELECT
     cp1.min_htlc_msat AS policy1_min_htlc_msat,
     cp1.max_htlc_msat AS policy1_max_htlc_msat,
     cp1.last_update AS policy1_last_update,
+    cp1.block_height AS policy1_block_height,
     cp1.disabled AS policy1_disabled,
+    cp1.disable_flags AS policy1_disable_flags,
     cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
     cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
     cp1.message_flags AS policy1_message_flags,
@@ -1451,7 +1501,9 @@ SELECT
     cp2.min_htlc_msat AS policy2_min_htlc_msat,
     cp2.max_htlc_msat AS policy2_max_htlc_msat,
     cp2.last_update AS policy2_last_update,
+    cp2.block_height AS policy2_block_height,
     cp2.disabled AS policy2_disabled,
+    cp2.disable_flags AS policy2_disable_flags,
     cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
     cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
     cp2.message_flags AS policy_2_message_flags,
@@ -1488,7 +1540,9 @@ type GetChannelsBySCIDWithPoliciesRow struct {
 	Policy1MinHtlcMsat             sql.NullInt64
 	Policy1MaxHtlcMsat             sql.NullInt64
 	Policy1LastUpdate              sql.NullInt64
+	Policy1BlockHeight             sql.NullInt64
 	Policy1Disabled                sql.NullBool
+	Policy1DisableFlags            sql.NullInt16
 	Policy1InboundBaseFeeMsat      sql.NullInt64
 	Policy1InboundFeeRateMilliMsat sql.NullInt64
 	Policy1MessageFlags            sql.NullInt16
@@ -1503,7 +1557,9 @@ type GetChannelsBySCIDWithPoliciesRow struct {
 	Policy2MinHtlcMsat             sql.NullInt64
 	Policy2MaxHtlcMsat             sql.NullInt64
 	Policy2LastUpdate              sql.NullInt64
+	Policy2BlockHeight             sql.NullInt64
 	Policy2Disabled                sql.NullBool
+	Policy2DisableFlags            sql.NullInt16
 	Policy2InboundBaseFeeMsat      sql.NullInt64
 	Policy2InboundFeeRateMilliMsat sql.NullInt64
 	Policy2MessageFlags            sql.NullInt16
@@ -1573,7 +1629,9 @@ func (q *Queries) GetChannelsBySCIDWithPolicies(ctx context.Context, arg GetChan
 			&i.Policy1MinHtlcMsat,
 			&i.Policy1MaxHtlcMsat,
 			&i.Policy1LastUpdate,
+			&i.Policy1BlockHeight,
 			&i.Policy1Disabled,
+			&i.Policy1DisableFlags,
 			&i.Policy1InboundBaseFeeMsat,
 			&i.Policy1InboundFeeRateMilliMsat,
 			&i.Policy1MessageFlags,
@@ -1588,7 +1646,9 @@ func (q *Queries) GetChannelsBySCIDWithPolicies(ctx context.Context, arg GetChan
 			&i.Policy2MinHtlcMsat,
 			&i.Policy2MaxHtlcMsat,
 			&i.Policy2LastUpdate,
+			&i.Policy2BlockHeight,
 			&i.Policy2Disabled,
+			&i.Policy2DisableFlags,
 			&i.Policy2InboundBaseFeeMsat,
 			&i.Policy2InboundFeeRateMilliMsat,
 			&i.Policy2MessageFlags,
@@ -2804,7 +2864,9 @@ SELECT c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity
     cp1.min_htlc_msat AS policy1_min_htlc_msat,
     cp1.max_htlc_msat AS policy1_max_htlc_msat,
     cp1.last_update AS policy1_last_update,
+    cp1.block_height AS policy1_block_height,
     cp1.disabled AS policy1_disabled,
+    cp1.disable_flags AS policy1_disable_flags,
     cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
     cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
     cp1.message_flags AS policy1_message_flags,
@@ -2821,7 +2883,9 @@ SELECT c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity
     cp2.min_htlc_msat AS policy2_min_htlc_msat,
     cp2.max_htlc_msat AS policy2_max_htlc_msat,
     cp2.last_update AS policy2_last_update,
+    cp2.block_height AS policy2_block_height,
     cp2.disabled AS policy2_disabled,
+    cp2.disable_flags AS policy2_disable_flags,
     cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
     cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
     cp2.message_flags AS policy2_message_flags,
@@ -2857,7 +2921,9 @@ type ListChannelsByNodeIDRow struct {
 	Policy1MinHtlcMsat             sql.NullInt64
 	Policy1MaxHtlcMsat             sql.NullInt64
 	Policy1LastUpdate              sql.NullInt64
+	Policy1BlockHeight             sql.NullInt64
 	Policy1Disabled                sql.NullBool
+	Policy1DisableFlags            sql.NullInt16
 	Policy1InboundBaseFeeMsat      sql.NullInt64
 	Policy1InboundFeeRateMilliMsat sql.NullInt64
 	Policy1MessageFlags            sql.NullInt16
@@ -2872,7 +2938,9 @@ type ListChannelsByNodeIDRow struct {
 	Policy2MinHtlcMsat             sql.NullInt64
 	Policy2MaxHtlcMsat             sql.NullInt64
 	Policy2LastUpdate              sql.NullInt64
+	Policy2BlockHeight             sql.NullInt64
 	Policy2Disabled                sql.NullBool
+	Policy2DisableFlags            sql.NullInt16
 	Policy2InboundBaseFeeMsat      sql.NullInt64
 	Policy2InboundFeeRateMilliMsat sql.NullInt64
 	Policy2MessageFlags            sql.NullInt16
@@ -2917,7 +2985,9 @@ func (q *Queries) ListChannelsByNodeID(ctx context.Context, arg ListChannelsByNo
 			&i.Policy1MinHtlcMsat,
 			&i.Policy1MaxHtlcMsat,
 			&i.Policy1LastUpdate,
+			&i.Policy1BlockHeight,
 			&i.Policy1Disabled,
+			&i.Policy1DisableFlags,
 			&i.Policy1InboundBaseFeeMsat,
 			&i.Policy1InboundFeeRateMilliMsat,
 			&i.Policy1MessageFlags,
@@ -2932,7 +3002,9 @@ func (q *Queries) ListChannelsByNodeID(ctx context.Context, arg ListChannelsByNo
 			&i.Policy2MinHtlcMsat,
 			&i.Policy2MaxHtlcMsat,
 			&i.Policy2LastUpdate,
+			&i.Policy2BlockHeight,
 			&i.Policy2Disabled,
+			&i.Policy2DisableFlags,
 			&i.Policy2InboundBaseFeeMsat,
 			&i.Policy2InboundFeeRateMilliMsat,
 			&i.Policy2MessageFlags,
@@ -2970,7 +3042,9 @@ SELECT c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity
        cp1.min_htlc_msat AS policy1_min_htlc_msat,
        cp1.max_htlc_msat AS policy1_max_htlc_msat,
        cp1.last_update AS policy1_last_update,
+       cp1.block_height AS policy1_block_height,
        cp1.disabled AS policy1_disabled,
+       cp1.disable_flags AS policy1_disable_flags,
        cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
        cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
        cp1.message_flags AS policy1_message_flags,
@@ -2987,7 +3061,9 @@ SELECT c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity
        cp2.min_htlc_msat AS policy2_min_htlc_msat,
        cp2.max_htlc_msat AS policy2_max_htlc_msat,
        cp2.last_update AS policy2_last_update,
+       cp2.block_height AS policy2_block_height,
        cp2.disabled AS policy2_disabled,
+       cp2.disable_flags AS policy2_disable_flags,
        cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
        cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
        cp2.message_flags AS policy2_message_flags,
@@ -3025,7 +3101,9 @@ type ListChannelsForNodeIDsRow struct {
 	Policy1MinHtlcMsat             sql.NullInt64
 	Policy1MaxHtlcMsat             sql.NullInt64
 	Policy1LastUpdate              sql.NullInt64
+	Policy1BlockHeight             sql.NullInt64
 	Policy1Disabled                sql.NullBool
+	Policy1DisableFlags            sql.NullInt16
 	Policy1InboundBaseFeeMsat      sql.NullInt64
 	Policy1InboundFeeRateMilliMsat sql.NullInt64
 	Policy1MessageFlags            sql.NullInt16
@@ -3040,7 +3118,9 @@ type ListChannelsForNodeIDsRow struct {
 	Policy2MinHtlcMsat             sql.NullInt64
 	Policy2MaxHtlcMsat             sql.NullInt64
 	Policy2LastUpdate              sql.NullInt64
+	Policy2BlockHeight             sql.NullInt64
 	Policy2Disabled                sql.NullBool
+	Policy2DisableFlags            sql.NullInt16
 	Policy2InboundBaseFeeMsat      sql.NullInt64
 	Policy2InboundFeeRateMilliMsat sql.NullInt64
 	Policy2MessageFlags            sql.NullInt16
@@ -3104,7 +3184,9 @@ func (q *Queries) ListChannelsForNodeIDs(ctx context.Context, arg ListChannelsFo
 			&i.Policy1MinHtlcMsat,
 			&i.Policy1MaxHtlcMsat,
 			&i.Policy1LastUpdate,
+			&i.Policy1BlockHeight,
 			&i.Policy1Disabled,
+			&i.Policy1DisableFlags,
 			&i.Policy1InboundBaseFeeMsat,
 			&i.Policy1InboundFeeRateMilliMsat,
 			&i.Policy1MessageFlags,
@@ -3119,7 +3201,9 @@ func (q *Queries) ListChannelsForNodeIDs(ctx context.Context, arg ListChannelsFo
 			&i.Policy2MinHtlcMsat,
 			&i.Policy2MaxHtlcMsat,
 			&i.Policy2LastUpdate,
+			&i.Policy2BlockHeight,
 			&i.Policy2Disabled,
+			&i.Policy2DisableFlags,
 			&i.Policy2InboundBaseFeeMsat,
 			&i.Policy2InboundFeeRateMilliMsat,
 			&i.Policy2MessageFlags,
@@ -3204,7 +3288,9 @@ SELECT
     cp1.base_fee_msat AS policy_1_base_fee_msat,
     cp1.min_htlc_msat AS policy_1_min_htlc_msat,
     cp1.max_htlc_msat AS policy_1_max_htlc_msat,
+    cp1.block_height AS policy_1_block_height,
     cp1.disabled AS policy_1_disabled,
+    cp1.disable_flags AS policy_1_disable_flags,
     cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
     cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
     cp1.message_flags AS policy1_message_flags,
@@ -3216,7 +3302,9 @@ SELECT
     cp2.base_fee_msat AS policy_2_base_fee_msat,
     cp2.min_htlc_msat AS policy_2_min_htlc_msat,
     cp2.max_htlc_msat AS policy_2_max_htlc_msat,
+    cp2.block_height AS policy_2_block_height,
     cp2.disabled AS policy_2_disabled,
+    cp2.disable_flags AS policy_2_disable_flags,
     cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
     cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
     cp2.message_flags AS policy2_message_flags,
@@ -3251,7 +3339,9 @@ type ListChannelsWithPoliciesForCachePaginatedRow struct {
 	Policy1BaseFeeMsat             sql.NullInt64
 	Policy1MinHtlcMsat             sql.NullInt64
 	Policy1MaxHtlcMsat             sql.NullInt64
+	Policy1BlockHeight             sql.NullInt64
 	Policy1Disabled                sql.NullBool
+	Policy1DisableFlags            sql.NullInt16
 	Policy1InboundBaseFeeMsat      sql.NullInt64
 	Policy1InboundFeeRateMilliMsat sql.NullInt64
 	Policy1MessageFlags            sql.NullInt16
@@ -3261,7 +3351,9 @@ type ListChannelsWithPoliciesForCachePaginatedRow struct {
 	Policy2BaseFeeMsat             sql.NullInt64
 	Policy2MinHtlcMsat             sql.NullInt64
 	Policy2MaxHtlcMsat             sql.NullInt64
+	Policy2BlockHeight             sql.NullInt64
 	Policy2Disabled                sql.NullBool
+	Policy2DisableFlags            sql.NullInt16
 	Policy2InboundBaseFeeMsat      sql.NullInt64
 	Policy2InboundFeeRateMilliMsat sql.NullInt64
 	Policy2MessageFlags            sql.NullInt16
@@ -3288,7 +3380,9 @@ func (q *Queries) ListChannelsWithPoliciesForCachePaginated(ctx context.Context,
 			&i.Policy1BaseFeeMsat,
 			&i.Policy1MinHtlcMsat,
 			&i.Policy1MaxHtlcMsat,
+			&i.Policy1BlockHeight,
 			&i.Policy1Disabled,
+			&i.Policy1DisableFlags,
 			&i.Policy1InboundBaseFeeMsat,
 			&i.Policy1InboundFeeRateMilliMsat,
 			&i.Policy1MessageFlags,
@@ -3298,7 +3392,9 @@ func (q *Queries) ListChannelsWithPoliciesForCachePaginated(ctx context.Context,
 			&i.Policy2BaseFeeMsat,
 			&i.Policy2MinHtlcMsat,
 			&i.Policy2MaxHtlcMsat,
+			&i.Policy2BlockHeight,
 			&i.Policy2Disabled,
+			&i.Policy2DisableFlags,
 			&i.Policy2InboundBaseFeeMsat,
 			&i.Policy2InboundFeeRateMilliMsat,
 			&i.Policy2MessageFlags,
@@ -3335,7 +3431,9 @@ SELECT
     cp1.min_htlc_msat AS policy_1_min_htlc_msat,
     cp1.max_htlc_msat AS policy_1_max_htlc_msat,
     cp1.last_update AS policy_1_last_update,
+    cp1.block_height AS policy_1_block_height,
     cp1.disabled AS policy_1_disabled,
+    cp1.disable_flags AS policy_1_disable_flags,
     cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
     cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
     cp1.message_flags AS policy1_message_flags,
@@ -3352,7 +3450,9 @@ SELECT
     cp2.min_htlc_msat AS policy_2_min_htlc_msat,
     cp2.max_htlc_msat AS policy_2_max_htlc_msat,
     cp2.last_update AS policy_2_last_update,
+    cp2.block_height AS policy_2_block_height,
     cp2.disabled AS policy_2_disabled,
+    cp2.disable_flags AS policy_2_disable_flags,
     cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
     cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
     cp2.message_flags AS policy2_message_flags,
@@ -3390,7 +3490,9 @@ type ListChannelsWithPoliciesPaginatedRow struct {
 	Policy1MinHtlcMsat             sql.NullInt64
 	Policy1MaxHtlcMsat             sql.NullInt64
 	Policy1LastUpdate              sql.NullInt64
+	Policy1BlockHeight             sql.NullInt64
 	Policy1Disabled                sql.NullBool
+	Policy1DisableFlags            sql.NullInt16
 	Policy1InboundBaseFeeMsat      sql.NullInt64
 	Policy1InboundFeeRateMilliMsat sql.NullInt64
 	Policy1MessageFlags            sql.NullInt16
@@ -3405,7 +3507,9 @@ type ListChannelsWithPoliciesPaginatedRow struct {
 	Policy2MinHtlcMsat             sql.NullInt64
 	Policy2MaxHtlcMsat             sql.NullInt64
 	Policy2LastUpdate              sql.NullInt64
+	Policy2BlockHeight             sql.NullInt64
 	Policy2Disabled                sql.NullBool
+	Policy2DisableFlags            sql.NullInt16
 	Policy2InboundBaseFeeMsat      sql.NullInt64
 	Policy2InboundFeeRateMilliMsat sql.NullInt64
 	Policy2MessageFlags            sql.NullInt16
@@ -3450,7 +3554,9 @@ func (q *Queries) ListChannelsWithPoliciesPaginated(ctx context.Context, arg Lis
 			&i.Policy1MinHtlcMsat,
 			&i.Policy1MaxHtlcMsat,
 			&i.Policy1LastUpdate,
+			&i.Policy1BlockHeight,
 			&i.Policy1Disabled,
+			&i.Policy1DisableFlags,
 			&i.Policy1InboundBaseFeeMsat,
 			&i.Policy1InboundFeeRateMilliMsat,
 			&i.Policy1MessageFlags,
@@ -3465,7 +3571,9 @@ func (q *Queries) ListChannelsWithPoliciesPaginated(ctx context.Context, arg Lis
 			&i.Policy2MinHtlcMsat,
 			&i.Policy2MaxHtlcMsat,
 			&i.Policy2LastUpdate,
+			&i.Policy2BlockHeight,
 			&i.Policy2Disabled,
+			&i.Policy2DisableFlags,
 			&i.Policy2InboundBaseFeeMsat,
 			&i.Policy2InboundFeeRateMilliMsat,
 			&i.Policy2MessageFlags,
@@ -3654,13 +3762,13 @@ const upsertEdgePolicy = `-- name: UpsertEdgePolicy :one
 */
 
 INSERT INTO graph_channel_policies (
-    version, channel_id, node_id, timelock, fee_ppm,
-    base_fee_msat, min_htlc_msat, last_update, disabled,
+    version, channel_id, node_id, timelock, block_height, fee_ppm,
+    base_fee_msat, min_htlc_msat, last_update, disabled, disable_flags,
     max_htlc_msat, inbound_base_fee_msat,
     inbound_fee_rate_milli_msat, message_flags, channel_flags,
     signature
 ) VALUES  (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
 )
 ON CONFLICT (channel_id, node_id, version)
     -- Update the following fields if a conflict occurs on channel_id,
@@ -3672,13 +3780,18 @@ ON CONFLICT (channel_id, node_id, version)
         min_htlc_msat = EXCLUDED.min_htlc_msat,
         last_update = EXCLUDED.last_update,
         disabled = EXCLUDED.disabled,
+        block_height = EXCLUDED.block_height,
+        disable_flags = EXCLUDED.disable_flags,
         max_htlc_msat = EXCLUDED.max_htlc_msat,
         inbound_base_fee_msat = EXCLUDED.inbound_base_fee_msat,
         inbound_fee_rate_milli_msat = EXCLUDED.inbound_fee_rate_milli_msat,
         message_flags = EXCLUDED.message_flags,
         channel_flags = EXCLUDED.channel_flags,
         signature = EXCLUDED.signature
-WHERE EXCLUDED.last_update > graph_channel_policies.last_update
+WHERE (graph_channel_policies.last_update IS NULL
+    OR EXCLUDED.last_update > graph_channel_policies.last_update)
+AND (graph_channel_policies.block_height IS NULL
+    OR EXCLUDED.block_height >= graph_channel_policies.block_height)
 RETURNING id
 `
 
@@ -3687,11 +3800,13 @@ type UpsertEdgePolicyParams struct {
 	ChannelID               int64
 	NodeID                  int64
 	Timelock                int32
+	BlockHeight             sql.NullInt64
 	FeePpm                  int64
 	BaseFeeMsat             int64
 	MinHtlcMsat             int64
 	LastUpdate              sql.NullInt64
 	Disabled                sql.NullBool
+	DisableFlags            sql.NullInt16
 	MaxHtlcMsat             sql.NullInt64
 	InboundBaseFeeMsat      sql.NullInt64
 	InboundFeeRateMilliMsat sql.NullInt64
@@ -3706,11 +3821,13 @@ func (q *Queries) UpsertEdgePolicy(ctx context.Context, arg UpsertEdgePolicyPara
 		arg.ChannelID,
 		arg.NodeID,
 		arg.Timelock,
+		arg.BlockHeight,
 		arg.FeePpm,
 		arg.BaseFeeMsat,
 		arg.MinHtlcMsat,
 		arg.LastUpdate,
 		arg.Disabled,
+		arg.DisableFlags,
 		arg.MaxHtlcMsat,
 		arg.InboundBaseFeeMsat,
 		arg.InboundFeeRateMilliMsat,
