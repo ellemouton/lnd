@@ -176,6 +176,54 @@ func NewV1Policy(channelID uint64, sigBytes []byte, timeLockDelta uint16,
 	return policy
 }
 
+// PolicyV2Fields houses V2-specific channel update fields.
+type PolicyV2Fields struct {
+	// LastBlockHeight is the block height that timestamps the last update
+	// we received for this policy.
+	LastBlockHeight uint32
+
+	// SecondPeer is true if this was produced by the channel's
+	// lexographically second peer.
+	SecondPeer bool
+
+	// DisableFlags is a bitfield which signals info about which direction
+	// of the channel is disabled.
+	DisableFlags lnwire.ChanUpdateDisableFlags
+
+	// ExtraSignedFields is a map of extra fields that are covered by the
+	// channel update's signature that we have not explicitly parsed.
+	ExtraSignedFields map[uint64][]byte
+}
+
+// NewV2Policy creates a new version 2 channel edge policy.
+func NewV2Policy(channelID uint64, sigBytes []byte, timeLockDelta uint16,
+	minHTLC, maxHTLC, feeBase, feePpm lnwire.MilliSatoshi,
+	inboundFee fn.Option[lnwire.Fee], v2Fields *PolicyV2Fields,
+	opts ...PolicyModifier) *ChannelEdgePolicy {
+
+	policy := &ChannelEdgePolicy{
+		Version:                   lnwire.GossipVersion2,
+		SigBytes:                  sigBytes,
+		ChannelID:                 channelID,
+		LastBlockHeight:           v2Fields.LastBlockHeight,
+		SecondPeer:                v2Fields.SecondPeer,
+		DisableFlags:              v2Fields.DisableFlags,
+		TimeLockDelta:             timeLockDelta,
+		MinHTLC:                   minHTLC,
+		MaxHTLC:                   maxHTLC,
+		FeeBaseMSat:               feeBase,
+		FeeProportionalMillionths: feePpm,
+		InboundFee:                inboundFee,
+		ExtraSignedFields:         v2Fields.ExtraSignedFields,
+	}
+
+	for _, opt := range opts {
+		opt(policy)
+	}
+
+	return policy
+}
+
 // SetSigBytes updates the signature and invalidates the cached parsed
 // signature.
 func (c *ChannelEdgePolicy) SetSigBytes(sig []byte) {
