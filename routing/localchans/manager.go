@@ -358,19 +358,26 @@ func (r *Manager) createEdge(channel *channeldb.OpenChannel,
 	// Construct a dummy channel edge policy with default values that will
 	// be updated with the new values in the call to processChan below.
 	timeLockDelta := uint16(r.DefaultRoutingPolicy.TimeLockDelta)
-	edge := &models.ChannelEdgePolicy{
-		ChannelID:                 shortChanID.ToUint64(),
-		LastUpdate:                timestamp,
-		TimeLockDelta:             timeLockDelta,
-		ChannelFlags:              channelFlags,
-		MessageFlags:              lnwire.ChanUpdateRequiredMaxHtlc,
-		FeeBaseMSat:               r.DefaultRoutingPolicy.BaseFee,
-		FeeProportionalMillionths: r.DefaultRoutingPolicy.FeeRate,
-		MinHTLC:                   r.DefaultRoutingPolicy.MinHTLCOut,
-		MaxHTLC:                   r.DefaultRoutingPolicy.MaxHTLC,
-	}
 
-	copy(edge.ToNode[:], channel.IdentityPub.SerializeCompressed())
+	var toNode route.Vertex
+	copy(toNode[:], channel.IdentityPub.SerializeCompressed())
+
+	edge := models.NewV1Policy(
+		shortChanID.ToUint64(),
+		nil, // SigBytes
+		timeLockDelta,
+		r.DefaultRoutingPolicy.MinHTLCOut,
+		r.DefaultRoutingPolicy.MaxHTLC,
+		r.DefaultRoutingPolicy.BaseFee,
+		r.DefaultRoutingPolicy.FeeRate,
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			LastUpdate:   timestamp,
+			MessageFlags: lnwire.ChanUpdateRequiredMaxHtlc,
+			ChannelFlags: channelFlags,
+		},
+		models.WithToNode(toNode),
+	)
 
 	return info, edge, nil
 }

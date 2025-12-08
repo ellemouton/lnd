@@ -121,18 +121,34 @@ func createEdgePolicies(t *testing.T, channel *channeldb.OpenChannel,
 	require.NoError(t, err)
 
 	return edgeInfo,
-		&models.ChannelEdgePolicy{
-			ChannelID:    channel.ShortChanID().ToUint64(),
-			ChannelFlags: dir1,
-			LastUpdate:   time.Now(),
-			SigBytes:     testSigBytes,
-		},
-		&models.ChannelEdgePolicy{
-			ChannelID:    channel.ShortChanID().ToUint64(),
-			ChannelFlags: dir2,
-			LastUpdate:   time.Now(),
-			SigBytes:     testSigBytes,
-		}
+		models.NewV1Policy(
+			channel.ShortChanID().ToUint64(),
+			testSigBytes,
+			0, // TimeLockDelta
+			0, // MinHTLC
+			0, // MaxHTLC
+			0, // FeeBaseMSat
+			0, // FeeProportionalMillionths
+			fn.None[lnwire.Fee](),
+			&models.PolicyV1Fields{
+				LastUpdate:   time.Now(),
+				ChannelFlags: dir1,
+			},
+		),
+		models.NewV1Policy(
+			channel.ShortChanID().ToUint64(),
+			testSigBytes,
+			0, // TimeLockDelta
+			0, // MinHTLC
+			0, // MaxHTLC
+			0, // FeeBaseMSat
+			0, // FeeProportionalMillionths
+			fn.None[lnwire.Fee](),
+			&models.PolicyV1Fields{
+				LastUpdate:   time.Now(),
+				ChannelFlags: dir2,
+			},
+		)
 }
 
 type mockGraph struct {
@@ -227,12 +243,20 @@ func (g *mockGraph) ApplyChannelUpdate(update *lnwire.ChannelUpdate1,
 
 	timestamp := time.Unix(int64(update.Timestamp), 0)
 
-	policy := &models.ChannelEdgePolicy{
-		ChannelID:    update.ShortChannelID.ToUint64(),
-		ChannelFlags: update.ChannelFlags,
-		LastUpdate:   timestamp,
-		SigBytes:     testSigBytes,
-	}
+	policy := models.NewV1Policy(
+		update.ShortChannelID.ToUint64(),
+		testSigBytes,
+		0, // TimeLockDelta
+		0, // MinHTLC
+		0, // MaxHTLC
+		0, // FeeBaseMSat
+		0, // FeeProportionalMillionths
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			LastUpdate:   timestamp,
+			ChannelFlags: update.ChannelFlags,
+		},
+	)
 
 	if update1 {
 		g.chanPols1[outpoint] = policy

@@ -3436,6 +3436,13 @@ func updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 	edge *models.ChannelEdgePolicy) (route.Vertex, route.Vertex, bool,
 	error) {
 
+	// TODO(elle): update to support v2 policies.
+	if edge.Version != lnwire.GossipVersion1 {
+		return route.Vertex{}, route.Vertex{}, false, fmt.Errorf(
+			"unsupported policy version: %d", edge.Version,
+		)
+	}
+
 	var (
 		node1Pub, node2Pub route.Vertex
 		isNode1            bool
@@ -4651,33 +4658,29 @@ func buildChanPolicy(dbPolicy sqlc.GraphChannelPolicy, channelID uint64,
 		})
 	}
 
-	return &models.ChannelEdgePolicy{
-		SigBytes:  dbPolicy.Signature,
-		ChannelID: channelID,
-		LastUpdate: time.Unix(
-			dbPolicy.LastUpdate.Int64, 0,
-		),
-		MessageFlags: sqldb.ExtractSqlInt16[lnwire.ChanUpdateMsgFlags](
-			dbPolicy.MessageFlags,
-		),
-		ChannelFlags: sqldb.ExtractSqlInt16[lnwire.ChanUpdateChanFlags](
-			dbPolicy.ChannelFlags,
-		),
-		TimeLockDelta: uint16(dbPolicy.Timelock),
-		MinHTLC: lnwire.MilliSatoshi(
-			dbPolicy.MinHtlcMsat,
-		),
-		MaxHTLC: lnwire.MilliSatoshi(
-			dbPolicy.MaxHtlcMsat.Int64,
-		),
-		FeeBaseMSat: lnwire.MilliSatoshi(
-			dbPolicy.BaseFeeMsat,
-		),
-		FeeProportionalMillionths: lnwire.MilliSatoshi(dbPolicy.FeePpm),
-		ToNode:                    toNode,
-		InboundFee:                inboundFee,
-		ExtraOpaqueData:           recs,
-	}, nil
+	policy := models.NewV1Policy(
+		channelID,
+		dbPolicy.Signature,
+		uint16(dbPolicy.Timelock),
+		lnwire.MilliSatoshi(dbPolicy.MinHtlcMsat),
+		lnwire.MilliSatoshi(dbPolicy.MaxHtlcMsat.Int64),
+		lnwire.MilliSatoshi(dbPolicy.BaseFeeMsat),
+		lnwire.MilliSatoshi(dbPolicy.FeePpm),
+		inboundFee,
+		&models.PolicyV1Fields{
+			LastUpdate: time.Unix(dbPolicy.LastUpdate.Int64, 0),
+			MessageFlags: sqldb.ExtractSqlInt16[lnwire.ChanUpdateMsgFlags](
+				dbPolicy.MessageFlags,
+			),
+			ChannelFlags: sqldb.ExtractSqlInt16[lnwire.ChanUpdateChanFlags](
+				dbPolicy.ChannelFlags,
+			),
+			ExtraOpaqueData: recs,
+		},
+		models.WithToNode(toNode),
+	)
+
+	return policy, nil
 }
 
 // extractChannelPolicies extracts the sqlc.GraphChannelPolicy records from the give

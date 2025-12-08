@@ -515,34 +515,40 @@ func (d *testDBGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 	if err := d.db.AddChannelEdge(ctx, edge); err != nil {
 		return nil, nil, err
 	}
-	edgePolicy := &models.ChannelEdgePolicy{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 chanID.ToUint64(),
-		LastUpdate:                time.Now(),
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		MaxHTLC:                   lnwire.NewMSatFromSatoshis(capacity),
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
-		MessageFlags:              1,
-		ChannelFlags:              0,
-	}
+	edgePolicy := models.NewV1Policy(
+		chanID.ToUint64(),
+		testSig.Serialize(),
+		10,                                        // TimeLockDelta
+		1,                                         // MinHTLC
+		lnwire.NewMSatFromSatoshis(capacity),      // MaxHTLC
+		10,                                        // FeeBaseMSat
+		10000,                                     // FeeProportionalMillionths
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			LastUpdate:   time.Now(),
+			MessageFlags: 1,
+			ChannelFlags: 0,
+		},
+	)
 
 	if err := d.db.UpdateEdgePolicy(ctx, edgePolicy); err != nil {
 		return nil, nil, err
 	}
-	edgePolicy = &models.ChannelEdgePolicy{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 chanID.ToUint64(),
-		LastUpdate:                time.Now(),
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		MaxHTLC:                   lnwire.NewMSatFromSatoshis(capacity),
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
-		MessageFlags:              1,
-		ChannelFlags:              1,
-	}
+	edgePolicy = models.NewV1Policy(
+		chanID.ToUint64(),
+		testSig.Serialize(),
+		10,                                        // TimeLockDelta
+		1,                                         // MinHTLC
+		lnwire.NewMSatFromSatoshis(capacity),      // MaxHTLC
+		10,                                        // FeeBaseMSat
+		10000,                                     // FeeProportionalMillionths
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			LastUpdate:   time.Now(),
+			MessageFlags: 1,
+			ChannelFlags: 1,
+		},
+	)
 	if err := d.db.UpdateEdgePolicy(ctx, edgePolicy); err != nil {
 		return nil, nil, err
 	}

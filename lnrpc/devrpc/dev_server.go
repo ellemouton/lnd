@@ -305,39 +305,39 @@ func (s *Server) ImportGraph(ctx context.Context,
 				rpcEdge.ChanPoint, err)
 		}
 
-		makePolicy := func(rpcPolicy *lnrpc.RoutingPolicy) *models.ChannelEdgePolicy { //nolint:ll
-			policy := &models.ChannelEdgePolicy{
-				ChannelID: rpcEdge.ChannelId,
-				LastUpdate: time.Unix(
-					int64(rpcPolicy.LastUpdate), 0,
-				),
-				TimeLockDelta: uint16(
-					rpcPolicy.TimeLockDelta,
-				),
-				MinHTLC: lnwire.MilliSatoshi(
-					rpcPolicy.MinHtlc,
-				),
-				FeeBaseMSat: lnwire.MilliSatoshi(
-					rpcPolicy.FeeBaseMsat,
-				),
-				FeeProportionalMillionths: lnwire.MilliSatoshi(
-					rpcPolicy.FeeRateMilliMsat,
-				),
-			}
+		makePolicy := func(rpcPolicy *lnrpc.RoutingPolicy,
+			chanFlags lnwire.ChanUpdateChanFlags) *models.ChannelEdgePolicy { //nolint:ll
+
+			var msgFlags lnwire.ChanUpdateMsgFlags
+			maxHTLC := lnwire.MilliSatoshi(0)
 			if rpcPolicy.MaxHtlcMsat > 0 {
-				policy.MaxHTLC = lnwire.MilliSatoshi(
+				maxHTLC = lnwire.MilliSatoshi(
 					rpcPolicy.MaxHtlcMsat,
 				)
-				policy.MessageFlags |=
-					lnwire.ChanUpdateRequiredMaxHtlc
+				msgFlags |= lnwire.ChanUpdateRequiredMaxHtlc
 			}
 
-			return policy
+			return models.NewV1Policy(
+				rpcEdge.ChannelId,
+				nil, // SigBytes
+				uint16(rpcPolicy.TimeLockDelta),
+				lnwire.MilliSatoshi(rpcPolicy.MinHtlc),
+				maxHTLC,
+				lnwire.MilliSatoshi(rpcPolicy.FeeBaseMsat),
+				lnwire.MilliSatoshi(rpcPolicy.FeeRateMilliMsat),
+				fn.None[lnwire.Fee](),
+				&models.PolicyV1Fields{
+					LastUpdate: time.Unix(
+						int64(rpcPolicy.LastUpdate), 0,
+					),
+					MessageFlags: msgFlags,
+					ChannelFlags: chanFlags,
+				},
+			)
 		}
 
 		if rpcEdge.Node1Policy != nil {
-			policy := makePolicy(rpcEdge.Node1Policy)
-			policy.ChannelFlags = 0
+			policy := makePolicy(rpcEdge.Node1Policy, 0)
 			err := graphDB.UpdateEdgePolicy(ctx, policy)
 			if err != nil {
 				return nil, fmt.Errorf(
@@ -346,8 +346,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 		}
 
 		if rpcEdge.Node2Policy != nil {
-			policy := makePolicy(rpcEdge.Node2Policy)
-			policy.ChannelFlags = 1
+			policy := makePolicy(rpcEdge.Node2Policy, 1)
 			err := graphDB.UpdateEdgePolicy(ctx, policy)
 			if err != nil {
 				return nil, fmt.Errorf(

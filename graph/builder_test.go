@@ -174,15 +174,21 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 	)
 	require.NoError(t, err)
 	edge.FundingScript = fn.Some(script)
-	edgePolicy := &models.ChannelEdgePolicy{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 edge.ChannelID,
-		LastUpdate:                testTime,
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
-	}
+	edgePolicy := models.NewV1Policy(
+		edge.ChannelID,
+		testSig.Serialize(),
+		10,   // TimeLockDelta
+		1,    // MinHTLC
+		0,    // MaxHTLC
+		10,   // FeeBaseMSat
+		10000, // FeeProportionalMillionths
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			LastUpdate:   testTime,
+			MessageFlags: 0,
+			ChannelFlags: 0,
+		},
+	)
 
 	// Attempt to update the edge. This should be ignored, since the edge
 	// is not yet added to the router.
@@ -1260,30 +1266,40 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 	}
 
 	// We'll also add two edge policies, one for each direction.
-	edgePolicy := &models.ChannelEdgePolicy{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 edge.ChannelID,
-		LastUpdate:                updateTimeStamp,
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
-	}
-	edgePolicy.ChannelFlags = 0
+	edgePolicy := models.NewV1Policy(
+		edge.ChannelID,
+		testSig.Serialize(),
+		10,    // TimeLockDelta
+		1,     // MinHTLC
+		0,     // MaxHTLC
+		10,    // FeeBaseMSat
+		10000, // FeeProportionalMillionths
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			LastUpdate:   updateTimeStamp,
+			MessageFlags: 0,
+			ChannelFlags: 0,
+		},
+	)
 	if err := ctx.builder.UpdateEdge(ctxb, edgePolicy); err != nil {
 		t.Fatalf("unable to update edge policy: %v", err)
 	}
 
-	edgePolicy = &models.ChannelEdgePolicy{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 edge.ChannelID,
-		LastUpdate:                updateTimeStamp,
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
-	}
-	edgePolicy.ChannelFlags = 1
+	edgePolicy = models.NewV1Policy(
+		edge.ChannelID,
+		testSig.Serialize(),
+		10,    // TimeLockDelta
+		1,     // MinHTLC
+		0,     // MaxHTLC
+		10,    // FeeBaseMSat
+		10000, // FeeProportionalMillionths
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			LastUpdate:   updateTimeStamp,
+			MessageFlags: 0,
+			ChannelFlags: 1,
+		},
+	)
 	if err := ctx.builder.UpdateEdge(ctxb, edgePolicy); err != nil {
 		t.Fatalf("unable to update edge policy: %v", err)
 	}
@@ -1601,29 +1617,24 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 			targetNode = edgeInfo.NodeKey2Bytes
 		}
 
-		edgePolicy := &models.ChannelEdgePolicy{
-			SigBytes: testSig.Serialize(),
-			MessageFlags: lnwire.ChanUpdateMsgFlags(
-				edge.MessageFlags,
-			),
-			ChannelFlags:  channelFlags,
-			ChannelID:     edge.ChannelID,
-			LastUpdate:    testTime,
-			TimeLockDelta: edge.Expiry,
-			MinHTLC: lnwire.MilliSatoshi(
-				edge.MinHTLC,
-			),
-			MaxHTLC: lnwire.MilliSatoshi(
-				edge.MaxHTLC,
-			),
-			FeeBaseMSat: lnwire.MilliSatoshi(
-				edge.FeeBaseMsat,
-			),
-			FeeProportionalMillionths: lnwire.MilliSatoshi(
-				edge.FeeRate,
-			),
-			ToNode: targetNode,
-		}
+		edgePolicy := models.NewV1Policy(
+			edge.ChannelID,
+			testSig.Serialize(),
+			edge.Expiry,
+			lnwire.MilliSatoshi(edge.MinHTLC),
+			lnwire.MilliSatoshi(edge.MaxHTLC),
+			lnwire.MilliSatoshi(edge.FeeBaseMsat),
+			lnwire.MilliSatoshi(edge.FeeRate),
+			fn.None[lnwire.Fee](),
+			&models.PolicyV1Fields{
+				LastUpdate: testTime,
+				MessageFlags: lnwire.ChanUpdateMsgFlags(
+					edge.MessageFlags,
+				),
+				ChannelFlags: channelFlags,
+			},
+			models.WithToNode(targetNode),
+		)
 		if err := graph.UpdateEdgePolicy(ctx, edgePolicy); err != nil {
 			return nil, err
 		}
@@ -1987,20 +1998,23 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 				channelFlags |= lnwire.ChanUpdateDisabled
 			}
 
-			edgePolicy := &models.ChannelEdgePolicy{
-				SigBytes:                  testSig.Serialize(),
-				MessageFlags:              msgFlags,
-				ChannelFlags:              channelFlags,
-				ChannelID:                 channelID,
-				LastUpdate:                node1.LastUpdate,
-				TimeLockDelta:             node1.Expiry,
-				MinHTLC:                   node1.MinHTLC,
-				MaxHTLC:                   node1.MaxHTLC,
-				FeeBaseMSat:               node1.FeeBaseMsat,
-				FeeProportionalMillionths: node1.FeeRate,
-				ToNode:                    node2Vertex,
-				ExtraOpaqueData:           getExtraData(node1),
-			}
+			edgePolicy := models.NewV1Policy(
+				channelID,
+				testSig.Serialize(),
+				node1.Expiry,
+				node1.MinHTLC,
+				node1.MaxHTLC,
+				node1.FeeBaseMsat,
+				node1.FeeRate,
+				fn.None[lnwire.Fee](),
+				&models.PolicyV1Fields{
+					LastUpdate:      node1.LastUpdate,
+					MessageFlags:    msgFlags,
+					ChannelFlags:    channelFlags,
+					ExtraOpaqueData: getExtraData(node1),
+				},
+				models.WithToNode(node2Vertex),
+			)
 			err := graph.UpdateEdgePolicy(ctx, edgePolicy)
 			if err != nil {
 				return nil, err
@@ -2018,20 +2032,23 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 			}
 			channelFlags |= lnwire.ChanUpdateDirection
 
-			edgePolicy := &models.ChannelEdgePolicy{
-				SigBytes:                  testSig.Serialize(),
-				MessageFlags:              msgFlags,
-				ChannelFlags:              channelFlags,
-				ChannelID:                 channelID,
-				LastUpdate:                node2.LastUpdate,
-				TimeLockDelta:             node2.Expiry,
-				MinHTLC:                   node2.MinHTLC,
-				MaxHTLC:                   node2.MaxHTLC,
-				FeeBaseMSat:               node2.FeeBaseMsat,
-				FeeProportionalMillionths: node2.FeeRate,
-				ToNode:                    node1Vertex,
-				ExtraOpaqueData:           getExtraData(node2),
-			}
+			edgePolicy := models.NewV1Policy(
+				channelID,
+				testSig.Serialize(),
+				node2.Expiry,
+				node2.MinHTLC,
+				node2.MaxHTLC,
+				node2.FeeBaseMsat,
+				node2.FeeRate,
+				fn.None[lnwire.Fee](),
+				&models.PolicyV1Fields{
+					LastUpdate:      node2.LastUpdate,
+					MessageFlags:    msgFlags,
+					ChannelFlags:    channelFlags,
+					ExtraOpaqueData: getExtraData(node2),
+				},
+				models.WithToNode(node1Vertex),
+			)
 			err := graph.UpdateEdgePolicy(ctx, edgePolicy)
 			if err != nil {
 				return nil, err

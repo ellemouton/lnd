@@ -62,10 +62,19 @@ func TestManager(t *testing.T) {
 		MaxHTLC:       5000,
 	}
 
-	currentPolicy := models.ChannelEdgePolicy{
-		MinHTLC:      minHTLC,
-		MessageFlags: lnwire.ChanUpdateRequiredMaxHtlc,
-	}
+	currentPolicy := *models.NewV1Policy(
+		0, // ChannelID
+		nil, // SigBytes
+		0, // TimeLockDelta
+		minHTLC,
+		0, // MaxHTLC
+		0, // FeeBaseMSat
+		0, // FeeProportionalMillionths
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			MessageFlags: lnwire.ChanUpdateRequiredMaxHtlc,
+		},
+	)
 
 	updateForwardingPolicies := func(
 		chanPolicies map[wire.OutPoint]models.ForwardingPolicy) {
@@ -447,20 +456,22 @@ func TestCreateEdgeLower(t *testing.T) {
 		models.WithChannelPoint(channel.FundingOutpoint),
 	)
 	require.NoError(t, err)
-	expectedEdge := &models.ChannelEdgePolicy{
-		ChannelID:                 8,
-		LastUpdate:                timestamp,
-		TimeLockDelta:             7,
-		ChannelFlags:              0,
-		MessageFlags:              lnwire.ChanUpdateRequiredMaxHtlc,
-		FeeBaseMSat:               3,
-		FeeProportionalMillionths: 4,
-		MinHTLC:                   1,
-		MaxHTLC:                   2,
-		SigBytes:                  nil,
-		ToNode:                    rp,
-		ExtraOpaqueData:           nil,
-	}
+	expectedEdge := models.NewV1Policy(
+		8,
+		nil, // SigBytes
+		7,   // TimeLockDelta
+		1,   // MinHTLC
+		2,   // MaxHTLC
+		3,   // FeeBaseMSat
+		4,   // FeeProportionalMillionths
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			LastUpdate:   timestamp,
+			MessageFlags: lnwire.ChanUpdateRequiredMaxHtlc,
+			ChannelFlags: 0,
+		},
+		models.WithToNode(rp),
+	)
 	manager := Manager{
 		SelfPub:              selfpub,
 		DefaultRoutingPolicy: defaultPolicy,
@@ -535,20 +546,22 @@ func TestCreateEdgeHigher(t *testing.T) {
 		models.WithChannelPoint(channel.FundingOutpoint),
 	)
 	require.NoError(t, err)
-	expectedEdge := &models.ChannelEdgePolicy{
-		ChannelID:                 8,
-		LastUpdate:                timestamp,
-		TimeLockDelta:             7,
-		ChannelFlags:              1,
-		MessageFlags:              lnwire.ChanUpdateRequiredMaxHtlc,
-		FeeBaseMSat:               3,
-		FeeProportionalMillionths: 4,
-		MinHTLC:                   1,
-		MaxHTLC:                   2,
-		SigBytes:                  nil,
-		ToNode:                    rp,
-		ExtraOpaqueData:           nil,
-	}
+	expectedEdge := models.NewV1Policy(
+		8,
+		nil, // SigBytes
+		7,   // TimeLockDelta
+		1,   // MinHTLC
+		2,   // MaxHTLC
+		3,   // FeeBaseMSat
+		4,   // FeeProportionalMillionths
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			LastUpdate:   timestamp,
+			MessageFlags: lnwire.ChanUpdateRequiredMaxHtlc,
+			ChannelFlags: 1,
+		},
+		models.WithToNode(rp),
+	)
 	manager := Manager{
 		SelfPub:              selfpub,
 		DefaultRoutingPolicy: defaultPolicy,

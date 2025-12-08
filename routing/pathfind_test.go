@@ -390,19 +390,22 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 			targetNode = edgeInfo.NodeKey2Bytes
 		}
 
-		edgePolicy := &models.ChannelEdgePolicy{
-			SigBytes:                  testSig.Serialize(),
-			MessageFlags:              lnwire.ChanUpdateMsgFlags(edge.MessageFlags),
-			ChannelFlags:              channelFlags,
-			ChannelID:                 edge.ChannelID,
-			LastUpdate:                testTime,
-			TimeLockDelta:             edge.Expiry,
-			MinHTLC:                   lnwire.MilliSatoshi(edge.MinHTLC),
-			MaxHTLC:                   lnwire.MilliSatoshi(edge.MaxHTLC),
-			FeeBaseMSat:               lnwire.MilliSatoshi(edge.FeeBaseMsat),
-			FeeProportionalMillionths: lnwire.MilliSatoshi(edge.FeeRate),
-			ToNode:                    targetNode,
-		}
+		edgePolicy := models.NewV1Policy(
+			edge.ChannelID,
+			testSig.Serialize(),
+			edge.Expiry,
+			lnwire.MilliSatoshi(edge.MinHTLC),
+			lnwire.MilliSatoshi(edge.MaxHTLC),
+			lnwire.MilliSatoshi(edge.FeeBaseMsat),
+			lnwire.MilliSatoshi(edge.FeeRate),
+			fn.None[lnwire.Fee](),
+			&models.PolicyV1Fields{
+				LastUpdate:   testTime,
+				MessageFlags: lnwire.ChanUpdateMsgFlags(edge.MessageFlags),
+				ChannelFlags: channelFlags,
+			},
+			models.WithToNode(targetNode),
+		)
 		if err := graph.UpdateEdgePolicy(ctx, edgePolicy); err != nil {
 			return nil, err
 		}
@@ -745,21 +748,23 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 				channelFlags |= lnwire.ChanUpdateDisabled
 			}
 
-			edgePolicy := &models.ChannelEdgePolicy{
-				SigBytes:                  testSig.Serialize(),
-				MessageFlags:              msgFlags,
-				ChannelFlags:              channelFlags,
-				ChannelID:                 channelID,
-				LastUpdate:                node1.LastUpdate,
-				TimeLockDelta:             node1.Expiry,
-				MinHTLC:                   node1.MinHTLC,
-				MaxHTLC:                   node1.MaxHTLC,
-				FeeBaseMSat:               node1.FeeBaseMsat,
-				FeeProportionalMillionths: node1.FeeRate,
-				ToNode:                    node2Vertex,
-				InboundFee:                getInboundFees(node1), //nolint:ll
-				ExtraOpaqueData:           getExtraData(node1),
-			}
+			edgePolicy := models.NewV1Policy(
+				channelID,
+				testSig.Serialize(),
+				node1.Expiry,
+				node1.MinHTLC,
+				node1.MaxHTLC,
+				node1.FeeBaseMsat,
+				node1.FeeRate,
+				getInboundFees(node1), //nolint:ll
+				&models.PolicyV1Fields{
+					LastUpdate:      node1.LastUpdate,
+					MessageFlags:    msgFlags,
+					ChannelFlags:    channelFlags,
+					ExtraOpaqueData: getExtraData(node1),
+				},
+				models.WithToNode(node2Vertex),
+			)
 			err := graph.UpdateEdgePolicy(ctx, edgePolicy)
 			if err != nil {
 				return nil, err
@@ -777,21 +782,23 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 			}
 			channelFlags |= lnwire.ChanUpdateDirection
 
-			edgePolicy := &models.ChannelEdgePolicy{
-				SigBytes:                  testSig.Serialize(),
-				MessageFlags:              msgFlags,
-				ChannelFlags:              channelFlags,
-				ChannelID:                 channelID,
-				LastUpdate:                node2.LastUpdate,
-				TimeLockDelta:             node2.Expiry,
-				MinHTLC:                   node2.MinHTLC,
-				MaxHTLC:                   node2.MaxHTLC,
-				FeeBaseMSat:               node2.FeeBaseMsat,
-				FeeProportionalMillionths: node2.FeeRate,
-				ToNode:                    node1Vertex,
-				InboundFee:                getInboundFees(node2), //nolint:ll
-				ExtraOpaqueData:           getExtraData(node2),
-			}
+			edgePolicy := models.NewV1Policy(
+				channelID,
+				testSig.Serialize(),
+				node2.Expiry,
+				node2.MinHTLC,
+				node2.MaxHTLC,
+				node2.FeeBaseMsat,
+				node2.FeeRate,
+				getInboundFees(node2), //nolint:ll
+				&models.PolicyV1Fields{
+					LastUpdate:      node2.LastUpdate,
+					MessageFlags:    msgFlags,
+					ChannelFlags:    channelFlags,
+					ExtraOpaqueData: getExtraData(node2),
+				},
+				models.WithToNode(node1Vertex),
+			)
 			err := graph.UpdateEdgePolicy(ctx, edgePolicy)
 			if err != nil {
 				return nil, err

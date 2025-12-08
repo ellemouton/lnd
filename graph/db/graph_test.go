@@ -1000,34 +1000,41 @@ func createChannelEdge(node1, node2 *models.Node,
 		return edgeInfo, nil, nil
 	}
 
-	edge1 := &models.ChannelEdgePolicy{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 chanID,
-		LastUpdate:                nextUpdateTime(),
-		MessageFlags:              1,
-		ChannelFlags:              0,
-		TimeLockDelta:             99,
-		MinHTLC:                   2342135,
-		MaxHTLC:                   13928598,
-		FeeBaseMSat:               4352345,
-		FeeProportionalMillionths: 3452352,
-		ToNode:                    secondNode,
-		ExtraOpaqueData:           []byte{1, 0},
-	}
-	edge2 := &models.ChannelEdgePolicy{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 chanID,
-		LastUpdate:                nextUpdateTime(),
-		MessageFlags:              1,
-		ChannelFlags:              1,
-		TimeLockDelta:             99,
-		MinHTLC:                   2342135,
-		MaxHTLC:                   13928598,
-		FeeBaseMSat:               4352345,
-		FeeProportionalMillionths: 90392423,
-		ToNode:                    firstNode,
-		ExtraOpaqueData:           []byte{1, 0},
-	}
+	edge1 := models.NewV1Policy(
+		chanID,
+		testSig.Serialize(),
+		99,                    // TimeLockDelta
+		2342135,               // MinHTLC
+		13928598,              // MaxHTLC
+		4352345,               // FeeBaseMSat
+		3452352,               // FeeProportionalMillionths
+		fn.None[lnwire.Fee](), // InboundFee
+		&models.PolicyV1Fields{
+			LastUpdate:      nextUpdateTime(),
+			MessageFlags:    1,
+			ChannelFlags:    0,
+			ExtraOpaqueData: []byte{1, 0},
+		},
+		models.WithToNode(secondNode),
+	)
+
+	edge2 := models.NewV1Policy(
+		chanID,
+		testSig.Serialize(),
+		99,                    // TimeLockDelta
+		2342135,               // MinHTLC
+		13928598,              // MaxHTLC
+		4352345,               // FeeBaseMSat
+		90392423,              // FeeProportionalMillionths
+		fn.None[lnwire.Fee](), // InboundFee
+		&models.PolicyV1Fields{
+			LastUpdate:      nextUpdateTime(),
+			MessageFlags:    1,
+			ChannelFlags:    1,
+			ExtraOpaqueData: []byte{1, 0},
+		},
+		models.WithToNode(firstNode),
+	)
 
 	return edgeInfo, edge1, edge2
 }
@@ -1398,34 +1405,45 @@ func randEdgePolicy(chanID uint64) *models.ChannelEdgePolicy {
 }
 
 func copyEdgePolicy(p *models.ChannelEdgePolicy) *models.ChannelEdgePolicy {
+	// Create a 1:1 copy to support both V1 and V2 policies.
 	return &models.ChannelEdgePolicy{
+		Version:                   p.Version,
 		SigBytes:                  p.SigBytes,
 		ChannelID:                 p.ChannelID,
 		LastUpdate:                p.LastUpdate,
+		LastBlockHeight:           p.LastBlockHeight,
 		MessageFlags:              p.MessageFlags,
 		ChannelFlags:              p.ChannelFlags,
+		SecondPeer:                p.SecondPeer,
+		DisableFlags:              p.DisableFlags,
 		TimeLockDelta:             p.TimeLockDelta,
 		MinHTLC:                   p.MinHTLC,
 		MaxHTLC:                   p.MaxHTLC,
 		FeeBaseMSat:               p.FeeBaseMSat,
 		FeeProportionalMillionths: p.FeeProportionalMillionths,
 		ToNode:                    p.ToNode,
+		InboundFee:                p.InboundFee,
 		ExtraOpaqueData:           p.ExtraOpaqueData,
+		ExtraSignedFields:         p.ExtraSignedFields,
 	}
 }
 
 func newEdgePolicy(chanID uint64, updateTime int64) *models.ChannelEdgePolicy {
-	return &models.ChannelEdgePolicy{
-		ChannelID:                 chanID,
-		LastUpdate:                time.Unix(updateTime, 0),
-		MessageFlags:              1,
-		ChannelFlags:              0,
-		TimeLockDelta:             uint16(prand.Int63()),
-		MinHTLC:                   lnwire.MilliSatoshi(prand.Int63()),
-		MaxHTLC:                   lnwire.MilliSatoshi(prand.Int63()),
-		FeeBaseMSat:               lnwire.MilliSatoshi(prand.Int63()),
-		FeeProportionalMillionths: lnwire.MilliSatoshi(prand.Int63()),
-	}
+	return models.NewV1Policy(
+		chanID,
+		nil, // SigBytes - set by caller.
+		uint16(prand.Int63()),
+		lnwire.MilliSatoshi(prand.Int63()),
+		lnwire.MilliSatoshi(prand.Int63()),
+		lnwire.MilliSatoshi(prand.Int63()),
+		lnwire.MilliSatoshi(prand.Int63()),
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			LastUpdate:   time.Unix(updateTime, 0),
+			MessageFlags: 1,
+			ChannelFlags: 0,
+		},
+	)
 }
 
 // testAddEdgeProof tests the ability to add an edge proof to an existing edge.
@@ -3414,14 +3432,23 @@ func TestFilterChannelRange(t *testing.T) {
 		var updateTime = time.Unix(0, 0)
 		if rand.Int31n(2) == 0 {
 			updateTime = time.Unix(updateTimeSeed, 0)
-			err = graph.UpdateEdgePolicy(
-				ctx, &models.ChannelEdgePolicy{
-					ToNode:       node.PubKeyBytes,
-					ChannelFlags: chanFlags,
-					ChannelID:    chanID,
+			policy := models.NewV1Policy(
+				chanID,
+				nil, // SigBytes
+				0,   // TimeLockDelta
+				0,   // MinHTLC
+				0,   // MaxHTLC
+				0,   // FeeBaseMSat
+				0,   // FeeProportionalMillionths
+				fn.None[lnwire.Fee](),
+				&models.PolicyV1Fields{
 					LastUpdate:   updateTime,
+					MessageFlags: 0,
+					ChannelFlags: chanFlags,
 				},
+				models.WithToNode(node.PubKeyBytes),
 			)
+			err = graph.UpdateEdgePolicy(ctx, policy)
 			require.NoError(t, err)
 		}
 		updateTimeSeed++

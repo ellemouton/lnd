@@ -3206,6 +3206,10 @@ func (c *KVStore) UpdateEdgePolicy(ctx context.Context,
 		from, to     route.Vertex
 	)
 
+	if edge.Version != lnwire.GossipVersion1 {
+		return from, to, ErrVersionNotSupportedForKVDB
+	}
+
 	r := &batch.Request[kvdb.RwTx]{
 		Opts: batch.NewSchedulerOptions(opts...),
 		Reset: func() {
@@ -5338,6 +5342,9 @@ func deserializeChanEdgePolicyRaw(r io.Reader) (*models.ChannelEdgePolicy,
 	if ok && val == nil {
 		edge.InboundFee = fn.Some(inboundFee)
 	}
+
+	// KV store only contains V1 policies.
+	edge.Version = lnwire.GossipVersion1
 
 	return edge, nil
 }

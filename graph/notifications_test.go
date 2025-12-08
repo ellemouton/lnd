@@ -112,19 +112,23 @@ func randEdgePolicy(chanID *lnwire.ShortChannelID,
 		return nil, err
 	}
 
-	return &models.ChannelEdgePolicy{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 chanID.ToUint64(),
-		LastUpdate:                time.Unix(int64(prand.Int31()), 0),
-		TimeLockDelta:             uint16(prand.Int63()),
-		MinHTLC:                   lnwire.MilliSatoshi(prand.Int31()),
-		MaxHTLC:                   lnwire.MilliSatoshi(prand.Int31()),
-		FeeBaseMSat:               lnwire.MilliSatoshi(prand.Int31()),
-		FeeProportionalMillionths: lnwire.MilliSatoshi(prand.Int31()),
-		ToNode:                    node.PubKeyBytes,
-		InboundFee:                fn.Some(inboundFee),
-		ExtraOpaqueData:           extraOpaqueData,
-	}, nil
+	return models.NewV1Policy(
+		chanID.ToUint64(),
+		testSig.Serialize(),
+		uint16(prand.Int63()),
+		lnwire.MilliSatoshi(prand.Int31()),
+		lnwire.MilliSatoshi(prand.Int31()),
+		lnwire.MilliSatoshi(prand.Int31()),
+		lnwire.MilliSatoshi(prand.Int31()),
+		fn.Some(inboundFee),
+		&models.PolicyV1Fields{
+			LastUpdate:      time.Unix(int64(prand.Int31()), 0),
+			MessageFlags:    0,
+			ChannelFlags:    0,
+			ExtraOpaqueData: extraOpaqueData,
+		},
+		models.WithToNode(node.PubKeyBytes),
+	), nil
 }
 
 func createChannelEdge(bitcoinKey1, bitcoinKey2 []byte,

@@ -2753,32 +2753,40 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 
 	// We must add the edge policy to be able to use the edge for route
 	// finding.
-	edgePolicy := &models.ChannelEdgePolicy{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 edge.ChannelID,
-		LastUpdate:                testTime,
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
-		ToNode:                    edge.NodeKey2Bytes,
-	}
-	edgePolicy.ChannelFlags = 0
+	edgePolicy := models.NewV1Policy(
+		edge.ChannelID,
+		testSig.Serialize(),
+		10,    // TimeLockDelta
+		1,     // MinHTLC
+		0,     // MaxHTLC
+		10,    // FeeBaseMSat
+		10000, // FeeProportionalMillionths
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			LastUpdate:   testTime,
+			ChannelFlags: 0,
+		},
+		models.WithToNode(edge.NodeKey2Bytes),
+	)
 
 	require.NoError(t, ctx.graph.UpdateEdgePolicy(ctxb, edgePolicy))
 
 	// Create edge in the other direction as well.
-	edgePolicy = &models.ChannelEdgePolicy{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 edge.ChannelID,
-		LastUpdate:                testTime,
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
-		ToNode:                    edge.NodeKey1Bytes,
-	}
-	edgePolicy.ChannelFlags = 1
+	edgePolicy = models.NewV1Policy(
+		edge.ChannelID,
+		testSig.Serialize(),
+		10,    // TimeLockDelta
+		1,     // MinHTLC
+		0,     // MaxHTLC
+		10,    // FeeBaseMSat
+		10000, // FeeProportionalMillionths
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			LastUpdate:   testTime,
+			ChannelFlags: 1,
+		},
+		models.WithToNode(edge.NodeKey1Bytes),
+	)
 
 	require.NoError(t, ctx.graph.UpdateEdgePolicy(ctxb, edgePolicy))
 
@@ -2837,31 +2845,39 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 
 	require.NoError(t, ctx.graph.AddChannelEdge(ctxb, edge))
 
-	edgePolicy = &models.ChannelEdgePolicy{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 edge.ChannelID,
-		LastUpdate:                testTime,
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
-		ToNode:                    edge.NodeKey2Bytes,
-	}
-	edgePolicy.ChannelFlags = 0
+	edgePolicy = models.NewV1Policy(
+		edge.ChannelID,
+		testSig.Serialize(),
+		10,    // TimeLockDelta
+		1,     // MinHTLC
+		0,     // MaxHTLC
+		10,    // FeeBaseMSat
+		10000, // FeeProportionalMillionths
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			LastUpdate:   testTime,
+			ChannelFlags: 0,
+		},
+		models.WithToNode(edge.NodeKey2Bytes),
+	)
 
 	require.NoError(t, ctx.graph.UpdateEdgePolicy(ctxb, edgePolicy))
 
-	edgePolicy = &models.ChannelEdgePolicy{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 edge.ChannelID,
-		LastUpdate:                testTime,
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
-		ToNode:                    edge.NodeKey1Bytes,
-	}
-	edgePolicy.ChannelFlags = 1
+	edgePolicy = models.NewV1Policy(
+		edge.ChannelID,
+		testSig.Serialize(),
+		10,    // TimeLockDelta
+		1,     // MinHTLC
+		0,     // MaxHTLC
+		10,    // FeeBaseMSat
+		10000, // FeeProportionalMillionths
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			LastUpdate:   testTime,
+			ChannelFlags: 1,
+		},
+		models.WithToNode(edge.NodeKey1Bytes),
+	)
 
 	require.NoError(t, ctx.graph.UpdateEdgePolicy(ctxb, edgePolicy))
 
@@ -2970,19 +2986,22 @@ func (m *mockGraphBuilder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 		return false
 	}
 
-	err := m.updateEdge(&models.ChannelEdgePolicy{
-		SigBytes:                  msg.Signature.ToSignatureBytes(),
-		ChannelID:                 msg.ShortChannelID.ToUint64(),
-		LastUpdate:                time.Unix(int64(msg.Timestamp), 0),
-		MessageFlags:              msg.MessageFlags,
-		ChannelFlags:              msg.ChannelFlags,
-		TimeLockDelta:             msg.TimeLockDelta,
-		MinHTLC:                   msg.HtlcMinimumMsat,
-		MaxHTLC:                   msg.HtlcMaximumMsat,
-		FeeBaseMSat:               lnwire.MilliSatoshi(msg.BaseFee),
-		FeeProportionalMillionths: lnwire.MilliSatoshi(msg.FeeRate),
-		ExtraOpaqueData:           msg.ExtraOpaqueData,
-	})
+	err := m.updateEdge(models.NewV1Policy(
+		msg.ShortChannelID.ToUint64(),
+		msg.Signature.ToSignatureBytes(),
+		msg.TimeLockDelta,
+		msg.HtlcMinimumMsat,
+		msg.HtlcMaximumMsat,
+		lnwire.MilliSatoshi(msg.BaseFee),
+		lnwire.MilliSatoshi(msg.FeeRate),
+		msg.InboundFee.ValOpt(),
+		&models.PolicyV1Fields{
+			LastUpdate:      time.Unix(int64(msg.Timestamp), 0),
+			MessageFlags:    msg.MessageFlags,
+			ChannelFlags:    msg.ChannelFlags,
+			ExtraOpaqueData: msg.ExtraOpaqueData,
+		},
+	))
 
 	return err == nil
 }
