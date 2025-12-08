@@ -1179,8 +1179,8 @@ func (c *KVStore) AddChannelEdge(ctx context.Context,
 			case alreadyExists:
 				return ErrEdgeAlreadyExist
 			default:
-				c.rejectCache.remove(edge.ChannelID)
-				c.chanCache.remove(edge.ChannelID)
+				c.rejectCache.remove(edge.ChannelID, lnwire.GossipVersion1)
+				c.chanCache.remove(edge.ChannelID, lnwire.GossipVersion1)
 				return nil
 			}
 		},
@@ -1302,7 +1302,7 @@ func (c *KVStore) HasChannelEdge(
 	// We'll query the cache with the shared lock held to allow multiple
 	// readers to access values in the cache concurrently if they exist.
 	c.cacheMu.RLock()
-	if entry, ok := c.rejectCache.get(chanID); ok {
+	if entry, ok := c.rejectCache.get(chanID, lnwire.GossipVersion1); ok {
 		c.cacheMu.RUnlock()
 		upd1Time = time.Unix(entry.upd1Time, 0)
 		upd2Time = time.Unix(entry.upd2Time, 0)
@@ -1318,7 +1318,7 @@ func (c *KVStore) HasChannelEdge(
 	// The item was not found with the shared lock, so we'll acquire the
 	// exclusive lock and check the cache again in case another method added
 	// the entry to the cache while no lock was held.
-	if entry, ok := c.rejectCache.get(chanID); ok {
+	if entry, ok := c.rejectCache.get(chanID, lnwire.GossipVersion1); ok {
 		upd1Time = time.Unix(entry.upd1Time, 0)
 		upd2Time = time.Unix(entry.upd2Time, 0)
 		exists, isZombie = entry.flags.unpack()
@@ -1385,7 +1385,7 @@ func (c *KVStore) HasChannelEdge(
 		return time.Time{}, time.Time{}, exists, isZombie, err
 	}
 
-	c.rejectCache.insert(chanID, rejectCacheEntry{
+	c.rejectCache.insert(chanID, lnwire.GossipVersion1, rejectCacheEntry{
 		upd1Time: upd1Time.Unix(),
 		upd2Time: upd2Time.Unix(),
 		flags:    packRejectFlags(exists, isZombie),
@@ -1564,8 +1564,8 @@ func (c *KVStore) PruneGraph(spentOutputs []*wire.OutPoint,
 	}
 
 	for _, channel := range chansClosed {
-		c.rejectCache.remove(channel.ChannelID)
-		c.chanCache.remove(channel.ChannelID)
+		c.rejectCache.remove(channel.ChannelID, channel.Version)
+		c.chanCache.remove(channel.ChannelID, channel.Version)
 	}
 
 	return chansClosed, prunedNodes, nil
@@ -1831,8 +1831,8 @@ func (c *KVStore) DisconnectBlockAtHeight(height uint32) (
 	}
 
 	for _, channel := range removedChans {
-		c.rejectCache.remove(channel.ChannelID)
-		c.chanCache.remove(channel.ChannelID)
+		c.rejectCache.remove(channel.ChannelID, channel.Version)
+		c.chanCache.remove(channel.ChannelID, channel.Version)
 	}
 
 	return removedChans, nil
@@ -1950,8 +1950,8 @@ func (c *KVStore) DeleteChannelEdges(v lnwire.GossipVersion,
 	}
 
 	for _, chanID := range chanIDs {
-		c.rejectCache.remove(chanID)
-		c.chanCache.remove(chanID)
+		c.rejectCache.remove(chanID, v)
+		c.chanCache.remove(chanID, v)
 	}
 
 	return infos, nil
@@ -2081,7 +2081,7 @@ func (c *KVStore) updateChanCacheBatch(edgesToCache map[uint64]ChannelEdge) {
 	defer c.cacheMu.Unlock()
 
 	for cid, edge := range edgesToCache {
-		c.chanCache.insert(cid, edge)
+		c.chanCache.insert(cid, edge.Info.Version, edge)
 	}
 }
 
@@ -2228,7 +2228,7 @@ func (c *KVStore) fetchNextChanUpdateBatch(
 			// Before we read the edge info, we'll see if this
 			// element is already in the cache or not.
 			c.cacheMu.RLock()
-			if channel, ok := c.chanCache.get(chanIDInt); ok {
+			if channel, ok := c.chanCache.get(chanIDInt, lnwire.GossipVersion1); ok {
 				state.edgesSeen[chanIDInt] = struct{}{}
 
 				batch = append(batch, channel)
@@ -3267,26 +3267,26 @@ func (c *KVStore) updateEdgeCache(e *models.ChannelEdgePolicy,
 	// the entry with the updated timestamp for the direction that was just
 	// written. If the edge doesn't exist, we'll load the cache entry lazily
 	// during the next query for this edge.
-	if entry, ok := c.rejectCache.get(e.ChannelID); ok {
+	if entry, ok := c.rejectCache.get(e.ChannelID, e.Version); ok {
 		if isUpdate1 {
 			entry.upd1Time = e.LastUpdate.Unix()
 		} else {
 			entry.upd2Time = e.LastUpdate.Unix()
 		}
-		c.rejectCache.insert(e.ChannelID, entry)
+		c.rejectCache.insert(e.ChannelID, e.Version, entry)
 	}
 
 	// If an entry for this channel is found in channel cache, we'll modify
 	// the entry with the updated policy for the direction that was just
 	// written. If the edge doesn't exist, we'll defer loading the info and
 	// policies and lazily read from disk during the next query.
-	if channel, ok := c.chanCache.get(e.ChannelID); ok {
+	if channel, ok := c.chanCache.get(e.ChannelID, e.Version); ok {
 		if isUpdate1 {
 			channel.Policy1 = e
 		} else {
 			channel.Policy2 = e
 		}
-		c.chanCache.insert(e.ChannelID, channel)
+		c.chanCache.insert(e.ChannelID, e.Version, channel)
 	}
 }
 
@@ -4184,8 +4184,8 @@ func (c *KVStore) MarkEdgeZombie(chanID uint64,
 		return err
 	}
 
-	c.rejectCache.remove(chanID)
-	c.chanCache.remove(chanID)
+	c.rejectCache.remove(chanID, lnwire.GossipVersion1)
+	c.chanCache.remove(chanID, lnwire.GossipVersion1)
 
 	return nil
 }
@@ -4253,8 +4253,8 @@ func (c *KVStore) markEdgeLiveUnsafe(tx kvdb.RwTx, chanID uint64) error {
 		return err
 	}
 
-	c.rejectCache.remove(chanID)
-	c.chanCache.remove(chanID)
+	c.rejectCache.remove(chanID, lnwire.GossipVersion1)
+	c.chanCache.remove(chanID, lnwire.GossipVersion1)
 
 	return nil
 }

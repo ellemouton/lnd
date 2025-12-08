@@ -1,5 +1,16 @@
 package graphdb
 
+import "github.com/lightningnetwork/lnd/lnwire"
+
+// cacheKey is a composite key used by the reject and channel caches to
+// uniquely identify a channel by both its channel ID and gossip version.
+// This ensures that V1 and V2 channels with the same ID don't collide in
+// the cache.
+type cacheKey struct {
+	chanID  uint64
+	version lnwire.GossipVersion
+}
+
 // rejectFlags is a compact representation of various metadata stored by the
 // reject cache about a particular channel.
 type rejectFlags uint8
@@ -51,31 +62,40 @@ type rejectCacheEntry struct {
 // well as the most recent timestamps for each policy (if they exists).
 type rejectCache struct {
 	n     int
-	edges map[uint64]rejectCacheEntry
+	edges map[cacheKey]rejectCacheEntry
 }
 
 // newRejectCache creates a new rejectCache with maximum capacity of n entries.
 func newRejectCache(n int) *rejectCache {
 	return &rejectCache{
 		n:     n,
-		edges: make(map[uint64]rejectCacheEntry, n),
+		edges: make(map[cacheKey]rejectCacheEntry, n),
 	}
 }
 
-// get returns the entry from the cache for chanid, if it exists.
-func (c *rejectCache) get(chanid uint64) (rejectCacheEntry, bool) {
-	entry, ok := c.edges[chanid]
+// get returns the entry from the cache for the given chanid and version, if it
+// exists.
+func (c *rejectCache) get(chanid uint64, version lnwire.GossipVersion) (
+	rejectCacheEntry, bool) {
+
+	key := cacheKey{chanID: chanid, version: version}
+	entry, ok := c.edges[key]
+
 	return entry, ok
 }
 
-// insert adds the entry to the reject cache. If an entry for chanid already
-// exists, it will be replaced with the new entry. If the entry doesn't exists,
-// it will be inserted to the cache, performing a random eviction if the cache
-// is at capacity.
-func (c *rejectCache) insert(chanid uint64, entry rejectCacheEntry) {
+// insert adds the entry to the reject cache. If an entry for the given chanid
+// and version already exists, it will be replaced with the new entry. If the
+// entry doesn't exist, it will be inserted to the cache, performing a random
+// eviction if the cache is at capacity.
+func (c *rejectCache) insert(chanid uint64, version lnwire.GossipVersion,
+	entry rejectCacheEntry) {
+
+	key := cacheKey{chanID: chanid, version: version}
+
 	// If entry exists, replace it.
-	if _, ok := c.edges[chanid]; ok {
-		c.edges[chanid] = entry
+	if _, ok := c.edges[key]; ok {
+		c.edges[key] = entry
 		return
 	}
 
@@ -86,10 +106,12 @@ func (c *rejectCache) insert(chanid uint64, entry rejectCacheEntry) {
 			break
 		}
 	}
-	c.edges[chanid] = entry
+	c.edges[key] = entry
 }
 
-// remove deletes an entry for chanid from the cache, if it exists.
-func (c *rejectCache) remove(chanid uint64) {
-	delete(c.edges, chanid)
+// remove deletes an entry for the given chanid and version from the cache, if
+// it exists.
+func (c *rejectCache) remove(chanid uint64, version lnwire.GossipVersion) {
+	key := cacheKey{chanID: chanid, version: version}
+	delete(c.edges, key)
 }

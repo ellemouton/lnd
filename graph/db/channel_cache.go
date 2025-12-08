@@ -1,11 +1,13 @@
 package graphdb
 
+import "github.com/lightningnetwork/lnd/lnwire"
+
 // channelCache is an in-memory cache used to improve the performance of
 // ChanUpdatesInHorizon. It caches the chan info and edge policies for a
 // particular channel.
 type channelCache struct {
 	n        int
-	channels map[uint64]ChannelEdge
+	channels map[cacheKey]ChannelEdge
 }
 
 // newChannelCache creates a new channelCache with maximum capacity of n
@@ -13,24 +15,32 @@ type channelCache struct {
 func newChannelCache(n int) *channelCache {
 	return &channelCache{
 		n:        n,
-		channels: make(map[uint64]ChannelEdge),
+		channels: make(map[cacheKey]ChannelEdge),
 	}
 }
 
-// get returns the channel from the cache, if it exists.
-func (c *channelCache) get(chanid uint64) (ChannelEdge, bool) {
-	channel, ok := c.channels[chanid]
+// get returns the channel from the cache for the given chanid and version, if
+// it exists.
+func (c *channelCache) get(chanid uint64, version lnwire.GossipVersion) (
+	ChannelEdge, bool) {
+
+	key := cacheKey{chanID: chanid, version: version}
+	channel, ok := c.channels[key]
 	return channel, ok
 }
 
-// insert adds the entry to the channel cache. If an entry for chanid already
-// exists, it will be replaced with the new entry. If the entry doesn't exist,
-// it will be inserted to the cache, performing a random eviction if the cache
-// is at capacity.
-func (c *channelCache) insert(chanid uint64, channel ChannelEdge) {
+// insert adds the entry to the channel cache. If an entry for the given chanid
+// and version already exists, it will be replaced with the new entry. If the
+// entry doesn't exist, it will be inserted to the cache, performing a random
+// eviction if the cache is at capacity.
+func (c *channelCache) insert(chanid uint64, version lnwire.GossipVersion,
+	channel ChannelEdge) {
+
+	key := cacheKey{chanID: chanid, version: version}
+
 	// If entry exists, replace it.
-	if _, ok := c.channels[chanid]; ok {
-		c.channels[chanid] = channel
+	if _, ok := c.channels[key]; ok {
+		c.channels[key] = channel
 		return
 	}
 
@@ -41,10 +51,12 @@ func (c *channelCache) insert(chanid uint64, channel ChannelEdge) {
 			break
 		}
 	}
-	c.channels[chanid] = channel
+	c.channels[key] = channel
 }
 
-// remove deletes an edge for chanid from the cache, if it exists.
-func (c *channelCache) remove(chanid uint64) {
-	delete(c.channels, chanid)
+// remove deletes an edge for the given chanid and version from the cache, if
+// it exists.
+func (c *channelCache) remove(chanid uint64, version lnwire.GossipVersion) {
+	key := cacheKey{chanID: chanid, version: version}
+	delete(c.channels, key)
 }
