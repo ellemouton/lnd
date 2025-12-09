@@ -630,11 +630,11 @@ func (c *ChannelGraph) DisabledChannelIDs() ([]uint64, error) {
 	return c.db.DisabledChannelIDs()
 }
 
-// HasChannelEdge returns true if the database knows of a channel edge.
-func (c *ChannelGraph) HasChannelEdge(chanID uint64) (time.Time, time.Time,
+// HasV1ChannelEdge returns true if the database knows of a channel edge.
+func (c *ChannelGraph) HasV1ChannelEdge(chanID uint64) (time.Time, time.Time,
 	bool, bool, error) {
 
-	return c.db.HasChannelEdge(chanID)
+	return c.db.HasV1ChannelEdge(chanID)
 }
 
 // AddEdgeProof sets the proof of an existing edge in the graph database.

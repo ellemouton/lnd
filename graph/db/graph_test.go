@@ -754,7 +754,7 @@ func TestDisconnectBlockAtHeight(t *testing.T) {
 	}
 
 	// The two first edges should be removed from the db.
-	_, _, has, isZombie, err := graph.HasChannelEdge(edgeInfo.ChannelID)
+	_, _, has, isZombie, err := graph.HasV1ChannelEdge(edgeInfo.ChannelID)
 	require.NoError(t, err, "unable to query for edge")
 	if has {
 		t.Fatalf("edge1 was not pruned from the graph")
@@ -762,7 +762,7 @@ func TestDisconnectBlockAtHeight(t *testing.T) {
 	if isZombie {
 		t.Fatal("reorged edge1 should not be marked as zombie")
 	}
-	_, _, has, isZombie, err = graph.HasChannelEdge(edgeInfo2.ChannelID)
+	_, _, has, isZombie, err = graph.HasV1ChannelEdge(edgeInfo2.ChannelID)
 	require.NoError(t, err, "unable to query for edge")
 	if has {
 		t.Fatalf("edge2 was not pruned from the graph")
@@ -772,7 +772,7 @@ func TestDisconnectBlockAtHeight(t *testing.T) {
 	}
 
 	// Edge 3 should not be removed.
-	_, _, has, isZombie, err = graph.HasChannelEdge(edgeInfo3.ChannelID)
+	_, _, has, isZombie, err = graph.HasV1ChannelEdge(edgeInfo3.ChannelID)
 	require.NoError(t, err, "unable to query for edge")
 	if !has {
 		t.Fatalf("edge3 was pruned from the graph")
@@ -1089,7 +1089,7 @@ func TestEdgeInfoUpdates(t *testing.T) {
 
 	// Check for existence of the edge within the database, it should be
 	// found.
-	_, _, found, isZombie, err := graph.HasChannelEdge(chanID)
+	_, _, found, isZombie, err := graph.HasV1ChannelEdge(chanID)
 	require.NoError(t, err, "unable to query for edge")
 	if !found {
 		t.Fatalf("graph should have of inserted edge")
@@ -3280,14 +3280,14 @@ func TestStressTestChannelGraphAPI(t *testing.T) {
 			},
 		},
 		{
-			name: "HasChannelEdge",
+			name: "HasV1ChannelEdge",
 			fn: func() error {
 				channel := getRandChan()
 				if channel == nil {
 					return nil
 				}
 
-				_, _, _, _, err := graph.HasChannelEdge(
+				_, _, _, _, err := graph.HasV1ChannelEdge(
 					channel.id.ToUint64(),
 				)
 

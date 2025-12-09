@@ -1283,13 +1283,13 @@ func (c *KVStore) addChannelEdge(tx kvdb.RwTx,
 	return chanIndex.Put(b.Bytes(), chanKey[:])
 }
 
-// HasChannelEdge returns true if the database knows of a channel edge with the
+// HasV1ChannelEdge returns true if the database knows of a channel edge with the
 // passed channel ID, and false otherwise. If an edge with that ID is found
 // within the graph, then two time stamps representing the last time the edge
 // was updated for both directed edges are returned along with the boolean. If
 // it is not found, then the zombie index is checked and its result is returned
 // as the second boolean.
-func (c *KVStore) HasChannelEdge(
+func (c *KVStore) HasV1ChannelEdge(
 	chanID uint64) (time.Time, time.Time, bool, bool, error) {
 
 	var (
@@ -1304,8 +1304,7 @@ func (c *KVStore) HasChannelEdge(
 	c.cacheMu.RLock()
 	if entry, ok := c.rejectCache.get(chanID, lnwire.GossipVersion1); ok {
 		c.cacheMu.RUnlock()
-		upd1Time = time.Unix(entry.upd1Time, 0)
-		upd2Time = time.Unix(entry.upd2Time, 0)
+		upd1Time, upd2Time = entry.toTimes(lnwire.GossipVersion1)
 		exists, isZombie = entry.flags.unpack()
 
 		return upd1Time, upd2Time, exists, isZombie, nil
@@ -1319,8 +1318,7 @@ func (c *KVStore) HasChannelEdge(
 	// exclusive lock and check the cache again in case another method added
 	// the entry to the cache while no lock was held.
 	if entry, ok := c.rejectCache.get(chanID, lnwire.GossipVersion1); ok {
-		upd1Time = time.Unix(entry.upd1Time, 0)
-		upd2Time = time.Unix(entry.upd2Time, 0)
+		upd1Time, upd2Time = entry.toTimes(lnwire.GossipVersion1)
 		exists, isZombie = entry.flags.unpack()
 
 		return upd1Time, upd2Time, exists, isZombie, nil
@@ -1385,11 +1383,10 @@ func (c *KVStore) HasChannelEdge(
 		return time.Time{}, time.Time{}, exists, isZombie, err
 	}
 
-	c.rejectCache.insert(chanID, lnwire.GossipVersion1, rejectCacheEntry{
-		upd1Time: upd1Time.Unix(),
-		upd2Time: upd2Time.Unix(),
-		flags:    packRejectFlags(exists, isZombie),
-	})
+	c.rejectCache.insert(chanID, lnwire.GossipVersion1,
+		newRejectCacheEntryFromTimes(upd1Time, upd2Time,
+			lnwire.GossipVersion1, exists, isZombie),
+	)
 
 	return upd1Time, upd2Time, exists, isZombie, nil
 }
@@ -3269,9 +3266,9 @@ func (c *KVStore) updateEdgeCache(e *models.ChannelEdgePolicy,
 	// during the next query for this edge.
 	if entry, ok := c.rejectCache.get(e.ChannelID, e.Version); ok {
 		if isUpdate1 {
-			entry.upd1Time = e.LastUpdate.Unix()
+			entry.upd1 = policyUpdateValue(e)
 		} else {
-			entry.upd2Time = e.LastUpdate.Unix()
+			entry.upd2 = policyUpdateValue(e)
 		}
 		c.rejectCache.insert(e.ChannelID, e.Version, entry)
 	}

@@ -861,9 +861,9 @@ func (s *SQLStore) updateEdgeCache(e *models.ChannelEdgePolicy,
 	// during the next query for this edge.
 	if entry, ok := s.rejectCache.get(e.ChannelID, e.Version); ok {
 		if isUpdate1 {
-			entry.upd1Time = e.LastUpdate.Unix()
+			entry.upd1 = policyUpdateValue(e)
 		} else {
-			entry.upd2Time = e.LastUpdate.Unix()
+			entry.upd2 = policyUpdateValue(e)
 		}
 		s.rejectCache.insert(e.ChannelID, e.Version, entry)
 	}
@@ -2189,7 +2189,7 @@ func (s *SQLStore) FetchChannelEdgesByOutpoint(v lnwire.GossipVersion,
 	return edge, policy1, policy2, nil
 }
 
-// HasChannelEdge returns true if the database knows of a channel edge with the
+// HasV1ChannelEdge returns true if the database knows of a channel edge with the
 // passed channel ID, and false otherwise. If an edge with that ID is found
 // within the graph, then two time stamps representing the last time the edge
 // was updated for both directed edges are returned along with the boolean. If
@@ -2197,7 +2197,7 @@ func (s *SQLStore) FetchChannelEdgesByOutpoint(v lnwire.GossipVersion,
 // as the second boolean.
 //
 // NOTE: part of the Store interface.
-func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
+func (s *SQLStore) HasV1ChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 	bool, error) {
 
 	ctx := context.TODO()
@@ -2214,8 +2214,7 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 	s.cacheMu.RLock()
 	if entry, ok := s.rejectCache.get(chanID, lnwire.GossipVersion1); ok {
 		s.cacheMu.RUnlock()
-		node1LastUpdate = time.Unix(entry.upd1Time, 0)
-		node2LastUpdate = time.Unix(entry.upd2Time, 0)
+		node1LastUpdate, node2LastUpdate = entry.toTimes(lnwire.GossipVersion1)
 		exists, isZombie = entry.flags.unpack()
 
 		return node1LastUpdate, node2LastUpdate, exists, isZombie, nil
@@ -2229,8 +2228,7 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 	// exclusive lock and check the cache again in case another method added
 	// the entry to the cache while no lock was held.
 	if entry, ok := s.rejectCache.get(chanID, lnwire.GossipVersion1); ok {
-		node1LastUpdate = time.Unix(entry.upd1Time, 0)
-		node2LastUpdate = time.Unix(entry.upd2Time, 0)
+		node1LastUpdate, node2LastUpdate = entry.toTimes(lnwire.GossipVersion1)
 		exists, isZombie = entry.flags.unpack()
 
 		return node1LastUpdate, node2LastUpdate, exists, isZombie, nil
@@ -2299,13 +2297,127 @@ func (s *SQLStore) HasChannelEdge(chanID uint64) (time.Time, time.Time, bool,
 			fmt.Errorf("unable to fetch channel: %w", err)
 	}
 
-	s.rejectCache.insert(chanID, lnwire.GossipVersion1, rejectCacheEntry{
-		upd1Time: node1LastUpdate.Unix(),
-		upd2Time: node2LastUpdate.Unix(),
-		flags:    packRejectFlags(exists, isZombie),
-	})
+	s.rejectCache.insert(chanID, lnwire.GossipVersion1,
+		newRejectCacheEntryFromTimes(node1LastUpdate, node2LastUpdate,
+			lnwire.GossipVersion1, exists, isZombie),
+	)
 
 	return node1LastUpdate, node2LastUpdate, exists, isZombie, nil
+}
+
+// HasChannelEdge returns true if the database knows of a channel edge with the
+// passed channel ID, and false otherwise. If it is not found, then the zombie
+// index is checked and its result is returned as the second boolean.
+//
+// NOTE: part of the Store interface.
+func (s *SQLStore) HasChannelEdge(v lnwire.GossipVersion, chanID uint64) (bool,
+	bool, error) {
+
+	ctx := context.TODO()
+
+	var (
+		exists   bool
+		isZombie bool
+	)
+
+	// We'll query the cache with the shared lock held to allow multiple
+	// readers to access values in the cache concurrently if they exist.
+	s.cacheMu.RLock()
+	if entry, ok := s.rejectCache.get(chanID, v); ok {
+		s.cacheMu.RUnlock()
+
+		exists, isZombie = entry.flags.unpack()
+
+		return exists, isZombie, nil
+	}
+	s.cacheMu.RUnlock()
+
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+
+	// The item was not found with the shared lock, so we'll acquire the
+	// exclusive lock and check the cache again in case another method added
+	// the entry to the cache while no lock was held.
+	if entry, ok := s.rejectCache.get(chanID, v); ok {
+		exists, isZombie = entry.flags.unpack()
+
+		return exists, isZombie, nil
+	}
+
+	var (
+		node1LastUpdate time.Time
+		node2LastUpdate time.Time
+	)
+
+	chanIDB := channelIDToBytes(chanID)
+	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+		channel, err := db.GetChannelBySCID(
+			ctx, sqlc.GetChannelBySCIDParams{
+				Scid:    chanIDB,
+				Version: int16(v),
+			},
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			// Check if it is a zombie channel.
+			isZombie, err = db.IsZombieChannel(
+				ctx, sqlc.IsZombieChannelParams{
+					Scid:    chanIDB,
+					Version: int16(v),
+				},
+			)
+			if err != nil {
+				return fmt.Errorf("could not check if channel "+
+					"is zombie: %w", err)
+			}
+
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("unable to fetch channel: %w", err)
+		}
+
+		exists = true
+
+		policy1, err := db.GetChannelPolicyByChannelAndNode(
+			ctx, sqlc.GetChannelPolicyByChannelAndNodeParams{
+				Version:   int16(v),
+				ChannelID: channel.ID,
+				NodeID:    channel.NodeID1,
+			},
+		)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("unable to fetch channel policy: %w",
+				err)
+		} else if err == nil {
+			node1LastUpdate = time.Unix(policy1.LastUpdate.Int64, 0)
+		}
+
+		policy2, err := db.GetChannelPolicyByChannelAndNode(
+			ctx, sqlc.GetChannelPolicyByChannelAndNodeParams{
+				Version:   int16(v),
+				ChannelID: channel.ID,
+				NodeID:    channel.NodeID2,
+			},
+		)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("unable to fetch channel policy: %w",
+				err)
+		} else if err == nil {
+			node2LastUpdate = time.Unix(policy2.LastUpdate.Int64, 0)
+		}
+
+		return nil
+	}, sqldb.NoOpReset)
+	if err != nil {
+		return false, false, fmt.Errorf("unable to fetch channel: %w",
+			err)
+	}
+
+	s.rejectCache.insert(chanID, v,
+		newRejectCacheEntryFromTimes(node1LastUpdate, node2LastUpdate,
+			v, exists, isZombie),
+	)
+
+	return exists, isZombie, nil
 }
 
 // ChannelID attempt to lookup the 8-byte compact channel ID which maps to the
