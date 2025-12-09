@@ -3154,7 +3154,7 @@ func createRPCCloseUpdate(
 // abandonChanFromGraph attempts to remove a channel from the channel graph. If
 // we can't find the chanID in the graph, then we assume it has already been
 // removed, and will return a nop.
-func abandonChanFromGraph(chanGraph *graphdb.ChannelGraph,
+func abandonChanFromGraph(chanGraph *graphdb.VersionedGraph,
 	chanPoint *wire.OutPoint) error {
 
 	// First, we'll obtain the channel ID. If we can't locate this, then
@@ -3195,7 +3195,8 @@ func (r *rpcServer) abandonChan(chanPoint *wire.OutPoint,
 	if err != nil {
 		return err
 	}
-	err = abandonChanFromGraph(r.server.graphDB, chanPoint)
+	// TODO: update to support deletions for v2 channels.
+	err = abandonChanFromGraph(r.server.v1Graph, chanPoint)
 	if err != nil {
 		return err
 	}
@@ -6937,10 +6938,10 @@ func marshalDBEdge(edgeInfo *models.ChannelEdgeInfo,
 	// channel announcement.
 	if includeAuthProof && edgeInfo.AuthProof != nil {
 		edge.AuthProof = &lnrpc.ChannelAuthProof{
-			NodeSig1:    edgeInfo.AuthProof.NodeSig1Bytes,
-			BitcoinSig1: edgeInfo.AuthProof.BitcoinSig1Bytes,
-			NodeSig2:    edgeInfo.AuthProof.NodeSig2Bytes,
-			BitcoinSig2: edgeInfo.AuthProof.BitcoinSig2Bytes,
+			NodeSig1:    edgeInfo.AuthProof.NodeSig1(),
+			BitcoinSig1: edgeInfo.AuthProof.BitcoinSig1(),
+			NodeSig2:    edgeInfo.AuthProof.NodeSig2(),
+			BitcoinSig2: edgeInfo.AuthProof.BitcoinSig2(),
 		}
 	}
 

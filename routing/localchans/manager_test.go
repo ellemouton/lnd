@@ -18,6 +18,7 @@ import (
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing"
+	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/stretchr/testify/require"
 )
 
@@ -61,10 +62,19 @@ func TestManager(t *testing.T) {
 		MaxHTLC:       5000,
 	}
 
-	currentPolicy := models.ChannelEdgePolicy{
-		MinHTLC:      minHTLC,
-		MessageFlags: lnwire.ChanUpdateRequiredMaxHtlc,
-	}
+	currentPolicy := *models.NewV1Policy(
+		0, // ChannelID
+		nil, // SigBytes
+		0, // TimeLockDelta
+		minHTLC,
+		0, // MaxHTLC
+		0, // FeeBaseMSat
+		0, // FeeProportionalMillionths
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			MessageFlags: lnwire.ChanUpdateRequiredMaxHtlc,
+		},
+	)
 
 	updateForwardingPolicies := func(
 		chanPolicies map[wire.OutPoint]models.ForwardingPolicy) {
@@ -209,10 +219,21 @@ func TestManager(t *testing.T) {
 			newPolicy:     newPolicy,
 			channelSet: []channel{
 				{
-					edgeInfo: &models.ChannelEdgeInfo{
-						Capacity:     chanCap,
-						ChannelPoint: chanPointValid,
-					},
+					//nolint:ll
+					edgeInfo: func() *models.ChannelEdgeInfo {
+						info, err := models.NewV1Channel(
+							0,
+							chainhash.Hash{},
+							route.Vertex{},
+							route.Vertex{},
+							&models.ChannelV1Fields{},
+							models.WithCapacity(chanCap),
+							models.WithChannelPoint(chanPointValid),
+						)
+						require.NoError(t, err)
+
+						return info
+					}(),
 				},
 			},
 			specifiedChanPoints:    []wire.OutPoint{chanPointValid},
@@ -227,10 +248,21 @@ func TestManager(t *testing.T) {
 			newPolicy:     newPolicy,
 			channelSet: []channel{
 				{
-					edgeInfo: &models.ChannelEdgeInfo{
-						Capacity:     chanCap,
-						ChannelPoint: chanPointValid,
-					},
+					//nolint:ll
+					edgeInfo: func() *models.ChannelEdgeInfo {
+						info, err := models.NewV1Channel(
+							0,
+							chainhash.Hash{},
+							route.Vertex{},
+							route.Vertex{},
+							&models.ChannelV1Fields{},
+							models.WithCapacity(chanCap),
+							models.WithChannelPoint(chanPointValid),
+						)
+						require.NoError(t, err)
+
+						return info
+					}(),
 				},
 			},
 			specifiedChanPoints:    []wire.OutPoint{},
@@ -245,10 +277,22 @@ func TestManager(t *testing.T) {
 			newPolicy:     newPolicy,
 			channelSet: []channel{
 				{
-					edgeInfo: &models.ChannelEdgeInfo{
-						Capacity:     chanCap,
-						ChannelPoint: chanPointValid,
-					},
+					//nolint:ll
+					edgeInfo: func() *models.ChannelEdgeInfo {
+						info, err := models.NewV1Channel(
+							0,
+							chainhash.Hash{},
+							route.Vertex{},
+							route.Vertex{},
+							&models.ChannelV1Fields{},
+							models.WithCapacity(chanCap),
+							models.WithChannelPoint(chanPointValid),
+						)
+
+						require.NoError(t, err)
+
+						return info
+					}(),
 				},
 			},
 			specifiedChanPoints: []wire.OutPoint{chanPointMissing},
@@ -267,10 +311,22 @@ func TestManager(t *testing.T) {
 			newPolicy:     noMaxHtlcPolicy,
 			channelSet: []channel{
 				{
-					edgeInfo: &models.ChannelEdgeInfo{
-						Capacity:     chanCap,
-						ChannelPoint: chanPointValid,
-					},
+					//nolint:ll
+					edgeInfo: func() *models.ChannelEdgeInfo {
+						info, err := models.NewV1Channel(
+							0,
+							chainhash.Hash{},
+							route.Vertex{},
+							route.Vertex{},
+							&models.ChannelV1Fields{},
+							models.WithCapacity(chanCap),
+							models.WithChannelPoint(chanPointValid),
+						)
+
+						require.NoError(t, err)
+
+						return info
+					}(),
 				},
 			},
 			specifiedChanPoints:    []wire.OutPoint{chanPointValid},
@@ -385,35 +441,37 @@ func TestCreateEdgeLower(t *testing.T) {
 			Index: 0,
 		},
 	}
-	expectedInfo := &models.ChannelEdgeInfo{
-		ChannelID:     8,
-		ChainHash:     channel.ChainHash,
-		Features:      lnwire.EmptyFeatureVector(),
-		Capacity:      9,
-		ChannelPoint:  channel.FundingOutpoint,
-		NodeKey1Bytes: sp,
-		NodeKey2Bytes: rp,
-		BitcoinKey1Bytes: [33]byte(
-			localMultisigKey.SerializeCompressed()),
-		BitcoinKey2Bytes: [33]byte(
-			remoteMultisigKey.SerializeCompressed()),
-		AuthProof:       nil,
-		ExtraOpaqueData: nil,
-	}
-	expectedEdge := &models.ChannelEdgePolicy{
-		ChannelID:                 8,
-		LastUpdate:                timestamp,
-		TimeLockDelta:             7,
-		ChannelFlags:              0,
-		MessageFlags:              lnwire.ChanUpdateRequiredMaxHtlc,
-		FeeBaseMSat:               3,
-		FeeProportionalMillionths: 4,
-		MinHTLC:                   1,
-		MaxHTLC:                   2,
-		SigBytes:                  nil,
-		ToNode:                    rp,
-		ExtraOpaqueData:           nil,
-	}
+	btcKey1 := route.NewVertex(localMultisigKey)
+	btcKey2 := route.NewVertex(remoteMultisigKey)
+	expectedInfo, err := models.NewV1Channel(
+		8,
+		channel.ChainHash,
+		sp,
+		rp,
+		&models.ChannelV1Fields{
+			BitcoinKey1Bytes: btcKey1,
+			BitcoinKey2Bytes: btcKey2,
+		},
+		models.WithCapacity(9),
+		models.WithChannelPoint(channel.FundingOutpoint),
+	)
+	require.NoError(t, err)
+	expectedEdge := models.NewV1Policy(
+		8,
+		nil, // SigBytes
+		7,   // TimeLockDelta
+		1,   // MinHTLC
+		2,   // MaxHTLC
+		3,   // FeeBaseMSat
+		4,   // FeeProportionalMillionths
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			LastUpdate:   timestamp,
+			MessageFlags: lnwire.ChanUpdateRequiredMaxHtlc,
+			ChannelFlags: 0,
+		},
+		models.WithToNode(rp),
+	)
 	manager := Manager{
 		SelfPub:              selfpub,
 		DefaultRoutingPolicy: defaultPolicy,
@@ -473,35 +531,37 @@ func TestCreateEdgeHigher(t *testing.T) {
 			Index: 0,
 		},
 	}
-	expectedInfo := &models.ChannelEdgeInfo{
-		ChannelID:     8,
-		ChainHash:     channel.ChainHash,
-		Features:      lnwire.EmptyFeatureVector(),
-		Capacity:      9,
-		ChannelPoint:  channel.FundingOutpoint,
-		NodeKey1Bytes: rp,
-		NodeKey2Bytes: sp,
-		BitcoinKey1Bytes: [33]byte(
-			remoteMultisigKey.SerializeCompressed()),
-		BitcoinKey2Bytes: [33]byte(
-			localMultisigKey.SerializeCompressed()),
-		AuthProof:       nil,
-		ExtraOpaqueData: nil,
-	}
-	expectedEdge := &models.ChannelEdgePolicy{
-		ChannelID:                 8,
-		LastUpdate:                timestamp,
-		TimeLockDelta:             7,
-		ChannelFlags:              1,
-		MessageFlags:              lnwire.ChanUpdateRequiredMaxHtlc,
-		FeeBaseMSat:               3,
-		FeeProportionalMillionths: 4,
-		MinHTLC:                   1,
-		MaxHTLC:                   2,
-		SigBytes:                  nil,
-		ToNode:                    rp,
-		ExtraOpaqueData:           nil,
-	}
+	btcKey1 := route.NewVertex(remoteMultisigKey)
+	btcKey2 := route.NewVertex(localMultisigKey)
+	expectedInfo, err := models.NewV1Channel(
+		8,
+		channel.ChainHash,
+		rp,
+		sp,
+		&models.ChannelV1Fields{
+			BitcoinKey1Bytes: btcKey1,
+			BitcoinKey2Bytes: btcKey2,
+		},
+		models.WithCapacity(9),
+		models.WithChannelPoint(channel.FundingOutpoint),
+	)
+	require.NoError(t, err)
+	expectedEdge := models.NewV1Policy(
+		8,
+		nil, // SigBytes
+		7,   // TimeLockDelta
+		1,   // MinHTLC
+		2,   // MaxHTLC
+		3,   // FeeBaseMSat
+		4,   // FeeProportionalMillionths
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			LastUpdate:   timestamp,
+			MessageFlags: lnwire.ChanUpdateRequiredMaxHtlc,
+			ChannelFlags: 1,
+		},
+		models.WithToNode(rp),
+	)
 	manager := Manager{
 		SelfPub:              selfpub,
 		DefaultRoutingPolicy: defaultPolicy,

@@ -17,6 +17,7 @@ import (
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing"
+	"github.com/lightningnetwork/lnd/routing/route"
 )
 
 // Manager manages the node's local channels. The only operation that is
@@ -321,35 +322,62 @@ func (r *Manager) createEdge(channel *channeldb.OpenChannel,
 		shortChanID = channel.ZeroConfRealScid()
 	}
 
-	info := &models.ChannelEdgeInfo{
-		ChannelID:    shortChanID.ToUint64(),
-		ChainHash:    channel.ChainHash,
-		Features:     lnwire.EmptyFeatureVector(),
-		Capacity:     channel.Capacity,
-		ChannelPoint: channel.FundingOutpoint,
+	nodeKey1, err := route.NewVertexFromBytes(nodeKey1Bytes)
+	if err != nil {
+		return nil, nil, err
+	}
+	nodeKey2, err := route.NewVertexFromBytes(nodeKey2Bytes)
+	if err != nil {
+		return nil, nil, err
+	}
+	bitcoinKey1, err := route.NewVertexFromBytes(bitcoinKey1Bytes)
+	if err != nil {
+		return nil, nil, err
+	}
+	bitcoinKey2, err := route.NewVertexFromBytes(bitcoinKey2Bytes)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	copy(info.NodeKey1Bytes[:], nodeKey1Bytes)
-	copy(info.NodeKey2Bytes[:], nodeKey2Bytes)
-	copy(info.BitcoinKey1Bytes[:], bitcoinKey1Bytes)
-	copy(info.BitcoinKey2Bytes[:], bitcoinKey2Bytes)
+	info, err := models.NewV1Channel(
+		shortChanID.ToUint64(),
+		channel.ChainHash,
+		nodeKey1,
+		nodeKey2,
+		&models.ChannelV1Fields{
+			BitcoinKey1Bytes: bitcoinKey1,
+			BitcoinKey2Bytes: bitcoinKey2,
+		},
+		models.WithCapacity(channel.Capacity),
+		models.WithChannelPoint(channel.FundingOutpoint),
+	)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	// Construct a dummy channel edge policy with default values that will
 	// be updated with the new values in the call to processChan below.
 	timeLockDelta := uint16(r.DefaultRoutingPolicy.TimeLockDelta)
-	edge := &models.ChannelEdgePolicy{
-		ChannelID:                 shortChanID.ToUint64(),
-		LastUpdate:                timestamp,
-		TimeLockDelta:             timeLockDelta,
-		ChannelFlags:              channelFlags,
-		MessageFlags:              lnwire.ChanUpdateRequiredMaxHtlc,
-		FeeBaseMSat:               r.DefaultRoutingPolicy.BaseFee,
-		FeeProportionalMillionths: r.DefaultRoutingPolicy.FeeRate,
-		MinHTLC:                   r.DefaultRoutingPolicy.MinHTLCOut,
-		MaxHTLC:                   r.DefaultRoutingPolicy.MaxHTLC,
-	}
 
-	copy(edge.ToNode[:], channel.IdentityPub.SerializeCompressed())
+	var toNode route.Vertex
+	copy(toNode[:], channel.IdentityPub.SerializeCompressed())
+
+	edge := models.NewV1Policy(
+		shortChanID.ToUint64(),
+		nil, // SigBytes
+		timeLockDelta,
+		r.DefaultRoutingPolicy.MinHTLCOut,
+		r.DefaultRoutingPolicy.MaxHTLC,
+		r.DefaultRoutingPolicy.BaseFee,
+		r.DefaultRoutingPolicy.FeeRate,
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			LastUpdate:   timestamp,
+			MessageFlags: lnwire.ChanUpdateRequiredMaxHtlc,
+			ChannelFlags: channelFlags,
+		},
+		models.WithToNode(toNode),
+	)
 
 	return info, edge, nil
 }

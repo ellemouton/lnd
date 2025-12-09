@@ -224,7 +224,6 @@ func (s *Server) ImportGraph(ctx context.Context,
 	// Obtain the pointer to the global singleton channel graph.
 	graphDB := s.cfg.GraphDB
 
-	var err error
 	for _, rpcNode := range graph.Nodes {
 		pubKeyBytes, err := parsePubKey(rpcNode.PubKey)
 		if err != nil {
@@ -273,18 +272,12 @@ func (s *Server) ImportGraph(ctx context.Context,
 	for _, rpcEdge := range graph.Edges {
 		rpcEdge := rpcEdge
 
-		edge := &models.ChannelEdgeInfo{
-			ChannelID: rpcEdge.ChannelId,
-			ChainHash: *s.cfg.ActiveNetParams.GenesisHash,
-			Capacity:  btcutil.Amount(rpcEdge.Capacity),
-		}
-
-		edge.NodeKey1Bytes, err = parsePubKey(rpcEdge.Node1Pub)
+		node1, err := parsePubKey(rpcEdge.Node1Pub)
 		if err != nil {
 			return nil, err
 		}
 
-		edge.NodeKey2Bytes, err = parsePubKey(rpcEdge.Node2Pub)
+		node2, err := parsePubKey(rpcEdge.Node2Pub)
 		if err != nil {
 			return nil, err
 		}
@@ -293,46 +286,58 @@ func (s *Server) ImportGraph(ctx context.Context,
 		if err != nil {
 			return nil, err
 		}
-		edge.ChannelPoint = *channelPoint
+
+		edge, err := models.NewV1Channel(
+			rpcEdge.ChannelId,
+			*s.cfg.ActiveNetParams.GenesisHash,
+			node1,
+			node2,
+			&models.ChannelV1Fields{},
+			models.WithCapacity(btcutil.Amount(rpcEdge.Capacity)),
+			models.WithChannelPoint(*channelPoint),
+		)
+		if err != nil {
+			return nil, err
+		}
 
 		if err := graphDB.AddChannelEdge(ctx, edge); err != nil {
 			return nil, fmt.Errorf("unable to add edge %v: %w",
 				rpcEdge.ChanPoint, err)
 		}
 
-		makePolicy := func(rpcPolicy *lnrpc.RoutingPolicy) *models.ChannelEdgePolicy { //nolint:ll
-			policy := &models.ChannelEdgePolicy{
-				ChannelID: rpcEdge.ChannelId,
-				LastUpdate: time.Unix(
-					int64(rpcPolicy.LastUpdate), 0,
-				),
-				TimeLockDelta: uint16(
-					rpcPolicy.TimeLockDelta,
-				),
-				MinHTLC: lnwire.MilliSatoshi(
-					rpcPolicy.MinHtlc,
-				),
-				FeeBaseMSat: lnwire.MilliSatoshi(
-					rpcPolicy.FeeBaseMsat,
-				),
-				FeeProportionalMillionths: lnwire.MilliSatoshi(
-					rpcPolicy.FeeRateMilliMsat,
-				),
-			}
+		makePolicy := func(rpcPolicy *lnrpc.RoutingPolicy,
+			chanFlags lnwire.ChanUpdateChanFlags) *models.ChannelEdgePolicy { //nolint:ll
+
+			var msgFlags lnwire.ChanUpdateMsgFlags
+			maxHTLC := lnwire.MilliSatoshi(0)
 			if rpcPolicy.MaxHtlcMsat > 0 {
-				policy.MaxHTLC = lnwire.MilliSatoshi(
+				maxHTLC = lnwire.MilliSatoshi(
 					rpcPolicy.MaxHtlcMsat,
 				)
-				policy.MessageFlags |=
-					lnwire.ChanUpdateRequiredMaxHtlc
+				msgFlags |= lnwire.ChanUpdateRequiredMaxHtlc
 			}
 
-			return policy
+			return models.NewV1Policy(
+				rpcEdge.ChannelId,
+				nil, // SigBytes
+				uint16(rpcPolicy.TimeLockDelta),
+				lnwire.MilliSatoshi(rpcPolicy.MinHtlc),
+				maxHTLC,
+				lnwire.MilliSatoshi(rpcPolicy.FeeBaseMsat),
+				lnwire.MilliSatoshi(rpcPolicy.FeeRateMilliMsat),
+				fn.None[lnwire.Fee](),
+				&models.PolicyV1Fields{
+					LastUpdate: time.Unix(
+						int64(rpcPolicy.LastUpdate), 0,
+					),
+					MessageFlags: msgFlags,
+					ChannelFlags: chanFlags,
+				},
+			)
 		}
 
 		if rpcEdge.Node1Policy != nil {
-			policy := makePolicy(rpcEdge.Node1Policy)
-			policy.ChannelFlags = 0
+			policy := makePolicy(rpcEdge.Node1Policy, 0)
 			err := graphDB.UpdateEdgePolicy(ctx, policy)
 			if err != nil {
 				return nil, fmt.Errorf(
@@ -341,8 +346,7 @@ func (s *Server) ImportGraph(ctx context.Context,
 		}
 
 		if rpcEdge.Node2Policy != nil {
-			policy := makePolicy(rpcEdge.Node2Policy)
-			policy.ChannelFlags = 1
+			policy := makePolicy(rpcEdge.Node2Policy, 1)
 			err := graphDB.UpdateEdgePolicy(ctx, policy)
 			if err != nil {
 				return nil, fmt.Errorf(

@@ -4,7 +4,10 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/lightningnetwork/lnd/graph/db/models"
+	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing/route"
 )
 
 // TestChannelCache checks the behavior of the channelCache with respect to
@@ -17,14 +20,14 @@ func TestChannelCache(t *testing.T) {
 
 	// As a sanity check, assert that querying the empty cache does not
 	// return an entry.
-	_, ok := c.get(0)
+	_, ok := c.get(0, lnwire.GossipVersion1)
 	if ok {
 		t.Fatalf("channel cache should be empty")
 	}
 
 	// Now, fill up the cache entirely.
 	for i := uint64(0); i < cacheSize; i++ {
-		c.insert(i, channelForInt(i))
+		c.insert(i, lnwire.GossipVersion1, channelForInt(i))
 	}
 
 	// Assert that the cache has all of the entries just inserted, since no
@@ -32,7 +35,7 @@ func TestChannelCache(t *testing.T) {
 	assertHasChanEntries(t, c, 0, cacheSize)
 
 	// Now, insert a new element that causes the cache to evict an element.
-	c.insert(cacheSize, channelForInt(cacheSize))
+	c.insert(cacheSize, lnwire.GossipVersion1, channelForInt(cacheSize))
 
 	// Assert that the cache has this last entry, as the cache should evict
 	// some prior element and not the newly inserted one.
@@ -42,7 +45,7 @@ func TestChannelCache(t *testing.T) {
 	// elements.
 	evicted := make(map[uint64]struct{})
 	for i := uint64(0); i < cacheSize+1; i++ {
-		_, ok := c.get(i)
+		_, ok := c.get(i, lnwire.GossipVersion1)
 		if !ok {
 			evicted[i] = struct{}{}
 		}
@@ -56,9 +59,9 @@ func TestChannelCache(t *testing.T) {
 
 	// Remove the highest item which initially caused the eviction and
 	// reinsert the element that was evicted prior.
-	c.remove(cacheSize)
+	c.remove(cacheSize, lnwire.GossipVersion1)
 	for i := range evicted {
-		c.insert(i, channelForInt(i))
+		c.insert(i, lnwire.GossipVersion1, channelForInt(i))
 	}
 
 	// Since the removal created an extra slot, the last insertion should
@@ -71,7 +74,7 @@ func TestChannelCache(t *testing.T) {
 	// happening on inserts for existing cache items, we expect this to fail
 	// with high probability.
 	for i := uint64(0); i < cacheSize; i++ {
-		c.insert(i, channelForInt(i))
+		c.insert(i, lnwire.GossipVersion1, channelForInt(i))
 	}
 	assertHasChanEntries(t, c, 0, cacheSize)
 
@@ -84,7 +87,7 @@ func assertHasChanEntries(t *testing.T, c *channelCache, start, end uint64) {
 	t.Helper()
 
 	for i := start; i < end; i++ {
-		entry, ok := c.get(i)
+		entry, ok := c.get(i, lnwire.GossipVersion1)
 		if !ok {
 			t.Fatalf("channel cache should contain chan %d", i)
 		}
@@ -99,9 +102,17 @@ func assertHasChanEntries(t *testing.T, c *channelCache, start, end uint64) {
 
 // channelForInt generates a unique ChannelEdge given an integer.
 func channelForInt(i uint64) ChannelEdge {
+	info, err := models.NewV1Channel(
+		i,
+		chainhash.Hash{},
+		route.Vertex{},
+		route.Vertex{},
+		&models.ChannelV1Fields{},
+	)
+	if err != nil {
+		panic(err)
+	}
 	return ChannelEdge{
-		Info: &models.ChannelEdgeInfo{
-			ChannelID: i,
-		},
+		Info: info,
 	}
 }

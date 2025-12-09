@@ -19,6 +19,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	sphinx "github.com/lightningnetwork/lightning-onion"
@@ -99,12 +100,12 @@ var (
 	_             = testSScalar.SetByteSlice(testSBytes)
 	testSig       = ecdsa.NewSignature(testRScalar, testSScalar)
 
-	testAuthProof = models.ChannelAuthProof{
-		NodeSig1Bytes:    testSig.Serialize(),
-		NodeSig2Bytes:    testSig.Serialize(),
-		BitcoinSig1Bytes: testSig.Serialize(),
-		BitcoinSig2Bytes: testSig.Serialize(),
-	}
+	testAuthProof = *models.NewV1ChannelAuthProof(
+		testSig.Serialize(),
+		testSig.Serialize(),
+		testSig.Serialize(),
+		testSig.Serialize(),
+	)
 )
 
 // noProbabilitySource is used in testing to return the same probability 1 for
@@ -345,18 +346,30 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 
 		// We first insert the existence of the edge between the two
 		// nodes.
-		edgeInfo := models.ChannelEdgeInfo{
-			ChannelID:    edge.ChannelID,
-			AuthProof:    &testAuthProof,
-			ChannelPoint: fundingPoint,
-			Features:     lnwire.EmptyFeatureVector(),
-			Capacity:     btcutil.Amount(edge.Capacity),
-		}
+		var node1Vertex, node2Vertex route.Vertex
+		copy(node1Vertex[:], node1Bytes)
+		copy(node2Vertex[:], node2Bytes)
 
-		copy(edgeInfo.NodeKey1Bytes[:], node1Bytes)
-		copy(edgeInfo.NodeKey2Bytes[:], node2Bytes)
-		copy(edgeInfo.BitcoinKey1Bytes[:], node1Bytes)
-		copy(edgeInfo.BitcoinKey2Bytes[:], node2Bytes)
+		var btcKey1, btcKey2 route.Vertex
+		copy(btcKey1[:], node1Bytes)
+		copy(btcKey2[:], node2Bytes)
+
+		edgeInfo, err := models.NewV1Channel(
+			edge.ChannelID,
+			*chaincfg.SimNetParams.GenesisHash,
+			node1Vertex,
+			node2Vertex,
+			&models.ChannelV1Fields{
+				BitcoinKey1Bytes: btcKey1,
+				BitcoinKey2Bytes: btcKey2,
+			},
+			models.WithChanProof(&testAuthProof),
+			models.WithChannelPoint(fundingPoint),
+			models.WithCapacity(btcutil.Amount(edge.Capacity)),
+		)
+		if err != nil {
+			return nil, err
+		}
 
 		shortID := lnwire.NewShortChanIDFromInt(edge.ChannelID)
 		links[shortID] = &mockLink{
@@ -365,7 +378,7 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 			),
 		}
 
-		err = graph.AddChannelEdge(ctx, &edgeInfo)
+		err = graph.AddChannelEdge(ctx, edgeInfo)
 		if err != nil && !errors.Is(err, graphdb.ErrEdgeAlreadyExist) {
 			return nil, err
 		}
@@ -377,30 +390,33 @@ func parseTestGraph(t *testing.T, useCache bool, path string) (
 			targetNode = edgeInfo.NodeKey2Bytes
 		}
 
-		edgePolicy := &models.ChannelEdgePolicy{
-			SigBytes:                  testSig.Serialize(),
-			MessageFlags:              lnwire.ChanUpdateMsgFlags(edge.MessageFlags),
-			ChannelFlags:              channelFlags,
-			ChannelID:                 edge.ChannelID,
-			LastUpdate:                testTime,
-			TimeLockDelta:             edge.Expiry,
-			MinHTLC:                   lnwire.MilliSatoshi(edge.MinHTLC),
-			MaxHTLC:                   lnwire.MilliSatoshi(edge.MaxHTLC),
-			FeeBaseMSat:               lnwire.MilliSatoshi(edge.FeeBaseMsat),
-			FeeProportionalMillionths: lnwire.MilliSatoshi(edge.FeeRate),
-			ToNode:                    targetNode,
-		}
+		edgePolicy := models.NewV1Policy(
+			edge.ChannelID,
+			testSig.Serialize(),
+			edge.Expiry,
+			lnwire.MilliSatoshi(edge.MinHTLC),
+			lnwire.MilliSatoshi(edge.MaxHTLC),
+			lnwire.MilliSatoshi(edge.FeeBaseMsat),
+			lnwire.MilliSatoshi(edge.FeeRate),
+			fn.None[lnwire.Fee](),
+			&models.PolicyV1Fields{
+				LastUpdate:   testTime,
+				MessageFlags: lnwire.ChanUpdateMsgFlags(edge.MessageFlags),
+				ChannelFlags: channelFlags,
+			},
+			models.WithToNode(targetNode),
+		)
 		if err := graph.UpdateEdgePolicy(ctx, edgePolicy); err != nil {
 			return nil, err
 		}
 
 		// We also store the channel IDs info for each of the node.
-		node1Vertex, err := route.NewVertexFromBytes(node1Bytes)
+		node1Vertex, err = route.NewVertexFromBytes(node1Bytes)
 		if err != nil {
 			return nil, err
 		}
 
-		node2Vertex, err := route.NewVertexFromBytes(node2Bytes)
+		node2Vertex, err = route.NewVertexFromBytes(node2Bytes)
 		if err != nil {
 			return nil, err
 		}
@@ -677,20 +693,24 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 
 		// We first insert the existence of the edge between the two
 		// nodes.
-		edgeInfo := models.ChannelEdgeInfo{
-			ChannelID:    channelID,
-			AuthProof:    &testAuthProof,
-			ChannelPoint: *fundingPoint,
-			Capacity:     testChannel.Capacity,
-			Features:     lnwire.EmptyFeatureVector(),
-
-			NodeKey1Bytes:    node1Vertex,
-			BitcoinKey1Bytes: node1Vertex,
-			NodeKey2Bytes:    node2Vertex,
-			BitcoinKey2Bytes: node2Vertex,
+		edgeInfo, err := models.NewV1Channel(
+			channelID,
+			*chaincfg.SimNetParams.GenesisHash,
+			node1Vertex,
+			node2Vertex,
+			&models.ChannelV1Fields{
+				BitcoinKey1Bytes: node1Vertex,
+				BitcoinKey2Bytes: node2Vertex,
+			},
+			models.WithChanProof(&testAuthProof),
+			models.WithChannelPoint(*fundingPoint),
+			models.WithCapacity(testChannel.Capacity),
+		)
+		if err != nil {
+			return nil, err
 		}
 
-		err = graph.AddChannelEdge(ctx, &edgeInfo)
+		err = graph.AddChannelEdge(ctx, edgeInfo)
 		if err != nil && !errors.Is(err, graphdb.ErrEdgeAlreadyExist) {
 			return nil, err
 		}
@@ -728,21 +748,23 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 				channelFlags |= lnwire.ChanUpdateDisabled
 			}
 
-			edgePolicy := &models.ChannelEdgePolicy{
-				SigBytes:                  testSig.Serialize(),
-				MessageFlags:              msgFlags,
-				ChannelFlags:              channelFlags,
-				ChannelID:                 channelID,
-				LastUpdate:                node1.LastUpdate,
-				TimeLockDelta:             node1.Expiry,
-				MinHTLC:                   node1.MinHTLC,
-				MaxHTLC:                   node1.MaxHTLC,
-				FeeBaseMSat:               node1.FeeBaseMsat,
-				FeeProportionalMillionths: node1.FeeRate,
-				ToNode:                    node2Vertex,
-				InboundFee:                getInboundFees(node1), //nolint:ll
-				ExtraOpaqueData:           getExtraData(node1),
-			}
+			edgePolicy := models.NewV1Policy(
+				channelID,
+				testSig.Serialize(),
+				node1.Expiry,
+				node1.MinHTLC,
+				node1.MaxHTLC,
+				node1.FeeBaseMsat,
+				node1.FeeRate,
+				getInboundFees(node1), //nolint:ll
+				&models.PolicyV1Fields{
+					LastUpdate:      node1.LastUpdate,
+					MessageFlags:    msgFlags,
+					ChannelFlags:    channelFlags,
+					ExtraOpaqueData: getExtraData(node1),
+				},
+				models.WithToNode(node2Vertex),
+			)
 			err := graph.UpdateEdgePolicy(ctx, edgePolicy)
 			if err != nil {
 				return nil, err
@@ -760,21 +782,23 @@ func createTestGraphFromChannels(t *testing.T, useCache bool,
 			}
 			channelFlags |= lnwire.ChanUpdateDirection
 
-			edgePolicy := &models.ChannelEdgePolicy{
-				SigBytes:                  testSig.Serialize(),
-				MessageFlags:              msgFlags,
-				ChannelFlags:              channelFlags,
-				ChannelID:                 channelID,
-				LastUpdate:                node2.LastUpdate,
-				TimeLockDelta:             node2.Expiry,
-				MinHTLC:                   node2.MinHTLC,
-				MaxHTLC:                   node2.MaxHTLC,
-				FeeBaseMSat:               node2.FeeBaseMsat,
-				FeeProportionalMillionths: node2.FeeRate,
-				ToNode:                    node1Vertex,
-				InboundFee:                getInboundFees(node2), //nolint:ll
-				ExtraOpaqueData:           getExtraData(node2),
-			}
+			edgePolicy := models.NewV1Policy(
+				channelID,
+				testSig.Serialize(),
+				node2.Expiry,
+				node2.MinHTLC,
+				node2.MaxHTLC,
+				node2.FeeBaseMsat,
+				node2.FeeRate,
+				getInboundFees(node2), //nolint:ll
+				&models.PolicyV1Fields{
+					LastUpdate:      node2.LastUpdate,
+					MessageFlags:    msgFlags,
+					ChannelFlags:    channelFlags,
+					ExtraOpaqueData: getExtraData(node2),
+				},
+				models.WithToNode(node1Vertex),
+			)
 			err := graph.UpdateEdgePolicy(ctx, edgePolicy)
 			if err != nil {
 				return nil, err

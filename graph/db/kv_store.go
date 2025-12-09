@@ -1179,8 +1179,8 @@ func (c *KVStore) AddChannelEdge(ctx context.Context,
 			case alreadyExists:
 				return ErrEdgeAlreadyExist
 			default:
-				c.rejectCache.remove(edge.ChannelID)
-				c.chanCache.remove(edge.ChannelID)
+				c.rejectCache.remove(edge.ChannelID, lnwire.GossipVersion1)
+				c.chanCache.remove(edge.ChannelID, lnwire.GossipVersion1)
 				return nil
 			}
 		},
@@ -1262,9 +1262,9 @@ func (c *KVStore) addChannelEdge(tx kvdb.RwTx,
 
 	// Mark edge policies for both sides as unknown. This is to enable
 	// efficient incoming channel lookup for a node.
-	keys := []*[33]byte{
-		&edge.NodeKey1Bytes,
-		&edge.NodeKey2Bytes,
+	keys := []route.Vertex{
+		edge.NodeKey1Bytes,
+		edge.NodeKey2Bytes,
 	}
 	for _, key := range keys {
 		err := putChanEdgePolicyUnknown(edges, edge.ChannelID, key[:])
@@ -1283,13 +1283,13 @@ func (c *KVStore) addChannelEdge(tx kvdb.RwTx,
 	return chanIndex.Put(b.Bytes(), chanKey[:])
 }
 
-// HasChannelEdge returns true if the database knows of a channel edge with the
+// HasV1ChannelEdge returns true if the database knows of a channel edge with the
 // passed channel ID, and false otherwise. If an edge with that ID is found
 // within the graph, then two time stamps representing the last time the edge
 // was updated for both directed edges are returned along with the boolean. If
 // it is not found, then the zombie index is checked and its result is returned
 // as the second boolean.
-func (c *KVStore) HasChannelEdge(
+func (c *KVStore) HasV1ChannelEdge(
 	chanID uint64) (time.Time, time.Time, bool, bool, error) {
 
 	var (
@@ -1302,10 +1302,9 @@ func (c *KVStore) HasChannelEdge(
 	// We'll query the cache with the shared lock held to allow multiple
 	// readers to access values in the cache concurrently if they exist.
 	c.cacheMu.RLock()
-	if entry, ok := c.rejectCache.get(chanID); ok {
+	if entry, ok := c.rejectCache.get(chanID, lnwire.GossipVersion1); ok {
 		c.cacheMu.RUnlock()
-		upd1Time = time.Unix(entry.upd1Time, 0)
-		upd2Time = time.Unix(entry.upd2Time, 0)
+		upd1Time, upd2Time = entry.toTimes(lnwire.GossipVersion1)
 		exists, isZombie = entry.flags.unpack()
 
 		return upd1Time, upd2Time, exists, isZombie, nil
@@ -1318,9 +1317,8 @@ func (c *KVStore) HasChannelEdge(
 	// The item was not found with the shared lock, so we'll acquire the
 	// exclusive lock and check the cache again in case another method added
 	// the entry to the cache while no lock was held.
-	if entry, ok := c.rejectCache.get(chanID); ok {
-		upd1Time = time.Unix(entry.upd1Time, 0)
-		upd2Time = time.Unix(entry.upd2Time, 0)
+	if entry, ok := c.rejectCache.get(chanID, lnwire.GossipVersion1); ok {
+		upd1Time, upd2Time = entry.toTimes(lnwire.GossipVersion1)
 		exists, isZombie = entry.flags.unpack()
 
 		return upd1Time, upd2Time, exists, isZombie, nil
@@ -1385,18 +1383,126 @@ func (c *KVStore) HasChannelEdge(
 		return time.Time{}, time.Time{}, exists, isZombie, err
 	}
 
-	c.rejectCache.insert(chanID, rejectCacheEntry{
-		upd1Time: upd1Time.Unix(),
-		upd2Time: upd2Time.Unix(),
-		flags:    packRejectFlags(exists, isZombie),
-	})
+	c.rejectCache.insert(chanID, lnwire.GossipVersion1,
+		newRejectCacheEntryFromTimes(upd1Time, upd2Time,
+			lnwire.GossipVersion1, exists, isZombie),
+	)
 
 	return upd1Time, upd2Time, exists, isZombie, nil
+}
+
+func (c *KVStore) HasChannelEdge(v lnwire.GossipVersion, chanID uint64) (bool,
+	bool, error) {
+
+	var (
+		exists   bool
+		isZombie bool
+		upd1Time time.Time
+		upd2Time time.Time
+	)
+
+	if v != lnwire.GossipVersion1 {
+		return false, false, ErrVersionNotSupportedForKVDB
+	}
+
+	// We'll query the cache with the shared lock held to allow multiple
+	// readers to access values in the cache concurrently if they exist.
+	c.cacheMu.RLock()
+	if entry, ok := c.rejectCache.get(chanID, v); ok {
+		c.cacheMu.RUnlock()
+		exists, isZombie = entry.flags.unpack()
+
+		return exists, isZombie, nil
+	}
+	c.cacheMu.RUnlock()
+
+	c.cacheMu.Lock()
+	defer c.cacheMu.Unlock()
+
+	// The item was not found with the shared lock, so we'll acquire the
+	// exclusive lock and check the cache again in case another method added
+	// the entry to the cache while no lock was held.
+	if entry, ok := c.rejectCache.get(chanID, v); ok {
+		exists, isZombie = entry.flags.unpack()
+
+		return exists, isZombie, nil
+	}
+
+	if err := kvdb.View(c.db, func(tx kvdb.RTx) error {
+		edges := tx.ReadBucket(edgeBucket)
+		if edges == nil {
+			return ErrGraphNoEdgesFound
+		}
+		edgeIndex := edges.NestedReadBucket(edgeIndexBucket)
+		if edgeIndex == nil {
+			return ErrGraphNoEdgesFound
+		}
+
+		var channelID [8]byte
+		byteOrder.PutUint64(channelID[:], chanID)
+
+		// If the edge doesn't exist, then we'll also check our zombie
+		// index.
+		if edgeIndex.Get(channelID[:]) == nil {
+			exists = false
+			zombieIndex := edges.NestedReadBucket(zombieBucket)
+			if zombieIndex != nil {
+				isZombie, _, _ = isZombieEdge(
+					zombieIndex, chanID,
+				)
+			}
+
+			return nil
+		}
+
+		exists = true
+		isZombie = false
+
+		// If the channel has been found in the graph, then retrieve
+		// the edges itself so we can return the last updated
+		// timestamps.
+		nodes := tx.ReadBucket(nodeBucket)
+		if nodes == nil {
+			return ErrGraphNodeNotFound
+		}
+
+		e1, e2, err := fetchChanEdgePolicies(
+			edgeIndex, edges, channelID[:],
+		)
+		if err != nil {
+			return err
+		}
+
+		// As we may have only one of the edges populated, only set the
+		// update time if the edge was found in the database.
+		if e1 != nil {
+			upd1Time = e1.LastUpdate
+		}
+		if e2 != nil {
+			upd2Time = e2.LastUpdate
+		}
+
+		return nil
+	}, func() {}); err != nil {
+		return exists, isZombie, err
+	}
+
+	c.rejectCache.insert(chanID, v, newRejectCacheEntryFromTimes(
+		upd1Time, upd2Time, v, exists, isZombie,
+	))
+
+	return exists, isZombie, nil
 }
 
 // AddEdgeProof sets the proof of an existing edge in the graph database.
 func (c *KVStore) AddEdgeProof(chanID lnwire.ShortChannelID,
 	proof *models.ChannelAuthProof) error {
+
+	// We only support v1 channel proofs in the KVStore.
+	if proof.Version != lnwire.GossipVersion1 {
+		return fmt.Errorf("only v1 channel proofs supported, got v%d",
+			proof.Version)
+	}
 
 	// Construct the channel's primary key which is the 8-byte channel ID.
 	var chanKey [8]byte
@@ -1558,8 +1664,8 @@ func (c *KVStore) PruneGraph(spentOutputs []*wire.OutPoint,
 	}
 
 	for _, channel := range chansClosed {
-		c.rejectCache.remove(channel.ChannelID)
-		c.chanCache.remove(channel.ChannelID)
+		c.rejectCache.remove(channel.ChannelID, channel.Version)
+		c.chanCache.remove(channel.ChannelID, channel.Version)
 	}
 
 	return chansClosed, prunedNodes, nil
@@ -1825,8 +1931,8 @@ func (c *KVStore) DisconnectBlockAtHeight(height uint32) (
 	}
 
 	for _, channel := range removedChans {
-		c.rejectCache.remove(channel.ChannelID)
-		c.chanCache.remove(channel.ChannelID)
+		c.rejectCache.remove(channel.ChannelID, channel.Version)
+		c.chanCache.remove(channel.ChannelID, channel.Version)
 	}
 
 	return removedChans, nil
@@ -1883,8 +1989,13 @@ func (c *KVStore) PruneTip() (*chainhash.Hash, uint32, error) {
 // that we require the node that failed to send the fresh update to be the one
 // that resurrects the channel from its zombie state. The markZombie bool
 // denotes whether or not to mark the channel as a zombie.
-func (c *KVStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
-	chanIDs ...uint64) ([]*models.ChannelEdgeInfo, error) {
+func (c *KVStore) DeleteChannelEdges(v lnwire.GossipVersion,
+	strictZombiePruning, markZombie bool, chanIDs ...uint64) (
+	[]*models.ChannelEdgeInfo, error) {
+
+	if v != lnwire.GossipVersion1 {
+		return nil, ErrVersionNotSupportedForKVDB
+	}
 
 	// TODO(roasbeef): possibly delete from node bucket if node has no more
 	// channels
@@ -1939,8 +2050,8 @@ func (c *KVStore) DeleteChannelEdges(strictZombiePruning, markZombie bool,
 	}
 
 	for _, chanID := range chanIDs {
-		c.rejectCache.remove(chanID)
-		c.chanCache.remove(chanID)
+		c.rejectCache.remove(chanID, v)
+		c.chanCache.remove(chanID, v)
 	}
 
 	return infos, nil
@@ -2070,7 +2181,7 @@ func (c *KVStore) updateChanCacheBatch(edgesToCache map[uint64]ChannelEdge) {
 	defer c.cacheMu.Unlock()
 
 	for cid, edge := range edgesToCache {
-		c.chanCache.insert(cid, edge)
+		c.chanCache.insert(cid, edge.Info.Version, edge)
 	}
 }
 
@@ -2217,7 +2328,7 @@ func (c *KVStore) fetchNextChanUpdateBatch(
 			// Before we read the edge info, we'll see if this
 			// element is already in the cache or not.
 			c.cacheMu.RLock()
-			if channel, ok := c.chanCache.get(chanIDInt); ok {
+			if channel, ok := c.chanCache.get(chanIDInt, lnwire.GossipVersion1); ok {
 				state.edgesSeen[chanIDInt] = struct{}{}
 
 				batch = append(batch, channel)
@@ -3195,6 +3306,10 @@ func (c *KVStore) UpdateEdgePolicy(ctx context.Context,
 		from, to     route.Vertex
 	)
 
+	if edge.Version != lnwire.GossipVersion1 {
+		return from, to, ErrVersionNotSupportedForKVDB
+	}
+
 	r := &batch.Request[kvdb.RwTx]{
 		Opts: batch.NewSchedulerOptions(opts...),
 		Reset: func() {
@@ -3252,26 +3367,26 @@ func (c *KVStore) updateEdgeCache(e *models.ChannelEdgePolicy,
 	// the entry with the updated timestamp for the direction that was just
 	// written. If the edge doesn't exist, we'll load the cache entry lazily
 	// during the next query for this edge.
-	if entry, ok := c.rejectCache.get(e.ChannelID); ok {
+	if entry, ok := c.rejectCache.get(e.ChannelID, e.Version); ok {
 		if isUpdate1 {
-			entry.upd1Time = e.LastUpdate.Unix()
+			entry.upd1 = policyUpdateValue(e)
 		} else {
-			entry.upd2Time = e.LastUpdate.Unix()
+			entry.upd2 = policyUpdateValue(e)
 		}
-		c.rejectCache.insert(e.ChannelID, entry)
+		c.rejectCache.insert(e.ChannelID, e.Version, entry)
 	}
 
 	// If an entry for this channel is found in channel cache, we'll modify
 	// the entry with the updated policy for the direction that was just
 	// written. If the edge doesn't exist, we'll defer loading the info and
 	// policies and lazily read from disk during the next query.
-	if channel, ok := c.chanCache.get(e.ChannelID); ok {
+	if channel, ok := c.chanCache.get(e.ChannelID, e.Version); ok {
 		if isUpdate1 {
 			channel.Policy1 = e
 		} else {
 			channel.Policy2 = e
 		}
-		c.chanCache.insert(e.ChannelID, channel)
+		c.chanCache.insert(e.ChannelID, e.Version, channel)
 	}
 }
 
@@ -3798,8 +3913,8 @@ func computeEdgePolicyKeys(info *models.ChannelEdgeInfo) ([]byte, []byte) {
 // found, then ErrEdgeNotFound is returned. A struct which houses the general
 // information for the channel itself is returned as well as two structs that
 // contain the routing policies for the channel in either direction.
-func (c *KVStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
-	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+func (c *KVStore) FetchChannelEdgesByOutpoint(v lnwire.GossipVersion,
+	op *wire.OutPoint) (*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
 	var (
@@ -3807,6 +3922,10 @@ func (c *KVStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 		policy1  *models.ChannelEdgePolicy
 		policy2  *models.ChannelEdgePolicy
 	)
+
+	if v != lnwire.GossipVersion1 {
+		return nil, nil, nil, ErrVersionNotSupportedForKVDB
+	}
 
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		// First, grab the node bucket. This will be used to populate
@@ -3884,9 +4003,13 @@ func (c *KVStore) FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
 // ErrZombieEdge an be returned if the edge is currently marked as a zombie
 // within the database. In this case, the ChannelEdgePolicy's will be nil, and
 // the ChannelEdgeInfo will only include the public keys of each node.
-func (c *KVStore) FetchChannelEdgesByID(chanID uint64) (
-	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+func (c *KVStore) FetchChannelEdgesByID(v lnwire.GossipVersion,
+	chanID uint64) (*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
+
+	if v != lnwire.GossipVersion1 {
+		return nil, nil, nil, ErrVersionNotSupportedForKVDB
+	}
 
 	var (
 		edgeInfo  *models.ChannelEdgeInfo
@@ -3942,10 +4065,17 @@ func (c *KVStore) FetchChannelEdgesByID(chanID uint64) (
 			// populate the edge info with the public keys of each
 			// party as this is the only information we have about
 			// it and return an error signaling so.
-			edgeInfo = &models.ChannelEdgeInfo{
-				NodeKey1Bytes: pubKey1,
-				NodeKey2Bytes: pubKey2,
+			zombieEdge, err := models.NewV1Channel(
+				0,
+				chainhash.Hash{},
+				pubKey1,
+				pubKey2,
+				&models.ChannelV1Fields{},
+			)
+			if err != nil {
+				return err
 			}
+			edgeInfo = zombieEdge
 
 			return ErrZombieEdge
 		}
@@ -3988,7 +4118,13 @@ func (c *KVStore) FetchChannelEdgesByID(chanID uint64) (
 // IsPublicNode is a helper method that determines whether the node with the
 // given public key is seen as a public node in the graph from the graph's
 // source node's point of view.
-func (c *KVStore) IsPublicNode(pubKey [33]byte) (bool, error) {
+func (c *KVStore) IsPublicNode(v lnwire.GossipVersion, pubKey [33]byte) (bool,
+	error) {
+
+	if v != lnwire.GossipVersion1 {
+		return false, ErrVersionNotSupportedForKVDB
+	}
+
 	var nodeIsPublic bool
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		nodes := tx.ReadBucket(nodeBucket)
@@ -4100,10 +4236,7 @@ func (c *KVStore) ChannelView() ([]EdgePoint, error) {
 					return err
 				}
 
-				pkScript, err := genMultiSigP2WSH(
-					edgeInfo.BitcoinKey1Bytes[:],
-					edgeInfo.BitcoinKey2Bytes[:],
-				)
+				pkScript, err := edgeInfo.FundingPKScript()
 				if err != nil {
 					return err
 				}
@@ -4151,8 +4284,8 @@ func (c *KVStore) MarkEdgeZombie(chanID uint64,
 		return err
 	}
 
-	c.rejectCache.remove(chanID)
-	c.chanCache.remove(chanID)
+	c.rejectCache.remove(chanID, lnwire.GossipVersion1)
+	c.chanCache.remove(chanID, lnwire.GossipVersion1)
 
 	return nil
 }
@@ -4220,8 +4353,8 @@ func (c *KVStore) markEdgeLiveUnsafe(tx kvdb.RwTx, chanID uint64) error {
 		return err
 	}
 
-	c.rejectCache.remove(chanID)
-	c.chanCache.remove(chanID)
+	c.rejectCache.remove(chanID, lnwire.GossipVersion1)
+	c.chanCache.remove(chanID, lnwire.GossipVersion1)
 
 	return nil
 }
@@ -4229,13 +4362,17 @@ func (c *KVStore) markEdgeLiveUnsafe(tx kvdb.RwTx, chanID uint64) error {
 // IsZombieEdge returns whether the edge is considered zombie. If it is a
 // zombie, then the two node public keys corresponding to this edge are also
 // returned.
-func (c *KVStore) IsZombieEdge(chanID uint64) (bool, [33]byte, [33]byte,
-	error) {
+func (c *KVStore) IsZombieEdge(v lnwire.GossipVersion,
+	chanID uint64) (bool, [33]byte, [33]byte, error) {
 
 	var (
 		isZombie         bool
 		pubKey1, pubKey2 [33]byte
 	)
+
+	if v != lnwire.GossipVersion1 {
+		return false, [33]byte{}, [33]byte{}, ErrVersionNotSupportedForKVDB
+	}
 
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
 		edges := tx.ReadBucket(edgeBucket)
@@ -4702,6 +4839,12 @@ func deserializeLightningNode(r io.Reader) (*models.Node, error) {
 func putChanEdgeInfo(edgeIndex kvdb.RwBucket,
 	edgeInfo *models.ChannelEdgeInfo, chanID [8]byte) error {
 
+	// We only support V1 channel edges in the KV store.
+	if edgeInfo.Version != lnwire.GossipVersion1 {
+		return fmt.Errorf("only V1 channel edges supported, got V%d",
+			edgeInfo.Version)
+	}
+
 	var b bytes.Buffer
 
 	if _, err := b.Write(edgeInfo.NodeKey1Bytes[:]); err != nil {
@@ -4710,10 +4853,24 @@ func putChanEdgeInfo(edgeIndex kvdb.RwBucket,
 	if _, err := b.Write(edgeInfo.NodeKey2Bytes[:]); err != nil {
 		return err
 	}
-	if _, err := b.Write(edgeInfo.BitcoinKey1Bytes[:]); err != nil {
+
+	btc1Key, err := edgeInfo.BitcoinKey1Bytes.UnwrapOrErr(
+		fmt.Errorf("edge missing bitcoin key 1"),
+	)
+	if err != nil {
 		return err
 	}
-	if _, err := b.Write(edgeInfo.BitcoinKey2Bytes[:]); err != nil {
+	btc2Key, err := edgeInfo.BitcoinKey2Bytes.UnwrapOrErr(
+		fmt.Errorf("edge missing bitcoin key 2"),
+	)
+	if err != nil {
+		return err
+	}
+
+	if _, err := b.Write(btc1Key[:]); err != nil {
+		return err
+	}
+	if _, err := b.Write(btc2Key[:]); err != nil {
 		return err
 	}
 
@@ -4729,10 +4886,10 @@ func putChanEdgeInfo(edgeIndex kvdb.RwBucket,
 	authProof := edgeInfo.AuthProof
 	var nodeSig1, nodeSig2, bitcoinSig1, bitcoinSig2 []byte
 	if authProof != nil {
-		nodeSig1 = authProof.NodeSig1Bytes
-		nodeSig2 = authProof.NodeSig2Bytes
-		bitcoinSig1 = authProof.BitcoinSig1Bytes
-		bitcoinSig2 = authProof.BitcoinSig2Bytes
+		nodeSig1 = authProof.NodeSig1()
+		nodeSig2 = authProof.NodeSig2()
+		bitcoinSig1 = authProof.BitcoinSig1()
+		bitcoinSig2 = authProof.BitcoinSig2()
 	}
 
 	if err := wire.WriteVarBytes(&b, 0, nodeSig1); err != nil {
@@ -4751,7 +4908,7 @@ func putChanEdgeInfo(edgeIndex kvdb.RwBucket,
 	if err := WriteOutpoint(&b, &edgeInfo.ChannelPoint); err != nil {
 		return err
 	}
-	err := binary.Write(&b, byteOrder, uint64(edgeInfo.Capacity))
+	err = binary.Write(&b, byteOrder, uint64(edgeInfo.Capacity))
 	if err != nil {
 		return err
 	}
@@ -4792,18 +4949,26 @@ func deserializeChanEdgeInfo(r io.Reader) (*models.ChannelEdgeInfo, error) {
 		edgeInfo models.ChannelEdgeInfo
 	)
 
+	// All channel edges in the KV store are V1.
+	edgeInfo.Version = lnwire.GossipVersion1
+
 	if _, err := io.ReadFull(r, edgeInfo.NodeKey1Bytes[:]); err != nil {
 		return nil, err
 	}
 	if _, err := io.ReadFull(r, edgeInfo.NodeKey2Bytes[:]); err != nil {
 		return nil, err
 	}
-	if _, err := io.ReadFull(r, edgeInfo.BitcoinKey1Bytes[:]); err != nil {
+
+	var btcKey1, btcKey2 route.Vertex
+	if _, err := io.ReadFull(r, btcKey1[:]); err != nil {
 		return nil, err
 	}
-	if _, err := io.ReadFull(r, edgeInfo.BitcoinKey2Bytes[:]); err != nil {
+	edgeInfo.BitcoinKey1Bytes = fn.Some(btcKey1)
+
+	if _, err := io.ReadFull(r, btcKey2[:]); err != nil {
 		return nil, err
 	}
+	edgeInfo.BitcoinKey2Bytes = fn.Some(btcKey2)
 
 	featureBytes, err := wire.ReadVarBytes(r, 0, 900, "features")
 	if err != nil {
@@ -4818,23 +4983,41 @@ func deserializeChanEdgeInfo(r io.Reader) (*models.ChannelEdgeInfo, error) {
 	}
 	edgeInfo.Features = lnwire.NewFeatureVector(features, lnwire.Features)
 
-	proof := &models.ChannelAuthProof{}
+	proof := &models.ChannelAuthProof{
+		// KV store always uses v1.
+		Version: lnwire.GossipVersion1,
+	}
 
-	proof.NodeSig1Bytes, err = wire.ReadVarBytes(r, 0, 80, "sigs")
+	nodeSig1, err := wire.ReadVarBytes(r, 0, 80, "sigs")
 	if err != nil {
 		return nil, err
 	}
-	proof.NodeSig2Bytes, err = wire.ReadVarBytes(r, 0, 80, "sigs")
+	if len(nodeSig1) > 0 {
+		proof.NodeSig1Bytes = fn.Some(nodeSig1)
+	}
+
+	nodeSig2, err := wire.ReadVarBytes(r, 0, 80, "sigs")
 	if err != nil {
 		return nil, err
 	}
-	proof.BitcoinSig1Bytes, err = wire.ReadVarBytes(r, 0, 80, "sigs")
+	if len(nodeSig2) > 0 {
+		proof.NodeSig2Bytes = fn.Some(nodeSig2)
+	}
+
+	bitcoinSig1, err := wire.ReadVarBytes(r, 0, 80, "sigs")
 	if err != nil {
 		return nil, err
 	}
-	proof.BitcoinSig2Bytes, err = wire.ReadVarBytes(r, 0, 80, "sigs")
+	if len(bitcoinSig1) > 0 {
+		proof.BitcoinSig1Bytes = fn.Some(bitcoinSig1)
+	}
+
+	bitcoinSig2, err := wire.ReadVarBytes(r, 0, 80, "sigs")
 	if err != nil {
 		return nil, err
+	}
+	if len(bitcoinSig2) > 0 {
+		proof.BitcoinSig2Bytes = fn.Some(bitcoinSig2)
 	}
 
 	if !proof.IsEmpty() {
@@ -5259,6 +5442,9 @@ func deserializeChanEdgePolicyRaw(r io.Reader) (*models.ChannelEdgePolicy,
 	if ok && val == nil {
 		edge.InboundFee = fn.Some(inboundFee)
 	}
+
+	// KV store only contains V1 policies.
+	edge.Version = lnwire.GossipVersion1
 
 	return edge, nil
 }

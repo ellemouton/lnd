@@ -146,7 +146,7 @@ type Store interface { //nolint:interfacebloat
 	// IsPublicNode is a helper method that determines whether the node with
 	// the given public key is seen as a public node in the graph from the
 	// graph's source node's point of view.
-	IsPublicNode(pubKey [33]byte) (bool, error)
+	IsPublicNode(v lnwire.GossipVersion, pubKey [33]byte) (bool, error)
 
 	// GraphSession will provide the call-back with access to a
 	// NodeTraverser instance which can be used to perform queries against
@@ -197,13 +197,16 @@ type Store interface { //nolint:interfacebloat
 	AddChannelEdge(ctx context.Context, edge *models.ChannelEdgeInfo,
 		op ...batch.SchedulerOption) error
 
-	// HasChannelEdge returns true if the database knows of a channel edge
+	// HasV1ChannelEdge returns true if the database knows of a channel edge
 	// with the passed channel ID, and false otherwise. If an edge with that
 	// ID is found within the graph, then two time stamps representing the
 	// last time the edge was updated for both directed edges are returned
 	// along with the boolean. If it is not found, then the zombie index is
 	// checked and its result is returned as the second boolean.
-	HasChannelEdge(chanID uint64) (time.Time, time.Time, bool, bool,
+	HasV1ChannelEdge(chanID uint64) (time.Time, time.Time, bool, bool,
+		error)
+
+	HasChannelEdge(v lnwire.GossipVersion, chanID uint64) (bool, bool,
 		error)
 
 	// DeleteChannelEdges removes edges with the given channel IDs from the
@@ -215,8 +218,9 @@ type Store interface { //nolint:interfacebloat
 	// failed to send the fresh update to be the one that resurrects the
 	// channel from its zombie state. The markZombie bool denotes whether
 	// to mark the channel as a zombie.
-	DeleteChannelEdges(strictZombiePruning, markZombie bool,
-		chanIDs ...uint64) ([]*models.ChannelEdgeInfo, error)
+	DeleteChannelEdges(v lnwire.GossipVersion, strictZombiePruning,
+		markZombie bool, chanIDs ...uint64) (
+		[]*models.ChannelEdgeInfo, error)
 
 	// AddEdgeProof sets the proof of an existing edge in the graph
 	// database.
@@ -275,7 +279,7 @@ type Store interface { //nolint:interfacebloat
 	// houses the general information for the channel itself is returned as
 	// well as two structs that contain the routing policies for the channel
 	// in either direction.
-	FetchChannelEdgesByOutpoint(op *wire.OutPoint) (
+	FetchChannelEdgesByOutpoint(v lnwire.GossipVersion, op *wire.OutPoint) (
 		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy, error)
 
@@ -290,7 +294,7 @@ type Store interface { //nolint:interfacebloat
 	// zombie within the database. In this case, the ChannelEdgePolicy's
 	// will be nil, and the ChannelEdgeInfo will only include the public
 	// keys of each node.
-	FetchChannelEdgesByID(chanID uint64) (
+	FetchChannelEdgesByID(v lnwire.GossipVersion, chanID uint64) (
 		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy, error)
 
@@ -313,7 +317,8 @@ type Store interface { //nolint:interfacebloat
 	// IsZombieEdge returns whether the edge is considered zombie. If it is
 	// a zombie, then the two node public keys corresponding to this edge
 	// are also returned.
-	IsZombieEdge(chanID uint64) (bool, [33]byte, [33]byte, error)
+	IsZombieEdge(v lnwire.GossipVersion, chanID uint64) (bool, [33]byte,
+		[33]byte, error)
 
 	// NumZombies returns the current number of zombie channels in the
 	// graph.

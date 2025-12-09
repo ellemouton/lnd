@@ -81,6 +81,19 @@ SELECT EXISTS (
       AND n.pub_key = $1
 );
 
+-- name: IsPublicV2Node :one
+SELECT EXISTS (
+    SELECT 1
+    FROM graph_channels c
+             JOIN graph_nodes n ON n.id = c.node_id_1 OR n.id = c.node_id_2
+    -- NOTE: we hard-code the version here since the clauses
+    -- here that determine if a node is public is specific
+    -- to the V2 gossip protocol.
+    WHERE c.version = 2
+      AND c.signature IS NOT NULL
+      AND n.pub_key = $1
+);
+
 -- name: DeleteUnconnectedNodes :many
 DELETE FROM graph_nodes
 WHERE
@@ -266,9 +279,9 @@ INSERT INTO graph_channels (
     version, scid, node_id_1, node_id_2,
     outpoint, capacity, bitcoin_key_1, bitcoin_key_2,
     node_1_signature, node_2_signature, bitcoin_1_signature,
-    bitcoin_2_signature
+    bitcoin_2_signature, signature, funding_pk_script, merkle_root_hash
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 )
 RETURNING id;
 
@@ -280,6 +293,12 @@ SET node_1_signature = $2,
     bitcoin_2_signature = $5
 WHERE scid = $1
   AND version = 1;
+
+-- name: AddV2ChannelProof :execresult
+UPDATE graph_channels
+SET signature = $2
+WHERE scid = $1
+  AND version = 2;
 
 -- name: GetChannelsBySCIDRange :many
 SELECT sqlc.embed(c),
@@ -342,7 +361,9 @@ SELECT
     cp1.min_htlc_msat AS policy1_min_htlc_msat,
     cp1.max_htlc_msat AS policy1_max_htlc_msat,
     cp1.last_update AS policy1_last_update,
+    cp1.block_height AS policy1_block_height,
     cp1.disabled AS policy1_disabled,
+    cp1.disable_flags AS policy1_disable_flags,
     cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
     cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
     cp1.message_flags AS policy1_message_flags,
@@ -359,7 +380,9 @@ SELECT
     cp2.min_htlc_msat AS policy2_min_htlc_msat,
     cp2.max_htlc_msat AS policy2_max_htlc_msat,
     cp2.last_update AS policy2_last_update,
+    cp2.block_height AS policy2_block_height,
     cp2.disabled AS policy2_disabled,
+    cp2.disable_flags AS policy2_disable_flags,
     cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
     cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
     cp2.message_flags AS policy_2_message_flags,
@@ -397,7 +420,9 @@ SELECT
     cp1.min_htlc_msat AS policy1_min_htlc_msat,
     cp1.max_htlc_msat AS policy1_max_htlc_msat,
     cp1.last_update AS policy1_last_update,
+    cp1.block_height AS policy1_block_height,
     cp1.disabled AS policy1_disabled,
+    cp1.disable_flags AS policy1_disable_flags,
     cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
     cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
     cp1.message_flags AS policy1_message_flags,
@@ -414,7 +439,9 @@ SELECT
     cp2.min_htlc_msat AS policy2_min_htlc_msat,
     cp2.max_htlc_msat AS policy2_max_htlc_msat,
     cp2.last_update AS policy2_last_update,
+    cp2.block_height AS policy2_block_height,
     cp2.disabled AS policy2_disabled,
+    cp2.disable_flags AS policy2_disable_flags,
     cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
     cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
     cp2.message_flags AS policy2_message_flags,
@@ -446,7 +473,9 @@ SELECT
     cp1.min_htlc_msat AS policy1_min_htlc_msat,
     cp1.max_htlc_msat AS policy1_max_htlc_msat,
     cp1.last_update AS policy1_last_update,
+    cp1.block_height AS policy1_block_height,
     cp1.disabled AS policy1_disabled,
+    cp1.disable_flags AS policy1_disable_flags,
     cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
     cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
     cp1.message_flags AS policy1_message_flags,
@@ -463,7 +492,9 @@ SELECT
     cp2.min_htlc_msat AS policy2_min_htlc_msat,
     cp2.max_htlc_msat AS policy2_max_htlc_msat,
     cp2.last_update AS policy2_last_update,
+    cp2.block_height AS policy2_block_height,
     cp2.disabled AS policy2_disabled,
+    cp2.disable_flags AS policy2_disable_flags,
     cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
     cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
     cp2.message_flags AS policy2_message_flags,
@@ -525,7 +556,9 @@ SELECT
     cp1.min_htlc_msat AS policy_1_min_htlc_msat,
     cp1.max_htlc_msat AS policy_1_max_htlc_msat,
     cp1.last_update AS policy_1_last_update,
+    cp1.block_height AS policy_1_block_height,
     cp1.disabled AS policy_1_disabled,
+    cp1.disable_flags AS policy_1_disable_flags,
     cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
     cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
     cp1.message_flags AS policy_1_message_flags,
@@ -542,7 +575,9 @@ SELECT
     cp2.min_htlc_msat AS policy_2_min_htlc_msat,
     cp2.max_htlc_msat AS policy_2_max_htlc_msat,
     cp2.last_update AS policy_2_last_update,
+    cp2.block_height AS policy_2_block_height,
     cp2.disabled AS policy_2_disabled,
+    cp2.disable_flags AS policy_2_disable_flags,
     cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
     cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
     cp2.message_flags AS policy_2_message_flags,
@@ -582,7 +617,9 @@ SELECT sqlc.embed(c),
        cp1.min_htlc_msat AS policy1_min_htlc_msat,
        cp1.max_htlc_msat AS policy1_max_htlc_msat,
        cp1.last_update AS policy1_last_update,
+       cp1.block_height AS policy1_block_height,
        cp1.disabled AS policy1_disabled,
+       cp1.disable_flags AS policy1_disable_flags,
        cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
        cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
        cp1.message_flags AS policy1_message_flags,
@@ -599,7 +636,9 @@ SELECT sqlc.embed(c),
        cp2.min_htlc_msat AS policy2_min_htlc_msat,
        cp2.max_htlc_msat AS policy2_max_htlc_msat,
        cp2.last_update AS policy2_last_update,
+       cp2.block_height AS policy2_block_height,
        cp2.disabled AS policy2_disabled,
+       cp2.disable_flags AS policy2_disable_flags,
        cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
        cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
        cp2.message_flags AS policy2_message_flags,
@@ -635,7 +674,9 @@ SELECT sqlc.embed(c),
     cp1.min_htlc_msat AS policy1_min_htlc_msat,
     cp1.max_htlc_msat AS policy1_max_htlc_msat,
     cp1.last_update AS policy1_last_update,
+    cp1.block_height AS policy1_block_height,
     cp1.disabled AS policy1_disabled,
+    cp1.disable_flags AS policy1_disable_flags,
     cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
     cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
     cp1.message_flags AS policy1_message_flags,
@@ -652,7 +693,9 @@ SELECT sqlc.embed(c),
     cp2.min_htlc_msat AS policy2_min_htlc_msat,
     cp2.max_htlc_msat AS policy2_max_htlc_msat,
     cp2.last_update AS policy2_last_update,
+    cp2.block_height AS policy2_block_height,
     cp2.disabled AS policy2_disabled,
+    cp2.disable_flags AS policy2_disable_flags,
     cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
     cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
     cp2.message_flags AS policy2_message_flags,
@@ -701,7 +744,9 @@ SELECT
     cp1.min_htlc_msat AS policy_1_min_htlc_msat,
     cp1.max_htlc_msat AS policy_1_max_htlc_msat,
     cp1.last_update AS policy_1_last_update,
+    cp1.block_height AS policy_1_block_height,
     cp1.disabled AS policy_1_disabled,
+    cp1.disable_flags AS policy_1_disable_flags,
     cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
     cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
     cp1.message_flags AS policy1_message_flags,
@@ -718,7 +763,9 @@ SELECT
     cp2.min_htlc_msat AS policy_2_min_htlc_msat,
     cp2.max_htlc_msat AS policy_2_max_htlc_msat,
     cp2.last_update AS policy_2_last_update,
+    cp2.block_height AS policy_2_block_height,
     cp2.disabled AS policy_2_disabled,
+    cp2.disable_flags AS policy_2_disable_flags,
     cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
     cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
     cp2.message_flags AS policy2_message_flags,
@@ -752,7 +799,9 @@ SELECT
     cp1.base_fee_msat AS policy_1_base_fee_msat,
     cp1.min_htlc_msat AS policy_1_min_htlc_msat,
     cp1.max_htlc_msat AS policy_1_max_htlc_msat,
+    cp1.block_height AS policy_1_block_height,
     cp1.disabled AS policy_1_disabled,
+    cp1.disable_flags AS policy_1_disable_flags,
     cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
     cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
     cp1.message_flags AS policy1_message_flags,
@@ -764,7 +813,9 @@ SELECT
     cp2.base_fee_msat AS policy_2_base_fee_msat,
     cp2.min_htlc_msat AS policy_2_min_htlc_msat,
     cp2.max_htlc_msat AS policy_2_max_htlc_msat,
+    cp2.block_height AS policy_2_block_height,
     cp2.disabled AS policy_2_disabled,
+    cp2.disable_flags AS policy_2_disable_flags,
     cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
     cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
     cp2.message_flags AS policy2_message_flags,
@@ -837,13 +888,13 @@ ORDER BY channel_id, type;
 
 -- name: UpsertEdgePolicy :one
 INSERT INTO graph_channel_policies (
-    version, channel_id, node_id, timelock, fee_ppm,
-    base_fee_msat, min_htlc_msat, last_update, disabled,
+    version, channel_id, node_id, timelock, block_height, fee_ppm,
+    base_fee_msat, min_htlc_msat, last_update, disabled, disable_flags,
     max_htlc_msat, inbound_base_fee_msat,
     inbound_fee_rate_milli_msat, message_flags, channel_flags,
     signature
 ) VALUES  (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
 )
 ON CONFLICT (channel_id, node_id, version)
     -- Update the following fields if a conflict occurs on channel_id,
@@ -855,13 +906,18 @@ ON CONFLICT (channel_id, node_id, version)
         min_htlc_msat = EXCLUDED.min_htlc_msat,
         last_update = EXCLUDED.last_update,
         disabled = EXCLUDED.disabled,
+        block_height = EXCLUDED.block_height,
+        disable_flags = EXCLUDED.disable_flags,
         max_htlc_msat = EXCLUDED.max_htlc_msat,
         inbound_base_fee_msat = EXCLUDED.inbound_base_fee_msat,
         inbound_fee_rate_milli_msat = EXCLUDED.inbound_fee_rate_milli_msat,
         message_flags = EXCLUDED.message_flags,
         channel_flags = EXCLUDED.channel_flags,
         signature = EXCLUDED.signature
-WHERE EXCLUDED.last_update > graph_channel_policies.last_update
+WHERE (graph_channel_policies.last_update IS NULL
+    OR EXCLUDED.last_update > graph_channel_policies.last_update)
+AND (graph_channel_policies.block_height IS NULL
+    OR EXCLUDED.block_height >= graph_channel_policies.block_height)
 RETURNING id;
 
 -- name: GetChannelPolicyByChannelAndNode :one
@@ -887,7 +943,9 @@ SELECT
     cp1.min_htlc_msat AS policy1_min_htlc_msat,
     cp1.max_htlc_msat AS policy1_max_htlc_msat,
     cp1.last_update AS policy1_last_update,
+    cp1.block_height AS policy1_block_height,
     cp1.disabled AS policy1_disabled,
+    cp1.disable_flags AS policy1_disable_flags,
     cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
     cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
     cp1.message_flags AS policy1_message_flags,
@@ -904,7 +962,9 @@ SELECT
     cp2.min_htlc_msat AS policy2_min_htlc_msat,
     cp2.max_htlc_msat AS policy2_max_htlc_msat,
     cp2.last_update AS policy2_last_update,
+    cp2.block_height AS policy2_block_height,
     cp2.disabled AS policy2_disabled,
+    cp2.disable_flags AS policy2_disable_flags,
     cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
     cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
     cp2.message_flags AS policy_2_message_flags,

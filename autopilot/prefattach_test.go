@@ -12,6 +12,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -492,47 +493,62 @@ func (d *testDBGraph) addRandChannel(node1, node2 *btcec.PublicKey,
 	}
 
 	chanID := randChanID()
-	edge := &models.ChannelEdgeInfo{
-		ChannelID: chanID.ToUint64(),
-		Capacity:  capacity,
-		Features:  lnwire.EmptyFeatureVector(),
+	nodeKey1 := route.NewVertex(lnNode1)
+	nodeKey2 := route.NewVertex(lnNode2)
+	btcKey1 := route.NewVertex(lnNode1)
+	btcKey2 := route.NewVertex(lnNode2)
+	edge, err := models.NewV1Channel(
+		chanID.ToUint64(),
+		chainhash.Hash{},
+		nodeKey1,
+		nodeKey2,
+		&models.ChannelV1Fields{
+			BitcoinKey1Bytes: btcKey1,
+			BitcoinKey2Bytes: btcKey2,
+		},
+		models.WithCapacity(capacity),
+	)
+	if err != nil {
+		return nil, nil, err
 	}
-	copy(edge.NodeKey1Bytes[:], lnNode1.SerializeCompressed())
-	copy(edge.NodeKey2Bytes[:], lnNode2.SerializeCompressed())
-	copy(edge.BitcoinKey1Bytes[:], lnNode1.SerializeCompressed())
-	copy(edge.BitcoinKey2Bytes[:], lnNode2.SerializeCompressed())
 
 	if err := d.db.AddChannelEdge(ctx, edge); err != nil {
 		return nil, nil, err
 	}
-	edgePolicy := &models.ChannelEdgePolicy{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 chanID.ToUint64(),
-		LastUpdate:                time.Now(),
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		MaxHTLC:                   lnwire.NewMSatFromSatoshis(capacity),
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
-		MessageFlags:              1,
-		ChannelFlags:              0,
-	}
+	edgePolicy := models.NewV1Policy(
+		chanID.ToUint64(),
+		testSig.Serialize(),
+		10,                                        // TimeLockDelta
+		1,                                         // MinHTLC
+		lnwire.NewMSatFromSatoshis(capacity),      // MaxHTLC
+		10,                                        // FeeBaseMSat
+		10000,                                     // FeeProportionalMillionths
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			LastUpdate:   time.Now(),
+			MessageFlags: 1,
+			ChannelFlags: 0,
+		},
+	)
 
 	if err := d.db.UpdateEdgePolicy(ctx, edgePolicy); err != nil {
 		return nil, nil, err
 	}
-	edgePolicy = &models.ChannelEdgePolicy{
-		SigBytes:                  testSig.Serialize(),
-		ChannelID:                 chanID.ToUint64(),
-		LastUpdate:                time.Now(),
-		TimeLockDelta:             10,
-		MinHTLC:                   1,
-		MaxHTLC:                   lnwire.NewMSatFromSatoshis(capacity),
-		FeeBaseMSat:               10,
-		FeeProportionalMillionths: 10000,
-		MessageFlags:              1,
-		ChannelFlags:              1,
-	}
+	edgePolicy = models.NewV1Policy(
+		chanID.ToUint64(),
+		testSig.Serialize(),
+		10,                                        // TimeLockDelta
+		1,                                         // MinHTLC
+		lnwire.NewMSatFromSatoshis(capacity),      // MaxHTLC
+		10,                                        // FeeBaseMSat
+		10000,                                     // FeeProportionalMillionths
+		fn.None[lnwire.Fee](),
+		&models.PolicyV1Fields{
+			LastUpdate:   time.Now(),
+			MessageFlags: 1,
+			ChannelFlags: 1,
+		},
+	)
 	if err := d.db.UpdateEdgePolicy(ctx, edgePolicy); err != nil {
 		return nil, nil, err
 	}
