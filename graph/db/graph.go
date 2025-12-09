@@ -782,6 +782,10 @@ func (c *VersionedGraph) AddrsForNode(ctx context.Context,
 	return c.db.AddrsForNode(ctx, c.v, nodePub)
 }
 
+func (c *VersionedGraph) HasChannelEdge(chanID uint64) (bool, bool, error) {
+	return c.db.HasChannelEdge(c.v, chanID)
+}
+
 // DeleteNode starts a new database transaction to remove a vertex/node
 // from the database according to the node's public key.
 func (c *VersionedGraph) DeleteNode(ctx context.Context,

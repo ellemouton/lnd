@@ -1391,6 +1391,109 @@ func (c *KVStore) HasV1ChannelEdge(
 	return upd1Time, upd2Time, exists, isZombie, nil
 }
 
+func (c *KVStore) HasChannelEdge(v lnwire.GossipVersion, chanID uint64) (bool,
+	bool, error) {
+
+	var (
+		exists   bool
+		isZombie bool
+		upd1Time time.Time
+		upd2Time time.Time
+	)
+
+	if v != lnwire.GossipVersion1 {
+		return false, false, ErrVersionNotSupportedForKVDB
+	}
+
+	// We'll query the cache with the shared lock held to allow multiple
+	// readers to access values in the cache concurrently if they exist.
+	c.cacheMu.RLock()
+	if entry, ok := c.rejectCache.get(chanID, v); ok {
+		c.cacheMu.RUnlock()
+		exists, isZombie = entry.flags.unpack()
+
+		return exists, isZombie, nil
+	}
+	c.cacheMu.RUnlock()
+
+	c.cacheMu.Lock()
+	defer c.cacheMu.Unlock()
+
+	// The item was not found with the shared lock, so we'll acquire the
+	// exclusive lock and check the cache again in case another method added
+	// the entry to the cache while no lock was held.
+	if entry, ok := c.rejectCache.get(chanID, v); ok {
+		exists, isZombie = entry.flags.unpack()
+
+		return exists, isZombie, nil
+	}
+
+	if err := kvdb.View(c.db, func(tx kvdb.RTx) error {
+		edges := tx.ReadBucket(edgeBucket)
+		if edges == nil {
+			return ErrGraphNoEdgesFound
+		}
+		edgeIndex := edges.NestedReadBucket(edgeIndexBucket)
+		if edgeIndex == nil {
+			return ErrGraphNoEdgesFound
+		}
+
+		var channelID [8]byte
+		byteOrder.PutUint64(channelID[:], chanID)
+
+		// If the edge doesn't exist, then we'll also check our zombie
+		// index.
+		if edgeIndex.Get(channelID[:]) == nil {
+			exists = false
+			zombieIndex := edges.NestedReadBucket(zombieBucket)
+			if zombieIndex != nil {
+				isZombie, _, _ = isZombieEdge(
+					zombieIndex, chanID,
+				)
+			}
+
+			return nil
+		}
+
+		exists = true
+		isZombie = false
+
+		// If the channel has been found in the graph, then retrieve
+		// the edges itself so we can return the last updated
+		// timestamps.
+		nodes := tx.ReadBucket(nodeBucket)
+		if nodes == nil {
+			return ErrGraphNodeNotFound
+		}
+
+		e1, e2, err := fetchChanEdgePolicies(
+			edgeIndex, edges, channelID[:],
+		)
+		if err != nil {
+			return err
+		}
+
+		// As we may have only one of the edges populated, only set the
+		// update time if the edge was found in the database.
+		if e1 != nil {
+			upd1Time = e1.LastUpdate
+		}
+		if e2 != nil {
+			upd2Time = e2.LastUpdate
+		}
+
+		return nil
+	}, func() {}); err != nil {
+		return exists, isZombie, err
+	}
+
+	c.rejectCache.insert(chanID, v, newRejectCacheEntryFromTimes(
+		upd1Time, upd2Time, v, exists, isZombie,
+	))
+
+	return exists, isZombie, nil
+}
+
 // AddEdgeProof sets the proof of an existing edge in the graph database.
 func (c *KVStore) AddEdgeProof(chanID lnwire.ShortChannelID,
 	proof *models.ChannelAuthProof) error {

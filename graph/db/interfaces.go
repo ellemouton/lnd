@@ -206,6 +206,9 @@ type Store interface { //nolint:interfacebloat
 	HasV1ChannelEdge(chanID uint64) (time.Time, time.Time, bool, bool,
 		error)
 
+	HasChannelEdge(v lnwire.GossipVersion, chanID uint64) (bool, bool,
+		error)
+
 	// DeleteChannelEdges removes edges with the given channel IDs from the
 	// database and marks them as zombies. This ensures that we're unable to
 	// re-add it to our database once again. If an edge does not exist

@@ -224,7 +224,7 @@ func testNodeInsertionAndDeletion(t *testing.T, v lnwire.GossipVersion) {
 	// without any errors.
 	node := nodeWithAddrs(testAddrs)
 	require.NoError(t, graph.AddNode(ctx, node))
-	assertNodeInCache(t, graph.ChannelGraph, node, testFeatures)
+	assertNodeInCache(t, graph, node, testFeatures)
 
 	// Our AddNode implementation uses the batcher meaning that it is
 	// possible that two updates for the same node announcement may be
@@ -400,8 +400,8 @@ func testPartialNode(t *testing.T, v lnwire.GossipVersion) {
 
 	// Both of the nodes should now be in both the graph (as partial/shell)
 	// nodes _and_ the cache should also have an awareness of both nodes.
-	assertNodeInCache(t, graph.ChannelGraph, &node1, nil)
-	assertNodeInCache(t, graph.ChannelGraph, &node2, nil)
+	assertNodeInCache(t, graph, &node1, nil)
+	assertNodeInCache(t, graph, &node2, nil)
 
 	// Next, fetch the nodes from the database to ensure everything was
 	// serialized properly.
@@ -526,7 +526,7 @@ func testEdgeInsertionDeletion(t *testing.T, v lnwire.GossipVersion) {
 	}
 
 	require.NoError(t, graph.AddChannelEdge(ctx, edgeInfo))
-	assertEdgeWithNoPoliciesInCache(t, graph.ChannelGraph, edgeInfo)
+	assertEdgeWithNoPoliciesInCache(t, graph, edgeInfo)
 
 	// Show that trying to insert the same channel again will return the
 	// expected error.
@@ -542,7 +542,7 @@ func testEdgeInsertionDeletion(t *testing.T, v lnwire.GossipVersion) {
 	// Next, attempt to delete the edge from the database, again this
 	// should proceed without any issues.
 	require.NoError(t, graph.DeleteChannelEdges(false, true, chanID))
-	assertNoEdge(t, graph.ChannelGraph, chanID)
+	assertNoEdge(t, graph, chanID)
 
 	// Ensure that any query attempts to lookup the delete channel edge are
 	// properly deleted.
@@ -667,7 +667,7 @@ func TestDisconnectBlockAtHeight(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 
-	graph := MakeTestGraph(t)
+	graph := NewVersionedGraph(MakeTestGraph(t), lnwire.GossipVersion1)
 
 	sourceNode := createTestVertex(t, lnwire.GossipVersion1)
 	if err := graph.SetSourceNode(ctx, sourceNode); err != nil {
@@ -754,7 +754,7 @@ func TestDisconnectBlockAtHeight(t *testing.T) {
 	}
 
 	// The two first edges should be removed from the db.
-	_, _, has, isZombie, err := graph.HasV1ChannelEdge(edgeInfo.ChannelID)
+	has, isZombie, err := graph.HasChannelEdge(edgeInfo.ChannelID)
 	require.NoError(t, err, "unable to query for edge")
 	if has {
 		t.Fatalf("edge1 was not pruned from the graph")
@@ -762,7 +762,7 @@ func TestDisconnectBlockAtHeight(t *testing.T) {
 	if isZombie {
 		t.Fatal("reorged edge1 should not be marked as zombie")
 	}
-	_, _, has, isZombie, err = graph.HasV1ChannelEdge(edgeInfo2.ChannelID)
+	has, isZombie, err = graph.HasChannelEdge(edgeInfo2.ChannelID)
 	require.NoError(t, err, "unable to query for edge")
 	if has {
 		t.Fatalf("edge2 was not pruned from the graph")
@@ -772,7 +772,7 @@ func TestDisconnectBlockAtHeight(t *testing.T) {
 	}
 
 	// Edge 3 should not be removed.
-	_, _, has, isZombie, err = graph.HasV1ChannelEdge(edgeInfo3.ChannelID)
+	has, isZombie, err = graph.HasChannelEdge(edgeInfo3.ChannelID)
 	require.NoError(t, err, "unable to query for edge")
 	if !has {
 		t.Fatalf("edge3 was pruned from the graph")
@@ -1043,7 +1043,7 @@ func TestEdgeInfoUpdates(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 
-	graph := MakeTestGraph(t)
+	graph := NewVersionedGraph(MakeTestGraph(t), lnwire.GossipVersion1)
 
 	// We'd like to test the update of edges inserted into the database, so
 	// we create two vertexes to connect.
@@ -1089,7 +1089,7 @@ func TestEdgeInfoUpdates(t *testing.T) {
 
 	// Check for existence of the edge within the database, it should be
 	// found.
-	_, _, found, isZombie, err := graph.HasV1ChannelEdge(chanID)
+	found, isZombie, err := graph.HasChannelEdge(chanID)
 	require.NoError(t, err, "unable to query for edge")
 	if !found {
 		t.Fatalf("graph should have of inserted edge")
@@ -1213,7 +1213,7 @@ func TestEdgePolicyCRUD(t *testing.T) {
 	updateAndAssertPolicies()
 }
 
-func assertNodeInCache(t *testing.T, g *ChannelGraph, n *models.Node,
+func assertNodeInCache(t *testing.T, g *VersionedGraph, n *models.Node,
 	expectedFeatures *lnwire.FeatureVector) {
 
 	// Let's check the internal view first.
@@ -1243,7 +1243,7 @@ func assertNodeNotInCache(t *testing.T, g *ChannelGraph, n route.Vertex) {
 	require.Equal(t, lnwire.EmptyFeatureVector(), features)
 }
 
-func assertEdgeWithNoPoliciesInCache(t *testing.T, g *ChannelGraph,
+func assertEdgeWithNoPoliciesInCache(t *testing.T, g *VersionedGraph,
 	e *models.ChannelEdgeInfo) {
 
 	// Let's check the internal view first.
@@ -1311,7 +1311,7 @@ func assertEdgeWithNoPoliciesInCache(t *testing.T, g *ChannelGraph,
 	require.Equal(t, expectedNode2Channel, foundChannel)
 }
 
-func assertNoEdge(t *testing.T, g *ChannelGraph, chanID uint64) {
+func assertNoEdge(t *testing.T, g *VersionedGraph, chanID uint64) {
 	// Make sure no channel in the cache has the given channel ID. If there
 	// are no channels at all, that is fine as well.
 	for _, channels := range g.graphCache.nodeChannels {
@@ -1321,7 +1321,7 @@ func assertNoEdge(t *testing.T, g *ChannelGraph, chanID uint64) {
 	}
 }
 
-func assertEdgeWithPolicyInCache(t *testing.T, g *ChannelGraph,
+func assertEdgeWithPolicyInCache(t *testing.T, g *VersionedGraph,
 	e *models.ChannelEdgeInfo, p *models.ChannelEdgePolicy, policy1 bool) {
 
 	// Check the internal state first.
@@ -3280,14 +3280,14 @@ func TestStressTestChannelGraphAPI(t *testing.T) {
 			},
 		},
 		{
-			name: "HasV1ChannelEdge",
+			name: "HasChannelEdge",
 			fn: func() error {
 				channel := getRandChan()
 				if channel == nil {
 					return nil
 				}
 
-				_, _, _, _, err := graph.HasV1ChannelEdge(
+				_, _, err := graph.HasChannelEdge(
 					channel.id.ToUint64(),
 				)
 
