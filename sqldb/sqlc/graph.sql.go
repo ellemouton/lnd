@@ -3454,10 +3454,6 @@ SELECT
     cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
     cp1.message_flags AS policy1_message_flags,
     cp1.channel_flags AS policy1_channel_flags,
-    cp1.block_height AS policy1_block_height,
-    cp1.disable_flags AS policy1_disable_flags,
-    cp1.block_height AS policy1_block_height,
-    cp1.disable_flags AS policy1_disable_flags,
     cp1.signature AS policy_1_signature,
     cp1.block_height AS policy_1_block_height,
     cp1.disable_flags AS policy_1_disable_flags,
@@ -3517,13 +3513,9 @@ type ListChannelsWithPoliciesPaginatedRow struct {
 	Policy1InboundFeeRateMilliMsat sql.NullInt64
 	Policy1MessageFlags            sql.NullInt16
 	Policy1ChannelFlags            sql.NullInt16
+	Policy1Signature               []byte
 	Policy1BlockHeight             sql.NullInt64
 	Policy1DisableFlags            sql.NullInt16
-	Policy1BlockHeight_2           sql.NullInt64
-	Policy1DisableFlags_2          sql.NullInt16
-	Policy1Signature               []byte
-	Policy1BlockHeight_3           sql.NullInt64
-	Policy1DisableFlags_3          sql.NullInt16
 	Policy2ID                      sql.NullInt64
 	Policy2NodeID                  sql.NullInt64
 	Policy2Version                 sql.NullInt16
@@ -3585,13 +3577,9 @@ func (q *Queries) ListChannelsWithPoliciesPaginated(ctx context.Context, arg Lis
 			&i.Policy1InboundFeeRateMilliMsat,
 			&i.Policy1MessageFlags,
 			&i.Policy1ChannelFlags,
+			&i.Policy1Signature,
 			&i.Policy1BlockHeight,
 			&i.Policy1DisableFlags,
-			&i.Policy1BlockHeight_2,
-			&i.Policy1DisableFlags_2,
-			&i.Policy1Signature,
-			&i.Policy1BlockHeight_3,
-			&i.Policy1DisableFlags_3,
 			&i.Policy2ID,
 			&i.Policy2NodeID,
 			&i.Policy2Version,
