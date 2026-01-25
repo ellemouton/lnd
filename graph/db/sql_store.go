@@ -4683,19 +4683,20 @@ func getAndBuildChanPolicies(ctx context.Context, cfg *sqldb.QueryConfig,
 		return nil, nil, nil
 	}
 
-	// TODO(elle): update to support v2 policies.
-	if dbPol1 != nil &&
-		lnwire.GossipVersion(dbPol1.Version) != lnwire.GossipVersion1 {
-
-		return nil, nil, fmt.Errorf("unsupported policy1 version: %d",
-			dbPol1.Version)
+	if dbPol1 != nil {
+		v := lnwire.GossipVersion(dbPol1.Version)
+		if v != lnwire.GossipVersion1 && v != lnwire.GossipVersion2 {
+			return nil, nil, fmt.Errorf("unsupported policy1 "+
+				"version: %d", dbPol1.Version)
+		}
 	}
 
-	if dbPol2 != nil &&
-		lnwire.GossipVersion(dbPol2.Version) != lnwire.GossipVersion1 {
-
-		return nil, nil, fmt.Errorf("unsupported policy2 version: %d",
-			dbPol2.Version)
+	if dbPol2 != nil {
+		v := lnwire.GossipVersion(dbPol2.Version)
+		if v != lnwire.GossipVersion1 && v != lnwire.GossipVersion2 {
+			return nil, nil, fmt.Errorf("unsupported policy2 "+
+				"version: %d", dbPol2.Version)
+		}
 	}
 
 	var policyIDs = make([]int64, 0, 2)
@@ -4769,6 +4770,10 @@ func buildChanPolicy(dbPolicy sqlc.GraphChannelPolicy, channelID uint64,
 			"fields: %w", err)
 	}
 
+	lastUpdate := policyLastUpdate(dbPolicy)
+	messageFlags := policyMessageFlags(dbPolicy)
+	channelFlags := policyChannelFlags(dbPolicy)
+
 	var inboundFee fn.Option[lnwire.Fee]
 	if dbPolicy.InboundFeeRateMilliMsat.Valid ||
 		dbPolicy.InboundBaseFeeMsat.Valid {
@@ -4782,15 +4787,9 @@ func buildChanPolicy(dbPolicy sqlc.GraphChannelPolicy, channelID uint64,
 	return &models.ChannelEdgePolicy{
 		SigBytes:  dbPolicy.Signature,
 		ChannelID: channelID,
-		LastUpdate: time.Unix(
-			dbPolicy.LastUpdate.Int64, 0,
-		),
-		MessageFlags: sqldb.ExtractSqlInt16[lnwire.ChanUpdateMsgFlags](
-			dbPolicy.MessageFlags,
-		),
-		ChannelFlags: sqldb.ExtractSqlInt16[lnwire.ChanUpdateChanFlags](
-			dbPolicy.ChannelFlags,
-		),
+		LastUpdate:   lastUpdate,
+		MessageFlags: messageFlags,
+		ChannelFlags: channelFlags,
 		TimeLockDelta: uint16(dbPolicy.Timelock),
 		MinHTLC: lnwire.MilliSatoshi(
 			dbPolicy.MinHtlcMsat,
@@ -4806,6 +4805,50 @@ func buildChanPolicy(dbPolicy sqlc.GraphChannelPolicy, channelID uint64,
 		InboundFee:                inboundFee,
 		ExtraOpaqueData:           recs,
 	}, nil
+}
+
+func policyLastUpdate(dbPolicy sqlc.GraphChannelPolicy) time.Time {
+	switch lnwire.GossipVersion(dbPolicy.Version) {
+	case lnwire.GossipVersion2:
+		if dbPolicy.BlockHeight.Valid {
+			return time.Unix(dbPolicy.BlockHeight.Int64, 0)
+		}
+	}
+
+	if dbPolicy.LastUpdate.Valid {
+		return time.Unix(dbPolicy.LastUpdate.Int64, 0)
+	}
+
+	return time.Unix(0, 0)
+}
+
+func policyMessageFlags(dbPolicy sqlc.GraphChannelPolicy) lnwire.ChanUpdateMsgFlags {
+	flags := sqldb.ExtractSqlInt16[lnwire.ChanUpdateMsgFlags](
+		dbPolicy.MessageFlags,
+	)
+	if !dbPolicy.MessageFlags.Valid && dbPolicy.MaxHtlcMsat.Valid {
+		flags |= lnwire.ChanUpdateRequiredMaxHtlc
+	}
+
+	return flags
+}
+
+func policyChannelFlags(dbPolicy sqlc.GraphChannelPolicy) lnwire.ChanUpdateChanFlags {
+	flags := sqldb.ExtractSqlInt16[lnwire.ChanUpdateChanFlags](
+		dbPolicy.ChannelFlags,
+	)
+	if dbPolicy.DisableFlags.Valid {
+		disableFlags := lnwire.ChanUpdateDisableFlags(
+			dbPolicy.DisableFlags.Int16,
+		)
+		if disableFlags.OutgoingDisabled() {
+			flags |= lnwire.ChanUpdateDisabled
+		} else {
+			flags &^= lnwire.ChanUpdateDisabled
+		}
+	}
+
+	return flags
 }
 
 // extractChannelPolicies extracts the sqlc.GraphChannelPolicy records from the give
