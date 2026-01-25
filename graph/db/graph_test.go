@@ -154,10 +154,6 @@ var versionedTests = []versionedTest{
 		name: "node is public",
 		test: testNodeIsPublic,
 	},
-	{
-		name: "node is public empty channel signature",
-		test: testIsPublicNodeEmptyChannelSignature,
-	},
 }
 
 // TestVersionedDBs runs various tests against both v1 and v2 versioned
@@ -4337,7 +4333,6 @@ func TestIsPublicNodeEmptyChannelSignature(t *testing.T) {
 			require.False(t, isPublic)
 		})
 	}
-}
 }
 
 // BenchmarkIsPublicNode measures the performance of IsPublicNode when checking
