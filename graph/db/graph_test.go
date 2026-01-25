@@ -151,6 +151,10 @@ var versionedTests = []versionedTest{
 		test: testEdgePolicyCRUDVersioned,
 	},
 	{
+		name: "strict zombie pruning",
+		test: testStrictZombiePruning,
+	},
+	{
 		name: "partial node",
 		test: testPartialNode,
 	},
@@ -459,6 +463,79 @@ func testEdgePolicyCRUDVersioned(t *testing.T, v lnwire.GossipVersion) {
 	}
 
 	require.NoError(t, compareEdgePolicies(policy2, dbPol2))
+}
+
+// testStrictZombiePruning checks strict zombie pruning for v1 and v2 policies.
+func testStrictZombiePruning(t *testing.T, v lnwire.GossipVersion) {
+	t.Parallel()
+	ctx := t.Context()
+
+	graph := NewVersionedGraph(MakeTestGraph(t), v)
+
+	node1 := createTestVertex(t, v)
+	node2 := createTestVertex(t, v)
+	if bytes.Compare(node1.PubKeyBytes[:], node2.PubKeyBytes[:]) == 1 {
+		node1, node2 = node2, node1
+	}
+
+	require.NoError(t, graph.AddNode(ctx, node1))
+	require.NoError(t, graph.AddNode(ctx, node2))
+
+	edgeInfo, _ := createEdge(v, 200, 0, 0, 0, node1, node2)
+	require.NoError(t, graph.AddChannelEdge(ctx, edgeInfo))
+
+	nextPolicyTime := func() time.Time {
+		if v == lnwire.GossipVersion2 {
+			return time.Unix(int64(nextBlockHeight()), 0)
+		}
+
+		return nextUpdateTime()
+	}
+
+	makePolicy := func(isNode1 bool, updateTime time.Time) *models.ChannelEdgePolicy {
+		flags := lnwire.ChanUpdateChanFlags(0)
+		if !isNode1 {
+			flags |= lnwire.ChanUpdateDirection
+		}
+
+		toNode := edgeInfo.NodeKey2Bytes
+		if !isNode1 {
+			toNode = edgeInfo.NodeKey1Bytes
+		}
+
+		return &models.ChannelEdgePolicy{
+			SigBytes:                  testSig.Serialize(),
+			ChannelID:                 edgeInfo.ChannelID,
+			LastUpdate:                updateTime,
+			MessageFlags:              lnwire.ChanUpdateRequiredMaxHtlc,
+			ChannelFlags:              flags,
+			TimeLockDelta:             144,
+			MinHTLC:                   1000,
+			MaxHTLC:                   2000,
+			FeeBaseMSat:               10,
+			FeeProportionalMillionths: 20,
+			ToNode:                    toNode,
+			ExtraOpaqueData:           []byte{1, 0},
+		}
+	}
+
+	policy1 := makePolicy(true, nextPolicyTime())
+	policy2 := makePolicy(false, nextPolicyTime())
+
+	require.NoError(t, graph.UpdateEdgePolicy(ctx, policy1))
+	require.NoError(t, graph.UpdateEdgePolicy(ctx, policy2))
+
+	require.NoError(t, graph.DeleteChannelEdges(
+		true, true, edgeInfo.ChannelID,
+	))
+
+	isZombie, pubKey1, pubKey2, err := graph.IsZombieEdge(
+		edgeInfo.ChannelID,
+	)
+	require.NoError(t, err)
+	require.True(t, isZombie)
+	require.Equal(t, node1.PubKeyBytes, pubKey1)
+	require.Equal(t, [33]byte{}, pubKey2)
 }
 
 // testPartialNode tests that partial/shell nodes are correctly created when

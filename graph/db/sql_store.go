@@ -6240,20 +6240,50 @@ func handleZombieMarking(ctx context.Context, db SQLQueries,
 	nodeKey1, nodeKey2 := info.NodeKey1Bytes, info.NodeKey2Bytes
 
 	if strictZombiePruning {
-		// TODO(elle): update for V2 last update times.
-		if v != lnwire.GossipVersion1 {
-			return fmt.Errorf("strict zombie pruning only "+
-				"supported for gossip v1, got %v", v)
-		}
-
 		var e1UpdateTime, e2UpdateTime *time.Time
-		if row.Policy1LastUpdate.Valid {
-			e1Time := time.Unix(row.Policy1LastUpdate.Int64, 0)
-			e1UpdateTime = &e1Time
-		}
-		if row.Policy2LastUpdate.Valid {
-			e2Time := time.Unix(row.Policy2LastUpdate.Int64, 0)
-			e2UpdateTime = &e2Time
+		switch v {
+		case lnwire.GossipVersion1:
+			if row.Policy1LastUpdate.Valid {
+				e1Time := time.Unix(
+					row.Policy1LastUpdate.Int64, 0,
+				)
+				e1UpdateTime = &e1Time
+			}
+			if row.Policy2LastUpdate.Valid {
+				e2Time := time.Unix(
+					row.Policy2LastUpdate.Int64, 0,
+				)
+				e2UpdateTime = &e2Time
+			}
+
+		case lnwire.GossipVersion2:
+			if row.Policy1BlockHeight.Valid {
+				e1Time := time.Unix(
+					row.Policy1BlockHeight.Int64, 0,
+				)
+				e1UpdateTime = &e1Time
+			} else if row.Policy1LastUpdate.Valid {
+				e1Time := time.Unix(
+					row.Policy1LastUpdate.Int64, 0,
+				)
+				e1UpdateTime = &e1Time
+			}
+
+			if row.Policy2BlockHeight.Valid {
+				e2Time := time.Unix(
+					row.Policy2BlockHeight.Int64, 0,
+				)
+				e2UpdateTime = &e2Time
+			} else if row.Policy2LastUpdate.Valid {
+				e2Time := time.Unix(
+					row.Policy2LastUpdate.Int64, 0,
+				)
+				e2UpdateTime = &e2Time
+			}
+
+		default:
+			return fmt.Errorf("unsupported gossip version: %v",
+				v)
 		}
 
 		nodeKey1, nodeKey2 = makeZombiePubkeys(
