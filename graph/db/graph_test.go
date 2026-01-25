@@ -147,6 +147,10 @@ var versionedTests = []versionedTest{
 		test: testEdgeInsertionDeletion,
 	},
 	{
+		name: "edge policy crud",
+		test: testEdgePolicyCRUDVersioned,
+	},
+	{
 		name: "partial node",
 		test: testPartialNode,
 	},
@@ -378,6 +382,83 @@ func testNodeInsertionAndDeletion(t *testing.T, v lnwire.GossipVersion) {
 		}, func() {},
 	)
 	require.NoError(t, err)
+}
+
+// testEdgePolicyCRUDVersioned tests edge policy updates for both versions.
+func testEdgePolicyCRUDVersioned(t *testing.T, v lnwire.GossipVersion) {
+	t.Parallel()
+	ctx := t.Context()
+
+	graph := NewVersionedGraph(MakeTestGraph(t), v)
+
+	node1 := createTestVertex(t, v)
+	node2 := createTestVertex(t, v)
+	if bytes.Compare(node1.PubKeyBytes[:], node2.PubKeyBytes[:]) == 1 {
+		node1, node2 = node2, node1
+	}
+
+	require.NoError(t, graph.AddNode(ctx, node1))
+	require.NoError(t, graph.AddNode(ctx, node2))
+
+	edgeInfo, _ := createEdge(v, 100, 0, 0, 0, node1, node2)
+	require.NoError(t, graph.AddChannelEdge(ctx, edgeInfo))
+
+	updateTime := func() time.Time {
+		if v == lnwire.GossipVersion2 {
+			return time.Unix(int64(nextBlockHeight()), 0)
+		}
+
+		return nextUpdateTime()
+	}
+
+	makePolicy := func(isNode1, disabled bool) *models.ChannelEdgePolicy {
+		flags := lnwire.ChanUpdateChanFlags(0)
+		if !isNode1 {
+			flags |= lnwire.ChanUpdateDirection
+		}
+		if disabled {
+			flags |= lnwire.ChanUpdateDisabled
+		}
+
+		toNode := edgeInfo.NodeKey2Bytes
+		if !isNode1 {
+			toNode = edgeInfo.NodeKey1Bytes
+		}
+
+		return &models.ChannelEdgePolicy{
+			SigBytes:                  testSig.Serialize(),
+			ChannelID:                 edgeInfo.ChannelID,
+			LastUpdate:                updateTime(),
+			MessageFlags:              lnwire.ChanUpdateRequiredMaxHtlc,
+			ChannelFlags:              flags,
+			TimeLockDelta:             144,
+			MinHTLC:                   1000,
+			MaxHTLC:                   2000,
+			FeeBaseMSat:               10,
+			FeeProportionalMillionths: 20,
+			ToNode:                    toNode,
+			ExtraOpaqueData:           []byte{1, 0},
+		}
+	}
+
+	policy1 := makePolicy(true, false)
+	policy2 := makePolicy(false, true)
+
+	require.NoError(t, graph.UpdateEdgePolicy(ctx, policy1))
+	require.NoError(t, graph.UpdateEdgePolicy(ctx, policy2))
+
+	_, dbPol1, dbPol2, err := graph.FetchChannelEdgesByID(
+		edgeInfo.ChannelID,
+	)
+	require.NoError(t, err)
+
+	if err := compareEdgePolicies(policy1, dbPol1); err != nil {
+		require.NoError(t, compareEdgePolicies(policy1, dbPol2))
+		require.NoError(t, compareEdgePolicies(policy2, dbPol1))
+		return
+	}
+
+	require.NoError(t, compareEdgePolicies(policy2, dbPol2))
 }
 
 // testPartialNode tests that partial/shell nodes are correctly created when

@@ -3457,23 +3457,38 @@ func updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 		node1Pub, node2Pub route.Vertex
 		isNode1            bool
 		chanIDB            = channelIDToBytes(edge.ChannelID)
+		dbChan             sqlc.GetChannelAndNodesBySCIDRow
+		found              bool
+		version            lnwire.GossipVersion
+		err                error
 	)
 
 	// Check that this edge policy refers to a channel that we already
 	// know of. We do this explicitly so that we can return the appropriate
 	// ErrEdgeNotFound error if the channel doesn't exist, rather than
 	// abort the transaction which would abort the entire batch.
-	dbChan, err := tx.GetChannelAndNodesBySCID(
-		ctx, sqlc.GetChannelAndNodesBySCIDParams{
-			Scid:    chanIDB,
-			Version: int16(lnwire.GossipVersion1),
-		},
-	)
-	if errors.Is(err, sql.ErrNoRows) {
+	for _, v := range []lnwire.GossipVersion{
+		lnwire.GossipVersion1, lnwire.GossipVersion2,
+	} {
+		dbChan, err = tx.GetChannelAndNodesBySCID(
+			ctx, sqlc.GetChannelAndNodesBySCIDParams{
+				Scid:    chanIDB,
+				Version: int16(v),
+			},
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		} else if err != nil {
+			return node1Pub, node2Pub, false, fmt.Errorf("unable "+
+				"to fetch channel(%v): %w", edge.ChannelID, err)
+		}
+
+		found = true
+		version = v
+		break
+	}
+	if !found {
 		return node1Pub, node2Pub, false, ErrEdgeNotFound
-	} else if err != nil {
-		return node1Pub, node2Pub, false, fmt.Errorf("unable to "+
-			"fetch channel(%v): %w", edge.ChannelID, err)
 	}
 
 	copy(node1Pub[:], dbChan.Node1PubKey)
@@ -3495,31 +3510,56 @@ func updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 		inboundBase = sqldb.SQLInt64(fee.BaseFee)
 	})
 
-		id, err := tx.UpsertEdgePolicy(ctx, sqlc.UpsertEdgePolicyParams{
-			Version:     int16(lnwire.GossipVersion1),
-			ChannelID:   dbChan.ID,
-			NodeID:      nodeID,
-			Timelock:    int32(edge.TimeLockDelta),
+	params := sqlc.UpsertEdgePolicyParams{
+		Version:     int16(version),
+		ChannelID:   dbChan.ID,
+		NodeID:      nodeID,
+		Timelock:    int32(edge.TimeLockDelta),
 		FeePpm:      int64(edge.FeeProportionalMillionths),
 		BaseFeeMsat: int64(edge.FeeBaseMSat),
 		MinHtlcMsat: int64(edge.MinHTLC),
-		LastUpdate:  sqldb.SQLInt64(edge.LastUpdate.Unix()),
-		Disabled: sql.NullBool{
+		InboundBaseFeeMsat:      inboundBase,
+		InboundFeeRateMilliMsat: inboundRate,
+		Signature:               edge.SigBytes,
+	}
+	switch version {
+	case lnwire.GossipVersion1:
+		params.LastUpdate = sqldb.SQLInt64(edge.LastUpdate.Unix())
+		params.Disabled = sql.NullBool{
 			Valid: true,
 			Bool:  edge.IsDisabled(),
-		},
-		MaxHtlcMsat: sql.NullInt64{
+		}
+		params.MaxHtlcMsat = sql.NullInt64{
 			Valid: edge.MessageFlags.HasMaxHtlc(),
 			Int64: int64(edge.MaxHTLC),
-		},
-			MessageFlags:            sqldb.SQLInt16(edge.MessageFlags),
-			ChannelFlags:            sqldb.SQLInt16(edge.ChannelFlags),
-			InboundBaseFeeMsat:      inboundBase,
-			InboundFeeRateMilliMsat: inboundRate,
-			Signature:               edge.SigBytes,
-				BlockHeight:             sql.NullInt64{},
-				DisableFlags:            sql.NullInt16{},
-		})
+		}
+		params.MessageFlags = sqldb.SQLInt16(edge.MessageFlags)
+		params.ChannelFlags = sqldb.SQLInt16(edge.ChannelFlags)
+
+	case lnwire.GossipVersion2:
+		updateHeight := edge.LastUpdate.Unix()
+		params.LastUpdate = sqldb.SQLInt64(updateHeight)
+		params.BlockHeight = sqldb.SQLInt64(updateHeight)
+		params.MaxHtlcMsat = sql.NullInt64{
+			Valid: true,
+			Int64: int64(edge.MaxHTLC),
+		}
+		params.ChannelFlags = sqldb.SQLInt16(
+			edge.ChannelFlags & lnwire.ChanUpdateDirection,
+		)
+		if edge.IsDisabled() {
+			params.DisableFlags = sqldb.SQLInt16(
+				int16(lnwire.ChanUpdateDisableOutgoing),
+			)
+		}
+
+	default:
+		return node1Pub, node2Pub, isNode1, fmt.Errorf(
+			"unknown gossip version: %d", version,
+		)
+	}
+
+	id, err := tx.UpsertEdgePolicy(ctx, params)
 	if err != nil {
 		return node1Pub, node2Pub, isNode1,
 			fmt.Errorf("unable to upsert edge policy: %w", err)
