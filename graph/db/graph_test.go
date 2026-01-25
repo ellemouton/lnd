@@ -161,6 +161,14 @@ var versionedTests = []versionedTest{
 		test: testChannelViewFundingScript,
 	},
 	{
+		name: "versioned source node channels",
+		test: testVersionedSourceNodeChannels,
+	},
+	{
+		name: "versioned channel range",
+		test: testVersionedChannelRange,
+	},
+	{
 		name: "strict zombie pruning",
 		test: testStrictZombiePruning,
 	},
@@ -657,6 +665,139 @@ func testChannelViewFundingScript(t *testing.T, v lnwire.GossipVersion) {
 		}
 	}
 	require.True(t, found)
+}
+
+// testVersionedSourceNodeChannels ensures versioned graphs iterate the source
+// node's channels and policies correctly.
+func testVersionedSourceNodeChannels(t *testing.T, v lnwire.GossipVersion) {
+	t.Parallel()
+	ctx := t.Context()
+
+	graph := NewVersionedGraph(MakeTestGraph(t), v)
+
+	nodeA := createTestVertex(t, v)
+	require.NoError(t, graph.SetSourceNode(ctx, nodeA))
+	require.NoError(t, graph.AddNode(ctx, nodeA))
+
+	nodeB := createTestVertex(t, v)
+	nodeC := createTestVertex(t, v)
+	require.NoError(t, graph.AddNode(ctx, nodeB))
+	require.NoError(t, graph.AddNode(ctx, nodeC))
+
+	edgeAB, _ := createEdge(v, 100, 0, 0, 0, nodeA, nodeB)
+	require.NoError(t, graph.AddChannelEdge(ctx, edgeAB))
+	edgeAC, _ := createEdge(v, 101, 0, 0, 1, nodeA, nodeC)
+	require.NoError(t, graph.AddChannelEdge(ctx, edgeAC))
+
+	policyForNode := func(edge *models.ChannelEdgeInfo,
+		fromNode *models.Node,
+		updateTime time.Time) *models.ChannelEdgePolicy {
+
+		isNode1 := bytes.Equal(
+			edge.NodeKey1Bytes[:], fromNode.PubKeyBytes[:],
+		)
+		flags := lnwire.ChanUpdateChanFlags(0)
+		toNode := edge.NodeKey2Bytes
+		if !isNode1 {
+			flags |= lnwire.ChanUpdateDirection
+			toNode = edge.NodeKey1Bytes
+		}
+
+		return &models.ChannelEdgePolicy{
+			SigBytes:   testSig.Serialize(),
+			ChannelID:  edge.ChannelID,
+			LastUpdate: updateTime,
+			MessageFlags: lnwire.
+				ChanUpdateRequiredMaxHtlc,
+			ChannelFlags:              flags,
+			TimeLockDelta:             144,
+			MinHTLC:                   1000,
+			MaxHTLC:                   2000,
+			FeeBaseMSat:               10,
+			FeeProportionalMillionths: 20,
+			ToNode:                    toNode,
+		}
+	}
+
+	require.NoError(t, graph.UpdateEdgePolicy(
+		ctx, policyForNode(edgeAB, nodeA, time.Unix(200, 0)),
+	))
+	require.NoError(t, graph.UpdateEdgePolicy(
+		ctx, policyForNode(edgeAC, nodeC, time.Unix(201, 0)),
+	))
+
+	type srcChan struct {
+		otherNode  route.Vertex
+		havePolicy bool
+	}
+	expected := map[wire.OutPoint]srcChan{
+		edgeAB.ChannelPoint: {
+			otherNode:  nodeB.PubKeyBytes,
+			havePolicy: true,
+		},
+		edgeAC.ChannelPoint: {
+			otherNode:  nodeC.PubKeyBytes,
+			havePolicy: false,
+		},
+	}
+
+	err := graph.ForEachSourceNodeChannel(ctx, func(
+		chanPoint wire.OutPoint, havePolicy bool,
+		otherNode *models.Node) error {
+
+		match, ok := expected[chanPoint]
+		require.True(t, ok)
+		require.Equal(t, match.otherNode[:], otherNode.PubKeyBytes[:])
+		require.Equal(t, match.havePolicy, havePolicy)
+
+		delete(expected, chanPoint)
+
+		return nil
+	}, func() {})
+	require.NoError(t, err)
+	require.Empty(t, expected)
+}
+
+// testVersionedChannelRange checks versioned range queries and highest SCID.
+func testVersionedChannelRange(t *testing.T, v lnwire.GossipVersion) {
+	t.Parallel()
+	ctx := t.Context()
+
+	graph := NewVersionedGraph(MakeTestGraph(t), v)
+
+	node1 := createTestVertex(t, v)
+	node2 := createTestVertex(t, v)
+	require.NoError(t, graph.AddNode(ctx, node1))
+	require.NoError(t, graph.AddNode(ctx, node2))
+
+	edge10, scid10 := createEdge(v, 10, 0, 0, 0, node1, node2)
+	require.NoError(t, graph.AddChannelEdge(ctx, edge10))
+	edge20, scid20 := createEdge(v, 20, 0, 0, 1, node1, node2)
+	require.NoError(t, graph.AddChannelEdge(ctx, edge20))
+
+	privateRange, _ := createEdge(
+		v, 15, 0, 0, 2, node1, node2, true,
+	)
+	require.NoError(t, graph.AddChannelEdge(ctx, privateRange))
+
+	privateHighest, scidHighest := createEdge(
+		v, 30, 0, 0, 3, node1, node2, true,
+	)
+	require.NoError(t, graph.AddChannelEdge(ctx, privateHighest))
+
+	bestID, err := graph.HighestChanID(ctx)
+	require.NoError(t, err)
+	require.Equal(t, scidHighest.ToUint64(), bestID)
+
+	ranges, err := graph.FilterChannelRange(5, 25, false)
+	require.NoError(t, err)
+	require.Len(t, ranges, 2)
+	require.Equal(t, uint32(10), ranges[0].Height)
+	require.Equal(t, uint32(20), ranges[1].Height)
+	require.Len(t, ranges[0].Channels, 1)
+	require.Len(t, ranges[1].Channels, 1)
+	require.Equal(t, scid10, ranges[0].Channels[0].ShortChannelID)
+	require.Equal(t, scid20, ranges[1].Channels[0].ShortChannelID)
 }
 
 // testStrictZombiePruning checks strict zombie pruning for v1 and v2 policies.

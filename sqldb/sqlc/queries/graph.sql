@@ -755,9 +755,20 @@ WHERE c.version = $1
 -- name: GetPublicV1ChannelsBySCID :many
 SELECT *
 FROM graph_channels
-WHERE COALESCE(length(node_1_signature), 0) > 0
+WHERE version = 1
+  AND COALESCE(length(node_1_signature), 0) > 0
   AND scid >= @start_scid
-  AND scid < @end_scid;
+  AND scid < @end_scid
+ORDER BY scid ASC;
+
+-- name: GetPublicV2ChannelsBySCID :many
+SELECT *
+FROM graph_channels
+WHERE version = 2
+  AND signature IS NOT NULL
+  AND scid >= @start_scid
+  AND scid < @end_scid
+ORDER BY scid ASC;
 
 -- name: ListChannelsPaginated :many
 SELECT id, bitcoin_key_1, bitcoin_key_2, outpoint, funding_pk_script

@@ -240,7 +240,7 @@ func (c *ChannelGraph) GraphSession(cb func(graph NodeTraverser) error,
 		return cb(c)
 	}
 
-	return c.db.GraphSession(cb, reset)
+	return c.db.GraphSession(lnwire.GossipVersion1, cb, reset)
 }
 
 // ForEachNodeCached iterates through all the stored vertices/nodes in the
@@ -592,7 +592,9 @@ func (c *ChannelGraph) ForEachSourceNodeChannel(ctx context.Context,
 	cb func(chanPoint wire.OutPoint, havePolicy bool,
 		otherNode *models.Node) error, reset func()) error {
 
-	return c.db.ForEachSourceNodeChannel(ctx, cb, reset)
+	return c.db.ForEachSourceNodeChannel(
+		ctx, lnwire.GossipVersion1, cb, reset,
+	)
 }
 
 // ForEachNodeChannel iterates through all channels of the given node.
@@ -682,7 +684,7 @@ func (c *ChannelGraph) ChannelID(chanPoint *wire.OutPoint) (uint64, error) {
 
 // HighestChanID returns the "highest" known channel ID in the channel graph.
 func (c *ChannelGraph) HighestChanID(ctx context.Context) (uint64, error) {
-	return c.db.HighestChanID(ctx)
+	return c.db.HighestChanID(ctx, lnwire.GossipVersion1)
 }
 
 // ChanUpdatesInHorizon returns all known channel edges with updates in the
@@ -690,14 +692,18 @@ func (c *ChannelGraph) HighestChanID(ctx context.Context) (uint64, error) {
 func (c *ChannelGraph) ChanUpdatesInHorizon(startTime, endTime time.Time,
 	opts ...IteratorOption) iter.Seq2[ChannelEdge, error] {
 
-	return c.db.ChanUpdatesInHorizon(startTime, endTime, opts...)
+	return c.db.ChanUpdatesInHorizon(
+		lnwire.GossipVersion1, startTime, endTime, opts...,
+	)
 }
 
 // FilterChannelRange returns channel IDs within the passed block height range.
 func (c *ChannelGraph) FilterChannelRange(startHeight, endHeight uint32,
 	withTimestamps bool) ([]BlockChannelRange, error) {
 
-	return c.db.FilterChannelRange(startHeight, endHeight, withTimestamps)
+	return c.db.FilterChannelRange(
+		lnwire.GossipVersion1, startHeight, endHeight, withTimestamps,
+	)
 }
 
 // FetchChanInfos returns the set of channel edges for the passed channel IDs.
@@ -892,6 +898,42 @@ func (c *VersionedGraph) DeleteChannelEdges(strictZombiePruning,
 // IsPublicNode determines whether the node is seen as public in the graph.
 func (c *VersionedGraph) IsPublicNode(pubKey [33]byte) (bool, error) {
 	return c.db.IsPublicNode(c.v, pubKey)
+}
+
+// ForEachSourceNodeChannel iterates through all channels of the source node.
+func (c *VersionedGraph) ForEachSourceNodeChannel(ctx context.Context,
+	cb func(chanPoint wire.OutPoint, havePolicy bool,
+		otherNode *models.Node) error, reset func()) error {
+
+	return c.db.ForEachSourceNodeChannel(ctx, c.v, cb, reset)
+}
+
+// HighestChanID returns the "highest" known channel ID in the channel graph.
+func (c *VersionedGraph) HighestChanID(ctx context.Context) (uint64, error) {
+	return c.db.HighestChanID(ctx, c.v)
+}
+
+// ChanUpdatesInHorizon returns all known channel edges with updates in the
+// horizon.
+func (c *VersionedGraph) ChanUpdatesInHorizon(startTime, endTime time.Time,
+	opts ...IteratorOption) iter.Seq2[ChannelEdge, error] {
+
+	return c.db.ChanUpdatesInHorizon(c.v, startTime, endTime, opts...)
+}
+
+// FilterChannelRange returns channel IDs within the passed block height range.
+func (c *VersionedGraph) FilterChannelRange(startHeight, endHeight uint32,
+	withTimestamps bool) ([]BlockChannelRange, error) {
+
+	return c.db.FilterChannelRange(c.v, startHeight, endHeight,
+		withTimestamps)
+}
+
+// GraphSession provides a consistent view of the graph for this version.
+func (c *VersionedGraph) GraphSession(cb func(graph NodeTraverser) error,
+	reset func()) error {
+
+	return c.db.GraphSession(c.v, cb, reset)
 }
 
 // MakeTestGraph creates a new instance of the ChannelGraph for testing

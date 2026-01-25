@@ -2006,7 +2006,13 @@ func getChanID(tx kvdb.RTx, chanPoint *wire.OutPoint) (uint64, error) {
 // HighestChanID returns the "highest" known channel ID in the channel graph.
 // This represents the "newest" channel from the PoV of the chain. This method
 // can be used by peers to quickly determine if they're graphs are in sync.
-func (c *KVStore) HighestChanID(_ context.Context) (uint64, error) {
+func (c *KVStore) HighestChanID(_ context.Context,
+	v lnwire.GossipVersion) (uint64, error) {
+
+	if v != lnwire.GossipVersion1 {
+		return 0, ErrVersionNotSupportedForKVDB
+	}
+
 	var cid uint64
 
 	err := kvdb.View(c.db, func(tx kvdb.RTx) error {
@@ -2318,8 +2324,15 @@ func (c *KVStore) fetchNextChanUpdateBatch(
 
 // ChanUpdatesInHorizon returns all the known channel edges which have at least
 // one edge that has an update timestamp within the specified horizon.
-func (c *KVStore) ChanUpdatesInHorizon(startTime, endTime time.Time,
+func (c *KVStore) ChanUpdatesInHorizon(v lnwire.GossipVersion,
+	startTime, endTime time.Time,
 	opts ...IteratorOption) iter.Seq2[ChannelEdge, error] {
+
+	if v != lnwire.GossipVersion1 {
+		return func(yield func(ChannelEdge, error) bool) {
+			yield(ChannelEdge{}, ErrVersionNotSupportedForKVDB)
+		}
+	}
 
 	cfg := defaultIteratorConfig()
 	for _, opt := range opts {
@@ -2756,8 +2769,12 @@ type BlockChannelRange struct {
 // up after a period of time offline. If withTimestamps is true then the
 // timestamp info of the latest received channel update messages of the channel
 // will be included in the response.
-func (c *KVStore) FilterChannelRange(startHeight,
+func (c *KVStore) FilterChannelRange(v lnwire.GossipVersion, startHeight,
 	endHeight uint32, withTimestamps bool) ([]BlockChannelRange, error) {
+
+	if v != lnwire.GossipVersion1 {
+		return nil, ErrVersionNotSupportedForKVDB
+	}
 
 	startChanID := &lnwire.ShortChannelID{
 		BlockHeight: startHeight,
@@ -3682,8 +3699,13 @@ func (c *KVStore) ForEachNodeChannel(_ context.Context, nodePub route.Vertex,
 // channel's outpoint, whether we have a policy for the channel and the channel
 // peer's node information.
 func (c *KVStore) ForEachSourceNodeChannel(_ context.Context,
+	v lnwire.GossipVersion,
 	cb func(chanPoint wire.OutPoint, havePolicy bool,
 		otherNode *models.Node) error, reset func()) error {
+
+	if v != lnwire.GossipVersion1 {
+		return ErrVersionNotSupportedForKVDB
+	}
 
 	return kvdb.View(c.db, func(tx kvdb.RTx) error {
 		nodes := tx.ReadBucket(nodeBucket)
@@ -4396,8 +4418,12 @@ func (c *KVStore) IsClosedScid(scid lnwire.ShortChannelID) (bool, error) {
 
 // GraphSession will provide the call-back with access to a NodeTraverser
 // instance which can be used to perform queries against the channel graph.
-func (c *KVStore) GraphSession(cb func(graph NodeTraverser) error,
-	reset func()) error {
+func (c *KVStore) GraphSession(v lnwire.GossipVersion,
+	cb func(graph NodeTraverser) error, reset func()) error {
+
+	if v != lnwire.GossipVersion1 {
+		return ErrVersionNotSupportedForKVDB
+	}
 
 	return c.db.View(func(tx walletdb.ReadTx) error {
 		return cb(&nodeTraverserSession{

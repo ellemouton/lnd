@@ -101,6 +101,7 @@ type SQLQueries interface {
 	GetChannelsByPolicyLastUpdateRange(ctx context.Context, arg sqlc.GetChannelsByPolicyLastUpdateRangeParams) ([]sqlc.GetChannelsByPolicyLastUpdateRangeRow, error)
 	GetChannelByOutpointWithPolicies(ctx context.Context, arg sqlc.GetChannelByOutpointWithPoliciesParams) (sqlc.GetChannelByOutpointWithPoliciesRow, error)
 	GetPublicV1ChannelsBySCID(ctx context.Context, arg sqlc.GetPublicV1ChannelsBySCIDParams) ([]sqlc.GraphChannel, error)
+	GetPublicV2ChannelsBySCID(ctx context.Context, arg sqlc.GetPublicV2ChannelsBySCIDParams) ([]sqlc.GraphChannel, error)
 	GetSCIDByOutpoint(ctx context.Context, arg sqlc.GetSCIDByOutpointParams) ([]byte, error)
 	DeleteChannels(ctx context.Context, ids []int64) error
 
@@ -762,10 +763,16 @@ func (s *SQLStore) AddChannelEdge(ctx context.Context,
 // can be used by peers to quickly determine if their graphs are in sync.
 //
 // NOTE: This is part of the Store interface.
-func (s *SQLStore) HighestChanID(ctx context.Context) (uint64, error) {
+func (s *SQLStore) HighestChanID(ctx context.Context,
+	v lnwire.GossipVersion) (uint64, error) {
+
+	if !isKnownGossipVersion(v) {
+		return 0, fmt.Errorf("unknown gossip version: %d", v)
+	}
+
 	var highestChanID uint64
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		chanID, err := db.HighestSCID(ctx, int16(lnwire.GossipVersion1))
+		chanID, err := db.HighestSCID(ctx, int16(v))
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		} else if err != nil {
@@ -892,12 +899,17 @@ func (s *SQLStore) updateEdgeCache(e *models.ChannelEdgePolicy,
 //
 // NOTE: part of the Store interface.
 func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
+	v lnwire.GossipVersion,
 	cb func(chanPoint wire.OutPoint, havePolicy bool,
 		otherNode *models.Node) error, reset func()) error {
 
+	if !isKnownGossipVersion(v) {
+		return fmt.Errorf("unknown gossip version: %d", v)
+	}
+
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		nodeID, nodePub, err := s.getSourceNode(
-			ctx, db, lnwire.GossipVersion1,
+			ctx, db, v,
 		)
 		if err != nil {
 			return fmt.Errorf("unable to fetch source node: %w",
@@ -905,7 +917,7 @@ func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
 		}
 
 		return forEachNodeChannel(
-			ctx, db, s.cfg, nodeID,
+			ctx, db, s.cfg, v, nodeID,
 			func(info *models.ChannelEdgeInfo,
 				outPolicy *models.ChannelEdgePolicy,
 				_ *models.ChannelEdgePolicy) error {
@@ -928,7 +940,7 @@ func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
 
 				_, otherNode, err := getNodeByPubKey(
 					ctx, s.cfg.QueryCfg, db,
-					lnwire.GossipVersion1, otherNodePub,
+					v, otherNodePub,
 				)
 				if err != nil {
 					return fmt.Errorf("unable to fetch "+
@@ -980,7 +992,9 @@ func (s *SQLStore) ForEachNodeDirectedChannel(nodePub route.Vertex,
 	var ctx = context.TODO()
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		return forEachNodeDirectedChannel(ctx, db, nodePub, cb)
+		return forEachNodeDirectedChannel(
+			ctx, db, lnwire.GossipVersion1, nodePub, cb,
+		)
 	}, reset)
 }
 
@@ -1036,7 +1050,9 @@ func (s *SQLStore) ForEachNodeChannel(ctx context.Context, nodePub route.Vertex,
 			return fmt.Errorf("unable to fetch node: %w", err)
 		}
 
-		return forEachNodeChannel(ctx, db, s.cfg, dbNode.ID, cb)
+		return forEachNodeChannel(
+			ctx, db, s.cfg, lnwire.GossipVersion1, dbNode.ID, cb,
+		)
 	}, reset)
 }
 
@@ -1136,8 +1152,17 @@ func (s *SQLStore) updateChanCacheBatch(edgesToCache map[uint64]ChannelEdge) {
 // 6. Repeat with updated pagination cursor until no more results
 //
 // NOTE: This is part of the Store interface.
-func (s *SQLStore) ChanUpdatesInHorizon(startTime, endTime time.Time,
+func (s *SQLStore) ChanUpdatesInHorizon(v lnwire.GossipVersion,
+	startTime, endTime time.Time,
 	opts ...IteratorOption) iter.Seq2[ChannelEdge, error] {
+
+	if !isKnownGossipVersion(v) {
+		return func(yield func(ChannelEdge, error) bool) {
+			yield(ChannelEdge{}, fmt.Errorf(
+				"unknown gossip version: %d", v,
+			))
+		}
+	}
 
 	// Apply options.
 	cfg := defaultIteratorConfig()
@@ -1172,7 +1197,7 @@ func (s *SQLStore) ChanUpdatesInHorizon(startTime, endTime time.Time,
 				func(db SQLQueries) error {
 					//nolint:ll
 					params := sqlc.GetChannelsByPolicyLastUpdateRangeParams{
-						Version: int16(lnwire.GossipVersion1),
+						Version: int16(v),
 						StartTime: sqldb.SQLInt64(
 							startTime.Unix(),
 						),
@@ -1619,8 +1644,13 @@ func (s *SQLStore) ForEachChannel(ctx context.Context,
 // will be included in the response.
 //
 // NOTE: This is part of the Store interface.
-func (s *SQLStore) FilterChannelRange(startHeight, endHeight uint32,
-	withTimestamps bool) ([]BlockChannelRange, error) {
+func (s *SQLStore) FilterChannelRange(v lnwire.GossipVersion,
+	startHeight, endHeight uint32, withTimestamps bool) (
+	[]BlockChannelRange, error) {
+
+	if !isKnownGossipVersion(v) {
+		return nil, fmt.Errorf("unknown gossip version: %d", v)
+	}
 
 	var (
 		ctx       = context.TODO()
@@ -1643,12 +1673,28 @@ func (s *SQLStore) FilterChannelRange(startHeight, endHeight uint32,
 	//    and add those timestamps to the collected channel.
 	channelsPerBlock := make(map[uint32][]ChannelUpdateInfo)
 	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		dbChans, err := db.GetPublicV1ChannelsBySCID(
-			ctx, sqlc.GetPublicV1ChannelsBySCIDParams{
-				StartScid: chanIDStart,
-				EndScid:   chanIDEnd,
-			},
+		var (
+			dbChans []sqlc.GraphChannel
+			err     error
 		)
+		switch v {
+		case lnwire.GossipVersion1:
+			dbChans, err = db.GetPublicV1ChannelsBySCID(
+				ctx, sqlc.GetPublicV1ChannelsBySCIDParams{
+					StartScid: chanIDStart,
+					EndScid:   chanIDEnd,
+				},
+			)
+		case lnwire.GossipVersion2:
+			dbChans, err = db.GetPublicV2ChannelsBySCID(
+				ctx, sqlc.GetPublicV2ChannelsBySCIDParams{
+					StartScid: chanIDStart,
+					EndScid:   chanIDEnd,
+				},
+			)
+		default:
+			return fmt.Errorf("unknown gossip version: %d", v)
+		}
 		if err != nil {
 			return fmt.Errorf("unable to fetch channel range: %w",
 				err)
@@ -1674,7 +1720,7 @@ func (s *SQLStore) FilterChannelRange(startHeight, endHeight uint32,
 			//nolint:ll
 			node1Policy, err := db.GetChannelPolicyByChannelAndNode(
 				ctx, sqlc.GetChannelPolicyByChannelAndNodeParams{
-					Version:   int16(lnwire.GossipVersion1),
+					Version:   int16(v),
 					ChannelID: dbChan.ID,
 					NodeID:    dbChan.NodeID1,
 				},
@@ -1683,15 +1729,14 @@ func (s *SQLStore) FilterChannelRange(startHeight, endHeight uint32,
 				return fmt.Errorf("unable to fetch node1 "+
 					"policy: %w", err)
 			} else if err == nil {
-				chanInfo.Node1UpdateTimestamp = time.Unix(
-					node1Policy.LastUpdate.Int64, 0,
-				)
+				chanInfo.Node1UpdateTimestamp =
+					policyLastUpdate(node1Policy)
 			}
 
 			//nolint:ll
 			node2Policy, err := db.GetChannelPolicyByChannelAndNode(
 				ctx, sqlc.GetChannelPolicyByChannelAndNodeParams{
-					Version:   int16(lnwire.GossipVersion1),
+					Version:   int16(v),
 					ChannelID: dbChan.ID,
 					NodeID:    dbChan.NodeID2,
 				},
@@ -1700,9 +1745,8 @@ func (s *SQLStore) FilterChannelRange(startHeight, endHeight uint32,
 				return fmt.Errorf("unable to fetch node2 "+
 					"policy: %w", err)
 			} else if err == nil {
-				chanInfo.Node2UpdateTimestamp = time.Unix(
-					node2Policy.LastUpdate.Int64, 0,
-				)
+				chanInfo.Node2UpdateTimestamp =
+					policyLastUpdate(node2Policy)
 			}
 
 			channelsPerBlock[cid.BlockHeight] = append(
@@ -3154,13 +3198,17 @@ func (s *SQLStore) IsClosedScid(scid lnwire.ShortChannelID) (bool, error) {
 // instance which can be used to perform queries against the channel graph.
 //
 // NOTE: part of the Store interface.
-func (s *SQLStore) GraphSession(cb func(graph NodeTraverser) error,
-	reset func()) error {
+func (s *SQLStore) GraphSession(v lnwire.GossipVersion,
+	cb func(graph NodeTraverser) error, reset func()) error {
+
+	if !isKnownGossipVersion(v) {
+		return fmt.Errorf("unknown gossip version: %d", v)
+	}
 
 	var ctx = context.TODO()
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		return cb(newSQLNodeTraverser(db, s.cfg.ChainHash))
+		return cb(newSQLNodeTraverser(db, s.cfg.ChainHash, v))
 	}, reset)
 }
 
@@ -3169,6 +3217,7 @@ func (s *SQLStore) GraphSession(cb func(graph NodeTraverser) error,
 type sqlNodeTraverser struct {
 	db    SQLQueries
 	chain chainhash.Hash
+	v     lnwire.GossipVersion
 }
 
 // A compile-time assertion to ensure that sqlNodeTraverser implements the
@@ -3176,12 +3225,13 @@ type sqlNodeTraverser struct {
 var _ NodeTraverser = (*sqlNodeTraverser)(nil)
 
 // newSQLNodeTraverser creates a new instance of the sqlNodeTraverser.
-func newSQLNodeTraverser(db SQLQueries,
-	chain chainhash.Hash) *sqlNodeTraverser {
+func newSQLNodeTraverser(db SQLQueries, chain chainhash.Hash,
+	v lnwire.GossipVersion) *sqlNodeTraverser {
 
 	return &sqlNodeTraverser{
 		db:    db,
 		chain: chain,
+		v:     v,
 	}
 }
 
@@ -3194,7 +3244,7 @@ func (s *sqlNodeTraverser) ForEachNodeDirectedChannel(nodePub route.Vertex,
 
 	ctx := context.TODO()
 
-	return forEachNodeDirectedChannel(ctx, s.db, nodePub, cb)
+	return forEachNodeDirectedChannel(ctx, s.db, s.v, nodePub, cb)
 }
 
 // FetchNodeFeatures returns the features of the given node. If the node is
@@ -3206,7 +3256,7 @@ func (s *sqlNodeTraverser) FetchNodeFeatures(nodePub route.Vertex) (
 
 	ctx := context.TODO()
 
-	return fetchNodeFeatures(ctx, s.db, lnwire.GossipVersion1, nodePub)
+	return fetchNodeFeatures(ctx, s.db, s.v, nodePub)
 }
 
 // forEachNodeDirectedChannel iterates through all channels of a given
@@ -3214,7 +3264,8 @@ func (s *sqlNodeTraverser) FetchNodeFeatures(nodePub route.Vertex) (
 // channel and its incoming policy. If the node is not found, no error is
 // returned.
 func forEachNodeDirectedChannel(ctx context.Context, db SQLQueries,
-	nodePub route.Vertex, cb func(channel *DirectedChannel) error) error {
+	v lnwire.GossipVersion, nodePub route.Vertex,
+	cb func(channel *DirectedChannel) error) error {
 
 	toNodeCallback := func() route.Vertex {
 		return nodePub
@@ -3222,7 +3273,7 @@ func forEachNodeDirectedChannel(ctx context.Context, db SQLQueries,
 
 	dbID, err := db.GetNodeIDByPubKey(
 		ctx, sqlc.GetNodeIDByPubKeyParams{
-			Version: int16(lnwire.GossipVersion1),
+			Version: int16(v),
 			PubKey:  nodePub[:],
 		},
 	)
@@ -3234,7 +3285,7 @@ func forEachNodeDirectedChannel(ctx context.Context, db SQLQueries,
 
 	rows, err := db.ListChannelsByNodeID(
 		ctx, sqlc.ListChannelsByNodeIDParams{
-			Version: int16(lnwire.GossipVersion1),
+			Version: int16(v),
 			NodeID1: dbID,
 		},
 	)
@@ -3382,14 +3433,14 @@ func forEachNodeCacheable(ctx context.Context, cfg *sqldb.QueryConfig,
 // edge information, the outgoing policy and the incoming policy for the
 // channel and node combo.
 func forEachNodeChannel(ctx context.Context, db SQLQueries,
-	cfg *SQLStoreConfig, id int64, cb func(*models.ChannelEdgeInfo,
-		*models.ChannelEdgePolicy,
+	cfg *SQLStoreConfig, v lnwire.GossipVersion, id int64,
+	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error) error {
 
-	// Get all the V1 channels for this node.
+	// Get all the channels for this node at the requested version.
 	rows, err := db.ListChannelsByNodeID(
 		ctx, sqlc.ListChannelsByNodeIDParams{
-			Version: int16(lnwire.GossipVersion1),
+			Version: int16(v),
 			NodeID1: id,
 		},
 	)

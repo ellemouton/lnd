@@ -59,7 +59,7 @@ type Store interface { //nolint:interfacebloat
 	// node, executing the passed callback on each. The call-back is
 	// provided with the channel's outpoint, whether we have a policy for
 	// the channel and the channel peer's node information.
-	ForEachSourceNodeChannel(ctx context.Context,
+	ForEachSourceNodeChannel(ctx context.Context, v lnwire.GossipVersion,
 		cb func(chanPoint wire.OutPoint, havePolicy bool,
 			otherNode *models.Node) error,
 		reset func()) error
@@ -151,7 +151,8 @@ type Store interface { //nolint:interfacebloat
 	// GraphSession will provide the call-back with access to a
 	// NodeTraverser instance which can be used to perform queries against
 	// the channel graph.
-	GraphSession(cb func(graph NodeTraverser) error, reset func()) error
+	GraphSession(v lnwire.GossipVersion,
+		cb func(graph NodeTraverser) error, reset func()) error
 
 	// ForEachChannel iterates through all the channel edges stored within
 	// the graph and invokes the passed callback for each edge. The callback
@@ -233,12 +234,14 @@ type Store interface { //nolint:interfacebloat
 	// graph. This represents the "newest" channel from the PoV of the
 	// chain. This method can be used by peers to quickly determine if
 	// they're graphs are in sync.
-	HighestChanID(ctx context.Context) (uint64, error)
+	HighestChanID(ctx context.Context, v lnwire.GossipVersion) (uint64,
+		error)
 
 	// ChanUpdatesInHorizon returns all the known channel edges which have
 	// at least one edge that has an update timestamp within the specified
 	// horizon.
-	ChanUpdatesInHorizon(startTime, endTime time.Time,
+	ChanUpdatesInHorizon(v lnwire.GossipVersion, startTime,
+		endTime time.Time,
 		opts ...IteratorOption) iter.Seq2[ChannelEdge, error]
 
 	// FilterKnownChanIDs takes a set of channel IDs and return the subset
@@ -259,7 +262,8 @@ type Store interface { //nolint:interfacebloat
 	// offline. If withTimestamps is true then the timestamp info of the
 	// latest received channel update messages of the channel will be
 	// included in the response.
-	FilterChannelRange(startHeight, endHeight uint32, withTimestamps bool) (
+	FilterChannelRange(v lnwire.GossipVersion, startHeight,
+		endHeight uint32, withTimestamps bool) (
 		[]BlockChannelRange, error)
 
 	// FetchChanInfos returns the set of channel edges that correspond to
