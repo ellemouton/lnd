@@ -1625,10 +1625,10 @@ func (s *SQLStore) FilterChannelRange(startHeight, endHeight uint32,
 	var (
 		ctx       = context.TODO()
 		startSCID = &lnwire.ShortChannelID{
-				BlockHeight: startHeight,
+			BlockHeight: startHeight,
 		}
 		endSCID = lnwire.ShortChannelID{
-				BlockHeight: endHeight,
+			BlockHeight: endHeight,
 			TxIndex:     math.MaxUint32 & 0x00ffffff,
 			TxPosition:  math.MaxUint16,
 		}
@@ -2678,7 +2678,7 @@ func (s *SQLStore) PruneGraph(spentOutputs []*wire.OutPoint,
 			err = db.UpsertPruneLogEntry(
 				ctx, sqlc.UpsertPruneLogEntryParams{
 					BlockHash:   blockHash[:],
-						BlockHeight: int64(blockHeight),
+					BlockHeight: int64(blockHeight),
 				},
 			)
 			if err != nil {
@@ -2706,7 +2706,7 @@ func (s *SQLStore) PruneGraph(spentOutputs []*wire.OutPoint,
 		err = db.UpsertPruneLogEntry(
 			ctx, sqlc.UpsertPruneLogEntryParams{
 				BlockHash:   blockHash[:],
-					BlockHeight: int64(blockHeight),
+				BlockHeight: int64(blockHeight),
 			},
 		)
 		if err != nil {
@@ -2810,8 +2810,11 @@ func (s *SQLStore) ChannelView() ([]EdgePoint, error) {
 				if len(channel.BitcoinKey1) == 0 ||
 					len(channel.BitcoinKey2) == 0 {
 
-					return fmt.Errorf("missing funding data for "+
-						"outpoint %s", channel.Outpoint)
+					return fmt.Errorf(
+						"missing funding data for "+
+							"outpoint %s",
+						channel.Outpoint,
+					)
 				}
 
 				var err error
@@ -2851,7 +2854,9 @@ func (s *SQLStore) ChannelView() ([]EdgePoint, error) {
 				)
 			}
 
-			extractCursor := func(row sqlc.ListChannelsPaginatedRow) int64 {
+			extractCursor := func(
+				row sqlc.ListChannelsPaginatedRow) int64 {
+
 				return row.ID
 			}
 
@@ -2953,7 +2958,7 @@ func (s *SQLStore) DisconnectBlockAtHeight(height uint32) (
 		// Every channel having a ShortChannelID starting at 'height'
 		// will no longer be confirmed.
 		startShortChanID = lnwire.ShortChannelID{
-				BlockHeight: height,
+			BlockHeight: height,
 		}
 
 		// Delete everything after this height from the db up until the
@@ -3505,6 +3510,7 @@ func updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 
 		found = true
 		version = v
+
 		break
 	}
 	if !found {
@@ -3531,13 +3537,13 @@ func updateChanEdgePolicy(ctx context.Context, tx SQLQueries,
 	})
 
 	params := sqlc.UpsertEdgePolicyParams{
-		Version:     int16(version),
-		ChannelID:   dbChan.ID,
-		NodeID:      nodeID,
-		Timelock:    int32(edge.TimeLockDelta),
-		FeePpm:      int64(edge.FeeProportionalMillionths),
-		BaseFeeMsat: int64(edge.FeeBaseMSat),
-		MinHtlcMsat: int64(edge.MinHTLC),
+		Version:                 int16(version),
+		ChannelID:               dbChan.ID,
+		NodeID:                  nodeID,
+		Timelock:                int32(edge.TimeLockDelta),
+		FeePpm:                  int64(edge.FeeProportionalMillionths),
+		BaseFeeMsat:             int64(edge.FeeBaseMSat),
+		MinHtlcMsat:             int64(edge.MinHTLC),
 		InboundBaseFeeMsat:      inboundBase,
 		InboundFeeRateMilliMsat: inboundRate,
 		Signature:               edge.SigBytes,
@@ -4845,11 +4851,11 @@ func buildChanPolicy(dbPolicy sqlc.GraphChannelPolicy, channelID uint64,
 	}
 
 	return &models.ChannelEdgePolicy{
-		SigBytes:  dbPolicy.Signature,
-		ChannelID: channelID,
-		LastUpdate:   lastUpdate,
-		MessageFlags: messageFlags,
-		ChannelFlags: channelFlags,
+		SigBytes:      dbPolicy.Signature,
+		ChannelID:     channelID,
+		LastUpdate:    lastUpdate,
+		MessageFlags:  messageFlags,
+		ChannelFlags:  channelFlags,
 		TimeLockDelta: uint16(dbPolicy.Timelock),
 		MinHTLC: lnwire.MilliSatoshi(
 			dbPolicy.MinHtlcMsat,
@@ -4868,11 +4874,10 @@ func buildChanPolicy(dbPolicy sqlc.GraphChannelPolicy, channelID uint64,
 }
 
 func policyLastUpdate(dbPolicy sqlc.GraphChannelPolicy) time.Time {
-	switch lnwire.GossipVersion(dbPolicy.Version) {
-	case lnwire.GossipVersion2:
-		if dbPolicy.BlockHeight.Valid {
-			return time.Unix(dbPolicy.BlockHeight.Int64, 0)
-		}
+	if lnwire.GossipVersion(dbPolicy.Version) ==
+		lnwire.GossipVersion2 && dbPolicy.BlockHeight.Valid {
+
+		return time.Unix(dbPolicy.BlockHeight.Int64, 0)
 	}
 
 	if dbPolicy.LastUpdate.Valid {
@@ -4882,7 +4887,9 @@ func policyLastUpdate(dbPolicy sqlc.GraphChannelPolicy) time.Time {
 	return time.Unix(0, 0)
 }
 
-func policyMessageFlags(dbPolicy sqlc.GraphChannelPolicy) lnwire.ChanUpdateMsgFlags {
+func policyMessageFlags(
+	dbPolicy sqlc.GraphChannelPolicy) lnwire.ChanUpdateMsgFlags {
+
 	flags := sqldb.ExtractSqlInt16[lnwire.ChanUpdateMsgFlags](
 		dbPolicy.MessageFlags,
 	)
@@ -4893,7 +4900,9 @@ func policyMessageFlags(dbPolicy sqlc.GraphChannelPolicy) lnwire.ChanUpdateMsgFl
 	return flags
 }
 
-func policyChannelFlags(dbPolicy sqlc.GraphChannelPolicy) lnwire.ChanUpdateChanFlags {
+func policyChannelFlags(
+	dbPolicy sqlc.GraphChannelPolicy) lnwire.ChanUpdateChanFlags {
+
 	flags := sqldb.ExtractSqlInt16[lnwire.ChanUpdateChanFlags](
 		dbPolicy.ChannelFlags,
 	)
@@ -4938,7 +4947,7 @@ func extractChannelPolicies(row any) (*sqlc.GraphChannelPolicy,
 				BlockHeight:             r.Policy1BlockHeight,
 				DisableFlags:            r.Policy1DisableFlags,
 			}
-			}
+		}
 		if r.Policy2Timelock.Valid {
 			policy2 = &sqlc.GraphChannelPolicy{
 				Timelock:                r.Policy2Timelock.Int32,
@@ -4952,9 +4961,9 @@ func extractChannelPolicies(row any) (*sqlc.GraphChannelPolicy,
 				MessageFlags:            r.Policy2MessageFlags,
 				ChannelFlags:            r.Policy2ChannelFlags,
 				BlockHeight:             r.Policy2BlockHeight,
-						DisableFlags:            r.Policy2DisableFlags,
-				}
+				DisableFlags:            r.Policy2DisableFlags,
 			}
+		}
 
 		return policy1, policy2, nil
 

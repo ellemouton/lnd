@@ -430,10 +430,11 @@ func testEdgePolicyCRUDVersioned(t *testing.T, v lnwire.GossipVersion) {
 		}
 
 		return &models.ChannelEdgePolicy{
-			SigBytes:                  testSig.Serialize(),
-			ChannelID:                 edgeInfo.ChannelID,
-			LastUpdate:                updateTime(),
-			MessageFlags:              lnwire.ChanUpdateRequiredMaxHtlc,
+			SigBytes:   testSig.Serialize(),
+			ChannelID:  edgeInfo.ChannelID,
+			LastUpdate: updateTime(),
+			MessageFlags: lnwire.
+				ChanUpdateRequiredMaxHtlc,
 			ChannelFlags:              flags,
 			TimeLockDelta:             144,
 			MinHTLC:                   1000,
@@ -492,7 +493,9 @@ func testStrictZombiePruning(t *testing.T, v lnwire.GossipVersion) {
 		return nextUpdateTime()
 	}
 
-	makePolicy := func(isNode1 bool, updateTime time.Time) *models.ChannelEdgePolicy {
+	makePolicy := func(isNode1 bool,
+		updateTime time.Time) *models.ChannelEdgePolicy {
+
 		flags := lnwire.ChanUpdateChanFlags(0)
 		if !isNode1 {
 			flags |= lnwire.ChanUpdateDirection
@@ -504,10 +507,11 @@ func testStrictZombiePruning(t *testing.T, v lnwire.GossipVersion) {
 		}
 
 		return &models.ChannelEdgePolicy{
-			SigBytes:                  testSig.Serialize(),
-			ChannelID:                 edgeInfo.ChannelID,
-			LastUpdate:                updateTime,
-			MessageFlags:              lnwire.ChanUpdateRequiredMaxHtlc,
+			SigBytes:   testSig.Serialize(),
+			ChannelID:  edgeInfo.ChannelID,
+			LastUpdate: updateTime,
+			MessageFlags: lnwire.
+				ChanUpdateRequiredMaxHtlc,
 			ChannelFlags:              flags,
 			TimeLockDelta:             144,
 			MinHTLC:                   1000,
