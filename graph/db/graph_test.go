@@ -28,6 +28,8 @@ import (
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
+	"github.com/lightningnetwork/lnd/sqldb"
+	"github.com/lightningnetwork/lnd/sqldb/sqlc"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
@@ -149,6 +151,14 @@ var versionedTests = []versionedTest{
 	{
 		name: "edge policy crud",
 		test: testEdgePolicyCRUDVersioned,
+	},
+	{
+		name: "v2 policy persistence",
+		test: testV2PolicyPersistence,
+	},
+	{
+		name: "channel view funding script",
+		test: testChannelViewFundingScript,
 	},
 	{
 		name: "strict zombie pruning",
@@ -464,6 +474,189 @@ func testEdgePolicyCRUDVersioned(t *testing.T, v lnwire.GossipVersion) {
 	}
 
 	require.NoError(t, compareEdgePolicies(policy2, dbPol2))
+}
+
+// testV2PolicyPersistence ensures v2 policy columns are persisted in SQL.
+func testV2PolicyPersistence(t *testing.T, v lnwire.GossipVersion) {
+	t.Parallel()
+
+	if v != lnwire.GossipVersion2 || !isSQLDB {
+		return
+	}
+
+	ctx := t.Context()
+	graph := NewVersionedGraph(MakeTestGraph(t), v)
+
+	node1 := createTestVertex(t, v)
+	node2 := createTestVertex(t, v)
+	if bytes.Compare(node1.PubKeyBytes[:], node2.PubKeyBytes[:]) == 1 {
+		node1, node2 = node2, node1
+	}
+
+	require.NoError(t, graph.AddNode(ctx, node1))
+	require.NoError(t, graph.AddNode(ctx, node2))
+
+	edgeInfo, _ := createEdge(v, 300, 0, 0, 0, node1, node2)
+	require.NoError(t, graph.AddChannelEdge(ctx, edgeInfo))
+
+	makePolicy := func(isNode1 bool, updateTime time.Time,
+		disabled bool) *models.ChannelEdgePolicy {
+
+		flags := lnwire.ChanUpdateChanFlags(0)
+		if !isNode1 {
+			flags |= lnwire.ChanUpdateDirection
+		}
+		if disabled {
+			flags |= lnwire.ChanUpdateDisabled
+		}
+
+		toNode := edgeInfo.NodeKey2Bytes
+		if !isNode1 {
+			toNode = edgeInfo.NodeKey1Bytes
+		}
+
+		return &models.ChannelEdgePolicy{
+			SigBytes:   testSig.Serialize(),
+			ChannelID:  edgeInfo.ChannelID,
+			LastUpdate: updateTime,
+			MessageFlags: lnwire.
+				ChanUpdateRequiredMaxHtlc,
+			ChannelFlags:              flags,
+			TimeLockDelta:             144,
+			MinHTLC:                   1000,
+			MaxHTLC:                   2000,
+			FeeBaseMSat:               10,
+			FeeProportionalMillionths: 20,
+			ToNode:                    toNode,
+			ExtraOpaqueData:           []byte{1, 0},
+		}
+	}
+
+	updateTime1 := time.Unix(int64(nextBlockHeight()), 0)
+	updateTime2 := time.Unix(int64(nextBlockHeight()), 0)
+	policy1 := makePolicy(true, updateTime1, false)
+	policy2 := makePolicy(false, updateTime2, true)
+
+	require.NoError(t, graph.UpdateEdgePolicy(ctx, policy1))
+	require.NoError(t, graph.UpdateEdgePolicy(ctx, policy2))
+
+	store, ok := graph.ChannelGraph.db.(*SQLStore)
+	require.True(t, ok)
+	var dbChan sqlc.GetChannelAndNodesBySCIDRow
+	err := store.db.ExecTx(
+		ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+			var err error
+			dbChan, err = db.GetChannelAndNodesBySCID(
+				ctx, sqlc.GetChannelAndNodesBySCIDParams{
+					Scid: channelIDToBytes(
+						edgeInfo.ChannelID,
+					),
+					Version: int16(v),
+				},
+			)
+
+			return err
+		}, sqldb.NoOpReset)
+	require.NoError(t, err)
+
+	var dbPol1, dbPol2 sqlc.GraphChannelPolicy
+	err = store.db.ExecTx(
+		ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+			var err error
+			dbPol1, err = db.GetChannelPolicyByChannelAndNode(
+				ctx,
+				sqlc.GetChannelPolicyByChannelAndNodeParams{
+					ChannelID: dbChan.ID,
+					NodeID:    dbChan.NodeID1,
+					Version:   int16(v),
+				},
+			)
+			if err != nil {
+				return err
+			}
+
+			dbPol2, err = db.GetChannelPolicyByChannelAndNode(
+				ctx,
+				sqlc.GetChannelPolicyByChannelAndNodeParams{
+					ChannelID: dbChan.ID,
+					NodeID:    dbChan.NodeID2,
+					Version:   int16(v),
+				},
+			)
+
+			return err
+		}, sqldb.NoOpReset)
+	require.NoError(t, err)
+
+	require.True(t, dbPol1.BlockHeight.Valid)
+	require.Equal(t, updateTime1.Unix(), dbPol1.BlockHeight.Int64)
+	require.False(t, dbPol1.DisableFlags.Valid)
+
+	require.True(t, dbPol2.BlockHeight.Valid)
+	require.Equal(t, updateTime2.Unix(), dbPol2.BlockHeight.Int64)
+	require.True(t, dbPol2.DisableFlags.Valid)
+	require.Equal(
+		t, int16(lnwire.ChanUpdateDisableOutgoing),
+		dbPol2.DisableFlags.Int16,
+	)
+}
+
+// testChannelViewFundingScript verifies v2 channels use funding scripts.
+func testChannelViewFundingScript(t *testing.T, v lnwire.GossipVersion) {
+	t.Parallel()
+
+	if v != lnwire.GossipVersion2 {
+		return
+	}
+
+	ctx := t.Context()
+	graph := NewVersionedGraph(MakeTestGraph(t), v)
+
+	node1 := createTestVertex(t, v)
+	node2 := createTestVertex(t, v)
+	if bytes.Compare(node1.PubKeyBytes[:], node2.PubKeyBytes[:]) == 1 {
+		node1, node2 = node2, node1
+	}
+
+	require.NoError(t, graph.AddNode(ctx, node1))
+	require.NoError(t, graph.AddNode(ctx, node2))
+
+	node1Pub, _ := node1.PubKey()
+	node2Pub, _ := node2.PubKey()
+	node1Vertex, _ := route.NewVertexFromBytes(
+		node1Pub.SerializeCompressed(),
+	)
+	node2Vertex, _ := route.NewVertexFromBytes(
+		node2Pub.SerializeCompressed(),
+	)
+
+	script := []byte{0x00, 0x20}
+	script = append(script, bytes.Repeat([]byte{0xcc}, 32)...)
+
+	edgeInfo, _ := models.NewV2Channel(
+		lnwire.NewShortChanIDFromInt(400).ToUint64(),
+		*chaincfg.MainNetParams.GenesisHash,
+		node1Vertex, node2Vertex,
+		&models.ChannelV2Fields{
+			FundingScript:     fn.Some(script),
+			ExtraSignedFields: make(map[uint64][]byte),
+		},
+		models.WithChannelPoint(wire.OutPoint{Hash: rev, Index: 99}),
+		models.WithCapacity(9000),
+	)
+	require.NoError(t, graph.AddChannelEdge(ctx, edgeInfo))
+
+	view, err := graph.ChannelGraph.ChannelView()
+	require.NoError(t, err)
+
+	found := false
+	for _, entry := range view {
+		if bytes.Equal(entry.FundingPkScript, script) {
+			found = true
+			break
+		}
+	}
+	require.True(t, found)
 }
 
 // testStrictZombiePruning checks strict zombie pruning for v1 and v2 policies.
