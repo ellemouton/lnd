@@ -169,6 +169,10 @@ var versionedTests = []versionedTest{
 		test: testVersionedChannelRange,
 	},
 	{
+		name: "versioned chan updates",
+		test: testVersionedChanUpdatesInHorizon,
+	},
+	{
 		name: "strict zombie pruning",
 		test: testStrictZombiePruning,
 	},
@@ -798,6 +802,70 @@ func testVersionedChannelRange(t *testing.T, v lnwire.GossipVersion) {
 	require.Len(t, ranges[1].Channels, 1)
 	require.Equal(t, scid10, ranges[0].Channels[0].ShortChannelID)
 	require.Equal(t, scid20, ranges[1].Channels[0].ShortChannelID)
+}
+
+// testVersionedChanUpdatesInHorizon verifies versioned horizon queries.
+func testVersionedChanUpdatesInHorizon(t *testing.T,
+	v lnwire.GossipVersion) {
+
+	t.Parallel()
+	ctx := t.Context()
+
+	graph := NewVersionedGraph(MakeTestGraph(t), v)
+
+	node1 := createTestVertex(t, v)
+	node2 := createTestVertex(t, v)
+	require.NoError(t, graph.AddNode(ctx, node1))
+	require.NoError(t, graph.AddNode(ctx, node2))
+
+	edgeInfo, _ := createEdge(v, 200, 0, 0, 0, node1, node2)
+	require.NoError(t, graph.AddChannelEdge(ctx, edgeInfo))
+
+	makePolicy := func(isNode1 bool,
+		updateTime time.Time) *models.ChannelEdgePolicy {
+
+		flags := lnwire.ChanUpdateChanFlags(0)
+		if !isNode1 {
+			flags |= lnwire.ChanUpdateDirection
+		}
+
+		toNode := edgeInfo.NodeKey2Bytes
+		if !isNode1 {
+			toNode = edgeInfo.NodeKey1Bytes
+		}
+
+		return &models.ChannelEdgePolicy{
+			SigBytes:   testSig.Serialize(),
+			ChannelID:  edgeInfo.ChannelID,
+			LastUpdate: updateTime,
+			MessageFlags: lnwire.
+				ChanUpdateRequiredMaxHtlc,
+			ChannelFlags:              flags,
+			TimeLockDelta:             144,
+			MinHTLC:                   1000,
+			MaxHTLC:                   2000,
+			FeeBaseMSat:               10,
+			FeeProportionalMillionths: 20,
+			ToNode:                    toNode,
+		}
+	}
+
+	updateInRange := time.Unix(100, 0)
+	updateOutOfRange := time.Unix(200, 0)
+	require.NoError(t, graph.UpdateEdgePolicy(
+		ctx, makePolicy(true, updateInRange),
+	))
+	require.NoError(t, graph.UpdateEdgePolicy(
+		ctx, makePolicy(false, updateOutOfRange),
+	))
+
+	iter := graph.ChanUpdatesInHorizon(
+		time.Unix(90, 0), time.Unix(110, 0),
+	)
+	edges, err := fn.CollectErr(iter)
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	require.Equal(t, edgeInfo.ChannelID, edges[0].Info.ChannelID)
 }
 
 // testStrictZombiePruning checks strict zombie pruning for v1 and v2 policies.

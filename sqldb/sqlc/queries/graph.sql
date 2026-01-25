@@ -550,31 +550,36 @@ FROM graph_channels c
         ON cp2.channel_id = c.id AND cp2.node_id = c.node_id_2 AND cp2.version = c.version
 WHERE c.version = @version
   AND (
-       (cp1.last_update >= @start_time AND cp1.last_update < @end_time)
+       (COALESCE(cp1.block_height, cp1.last_update) >= @start_time
+           AND COALESCE(cp1.block_height, cp1.last_update) < @end_time)
        OR
-       (cp2.last_update >= @start_time AND cp2.last_update < @end_time)
+       (COALESCE(cp2.block_height, cp2.last_update) >= @start_time
+           AND COALESCE(cp2.block_height, cp2.last_update) < @end_time)
   )
   -- Pagination using compound cursor (max_update_time, id).
   -- We use COALESCE with -1 as sentinel since timestamps are always positive.
   AND (
        (CASE
-           WHEN COALESCE(cp1.last_update, 0) >= COALESCE(cp2.last_update, 0)
-               THEN COALESCE(cp1.last_update, 0)
-           ELSE COALESCE(cp2.last_update, 0)
+           WHEN COALESCE(cp1.block_height, cp1.last_update, 0) >=
+               COALESCE(cp2.block_height, cp2.last_update, 0)
+               THEN COALESCE(cp1.block_height, cp1.last_update, 0)
+           ELSE COALESCE(cp2.block_height, cp2.last_update, 0)
        END > COALESCE(sqlc.narg('last_update_time'), -1))
        OR 
        (CASE
-           WHEN COALESCE(cp1.last_update, 0) >= COALESCE(cp2.last_update, 0)
-               THEN COALESCE(cp1.last_update, 0)
-           ELSE COALESCE(cp2.last_update, 0)
+           WHEN COALESCE(cp1.block_height, cp1.last_update, 0) >=
+               COALESCE(cp2.block_height, cp2.last_update, 0)
+               THEN COALESCE(cp1.block_height, cp1.last_update, 0)
+           ELSE COALESCE(cp2.block_height, cp2.last_update, 0)
        END = COALESCE(sqlc.narg('last_update_time'), -1) 
        AND c.id > COALESCE(sqlc.narg('last_id'), -1))
   )
 ORDER BY
     CASE
-        WHEN COALESCE(cp1.last_update, 0) >= COALESCE(cp2.last_update, 0)
-            THEN COALESCE(cp1.last_update, 0)
-        ELSE COALESCE(cp2.last_update, 0)
+        WHEN COALESCE(cp1.block_height, cp1.last_update, 0) >=
+            COALESCE(cp2.block_height, cp2.last_update, 0)
+            THEN COALESCE(cp1.block_height, cp1.last_update, 0)
+        ELSE COALESCE(cp2.block_height, cp2.last_update, 0)
     END ASC,
     c.id ASC
 LIMIT COALESCE(sqlc.narg('max_results'), 999999999);
