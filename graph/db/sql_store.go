@@ -594,8 +594,17 @@ func (s *SQLStore) SetSourceNode(ctx context.Context,
 // announcements.
 //
 // NOTE: This is part of the Store interface.
-func (s *SQLStore) NodeUpdatesInHorizon(startTime, endTime time.Time,
+func (s *SQLStore) NodeUpdatesInHorizon(v lnwire.GossipVersion,
+	startTime, endTime time.Time,
 	opts ...IteratorOption) iter.Seq2[*models.Node, error] {
+
+	if !isKnownGossipVersion(v) {
+		return func(yield func(*models.Node, error) bool) {
+			yield(&models.Node{}, fmt.Errorf(
+				"unknown gossip version: %d", v,
+			))
+		}
+	}
 
 	cfg := defaultIteratorConfig()
 	for _, opt := range opts {
@@ -619,6 +628,7 @@ func (s *SQLStore) NodeUpdatesInHorizon(startTime, endTime time.Time,
 			err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 				//nolint:ll
 				params := sqlc.GetNodesByLastUpdateRangeParams{
+					Version: int16(v),
 					StartTime: sqldb.SQLInt64(
 						startTime.Unix(),
 					),
@@ -652,9 +662,11 @@ func (s *SQLStore) NodeUpdatesInHorizon(startTime, endTime time.Time,
 						// Update pagination cursors
 						// based on the last processed
 						// node.
+						updateTime := nodeUpdateTime(
+							node,
+						)
 						lastUpdateTime = sql.NullInt64{
-							Int64: node.LastUpdate.
-								Unix(),
+							Int64: updateTime.Unix(),
 							Valid: true,
 						}
 						lastPubKey = node.PubKeyBytes[:]
@@ -4936,6 +4948,14 @@ func policyLastUpdate(dbPolicy sqlc.GraphChannelPolicy) time.Time {
 	}
 
 	return time.Unix(0, 0)
+}
+
+func nodeUpdateTime(node *models.Node) time.Time {
+	if node.Version == lnwire.GossipVersion2 {
+		return time.Unix(int64(node.LastBlockHeight), 0)
+	}
+
+	return node.LastUpdate
 }
 
 func policyMessageFlags(

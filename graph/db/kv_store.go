@@ -2581,9 +2581,15 @@ func (c *KVStore) fetchNextNodeBatch(
 
 // NodeUpdatesInHorizon returns all the known lightning node which have an
 // update timestamp within the passed range.
-func (c *KVStore) NodeUpdatesInHorizon(startTime,
-	endTime time.Time,
+func (c *KVStore) NodeUpdatesInHorizon(v lnwire.GossipVersion,
+	startTime, endTime time.Time,
 	opts ...IteratorOption) iter.Seq2[*models.Node, error] {
+
+	if v != lnwire.GossipVersion1 {
+		return func(yield func(*models.Node, error) bool) {
+			yield(&models.Node{}, ErrVersionNotSupportedForKVDB)
+		}
+	}
 
 	cfg := defaultIteratorConfig()
 	for _, opt := range opts {

@@ -173,6 +173,10 @@ var versionedTests = []versionedTest{
 		test: testVersionedChanUpdatesInHorizon,
 	},
 	{
+		name: "versioned node updates",
+		test: testVersionedNodeUpdatesInHorizon,
+	},
+	{
 		name: "strict zombie pruning",
 		test: testStrictZombiePruning,
 	},
@@ -866,6 +870,44 @@ func testVersionedChanUpdatesInHorizon(t *testing.T,
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 	require.Equal(t, edgeInfo.ChannelID, edges[0].Info.ChannelID)
+}
+
+// testVersionedNodeUpdatesInHorizon verifies node update horizon queries.
+func testVersionedNodeUpdatesInHorizon(t *testing.T, v lnwire.GossipVersion) {
+	t.Parallel()
+	ctx := t.Context()
+
+	graph := NewVersionedGraph(MakeTestGraph(t), v)
+
+	node1 := createTestVertex(t, v)
+	node2 := createTestVertex(t, v)
+	require.NoError(t, graph.AddNode(ctx, node1))
+	require.NoError(t, graph.AddNode(ctx, node2))
+
+	var (
+		startTime time.Time
+		endTime   time.Time
+	)
+	switch v {
+	case lnwire.GossipVersion1:
+		startTime = node1.LastUpdate.Add(-time.Second)
+		endTime = node1.LastUpdate
+	case lnwire.GossipVersion2:
+		startTime = time.Unix(
+			int64(node1.LastBlockHeight-1), 0,
+		)
+		endTime = time.Unix(
+			int64(node1.LastBlockHeight), 0,
+		)
+	default:
+		t.Fatalf("unknown gossip version: %v", v)
+	}
+
+	iter := graph.NodeUpdatesInHorizon(startTime, endTime)
+	nodes, err := fn.CollectErr(iter)
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	require.Equal(t, node1.PubKeyBytes, nodes[0].PubKeyBytes)
 }
 
 // testStrictZombiePruning checks strict zombie pruning for v1 and v2 policies.

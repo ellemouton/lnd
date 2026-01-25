@@ -2126,39 +2126,57 @@ func (q *Queries) GetNodesByIDs(ctx context.Context, ids []int64) ([]GraphNode, 
 const getNodesByLastUpdateRange = `-- name: GetNodesByLastUpdateRange :many
 SELECT id, version, pub_key, alias, last_update, color, signature, block_height
 FROM graph_nodes
-WHERE last_update >= $1
-  AND last_update <= $2
+WHERE graph_nodes.version = $1
+  AND COALESCE(block_height, last_update) >= $2
+  AND COALESCE(block_height, last_update) <= $3
   -- Pagination: We use (last_update, pub_key) as a compound cursor.
   -- This ensures stable ordering and allows us to resume from where we left off.
   -- We use COALESCE with -1 as sentinel since timestamps are always positive.
   AND (
     -- Include rows with last_update greater than cursor (or all rows if cursor is -1)
-    last_update > COALESCE($3, -1)
+    COALESCE(block_height, last_update) >
+        COALESCE($4, -1)
     OR 
     -- For rows with same last_update, use pub_key as tiebreaker
-    (last_update = COALESCE($3, -1) 
-     AND pub_key > $4)
+    (COALESCE(block_height, last_update) =
+        COALESCE($4, -1) 
+     AND pub_key > $5)
   )
   -- Optional filter for public nodes only
   AND (
     -- If only_public is false or not provided, include all nodes
-    COALESCE($5, FALSE) IS FALSE
-    OR 
-    -- For V1 protocol, a node is public if it has at least one public channel.
-    -- A public channel has bitcoin_1_signature set (channel announcement received).
-    EXISTS (
-      SELECT 1
-      FROM graph_channels c
-      WHERE c.version = 1
-        AND COALESCE(length(c.bitcoin_1_signature), 0) > 0
-        AND (c.node_id_1 = graph_nodes.id OR c.node_id_2 = graph_nodes.id)
+    COALESCE($6, FALSE) IS FALSE
+    OR
+    (
+      $1 = 1
+      AND EXISTS (
+        SELECT 1
+        FROM graph_channels c
+        WHERE c.version = 1
+          AND COALESCE(length(c.bitcoin_1_signature), 0) > 0
+          AND (c.node_id_1 = graph_nodes.id
+            OR c.node_id_2 = graph_nodes.id)
+      )
+    )
+    OR
+    (
+      $1 = 2
+      AND EXISTS (
+        SELECT 1
+        FROM graph_channels c
+        WHERE c.version = 2
+          AND COALESCE(length(c.signature), 0) > 0
+          AND (c.node_id_1 = graph_nodes.id
+            OR c.node_id_2 = graph_nodes.id)
+      )
     )
   )
-ORDER BY last_update ASC, pub_key ASC
-LIMIT COALESCE($6, 999999999)
+ORDER BY COALESCE(block_height, last_update) ASC, pub_key ASC
+LIMIT COALESCE($7, 999999999)
 `
 
 type GetNodesByLastUpdateRangeParams struct {
+	Version    int16
 	StartTime  sql.NullInt64
 	EndTime    sql.NullInt64
 	LastUpdate sql.NullInt64
@@ -2169,6 +2187,7 @@ type GetNodesByLastUpdateRangeParams struct {
 
 func (q *Queries) GetNodesByLastUpdateRange(ctx context.Context, arg GetNodesByLastUpdateRangeParams) ([]GraphNode, error) {
 	rows, err := q.db.QueryContext(ctx, getNodesByLastUpdateRange,
+		arg.Version,
 		arg.StartTime,
 		arg.EndTime,
 		arg.LastUpdate,

@@ -344,7 +344,7 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 
 	for {
 		err := p.graphSessFactory.GraphSession(
-			findPath, func() {
+			lnwire.GossipVersion1, findPath, func() {
 				path = nil
 			},
 		)

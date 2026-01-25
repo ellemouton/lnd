@@ -30,7 +30,8 @@ type GraphSessionFactory interface {
 	// GraphSession will provide the call-back with access to a
 	// graphdb.NodeTraverser instance which can be used to perform queries
 	// against the channel graph.
-	GraphSession(cb func(graph graphdb.NodeTraverser) error,
+	GraphSession(v lnwire.GossipVersion,
+		cb func(graph graphdb.NodeTraverser) error,
 		reset func()) error
 }
 

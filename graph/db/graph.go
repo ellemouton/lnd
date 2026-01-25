@@ -233,14 +233,14 @@ func (c *ChannelGraph) FetchNodeFeatures(node route.Vertex) (
 // instance which can be used to perform queries against the channel graph. If
 // the graph cache is not enabled, then the call-back will be provided with
 // access to the graph via a consistent read-only transaction.
-func (c *ChannelGraph) GraphSession(cb func(graph NodeTraverser) error,
-	reset func()) error {
+func (c *ChannelGraph) GraphSession(v lnwire.GossipVersion,
+	cb func(graph NodeTraverser) error, reset func()) error {
 
-	if c.graphCache != nil {
+	if c.graphCache != nil && v == lnwire.GossipVersion1 {
 		return cb(c)
 	}
 
-	return c.db.GraphSession(lnwire.GossipVersion1, cb, reset)
+	return c.db.GraphSession(v, cb, reset)
 }
 
 // ForEachNodeCached iterates through all the stored vertices/nodes in the
@@ -626,7 +626,9 @@ func (c *ChannelGraph) ForEachNodeCacheable(ctx context.Context,
 func (c *ChannelGraph) NodeUpdatesInHorizon(startTime, endTime time.Time,
 	opts ...IteratorOption) iter.Seq2[*models.Node, error] {
 
-	return c.db.NodeUpdatesInHorizon(startTime, endTime, opts...)
+	return c.db.NodeUpdatesInHorizon(
+		lnwire.GossipVersion1, startTime, endTime, opts...,
+	)
 }
 
 // HasV1Node determines if the graph has a vertex identified by the target node
@@ -930,10 +932,23 @@ func (c *VersionedGraph) FilterChannelRange(startHeight, endHeight uint32,
 }
 
 // GraphSession provides a consistent view of the graph for this version.
-func (c *VersionedGraph) GraphSession(cb func(graph NodeTraverser) error,
-	reset func()) error {
+func (c *VersionedGraph) GraphSession(v lnwire.GossipVersion,
+	cb func(graph NodeTraverser) error, reset func()) error {
 
-	return c.db.GraphSession(c.v, cb, reset)
+	if v != c.v {
+		return fmt.Errorf("expected gossip version %d, got %d",
+			c.v, v)
+	}
+
+	return c.db.GraphSession(v, cb, reset)
+}
+
+// NodeUpdatesInHorizon returns all known lightning nodes with updates in the
+// range for this version.
+func (c *VersionedGraph) NodeUpdatesInHorizon(startTime, endTime time.Time,
+	opts ...IteratorOption) iter.Seq2[*models.Node, error] {
+
+	return c.db.NodeUpdatesInHorizon(c.v, startTime, endTime, opts...)
 }
 
 // MakeTestGraph creates a new instance of the ChannelGraph for testing
