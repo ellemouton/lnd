@@ -2805,12 +2805,23 @@ func (s *SQLStore) ChannelView() ([]EdgePoint, error) {
 		handleChannel := func(_ context.Context,
 			channel sqlc.ListChannelsPaginatedRow) error {
 
-			// TODO(elle): update to handle V2 channels.
-			pkScript, err := genMultiSigP2WSH(
-				channel.BitcoinKey1, channel.BitcoinKey2,
-			)
-			if err != nil {
-				return err
+			pkScript := channel.FundingPkScript
+			if len(pkScript) == 0 {
+				if len(channel.BitcoinKey1) == 0 ||
+					len(channel.BitcoinKey2) == 0 {
+
+					return fmt.Errorf("missing funding data for "+
+						"outpoint %s", channel.Outpoint)
+				}
+
+				var err error
+				pkScript, err = genMultiSigP2WSH(
+					channel.BitcoinKey1,
+					channel.BitcoinKey2,
+				)
+				if err != nil {
+					return err
+				}
 			}
 
 			op, err := wire.NewOutPointFromString(channel.Outpoint)
@@ -2826,26 +2837,35 @@ func (s *SQLStore) ChannelView() ([]EdgePoint, error) {
 			return nil
 		}
 
-		queryFunc := func(ctx context.Context, lastID int64,
-			limit int32) ([]sqlc.ListChannelsPaginatedRow, error) {
+		queryChannels := func(v lnwire.GossipVersion) error {
+			queryFunc := func(ctx context.Context, lastID int64,
+				limit int32) ([]sqlc.ListChannelsPaginatedRow,
+				error) {
 
-			return db.ListChannelsPaginated(
-				ctx, sqlc.ListChannelsPaginatedParams{
-					Version: int16(lnwire.GossipVersion1),
-					ID:      lastID,
-					Limit:   limit,
-				},
+				return db.ListChannelsPaginated(
+					ctx, sqlc.ListChannelsPaginatedParams{
+						Version: int16(v),
+						ID:      lastID,
+						Limit:   limit,
+					},
+				)
+			}
+
+			extractCursor := func(row sqlc.ListChannelsPaginatedRow) int64 {
+				return row.ID
+			}
+
+			return sqldb.ExecutePaginatedQuery(
+				ctx, s.cfg.QueryCfg, int64(-1), queryFunc,
+				extractCursor, handleChannel,
 			)
 		}
 
-		extractCursor := func(row sqlc.ListChannelsPaginatedRow) int64 {
-			return row.ID
+		if err := queryChannels(lnwire.GossipVersion1); err != nil {
+			return err
 		}
 
-		return sqldb.ExecutePaginatedQuery(
-			ctx, s.cfg.QueryCfg, int64(-1), queryFunc,
-			extractCursor, handleChannel,
-		)
+		return queryChannels(lnwire.GossipVersion2)
 	}, func() {
 		edgePoints = nil
 	})

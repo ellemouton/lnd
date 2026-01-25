@@ -760,7 +760,7 @@ WHERE COALESCE(length(node_1_signature), 0) > 0
   AND scid < @end_scid;
 
 -- name: ListChannelsPaginated :many
-SELECT id, bitcoin_key_1, bitcoin_key_2, outpoint
+SELECT id, bitcoin_key_1, bitcoin_key_2, outpoint, funding_pk_script
 FROM graph_channels c
 WHERE c.version = $1 AND c.id > $2
 ORDER BY c.id

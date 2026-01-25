@@ -3240,7 +3240,7 @@ func (q *Queries) ListChannelsForNodeIDs(ctx context.Context, arg ListChannelsFo
 }
 
 const listChannelsPaginated = `-- name: ListChannelsPaginated :many
-SELECT id, bitcoin_key_1, bitcoin_key_2, outpoint
+SELECT id, bitcoin_key_1, bitcoin_key_2, outpoint, funding_pk_script
 FROM graph_channels c
 WHERE c.version = $1 AND c.id > $2
 ORDER BY c.id
@@ -3254,10 +3254,11 @@ type ListChannelsPaginatedParams struct {
 }
 
 type ListChannelsPaginatedRow struct {
-	ID          int64
-	BitcoinKey1 []byte
-	BitcoinKey2 []byte
-	Outpoint    string
+	ID              int64
+	BitcoinKey1     []byte
+	BitcoinKey2     []byte
+	Outpoint        string
+	FundingPkScript []byte
 }
 
 func (q *Queries) ListChannelsPaginated(ctx context.Context, arg ListChannelsPaginatedParams) ([]ListChannelsPaginatedRow, error) {
@@ -3274,6 +3275,7 @@ func (q *Queries) ListChannelsPaginated(ctx context.Context, arg ListChannelsPag
 			&i.BitcoinKey1,
 			&i.BitcoinKey2,
 			&i.Outpoint,
+			&i.FundingPkScript,
 		); err != nil {
 			return nil, err
 		}
