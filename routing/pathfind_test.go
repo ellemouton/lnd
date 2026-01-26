@@ -3313,23 +3313,22 @@ func dbFindPath(graph *graphdb.VersionedGraph,
 	}
 
 	var route []*unifiedEdge
-	err = graph.GraphSession(lnwire.GossipVersion1,
-		func(graph graphdb.NodeTraverser) error {
-			route, _, err = findPath(
-				&graphParams{
-					additionalEdges: additionalEdges,
-					bandwidthHints:  bandwidthHints,
-					graph:           graph,
-				},
-				r, cfg, sourceNode.PubKeyBytes,
-				source, target, amt, timePref,
-				finalHtlcExpiry,
-			)
+	err = graph.GraphSession(func(graph graphdb.NodeTraverser) error {
+		route, _, err = findPath(
+			&graphParams{
+				additionalEdges: additionalEdges,
+				bandwidthHints:  bandwidthHints,
+				graph:           graph,
+			},
+			r, cfg, sourceNode.PubKeyBytes,
+			source, target, amt, timePref,
+			finalHtlcExpiry,
+		)
 
-			return err
-		}, func() {
-			route = nil
-		})
+		return err
+	}, func() {
+		route = nil
+	})
 	if err != nil {
 		return nil, err
 	}
