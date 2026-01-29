@@ -787,7 +787,7 @@ ORDER BY scid ASC;
 SELECT *
 FROM graph_channels
 WHERE version = 2
-  AND signature IS NOT NULL
+  AND COALESCE(length(signature), 0) > 0
   AND scid >= @start_scid
   AND scid < @end_scid
 ORDER BY scid ASC;

@@ -2351,7 +2351,7 @@ const getPublicV2ChannelsBySCID = `-- name: GetPublicV2ChannelsBySCID :many
 SELECT id, version, scid, node_id_1, node_id_2, outpoint, capacity, bitcoin_key_1, bitcoin_key_2, node_1_signature, node_2_signature, bitcoin_1_signature, bitcoin_2_signature, signature, funding_pk_script, merkle_root_hash
 FROM graph_channels
 WHERE version = 2
-  AND signature IS NOT NULL
+  AND COALESCE(length(signature), 0) > 0
   AND scid >= $1
   AND scid < $2
 ORDER BY scid ASC
