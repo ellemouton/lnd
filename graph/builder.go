@@ -1403,7 +1403,7 @@ func (b *Builder) GetChannelByID(chanID lnwire.ShortChannelID) (
 	*models.ChannelEdgePolicy, error) {
 
 	return b.cfg.Graph.FetchChannelEdgesByID(
-		context.TODO(), chanID.ToUint64(),
+		context.TODO(), lnwire.GossipVersion1, chanID.ToUint64(),
 	)
 }
 

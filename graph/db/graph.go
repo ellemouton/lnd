@@ -739,24 +739,20 @@ func (c *ChannelGraph) FetchChanInfos(ctx context.Context,
 // FetchChannelEdgesByOutpoint attempts to lookup directed edges by funding
 // outpoint.
 func (c *ChannelGraph) FetchChannelEdgesByOutpoint(ctx context.Context,
-	op *wire.OutPoint) (
+	v lnwire.GossipVersion, op *wire.OutPoint) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
-	return c.db.FetchChannelEdgesByOutpoint(
-		ctx, lnwire.GossipVersion1, op,
-	)
+	return c.db.FetchChannelEdgesByOutpoint(ctx, v, op)
 }
 
 // FetchChannelEdgesByID attempts to lookup directed edges by channel ID.
 func (c *ChannelGraph) FetchChannelEdgesByID(ctx context.Context,
-	chanID uint64) (
+	v lnwire.GossipVersion, chanID uint64) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
-	return c.db.FetchChannelEdgesByID(
-		ctx, lnwire.GossipVersion1, chanID,
-	)
+	return c.db.FetchChannelEdgesByID(ctx, v, chanID)
 }
 
 // PutClosedScid stores a SCID for a closed channel in the database.

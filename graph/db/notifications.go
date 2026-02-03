@@ -414,7 +414,7 @@ func (c *ChannelGraph) addToTopologyChange(ctx context.Context,
 		// in order to get the information concerning which nodes are
 		// being connected.
 		edgeInfo, _, _, err := c.FetchChannelEdgesByID(
-			ctx, m.ChannelID,
+			ctx, lnwire.GossipVersion1, m.ChannelID,
 		)
 		if err != nil {
 			return fmt.Errorf("unable fetch channel edge: %w", err)

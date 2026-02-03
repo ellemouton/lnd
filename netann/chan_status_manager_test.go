@@ -174,7 +174,7 @@ func (g *mockGraph) FetchAllOpenChannels() ([]*channeldb.OpenChannel, error) {
 }
 
 func (g *mockGraph) FetchChannelEdgesByOutpoint(
-	_ context.Context, op *wire.OutPoint) (
+	_ context.Context, _ lnwire.GossipVersion, op *wire.OutPoint) (
 	*models.ChannelEdgeInfo,
 	*models.ChannelEdgePolicy, *models.ChannelEdgePolicy, error) {
 
