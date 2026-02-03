@@ -7144,7 +7144,7 @@ func (r *rpcServer) GetChanInfo(ctx context.Context,
 	switch {
 	case in.ChanId != 0:
 		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByID(
-			ctx, in.ChanId,
+			ctx, lnwire.GossipVersion1, in.ChanId,
 		)
 
 	case in.ChanPoint != "":
@@ -7154,7 +7154,7 @@ func (r *rpcServer) GetChanInfo(ctx context.Context,
 			return nil, err
 		}
 		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByOutpoint(
-			ctx, chanPoint,
+			ctx, lnwire.GossipVersion1, chanPoint,
 		)
 
 	default:
