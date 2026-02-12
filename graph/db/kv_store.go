@@ -4604,8 +4604,7 @@ func (c *nodeTraverserSession) ForEachNodeDirectedChannel(
 //
 // NOTE: Part of the NodeTraverser interface.
 func (c *nodeTraverserSession) FetchNodeFeatures(_ context.Context,
-	nodePub route.Vertex) (
-	*lnwire.FeatureVector, error) {
+	nodePub route.Vertex) (*lnwire.FeatureVector, error) {
 
 	return c.db.fetchNodeFeatures(c.tx, nodePub)
 }

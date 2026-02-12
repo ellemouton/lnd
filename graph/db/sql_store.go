@@ -3747,8 +3747,7 @@ func (s *sqlNodeTraverser) ForEachNodeDirectedChannel(
 //
 // NOTE: Part of the NodeTraverser interface.
 func (s *sqlNodeTraverser) FetchNodeFeatures(ctx context.Context,
-	nodePub route.Vertex) (
-	*lnwire.FeatureVector, error) {
+	nodePub route.Vertex) (*lnwire.FeatureVector, error) {
 
 	return fetchNodeFeatures(ctx, s.db, lnwire.GossipVersion1, nodePub)
 }

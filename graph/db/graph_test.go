@@ -356,7 +356,7 @@ func testNodeInsertionAndDeletion(t *testing.T, v lnwire.GossipVersion) {
 
 	// Check that the node's features are fetched correctly. This check
 	// will check the database directly.
-	features, err = graph.FetchNodeFeatures(ctx, node.PubKeyBytes)
+	features, err = graph.db.FetchNodeFeatures(ctx, v, node.PubKeyBytes)
 	require.NoError(t, err)
 	require.Equal(t, testFeatures, features)
 
@@ -5197,7 +5197,9 @@ func testGraphZombieIndex(t *testing.T, v lnwire.GossipVersion) {
 
 	// If we delete the edge and mark it as a zombie, then we should expect
 	// to see it within the index.
-	err = graph.DeleteChannelEdges(ctx, false, true, edge.ChannelID)
+	err = graph.DeleteChannelEdges(
+		ctx, false, true, edge.ChannelID,
+	)
 	require.NoError(t, err, "unable to mark edge as zombie")
 	isZombie, pubKey1, pubKey2, err := v1Graph.IsZombieEdge(
 		ctx, edge.ChannelID,
