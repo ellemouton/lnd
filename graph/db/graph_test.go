@@ -208,6 +208,42 @@ var versionedTests = []versionedTest{
 		name: "channel view",
 		test: testChannelView,
 	},
+	{
+		name: "filter channel range",
+		test: testFilterChannelRange,
+	},
+	{
+		name: "graph traversal",
+		test: testGraphTraversal,
+	},
+	{
+		name: "graph cache traversal",
+		test: testGraphCacheTraversal,
+	},
+	{
+		name: "graph zombie index",
+		test: testGraphZombieIndex,
+	},
+	{
+		name: "prune graph nodes",
+		test: testPruneGraphNodes,
+	},
+	{
+		name: "graph pruning",
+		test: testGraphPruning,
+	},
+	{
+		name: "node pruning update index",
+		test: testNodePruningUpdateIndexDeletion,
+	},
+	{
+		name: "graph loading",
+		test: testGraphLoading,
+	},
+	{
+		name: "disconnect block at height",
+		test: testDisconnectBlockAtHeight,
+	},
 }
 
 // TestVersionedDBs runs various tests against both v1 and v2 versioned
@@ -843,7 +879,7 @@ func createEdge(version lnwire.GossipVersion, height, txIndex uint32,
 	return edgeInfo, shortChanID
 }
 
-// TestDisconnectBlockAtHeight checks that the pruned state of the channel
+// testDisconnectBlockAtHeight checks that the pruned state of the channel
 // database is what we expect after calling DisconnectBlockAtHeight.
 func TestDisconnectBlockAtHeight(t *testing.T) {
 	t.Parallel()
@@ -4799,7 +4835,7 @@ func putSerializedPolicy(t *testing.T, db kvdb.Backend, from []byte,
 	require.NoError(t, err, "error writing db")
 }
 
-// assertNumZombies queries the provided ChannelGraph for NumZombies, and
+// assertNumZombies queries the provided graph for NumZombies, and
 // asserts that the returned number is equal to expZombies.
 func assertNumZombies(t *testing.T, graph *ChannelGraph, expZombies uint64) {
 	t.Helper()
@@ -5285,7 +5321,7 @@ func testGraphCacheForEachNodeChannel(t *testing.T,
 	}
 }
 
-// TestGraphLoading asserts that the cache is properly reconstructed after a
+// testGraphLoading asserts that the cache is properly reconstructed after a
 // restart.
 func TestGraphLoading(t *testing.T) {
 	t.Parallel()
