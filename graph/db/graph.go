@@ -591,7 +591,7 @@ func (c *ChannelGraph) FilterKnownChanIDs(ctx context.Context,
 		// alive, and we let it be added to the set of IDs to query our
 		// peer for.
 		err := c.db.MarkEdgeLive(
-			ctx, info.Version,
+			ctx, v,
 			info.ShortChannelID.ToUint64(),
 		)
 		// Since there is a chance that the edge could have been marked
@@ -855,6 +855,11 @@ func NewVersionedGraph(c *ChannelGraph,
 	}
 }
 
+// Version returns the gossip version for this graph.
+func (c *VersionedGraph) Version() lnwire.GossipVersion {
+	return c.v
+}
+
 // FetchNodeFeatures returns the features of the given node. If no features are
 // known for the node, an empty feature vector is returned. If the graphCache is
 // available, it will be used instead of the database.
@@ -872,8 +877,12 @@ func (c *VersionedGraph) FetchNodeFeatures(ctx context.Context,
 
 // ForEachNodeDirectedChannel iterates through all channels of a given node,
 // executing the passed callback on the directed edge representing the channel
-// and its incoming policy. If the graphCache is available, it will be used
-// instead of the database.
+// and its incoming policy. If the callback returns an error, then the iteration
+// is halted with the error propagated back up to the caller. If the graphCache
+// is available, then it will be used to retrieve the node's channels instead
+// of the database.
+//
+// Unknown policies are passed into the callback as nil values.
 //
 // NOTE: This is part of the graphdb.NodeTraverser interface.
 func (c *VersionedGraph) ForEachNodeDirectedChannel(ctx context.Context,
@@ -884,6 +893,9 @@ func (c *VersionedGraph) ForEachNodeDirectedChannel(ctx context.Context,
 		return c.graphCache.ForEachChannel(node, cb)
 	}
 
+	// TODO(elle): once the no-cache path needs to support
+	// pathfinding across gossip versions, this should iterate
+	// across all versions rather than defaulting to v1.
 	return c.db.ForEachNodeDirectedChannel(ctx, c.v, node, cb, reset)
 }
 
