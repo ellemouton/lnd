@@ -221,6 +221,10 @@ var versionedTests = []versionedTest{
 		test: testGraphCacheTraversal,
 	},
 	{
+		name: "graph zombie index",
+		test: testGraphZombieIndex,
+	},
+	{
 		name: "prune graph nodes",
 		test: testPruneGraphNodes,
 	},
@@ -235,6 +239,14 @@ var versionedTests = []versionedTest{
 	{
 		name: "graph zombie index",
 		test: testGraphZombieIndex,
+	},
+	{
+		name: "graph loading",
+		test: testGraphLoading,
+	},
+	{
+		name: "disconnect block at height",
+		test: testDisconnectBlockAtHeight,
 	},
 	{
 		name: "graph loading",
@@ -934,7 +946,7 @@ func createEdge(version lnwire.GossipVersion, height, txIndex uint32,
 	return edgeInfo, shortChanID
 }
 
-// TestDisconnectBlockAtHeight checks that the pruned state of the channel
+// testDisconnectBlockAtHeight checks that the pruned state of the channel
 // database is what we expect after calling DisconnectBlockAtHeight.
 func testDisconnectBlockAtHeight(t *testing.T, v lnwire.GossipVersion) {
 	t.Parallel()
@@ -5139,7 +5151,7 @@ func putSerializedPolicy(t *testing.T, db kvdb.Backend, from []byte,
 	require.NoError(t, err, "error writing db")
 }
 
-// assertNumZombies queries the provided ChannelGraph for NumZombies, and
+// assertNumZombies queries the provided graph for NumZombies, and
 // asserts that the returned number is equal to expZombies.
 func assertNumZombies(t *testing.T, graph *VersionedGraph,
 	expZombies uint64) {
@@ -5621,7 +5633,7 @@ func testGraphCacheForEachNodeChannel(t *testing.T,
 	}
 }
 
-// TestGraphLoading asserts that the cache is properly reconstructed after a
+// testGraphLoading asserts that the cache is properly reconstructed after a
 // restart.
 func testGraphLoading(t *testing.T, v lnwire.GossipVersion) {
 	t.Parallel()
