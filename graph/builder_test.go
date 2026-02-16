@@ -1077,7 +1077,7 @@ func TestIsStaleNode(t *testing.T) {
 	updateTimeStamp := time.Unix(123, 0)
 	require.False(t, ctx.builder.IsStaleNode(
 		ctxb, lnwire.GossipVersion1, pub1,
-		lnwire.UnixTimestamp(uint64(updateTimeStamp.Unix())),
+		lnwire.UnixTimestamp(updateTimeStamp.Unix()),
 	))
 
 	// With the node stub in the database, we'll add the fully node
@@ -1098,7 +1098,7 @@ func TestIsStaleNode(t *testing.T) {
 	// true.
 	require.True(t, ctx.builder.IsStaleNode(
 		ctxb, lnwire.GossipVersion1, pub1,
-		lnwire.UnixTimestamp(uint64(updateTimeStamp.Unix())),
+		lnwire.UnixTimestamp(updateTimeStamp.Unix()),
 	))
 
 	// If we update the timestamp and once again query for staleness, it
@@ -1106,7 +1106,7 @@ func TestIsStaleNode(t *testing.T) {
 	newTimeStamp := time.Unix(1234, 0)
 	require.False(t, ctx.builder.IsStaleNode(
 		ctxb, lnwire.GossipVersion1, pub1,
-		lnwire.UnixTimestamp(uint64(newTimeStamp.Unix())),
+		lnwire.UnixTimestamp(newTimeStamp.Unix()),
 	))
 }
 
@@ -1186,18 +1186,22 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 	// If we query for staleness before adding the edge, we should get
 	// false.
 	updateTimeStamp := time.Unix(123, 0)
-	require.False(t, ctx.builder.IsStaleEdgePolicy(&models.ChannelEdgePolicy{
-		Version:      lnwire.GossipVersion1,
-		ChannelID:    chanID.ToUint64(),
-		LastUpdate:   updateTimeStamp,
-		ChannelFlags: 0,
-	}))
-	require.False(t, ctx.builder.IsStaleEdgePolicy(&models.ChannelEdgePolicy{
-		Version:      lnwire.GossipVersion1,
-		ChannelID:    chanID.ToUint64(),
-		LastUpdate:   updateTimeStamp,
-		ChannelFlags: 1,
-	}))
+	require.False(t, ctx.builder.IsStaleEdgePolicy(
+		&models.ChannelEdgePolicy{
+			Version:      lnwire.GossipVersion1,
+			ChannelID:    chanID.ToUint64(),
+			LastUpdate:   updateTimeStamp,
+			ChannelFlags: 0,
+		},
+	))
+	require.False(t, ctx.builder.IsStaleEdgePolicy(
+		&models.ChannelEdgePolicy{
+			Version:      lnwire.GossipVersion1,
+			ChannelID:    chanID.ToUint64(),
+			LastUpdate:   updateTimeStamp,
+			ChannelFlags: 1,
+		},
+	))
 
 	edge, err := models.NewV1Channel(
 		chanID.ToUint64(), *chaincfg.SimNetParams.GenesisHash, pub1,
@@ -1255,18 +1259,22 @@ func TestIsStaleEdgePolicy(t *testing.T) {
 	// If we now update the timestamp for both edges, the router should
 	// detect that this tuple represents a fresh edge.
 	updateTimeStamp = time.Unix(9999, 0)
-	require.False(t, ctx.builder.IsStaleEdgePolicy(&models.ChannelEdgePolicy{
-		Version:      lnwire.GossipVersion1,
-		ChannelID:    chanID.ToUint64(),
-		LastUpdate:   updateTimeStamp,
-		ChannelFlags: 0,
-	}))
-	require.False(t, ctx.builder.IsStaleEdgePolicy(&models.ChannelEdgePolicy{
-		Version:      lnwire.GossipVersion1,
-		ChannelID:    chanID.ToUint64(),
-		LastUpdate:   updateTimeStamp,
-		ChannelFlags: 1,
-	}))
+	require.False(t, ctx.builder.IsStaleEdgePolicy(
+		&models.ChannelEdgePolicy{
+			Version:      lnwire.GossipVersion1,
+			ChannelID:    chanID.ToUint64(),
+			LastUpdate:   updateTimeStamp,
+			ChannelFlags: 0,
+		},
+	))
+	require.False(t, ctx.builder.IsStaleEdgePolicy(
+		&models.ChannelEdgePolicy{
+			Version:      lnwire.GossipVersion1,
+			ChannelID:    chanID.ToUint64(),
+			LastUpdate:   updateTimeStamp,
+			ChannelFlags: 1,
+		},
+	))
 }
 
 // TestBlockDifferenceFix tests if when the router is behind on blocks, the
