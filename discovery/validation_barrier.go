@@ -188,15 +188,13 @@ func (v *ValidationBarrier) InitJobDependencies(job interface{}) (JobID,
 		version := msg.GossipVersion()
 
 		updateOrCreateJobInfo(chanAnnID(version, msg.SCID()), id)
+		n1 := route.Vertex(msg.Node1KeyBytes())
+		n2 := route.Vertex(msg.Node2KeyBytes())
 		updateOrCreateJobInfo(
-			nodeAnnID(
-				version, route.Vertex(msg.Node1KeyBytes()),
-			), id,
+			nodeAnnID(version, n1), id,
 		)
 		updateOrCreateJobInfo(
-			nodeAnnID(
-				version, route.Vertex(msg.Node2KeyBytes()),
-			), id,
+			nodeAnnID(version, n2), id,
 		)
 
 		return id, nil
@@ -211,11 +209,10 @@ func (v *ValidationBarrier) InitJobDependencies(job interface{}) (JobID,
 		return childJobID, nil
 	case lnwire.NodeAnnouncement:
 		childJobID := JobID(v.idCtr.Add(1))
+		nID := route.Vertex(msg.NodePub())
 		populateDependencies(
-			nodeAnnID(
-				msg.GossipVersion(),
-				route.Vertex(msg.NodePub()),
-			), childJobID,
+			nodeAnnID(msg.GossipVersion(), nID),
+			childJobID,
 		)
 
 		return childJobID, nil
@@ -481,13 +478,13 @@ func (v *ValidationBarrier) SignalDependents(job interface{}, id JobID) error {
 
 	case lnwire.NodeAnnouncement:
 		// Remove child job info.
-		return removeJob(
-			nodeAnnID(
-				msg.GossipVersion(),
-				route.Vertex(msg.NodePub()),
-			),
-			id, true,
+		nID := nodeAnnID(
+			msg.GossipVersion(),
+			route.Vertex(msg.NodePub()),
 		)
+
+		return removeJob(nID, id, true)
+
 
 	case lnwire.ChannelUpdate:
 		// Remove child job info.
