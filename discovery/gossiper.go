@@ -1033,6 +1033,24 @@ type channelUpdateID struct {
 	isNode1 bool
 }
 
+// nodeAnnouncementID is a unique identifier for NodeAnnouncement messages.
+type nodeAnnouncementID struct {
+	// nodeID is the public key of the node.
+	nodeID route.Vertex
+
+	// version is the gossip version this update belongs to.
+	version lnwire.GossipVersion
+}
+
+// newNodeAnnouncementID constructs the de-duplication key for a node
+// announcement.
+func newNodeAnnouncementID(msg lnwire.NodeAnnouncement) nodeAnnouncementID {
+	return nodeAnnouncementID{
+		nodeID:  route.Vertex(msg.NodePub()),
+		version: msg.GossipVersion(),
+	}
+}
+
 // msgWithSenders is a wrapper struct around a message, and the set of peers
 // that originally sent us this message. Using this struct, we can ensure that
 // we don't re-send a message to the peer that sent it to us in the first
@@ -1074,8 +1092,8 @@ type deDupedAnnouncements struct {
 	// channelUpdates are identified by the channel update id field.
 	channelUpdates map[channelUpdateID]msgWithSenders
 
-	// nodeAnnouncements are identified by the Vertex field.
-	nodeAnnouncements map[route.Vertex]msgWithSenders
+	// nodeAnnouncements are identified by the node pubkey and version.
+	nodeAnnouncements map[nodeAnnouncementID]msgWithSenders
 
 	sync.Mutex
 }
@@ -1097,7 +1115,7 @@ func (d *deDupedAnnouncements) reset() {
 	// appropriate key points to the corresponding lnwire.Message.
 	d.channelAnnouncements = make(map[lnwire.ShortChannelID]msgWithSenders)
 	d.channelUpdates = make(map[channelUpdateID]msgWithSenders)
-	d.nodeAnnouncements = make(map[route.Vertex]msgWithSenders)
+	d.nodeAnnouncements = make(map[nodeAnnouncementID]msgWithSenders)
 }
 
 // addMsg adds a new message to the current batch. If the message is already
@@ -1216,7 +1234,7 @@ func (d *deDupedAnnouncements) addMsg(message networkMsg) {
 	// NodeID to create the corresponding Vertex.
 	case lnwire.NodeAnnouncement:
 		sender := route.NewVertex(message.source)
-		deDupKey := route.Vertex(msg.NodePub())
+		deDupKey := newNodeAnnouncementID(msg)
 
 		mws, ok := d.nodeAnnouncements[deDupKey]
 		if ok {
@@ -2229,7 +2247,7 @@ func (d *AuthenticatedGossiper) fetchPKScript(chanID lnwire.ShortChannelID) (
 // addNode processes the given node announcement, and adds it to our channel
 // graph.
 func (d *AuthenticatedGossiper) addNode(ctx context.Context,
-	msg *lnwire.NodeAnnouncement1, op ...batch.SchedulerOption) error {
+	msg lnwire.NodeAnnouncement, op ...batch.SchedulerOption) error {
 
 	if err := netann.ValidateNodeAnn(msg); err != nil {
 		return fmt.Errorf("unable to validate node announcement: %w",
@@ -2324,14 +2342,7 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(ctx context.Context,
 	// information about a node in one of the channels we know about, or a
 	// updating previously advertised information.
 	case lnwire.NodeAnnouncement:
-		nodeAnn, ok := msg.(*lnwire.NodeAnnouncement1)
-		if !ok {
-			err := fmt.Errorf("unsupported node announcement: %T", msg)
-			nMsg.err <- err
-			return nil, false
-		}
-
-		return d.handleNodeAnnouncement(ctx, nMsg, nodeAnn, schedulerOp)
+		return d.handleNodeAnnouncement(ctx, nMsg, msg, schedulerOp)
 
 	// A new channel announcement has arrived, this indicates the
 	// *creation* of a new channel within the network. This only advertises
@@ -2639,22 +2650,23 @@ func (d *AuthenticatedGossiper) latestHeight() uint32 {
 
 // handleNodeAnnouncement processes a new node announcement.
 func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
-	nMsg *networkMsg, nodeAnn *lnwire.NodeAnnouncement1,
+	nMsg *networkMsg, nodeAnn lnwire.NodeAnnouncement,
 	ops []batch.SchedulerOption) ([]networkMsg, bool) {
 
-	timestamp := time.Unix(int64(nodeAnn.Timestamp), 0)
+	nodePub := nodeAnn.NodePub()
 
-	log.Debugf("Processing NodeAnnouncement1: peer=%v, timestamp=%v, "+
-		"node=%x, source=%x", nMsg.peer, timestamp, nodeAnn.NodeID,
-		nMsg.source.SerializeCompressed())
+	log.Debugf("Processing NodeAnnouncement: peer=%v, "+
+		"%v, node=%x, source=%x", nMsg.peer,
+		nodeAnn.TimestampDesc(), nodePub,
+		nMsg.source.SerializeCompressed(),
+	)
 
 	// Although not explicitly required by BOLT 7 for node announcements
-	// (unlike channel updates), we still enforce non-zero timestamps as a
-	// sanity check. A timestamp of zero is likely indicative of a bug or
-	// uninitialized message.
-	if nodeAnn.Timestamp == 0 {
+	// (unlike channel updates), we still enforce a non-zero update ordering
+	// field as a sanity check.
+	if nodeAnn.HasZeroUpdateTime() {
 		err := fmt.Errorf("rejecting node announcement with zero "+
-			"timestamp for node %x", nodeAnn.NodeID)
+			"update time for node %x", nodePub)
 
 		log.Warnf("Rejecting node announcement from peer=%v: %v",
 			nMsg.peer, err)
@@ -2664,19 +2676,21 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
 		return nil, false
 	}
 
-	// We'll quickly ask the router if it already has a newer update for
-	// this node so we can skip validating signatures if not required.
-	if d.cfg.Graph.IsStaleNode(ctx, lnwire.GossipVersion1, nodeAnn.NodeID,
-		lnwire.UnixTimestamp(nodeAnn.Timestamp)) {
+	// We'll quickly ask the router if it already has a newer
+	// update for this node so we can skip validating signatures
+	// if not required.
+	if d.cfg.Graph.IsStaleNode(
+		ctx, nodeAnn.GossipVersion(), nodePub,
+		nodeAnn.UpdateTimestamp(),
+	) {
 
-		log.Debugf("Skipped processing stale node: %x", nodeAnn.NodeID)
+		log.Debugf("Skipped processing stale node: %x", nodePub)
 		nMsg.err <- nil
 		return nil, true
 	}
 
 	if err := d.addNode(ctx, nodeAnn, ops...); err != nil {
-		log.Debugf("Adding node: %x got error: %v", nodeAnn.NodeID,
-			err)
+		log.Debugf("Adding node: %x got error: %v", nodePub, err)
 
 		if !graph.IsError(
 			err,
@@ -2695,11 +2709,11 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
 	// quick check to ensure this node intends to publicly advertise itself
 	// to the network.
 	isPublic, err := d.cfg.Graph.IsPublicNode(
-		lnwire.GossipVersion1, nodeAnn.NodeID,
+		nodeAnn.GossipVersion(), nodePub,
 	)
 	if err != nil {
 		log.Errorf("Unable to determine if node %x is advertised: %v",
-			nodeAnn.NodeID, err)
+			nodePub, err)
 		nMsg.err <- err
 		return nil, false
 	}
@@ -2717,15 +2731,17 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
 		})
 	} else {
 		log.Tracef("Skipping broadcasting node announcement for %x "+
-			"due to being unadvertised", nodeAnn.NodeID)
+			"due to being unadvertised", nodePub)
 	}
 
 	nMsg.err <- nil
 	// TODO(roasbeef): get rid of the above
 
-	log.Debugf("Processed NodeAnnouncement1: peer=%v, timestamp=%v, "+
-		"node=%x, source=%x", nMsg.peer, timestamp, nodeAnn.NodeID,
-		nMsg.source.SerializeCompressed())
+	log.Debugf("Processed NodeAnnouncement: peer=%v, "+
+		"%v, node=%x, source=%x", nMsg.peer,
+		nodeAnn.TimestampDesc(), nodePub,
+		nMsg.source.SerializeCompressed(),
+	)
 
 	return announcements, true
 }

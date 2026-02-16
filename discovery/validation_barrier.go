@@ -485,7 +485,6 @@ func (v *ValidationBarrier) SignalDependents(job interface{}, id JobID) error {
 
 		return removeJob(nID, id, true)
 
-
 	case lnwire.ChannelUpdate:
 		// Remove child job info.
 		return removeJob(

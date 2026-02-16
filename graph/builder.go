@@ -1538,14 +1538,7 @@ func (b *Builder) IsStaleNode(ctx context.Context, v lnwire.GossipVersion,
 func (b *Builder) IsPublicNode(v lnwire.GossipVersion,
 	node route.Vertex) (bool, error) {
 
-	switch v {
-	case lnwire.GossipVersion1:
-		return b.v1Graph.IsPublicNode(context.TODO(), node)
-	case lnwire.GossipVersion2:
-		return b.v2Graph.IsPublicNode(context.TODO(), node)
-	default:
-		return false, fmt.Errorf("unknown gossip version: %v", v)
-	}
+	return b.cfg.Graph.IsPublicNode(context.TODO(), v, node)
 }
 
 // IsKnownEdge returns true if the graph source already knows of the passed
