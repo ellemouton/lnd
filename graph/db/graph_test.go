@@ -2223,8 +2223,8 @@ func assertNumChans(t *testing.T, graph *ChannelGraph, n int) {
 
 func assertNumNodes(t *testing.T, graph *ChannelGraph, n int) {
 	numNodes := 0
-	v1Graph := NewVersionedGraph(graph, lnwire.GossipVersion1)
-	err := v1Graph.ForEachNode(t.Context(), func(_ *models.Node) error {
+	vGraph := NewVersionedGraph(graph, v)
+	err := vGraph.ForEachNode(t.Context(), func(_ *models.Node) error {
 		numNodes++
 
 		return nil
@@ -2347,11 +2347,9 @@ func TestGraphPruning(t *testing.T) {
 		require.NoError(t, graph.UpdateEdgePolicy(ctx, edge))
 	}
 
-	v1Graph := NewVersionedGraph(graph, lnwire.GossipVersion1)
-
 	// With all the channel points added, we'll consult the graph to ensure
 	// it has the same channel view as the one we just constructed.
-	channelView, err := v1Graph.ChannelView(ctx)
+	channelView, err := graph.ChannelView(ctx)
 	require.NoError(t, err, "unable to get graph channel view")
 	assertChanViewEqual(t, channelView, edgePoints)
 
@@ -2378,7 +2376,7 @@ func TestGraphPruning(t *testing.T) {
 	assertNumChans(t, graph, 2)
 
 	// Those channels should also be missing from the channel view.
-	channelView, err = v1Graph.ChannelView(ctx)
+	channelView, err = graph.ChannelView(ctx)
 	require.NoError(t, err, "unable to get graph channel view")
 	assertChanViewEqualChanPoints(t, channelView, channelPoints[2:])
 
@@ -2427,7 +2425,7 @@ func TestGraphPruning(t *testing.T) {
 	// Finally, the channel view at this point in the graph should now be
 	// completely empty.  Those channels should also be missing from the
 	// channel view.
-	channelView, err = v1Graph.ChannelView(ctx)
+	channelView, err = graph.ChannelView(ctx)
 	require.NoError(t, err, "unable to get graph channel view")
 	require.Empty(t, channelView)
 }
@@ -3759,9 +3757,30 @@ func TestFilterChannelRange(t *testing.T) {
 		)
 	)
 
+	// newChanInfo builds a ChannelUpdateInfo for the given SCID and
+	// freshness values using the test's gossip version.
+	newChanInfo := func(scid lnwire.ShortChannelID,
+		fresh1, fresh2 lnwire.Timestamp) ChannelUpdateInfo {
+
+		return ChannelUpdateInfo{
+			ShortChannelID: scid,
+			Version:        v,
+			Node1Freshness: fresh1,
+			Node2Freshness: fresh2,
+		}
+	}
+
+	// zeroFresh returns the zero freshness value for the test version.
+	zeroFresh := func() lnwire.Timestamp {
+		if v == lnwire.GossipVersion2 {
+			return lnwire.BlockHeightTimestamp(0)
+		}
+		return lnwire.UnixTimestamp(0)
+	}
+
 	updateTimeSeed := time.Now().Unix()
 	maybeAddPolicy := func(chanID uint64, node *models.Node,
-		node2 bool) time.Time {
+		node2 bool) lnwire.Timestamp {
 
 		var chanFlags lnwire.ChanUpdateChanFlags
 		if node2 {
@@ -3784,7 +3803,15 @@ func TestFilterChannelRange(t *testing.T) {
 		}
 		updateTimeSeed++
 
-		return updateTime
+		if v == lnwire.GossipVersion2 {
+			return lnwire.BlockHeightTimestamp(updateBlock)
+		}
+
+		ts := lnwire.UnixTimestamp(updateTime.Unix())
+		if updateTime.Equal(time.Unix(0, 0)) {
+			ts = 0
+		}
+		return ts
 	}
 
 	for i := 0; i < numChans/2; i++ {
@@ -3801,12 +3828,8 @@ func TestFilterChannelRange(t *testing.T) {
 		)
 		require.NoError(t, graph.AddChannelEdge(ctx, channel2))
 
-		chanInfo1 := NewV1ChannelUpdateInfo(
-			chanID1, time.Time{}, time.Time{},
-		)
-		chanInfo2 := NewV1ChannelUpdateInfo(
-			chanID2, time.Time{}, time.Time{},
-		)
+		chanInfo1 := newChanInfo(chanID1, zeroFresh(), zeroFresh())
+		chanInfo2 := newChanInfo(chanID2, zeroFresh(), zeroFresh())
 		channelRanges = append(channelRanges, BlockChannelRange{
 			Height: chanHeight,
 			Channels: []ChannelUpdateInfo{
@@ -3815,14 +3838,14 @@ func TestFilterChannelRange(t *testing.T) {
 		})
 
 		var (
-			time1 = maybeAddPolicy(channel1.ChannelID, node1, false)
-			time2 = maybeAddPolicy(channel1.ChannelID, node2, true)
-			time3 = maybeAddPolicy(channel2.ChannelID, node1, false)
-			time4 = maybeAddPolicy(channel2.ChannelID, node2, true)
+			fresh1 = maybeAddPolicy(channel1.ChannelID, node1, false)
+			fresh2 = maybeAddPolicy(channel1.ChannelID, node2, true)
+			fresh3 = maybeAddPolicy(channel2.ChannelID, node1, false)
+			fresh4 = maybeAddPolicy(channel2.ChannelID, node2, true)
 		)
 
-		chanInfo1 = NewV1ChannelUpdateInfo(chanID1, time1, time2)
-		chanInfo2 = NewV1ChannelUpdateInfo(chanID2, time3, time4)
+		chanInfo1 = newChanInfo(chanID1, fresh1, fresh2)
+		chanInfo2 = newChanInfo(chanID2, fresh3, fresh4)
 		channelRangesWithTimestamps = append(
 			channelRangesWithTimestamps, BlockChannelRange{
 				Height: chanHeight,
@@ -5139,8 +5162,7 @@ func putSerializedPolicy(t *testing.T, db kvdb.Backend, from []byte,
 func assertNumZombies(t *testing.T, graph *ChannelGraph, expZombies uint64) {
 	t.Helper()
 
-	v1Graph := NewVersionedGraph(graph, lnwire.GossipVersion1)
-	numZombies, err := v1Graph.NumZombies(t.Context())
+	numZombies, err := graph.NumZombies(t.Context())
 	require.NoError(t, err, "unable to query number of zombies")
 	require.Equal(t, expZombies, numZombies)
 }
@@ -5167,11 +5189,9 @@ func TestGraphZombieIndex(t *testing.T) {
 	)
 	require.NoError(t, graph.AddChannelEdge(ctx, edge))
 
-	v1Graph := NewVersionedGraph(graph, lnwire.GossipVersion1)
-
 	// Since the edge is known the graph and it isn't a zombie, IsZombieEdge
 	// should not report the channel as a zombie.
-	isZombie, _, _, err := v1Graph.IsZombieEdge(ctx, edge.ChannelID)
+	isZombie, _, _, err := graph.IsZombieEdge(ctx, edge.ChannelID)
 	require.NoError(t, err)
 	require.False(t, isZombie)
 	assertNumZombies(t, graph, 0)
@@ -5182,7 +5202,7 @@ func TestGraphZombieIndex(t *testing.T) {
 		ctx, lnwire.GossipVersion1, false, true, edge.ChannelID,
 	)
 	require.NoError(t, err, "unable to mark edge as zombie")
-	isZombie, pubKey1, pubKey2, err := v1Graph.IsZombieEdge(
+	isZombie, pubKey1, pubKey2, err := graph.IsZombieEdge(
 		ctx, edge.ChannelID,
 	)
 	require.NoError(t, err)
@@ -5205,7 +5225,7 @@ func TestGraphZombieIndex(t *testing.T) {
 		ErrZombieEdgeNotFound,
 	)
 
-	isZombie, _, _, err = v1Graph.IsZombieEdge(ctx, edge.ChannelID)
+	isZombie, _, _, err = graph.IsZombieEdge(ctx, edge.ChannelID)
 	require.NoError(t, err)
 	require.False(t, isZombie)
 
@@ -5219,7 +5239,7 @@ func TestGraphZombieIndex(t *testing.T) {
 	)
 	require.NoError(t, err, "unable to mark edge as zombie")
 
-	isZombie, _, _, err = v1Graph.IsZombieEdge(ctx, edge.ChannelID)
+	isZombie, _, _, err = graph.IsZombieEdge(ctx, edge.ChannelID)
 	require.NoError(t, err)
 	require.True(t, isZombie)
 	assertNumZombies(t, graph, 1)

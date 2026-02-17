@@ -35,6 +35,12 @@ const (
 	// block-height-based expiry for v2 gossip channels.
 	avgBitcoinBlockTime = 10 * time.Minute
 
+	// DefaultChannelPruneExpiryBlocks is the block-height equivalent of
+	// DefaultChannelPruneExpiry using a 10-minute block cadence.
+	DefaultChannelPruneExpiryBlocks = uint32(
+		DefaultChannelPruneExpiry / (10 * time.Minute),
+	)
+
 	// DefaultFirstTimePruneDelay is the time we'll wait after startup
 	// before attempting to prune the graph for zombie channels. We don't
 	// do it immediately after startup to allow lnd to start up without
@@ -1538,7 +1544,9 @@ func (b *Builder) IsStaleNode(ctx context.Context, v lnwire.GossipVersion,
 func (b *Builder) IsPublicNode(v lnwire.GossipVersion,
 	node route.Vertex) (bool, error) {
 
-	return b.cfg.Graph.IsPublicNode(context.TODO(), v, node)
+	return graphdb.NewVersionedGraph(
+		b.cfg.Graph, v,
+	).IsPublicNode(context.TODO(), node)
 }
 
 // IsKnownEdge returns true if the graph source already knows of the passed

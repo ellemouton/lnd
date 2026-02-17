@@ -111,6 +111,19 @@ type ChannelUpdate interface {
 	// update.
 	ForwardingPolicy() *ForwardingPolicy
 
+	// HasZeroUpdateTime returns true if the update-ordering field of the
+	// message is zero. For v1 this is the timestamp, for v2 this is the
+	// block height.
+	HasZeroUpdateTime() bool
+
+	// UpdateTimestamp returns the update-ordering field of the message. For
+	// v1 this is a UnixTimestamp, for v2 this is a BlockHeightTimestamp.
+	UpdateTimestamp() Timestamp
+
+	// TimeDesc returns a human-readable description of the update-ordering
+	// field.
+	TimeDesc() string
+
 	// CmpAge can be used to determine if the update is older or newer than
 	// the passed update. It returns LessThan if this update is older than
 	// the passed update, GreaterThan if it is newer and EqualTo if they are
