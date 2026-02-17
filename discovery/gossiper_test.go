@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -1005,11 +1004,7 @@ func createTestCtx(t *testing.T, startHeight uint32, isChanPeer bool) (
 		return false
 	}
 
-	signAliasUpdate := func(*lnwire.ChannelUpdate1) (*ecdsa.Signature,
-		error) {
-
-		return nil, nil
-	}
+	signAliasUpdate := func(lnwire.ChannelUpdate) error { return nil }
 
 	findBaseByAlias := func(lnwire.ShortChannelID) (lnwire.ShortChannelID,
 		error) {
@@ -1740,11 +1735,7 @@ func TestSignatureAnnouncementRetryAtStartup(t *testing.T) {
 		return false
 	}
 
-	signAliasUpdate := func(*lnwire.ChannelUpdate1) (*ecdsa.Signature,
-		error) {
-
-		return nil, nil
-	}
+	signAliasUpdate := func(lnwire.ChannelUpdate) error { return nil }
 
 	findBaseByAlias := func(lnwire.ShortChannelID) (lnwire.ShortChannelID,
 		error) {
