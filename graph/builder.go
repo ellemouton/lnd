@@ -30,6 +30,12 @@ const (
 	// if a channel should be pruned or not.
 	DefaultChannelPruneExpiry = time.Hour * 24 * 14
 
+	// DefaultChannelPruneExpiryBlocks is the block-height equivalent of
+	// DefaultChannelPruneExpiry using a 10-minute block cadence.
+	DefaultChannelPruneExpiryBlocks = uint32(
+		DefaultChannelPruneExpiry / (10 * time.Minute),
+	)
+
 	// DefaultFirstTimePruneDelay is the time we'll wait after startup
 	// before attempting to prune the graph for zombie channels. We don't
 	// do it immediately after startup to allow lnd to start up without

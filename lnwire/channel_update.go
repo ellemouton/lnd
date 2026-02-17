@@ -363,6 +363,27 @@ func (a *ChannelUpdate1) ForwardingPolicy() *ForwardingPolicy {
 	}
 }
 
+// HasZeroUpdateTime returns true if the update-ordering field is zero.
+//
+// NOTE: this is part of the ChannelUpdate interface.
+func (a *ChannelUpdate1) HasZeroUpdateTime() bool {
+	return a.UpdateTimestamp().IsZero()
+}
+
+// UpdateTimestamp returns the update-ordering field.
+//
+// NOTE: this is part of the ChannelUpdate interface.
+func (a *ChannelUpdate1) UpdateTimestamp() Timestamp {
+	return UnixTimestamp(a.Timestamp)
+}
+
+// TimeDesc returns a human-readable description of the update-ordering field.
+//
+// NOTE: this is part of the ChannelUpdate interface.
+func (a *ChannelUpdate1) TimeDesc() string {
+	return fmt.Sprintf("timestamp=%d", a.Timestamp)
+}
+
 // GossipVersion returns the gossip version that this message is part of.
 //
 // NOTE: this is part of the GossipMessage interface.
