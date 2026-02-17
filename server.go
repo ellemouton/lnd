@@ -1091,7 +1091,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		MaxChannelUpdateBurst:   cfg.Gossip.MaxChannelUpdateBurst,
 		ChannelUpdateInterval:   cfg.Gossip.ChannelUpdateInterval,
 		IsAlias:                 aliasmgr.IsAlias,
-		SignAliasUpdate:         s.signAliasUpdate,
+		SignAliasUpdate:         s.signGossipAliasUpdate,
 		FindBaseByAlias:         s.aliasMgr.FindBaseSCID,
 		GetAlias:                s.aliasMgr.GetPeerAlias,
 		FindChannel:             s.findChannel,
@@ -1905,6 +1905,31 @@ func (s *server) signAliasUpdate(u *lnwire.ChannelUpdate1) (*ecdsa.Signature,
 	}
 
 	return s.cc.MsgSigner.SignMessage(s.identityKeyLoc, data, true)
+}
+
+// signGossipAliasUpdate re-signs an aliased gossip channel update in-place.
+func (s *server) signGossipAliasUpdate(update lnwire.ChannelUpdate) error {
+	switch update := update.(type) {
+	case *lnwire.ChannelUpdate1:
+		sig, err := s.signAliasUpdate(update)
+		if err != nil {
+			return err
+		}
+
+		lnSig, err := lnwire.NewSigFromSignature(sig)
+		if err != nil {
+			return err
+		}
+
+		update.Signature = lnSig
+		return nil
+
+	case *lnwire.ChannelUpdate2:
+		return netann.SignChannelUpdate2(s.cc.KeyRing, s.identityKeyLoc, update)
+
+	default:
+		return fmt.Errorf("unsupported channel update type: %T", update)
+	}
 }
 
 // createLivenessMonitor creates a set of health checks using our configured

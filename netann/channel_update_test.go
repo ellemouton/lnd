@@ -7,10 +7,14 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/netann"
+	"github.com/lightningnetwork/lnd/tlv"
+	"github.com/stretchr/testify/require"
 )
 
 type mockSigner struct {
@@ -28,6 +32,41 @@ func (m *mockSigner) SignMessage(_ keychain.KeyLocator,
 }
 
 var _ lnwallet.MessageSigner = (*mockSigner)(nil)
+
+type mockSchnorrSigner struct {
+	err     error
+	privKey *btcec.PrivateKey
+}
+
+func (m *mockSchnorrSigner) SignMessageSchnorr(_ keychain.KeyLocator,
+	msg []byte, doubleHash bool, _ []byte,
+	tag []byte) (*schnorr.Signature, error) {
+
+	if m.err != nil {
+		return nil, m.err
+	}
+
+	if m.privKey == nil {
+		return nil, nil
+	}
+
+	var digest []byte
+	switch {
+	case len(tag) > 0:
+		hash := chainhash.TaggedHash(tag, msg)
+		digest = hash[:]
+
+	case doubleHash:
+		digest = chainhash.DoubleHashB(msg)
+
+	default:
+		digest = chainhash.HashB(msg)
+	}
+
+	return schnorr.Sign(m.privKey, digest)
+}
+
+var _ netann.ChannelUpdate2Signer = (*mockSchnorrSigner)(nil)
 
 var (
 	privKey, _    = btcec.NewPrivateKey()
@@ -134,27 +173,11 @@ func TestUpdateDisableFlag(t *testing.T) {
 				netann.ChanUpdSetTimestamp,
 			)
 
-			var fail bool
-			switch {
-
-			// Both nil, pass.
-			case tc.expErr == nil && err == nil:
-
-			// Both non-nil, compare error strings since some
-			// methods don't return concrete error types.
-			case tc.expErr != nil && err != nil:
-				if err.Error() != tc.expErr.Error() {
-					fail = true
-				}
-
-			// Otherwise, one is nil and one is non-nil.
-			default:
-				fail = true
-			}
-
-			if fail {
-				t.Fatalf("expected error: %v, got %v",
-					tc.expErr, err)
+			if tc.expErr == nil {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				require.EqualError(t, err, tc.expErr.Error())
 			}
 
 			// Exit early if the test expected a failure.
@@ -164,30 +187,112 @@ func TestUpdateDisableFlag(t *testing.T) {
 
 			// Verify that the timestamp has increased from the
 			// original update.
-			if newUpdate.Timestamp <= ogUpdate.Timestamp {
-				t.Fatalf("update timestamp should be "+
-					"monotonically increasing, "+
-					"original: %d, new %d",
-					ogUpdate.Timestamp, newUpdate.Timestamp)
-			}
+			require.Greater(
+				t, newUpdate.Timestamp, ogUpdate.Timestamp,
+				"update timestamp should be monotonically "+
+					"increasing",
+			)
 
 			// Verify that the disabled flag is properly set.
 			disabled := newUpdate.ChannelFlags&
 				lnwire.ChanUpdateDisabled != 0
-			if disabled != tc.disable {
-				t.Fatalf("expected disable:%v, found:%v",
-					tc.disable, disabled)
-			}
+			require.Equal(t, tc.disable, disabled)
 
 			// Finally, validate the signature using the router's
 			// verification logic.
 			err = netann.VerifyChannelUpdateSignature(
 				newUpdate, pubKey,
 			)
-			if err != nil {
-				t.Fatalf("channel update failed to "+
-					"validate: %v", err)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestSignChannelUpdate2(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		signer netann.ChannelUpdate2Signer
+		expErr error
+	}{
+		{
+			name: "working signer",
+			signer: &mockSchnorrSigner{
+				privKey: privKey,
+			},
+		},
+		{
+			name: "failing signer",
+			signer: &mockSchnorrSigner{
+				err: errFailedToSign,
+			},
+			expErr: errFailedToSign,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+
+		t.Run(tc.name, func(t *testing.T) {
+			upd := &lnwire.ChannelUpdate2{
+				ChainHash: tlv.NewPrimitiveRecord[tlv.TlvType0](
+					chainhash.Hash{},
+				),
+				ShortChannelID: tlv.NewRecordT[tlv.TlvType2](
+					lnwire.ShortChannelID{
+						BlockHeight: 500,
+						TxIndex:     2,
+						TxPosition:  1,
+					},
+				),
+				BlockHeight: tlv.NewPrimitiveRecord[tlv.TlvType4](
+					uint32(600),
+				),
+				DisabledFlags: tlv.NewPrimitiveRecord[tlv.TlvType6](
+					lnwire.ChanUpdateDisableFlags(0),
+				),
+				CLTVExpiryDelta: tlv.NewPrimitiveRecord[tlv.TlvType10](
+					uint16(80),
+				),
+				HTLCMinimumMsat: tlv.NewPrimitiveRecord[tlv.TlvType12](
+					lnwire.MilliSatoshi(1000),
+				),
+				HTLCMaximumMsat: tlv.NewPrimitiveRecord[tlv.TlvType14](
+					lnwire.MilliSatoshi(2_000_000),
+				),
+				FeeBaseMsat: tlv.NewPrimitiveRecord[tlv.TlvType16](
+					uint32(1000),
+				),
+				FeeProportionalMillionths: tlv.NewPrimitiveRecord[tlv.TlvType18](uint32(100)),
 			}
+
+			err := netann.SignChannelUpdate2(
+				tc.signer, testKeyLoc, upd,
+				func(update *lnwire.ChannelUpdate2) {
+					update.ShortChannelID.Val = lnwire.ShortChannelID{
+						BlockHeight: 700,
+						TxIndex:     3,
+						TxPosition:  0,
+					}
+				},
+			)
+
+			if tc.expErr == nil {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				require.EqualError(t, err, tc.expErr.Error())
+			}
+
+			if tc.expErr != nil {
+				return
+			}
+
+			require.Equal(t, uint32(700), upd.ShortChannelID.Val.BlockHeight)
+
+			err = netann.VerifyChannelUpdateSignature(upd, pubKey)
+			require.NoError(t, err)
 		})
 	}
 }

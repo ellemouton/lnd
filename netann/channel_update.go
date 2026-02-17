@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/lightningnetwork/lnd/graph/db/models"
@@ -37,6 +38,18 @@ var ErrUnableToExtractChanUpdate = fmt.Errorf("unable to extract ChannelUpdate")
 // ChannelUpdateModifier is a closure that makes in-place modifications to an
 // lnwire.ChannelUpdate.
 type ChannelUpdateModifier func(*lnwire.ChannelUpdate1)
+
+// ChannelUpdate2Modifier is a closure that makes in-place modifications to an
+// lnwire.ChannelUpdate2.
+type ChannelUpdate2Modifier func(*lnwire.ChannelUpdate2)
+
+// ChannelUpdate2Signer describes the signing capabilities required to sign a
+// channel_update_2 message.
+type ChannelUpdate2Signer interface {
+	SignMessageSchnorr(keyLoc keychain.KeyLocator, msg []byte,
+		doubleHash bool, taprootTweak []byte,
+		tag []byte) (*schnorr.Signature, error)
+}
 
 // ChanUpdSetDisable is a functional option that sets the disabled channel flag
 // if disabled is true, and clears the bit otherwise.
@@ -95,6 +108,36 @@ func SignChannelUpdate(signer lnwallet.MessageSigner, keyLoc keychain.KeyLocator
 	}
 
 	return nil
+}
+
+// SignChannelUpdate2 applies the given modifiers to the passed
+// lnwire.ChannelUpdate2, then signs the resulting update.
+//
+// NOTE: This method modifies the given update.
+func SignChannelUpdate2(signer ChannelUpdate2Signer,
+	keyLoc keychain.KeyLocator, update *lnwire.ChannelUpdate2,
+	mods ...ChannelUpdate2Modifier) error {
+
+	// Apply the requested changes to the channel update.
+	for _, modifier := range mods {
+		modifier(update)
+	}
+
+	data, err := lnwire.SerialiseFieldsToSign(update)
+	if err != nil {
+		return err
+	}
+
+	// Sign using the BOLT-7 tagged hash for channel_update_2.
+	sig, err := signer.SignMessageSchnorr(
+		keyLoc, data, false, nil, ChanUpdate2DigestTag(),
+	)
+	if err != nil {
+		return err
+	}
+
+	update.Signature.Val, err = lnwire.NewSigFromSignature(sig)
+	return err
 }
 
 // ExtractChannelUpdate attempts to retrieve a lnwire.ChannelUpdate message from
