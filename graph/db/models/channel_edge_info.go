@@ -13,6 +13,7 @@ import (
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
+	"github.com/lightningnetwork/lnd/tlv"
 )
 
 // ChannelEdgeInfo represents a fully authenticated channel along with all its
@@ -504,4 +505,85 @@ func (c *ChannelEdgeInfo) ToChannelAnnouncement() (
 	}
 
 	return chanAnn, nil
+}
+
+// ToWireAnnouncement converts the ChannelEdgeInfo to a version-aware wire
+// channel announcement.
+func (c *ChannelEdgeInfo) ToWireAnnouncement() (
+	lnwire.ChannelAnnouncement, error) {
+
+	switch c.Version {
+	case lnwire.GossipVersion1:
+		return c.ToChannelAnnouncement()
+
+	case lnwire.GossipVersion2:
+		return c.toChannelAnnouncement2()
+
+	default:
+		return nil, fmt.Errorf("unsupported channel version: %d",
+			c.Version)
+	}
+}
+
+// toChannelAnnouncement2 converts the ChannelEdgeInfo to a
+// lnwire.ChannelAnnouncement2 message.
+func (c *ChannelEdgeInfo) toChannelAnnouncement2() (
+	*lnwire.ChannelAnnouncement2, error) {
+
+	// If there's no auth proof, we can't create a full channel
+	// announcement.
+	if c.AuthProof == nil {
+		return nil, fmt.Errorf("cannot create channel announcement " +
+			"without auth proof")
+	}
+
+	if c.AuthProof.Version != lnwire.GossipVersion2 {
+		return nil, fmt.Errorf("invalid channel auth proof version: %d",
+			c.AuthProof.Version)
+	}
+
+	sigBytes := c.AuthProof.Sig()
+	if len(sigBytes) == 0 {
+		return nil, fmt.Errorf("missing signature for v2 channel " +
+			"announcement")
+	}
+
+	sig, err := lnwire.NewSigFromSchnorrRawSignature(sigBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	features := lnwire.RawFeatureVector{}
+	if c.Features != nil && c.Features.RawFeatureVector != nil {
+		features = *c.Features.RawFeatureVector
+	}
+
+	var chanAnn lnwire.ChannelAnnouncement2
+	chanAnn.ChainHash.Val = c.ChainHash
+	chanAnn.Features.Val = features
+	chanAnn.ShortChannelID.Val = lnwire.NewShortChanIDFromInt(c.ChannelID)
+	chanAnn.Capacity.Val = uint64(c.Capacity)
+	chanAnn.NodeID1.Val = [33]byte(c.NodeKey1Bytes)
+	chanAnn.NodeID2.Val = [33]byte(c.NodeKey2Bytes)
+	chanAnn.Outpoint.Val = lnwire.OutPoint(c.ChannelPoint)
+	chanAnn.Signature.Val = sig
+	chanAnn.ExtraSignedFields = c.ExtraSignedFields
+
+	c.BitcoinKey1Bytes.WhenSome(func(key route.Vertex) {
+		btcKey1 := tlv.ZeroRecordT[tlv.TlvType12, [33]byte]()
+		btcKey1.Val = [33]byte(key)
+		chanAnn.BitcoinKey1 = tlv.SomeRecordT(btcKey1)
+	})
+	c.BitcoinKey2Bytes.WhenSome(func(key route.Vertex) {
+		btcKey2 := tlv.ZeroRecordT[tlv.TlvType14, [33]byte]()
+		btcKey2.Val = [33]byte(key)
+		chanAnn.BitcoinKey2 = tlv.SomeRecordT(btcKey2)
+	})
+	c.MerkleRootHash.WhenSome(func(hash chainhash.Hash) {
+		merkleRoot := tlv.ZeroRecordT[tlv.TlvType16, [32]byte]()
+		merkleRoot.Val = [32]byte(hash)
+		chanAnn.MerkleRootHash = tlv.SomeRecordT(merkleRoot)
+	})
+
+	return &chanAnn, nil
 }

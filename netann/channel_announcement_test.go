@@ -11,9 +11,11 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/tlv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,7 +64,36 @@ func TestCreateChanAnnouncement(t *testing.T) {
 	chanAnn, _, _, err := CreateChanAnnouncement(chanInfo, nil, nil)
 	require.NoError(t, err, "unable to create channel announcement")
 
-	assert.Equal(t, chanAnn, expChanAnn)
+	assert.Equal(t, expChanAnn, chanAnn)
+}
+
+func TestCreateChanAnnouncementV2(t *testing.T) {
+	t.Parallel()
+
+	node1 := [33]byte{0x1}
+	node2 := [33]byte{0x2}
+
+	var sigBytes [64]byte
+	copy(sigBytes[:], bytes.Repeat([]byte{0x2}, 64))
+
+	chanProof := models.NewV2ChannelAuthProof(sigBytes[:])
+	chanInfo, err := models.NewV2Channel(
+		lnwire.ShortChannelID{BlockHeight: 1}.ToUint64(),
+		chainhash.Hash{0x1}, node1, node2, &models.ChannelV2Fields{
+			BitcoinKey1Bytes: fn.Some(route.Vertex(node1)),
+			BitcoinKey2Bytes: fn.Some(route.Vertex(node2)),
+		},
+		models.WithChanProof(chanProof),
+		models.WithChannelPoint(wire.OutPoint{Index: 1}),
+		models.WithCapacity(btcutil.SatoshiPerBitcoin),
+	)
+	require.NoError(t, err)
+
+	chanAnn, edge1, edge2, err := CreateChanAnnouncement(chanInfo, nil, nil)
+	require.NoError(t, err, "unable to create channel announcement")
+	require.IsType(t, &lnwire.ChannelAnnouncement2{}, chanAnn)
+	require.Nil(t, edge1)
+	require.Nil(t, edge2)
 }
 
 // TestChanAnnounce2Validation checks that the various forms of the
