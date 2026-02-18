@@ -191,24 +191,25 @@ type WaitingProofKey [9]byte
 // needed to make channel proof exchange persistent, so that after client
 // restart we may receive remote/local half proof and process it.
 type WaitingProof struct {
-	*lnwire.AnnounceSignatures1
-	isRemote bool
+	AnnounceSignatures lnwire.AnnounceSignatures
+	isRemote           bool
 }
 
 // NewWaitingProof constructs a new waiting prof instance.
 func NewWaitingProof(isRemote bool,
-	proof *lnwire.AnnounceSignatures1) *WaitingProof {
+	proof lnwire.AnnounceSignatures) *WaitingProof {
 
 	return &WaitingProof{
-		AnnounceSignatures1: proof,
-		isRemote:            isRemote,
+		AnnounceSignatures: proof,
+		isRemote:           isRemote,
 	}
 }
 
 // OppositeKey returns the key which uniquely identifies opposite waiting proof.
 func (p *WaitingProof) OppositeKey() WaitingProofKey {
 	var key [9]byte
-	binary.BigEndian.PutUint64(key[:8], p.ShortChannelID.ToUint64())
+	binary.BigEndian.PutUint64(key[:8], p.AnnounceSignatures.SCID().
+		ToUint64())
 
 	if !p.isRemote {
 		key[8] = 1
@@ -219,7 +220,8 @@ func (p *WaitingProof) OppositeKey() WaitingProofKey {
 // Key returns the key which uniquely identifies waiting proof.
 func (p *WaitingProof) Key() WaitingProofKey {
 	var key [9]byte
-	binary.BigEndian.PutUint64(key[:8], p.ShortChannelID.ToUint64())
+	binary.BigEndian.PutUint64(key[:8], p.AnnounceSignatures.SCID().
+		ToUint64())
 
 	if p.isRemote {
 		key[8] = 1
@@ -240,7 +242,8 @@ func (p *WaitingProof) Encode(w io.Writer) error {
 		return fmt.Errorf("expect io.Writer to be *bytes.Buffer")
 	}
 
-	if err := p.AnnounceSignatures1.Encode(buf, 0); err != nil {
+	_, err := lnwire.WriteMessage(buf, p.AnnounceSignatures, 0)
+	if err != nil {
 		return err
 	}
 
@@ -254,12 +257,33 @@ func (p *WaitingProof) Decode(r io.Reader) error {
 		return err
 	}
 
-	msg := &lnwire.AnnounceSignatures1{}
-	if err := msg.Decode(r, 0); err != nil {
+	encoded, err := io.ReadAll(r)
+	if err != nil {
 		return err
 	}
 
-	p.AnnounceSignatures1 = msg
+	// New format: encoded with lnwire.WriteMessage, so it includes the
+	// message type prefix and supports both v1 and v2 announce signatures.
+	msg, err := lnwire.ReadMessage(bytes.NewReader(encoded), 0)
+	if err == nil {
+		ann, ok := msg.(lnwire.AnnounceSignatures)
+		if !ok {
+			return fmt.Errorf("unexpected waiting proof message type: %T",
+				msg)
+		}
+
+		p.AnnounceSignatures = ann
+
+		return nil
+	}
+
+	// Legacy format: a raw AnnounceSignatures1 payload without message type.
+	legacy := &lnwire.AnnounceSignatures1{}
+	if err := legacy.Decode(bytes.NewReader(encoded), 0); err != nil {
+		return err
+	}
+
+	p.AnnounceSignatures = legacy
 
 	return nil
 }
