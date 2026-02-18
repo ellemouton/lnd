@@ -35,15 +35,21 @@ const (
 // structs for announcing new channels to other peers, or simply syncing up a
 // peer's initial routing table upon connect.
 func CreateChanAnnouncement(chanInfo *models.ChannelEdgeInfo,
-	e1, e2 *models.ChannelEdgePolicy) (*lnwire.ChannelAnnouncement1,
-	*lnwire.ChannelUpdate1, *lnwire.ChannelUpdate1, error) {
+	e1, e2 *models.ChannelEdgePolicy) (lnwire.ChannelAnnouncement,
+	lnwire.ChannelUpdate, lnwire.ChannelUpdate, error) {
 
 	// First, using the parameters of the channel, along with the channel
 	// authentication proof, we'll create re-create the original
 	// authenticated channel announcement.
-	chanAnn, err := chanInfo.ToChannelAnnouncement()
+	chanAnn, err := chanInfo.ToWireAnnouncement()
 	if err != nil {
 		return nil, nil, nil, err
+	}
+
+	// TODO(elle): add v2 channel update reconstruction to return updates
+	// alongside ChannelAnnouncement2.
+	if chanInfo.Version == lnwire.GossipVersion2 {
+		return chanAnn, nil, nil, nil
 	}
 
 	// We'll unconditionally queue the channel's existence chanProof as it
@@ -53,7 +59,7 @@ func CreateChanAnnouncement(chanInfo *models.ChannelEdgeInfo,
 	// Since it's up to a node's policy as to whether they advertise the
 	// edge in a direction, we don't create an advertisement if the edge is
 	// nil.
-	var edge1Ann, edge2Ann *lnwire.ChannelUpdate1
+	var edge1Ann, edge2Ann lnwire.ChannelUpdate
 	if e1 != nil {
 		edge1Ann, err = ChannelUpdateFromEdge(chanInfo, e1)
 		if err != nil {

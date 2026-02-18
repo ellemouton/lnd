@@ -1580,7 +1580,7 @@ func (d *AuthenticatedGossiper) networkHandler(ctx context.Context) {
 			switch announcement.msg.(type) {
 			// Channel announcement signatures are amongst the only
 			// messages that we'll process serially.
-			case *lnwire.AnnounceSignatures1:
+			case lnwire.AnnounceSignatures:
 				// Process in an anonymous function so we can
 				// recover from any panics without crashing the
 				// main networkHandler goroutine. We pass nil
@@ -2159,15 +2159,6 @@ func (d *AuthenticatedGossiper) processRejectedEdge(_ context.Context,
 		return nil, err
 	}
 
-	// For v2 channels, there is no v2 equivalent of CreateChanAnnouncement
-	// yet. Rebroadcast the incoming channel announcement only.
-	if chanAnnMsg.GossipVersion() == lnwire.GossipVersion2 {
-		return []networkMsg{{
-			source: d.selfKey,
-			msg:    chanAnnMsg,
-		}}, nil
-	}
-
 	// We'll then create then validate the new fully assembled
 	// announcement.
 	chanAnn, e1Ann, e2Ann, err := netann.CreateChanAnnouncement(
@@ -2351,7 +2342,7 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(ctx context.Context,
 	// A new signature announcement has been received. This indicates
 	// willingness of nodes involved in the funding of a channel to
 	// announce this new channel to the rest of the world.
-	case *lnwire.AnnounceSignatures1:
+	case lnwire.AnnounceSignatures:
 		return d.handleAnnSig(ctx, nMsg, msg)
 
 	default:
@@ -2448,10 +2439,10 @@ func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
 	msg lnwire.Message) bool {
 
 	switch msg := msg.(type) {
-	case *lnwire.AnnounceSignatures1:
+	case lnwire.AnnounceSignatures:
 		chanInfo, _, _, err := d.cfg.Graph.GetChannelByID(
 			msg.GossipVersion(),
-			msg.ShortChannelID,
+			msg.SCID(),
 		)
 
 		// If the channel cannot be found, it is most likely a leftover
@@ -2462,7 +2453,7 @@ func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
 		}
 		if err != nil {
 			log.Debugf("Unable to retrieve channel=%v from graph: "+
-				"%v", msg.ShortChannelID, err)
+				"%v", msg.SCID(), err)
 			return false
 		}
 
@@ -3735,32 +3726,28 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 //
 //nolint:funlen
 func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
-	nMsg *networkMsg, ann *lnwire.AnnounceSignatures1) ([]networkMsg,
-	bool) {
+	nMsg *networkMsg, ann lnwire.AnnounceSignatures) ([]networkMsg, bool) {
 
-	needBlockHeight := ann.ShortChannelID.BlockHeight +
-		d.cfg.ProofMatureDelta
-	shortChanID := ann.ShortChannelID.ToUint64()
+	scid := ann.SCID()
+	needBlockHeight := scid.BlockHeight + d.cfg.ProofMatureDelta
+	shortChanID := scid.ToUint64()
+	chanID := ann.ChanID()
 
 	prefix := "local"
 	if nMsg.isRemote {
 		prefix = "remote"
 	}
 
-	log.Infof("Received new %v announcement signature for %v", prefix,
-		ann.ShortChannelID)
+	log.Infof("Received new %v announcement signature for %v", prefix, scid)
 
 	// By the specification, channel announcement proofs should be sent
 	// after some number of confirmations after channel was registered in
 	// bitcoin blockchain. Therefore, we check if the proof is mature.
 	d.Lock()
-	premature := d.isPremature(
-		ann.ShortChannelID, d.cfg.ProofMatureDelta, nMsg,
-	)
+	premature := d.isPremature(scid, d.cfg.ProofMatureDelta, nMsg)
 	if premature {
-		log.Warnf("Premature proof announcement, current block height"+
-			"lower than needed: %v < %v", d.bestHeight,
-			needBlockHeight)
+		log.Warnf("Premature proof announcement, current block height "+
+			"lower than needed: %v < %v", d.bestHeight, needBlockHeight)
 		d.Unlock()
 		nMsg.err <- nil
 		return nil, false
@@ -3773,15 +3760,14 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	// We must acquire the mutex for this channel ID before getting the
 	// channel from the database, to ensure what we read does not change
 	// before we call AddProof() later.
-	d.channelMtx.Lock(ann.ShortChannelID.ToUint64())
-	defer d.channelMtx.Unlock(ann.ShortChannelID.ToUint64())
+	d.channelMtx.Lock(scid.ToUint64())
+	defer d.channelMtx.Unlock(scid.ToUint64())
 
 	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(
-		ann.GossipVersion(),
-		ann.ShortChannelID,
+		ann.GossipVersion(), scid,
 	)
 	if err != nil {
-		_, err = d.cfg.FindChannel(nMsg.source, ann.ChannelID)
+		_, err = d.cfg.FindChannel(nMsg.source, ann.ChanID())
 		if err != nil {
 			err := fmt.Errorf("unable to store the proof for "+
 				"short_chan_id=%v: %v", shortChanID, err)
@@ -3801,8 +3787,8 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 			return nil, false
 		}
 
-		log.Infof("Orphan %v proof announcement with short_chan_id=%v"+
-			", adding to waiting batch", prefix, shortChanID)
+		log.Infof("Orphan %v proof announcement with short_chan_id=%v, "+
+			"adding to waiting batch", prefix, shortChanID)
 		nMsg.err <- nil
 		return nil, false
 	}
@@ -3814,9 +3800,8 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	// Ensure that channel that was retrieved belongs to the peer which
 	// sent the proof announcement.
 	if !(isFirstNode || isSecondNode) {
-		err := fmt.Errorf("channel that was received doesn't belong "+
-			"to the peer which sent the proof, short_chan_id=%v",
-			shortChanID)
+		err := fmt.Errorf("channel that was received doesn't belong to "+
+			"the peer which sent the proof, short_chan_id=%v", shortChanID)
 		log.Error(err)
 		nMsg.err <- err
 		return nil, false
@@ -3839,8 +3824,8 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 		err := d.reliableSender.sendMessage(ctx, ann, remotePubKey)
 		if err != nil {
 			err := fmt.Errorf("unable to reliably send %v for "+
-				"channel=%v to peer=%x: %v", ann.MsgType(),
-				ann.ShortChannelID, remotePubKey, err)
+				"channel=%v to peer=%x: %v", ann.MsgType(), scid,
+				remotePubKey, err)
 			nMsg.err <- err
 			return nil, false
 		}
@@ -3861,41 +3846,39 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 				defer d.wg.Done()
 
 				log.Debugf("Received half proof for channel "+
-					"%v with existing full proof. Sending"+
-					" full proof to peer=%x",
-					ann.ChannelID, peerID)
+					"%v with existing full proof. Sending "+
+					"full proof to peer=%x", chanID, peerID)
 
 				ca, _, _, err := netann.CreateChanAnnouncement(
 					chanInfo, e1, e2,
 				)
 				if err != nil {
-					log.Errorf("unable to gen ann: %v",
-						err)
+					log.Errorf("unable to gen ann: %v", err)
 					return
 				}
 
 				err = nMsg.peer.SendMessage(false, ca)
 				if err != nil {
-					log.Errorf("Failed sending full proof"+
-						" to peer=%x: %v", peerID, err)
+					log.Errorf("Failed sending full proof "+
+						"to peer=%x: %v", peerID, err)
 					return
 				}
 
 				log.Debugf("Full proof sent to peer=%x for "+
-					"chanID=%v", peerID, ann.ChannelID)
+					"chanID=%v", peerID, chanID)
 			}()
 		}
 
 		log.Debugf("Already have proof for channel with chanID=%v",
-			ann.ChannelID)
+			chanID)
 		nMsg.err <- nil
 		return nil, true
 	}
 
-	// Check that we received the opposite proof. If so, then we're now
-	// able to construct the full proof, and create the channel
-	// announcement. If we didn't receive the opposite half of the proof
-	// then we should store this one, and wait for the opposite to be
+	// Check that we received the opposite proof. If so, then we might now
+	// be able to construct the full proof and create the channel
+	// announcement. If we didn't receive the opposite half of the proof,
+	// then we should store this one and wait for the opposite to be
 	// received.
 	proof := channeldb.NewWaitingProof(nMsg.isRemote, ann)
 	oppProof, err := d.cfg.WaitingProofStore.Get(proof.OppositeKey())
@@ -3917,32 +3900,38 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 			return nil, false
 		}
 
-		log.Infof("1/2 of channel ann proof received for "+
-			"short_chan_id=%v, waiting for other half",
-			shortChanID)
-
+		log.Infof("1/2 of channel ann proof received for short_chan_id=%v, "+
+			"waiting for other half", shortChanID)
 		nMsg.err <- nil
 		return nil, false
 	}
 
-	// We now have both halves of the channel announcement proof, then
-	// we'll reconstruct the initial announcement so we can validate it
-	// shortly below.
-	var dbProof *models.ChannelAuthProof
-	if isFirstNode {
-		dbProof = models.NewV1ChannelAuthProof(
-			ann.NodeSignature.ToSignatureBytes(),
-			oppProof.NodeSignature.ToSignatureBytes(),
-			ann.BitcoinSignature.ToSignatureBytes(),
-			oppProof.BitcoinSignature.ToSignatureBytes(),
-		)
-	} else {
-		dbProof = models.NewV1ChannelAuthProof(
-			oppProof.NodeSignature.ToSignatureBytes(),
-			ann.NodeSignature.ToSignatureBytes(),
-			oppProof.BitcoinSignature.ToSignatureBytes(),
-			ann.BitcoinSignature.ToSignatureBytes(),
-		)
+	dbProof, err := models.ChannelAuthProofFromAnnounceSignatures(
+		ann, oppProof.AnnounceSignatures, isFirstNode,
+	)
+	if errors.Is(err, models.ErrV2AnnSigProofAssemblyPending) {
+		log.Infof("Received both v2 announce signatures halves for "+
+			"short_chan_id=%v; full proof assembly not yet "+
+			"implemented", shortChanID)
+
+		// Once both halves are observed, clear the opposite half to
+		// avoid indefinite retries while full v2 assembly is pending
+		// implementation.
+		err = d.cfg.WaitingProofStore.Remove(proof.OppositeKey())
+		if err != nil && err != channeldb.ErrWaitingProofNotFound {
+			err := fmt.Errorf("unable to remove opposite proof for "+
+				"short_chan_id=%v: %v", shortChanID, err)
+			log.Error(err)
+			nMsg.err <- err
+			return nil, false
+		}
+
+		nMsg.err <- nil
+		return nil, false
+	}
+	if err != nil {
+		nMsg.err <- err
+		return nil, false
 	}
 
 	// Attach the proof to the channel info before creating the
@@ -3964,22 +3953,22 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	if err != nil {
 		err := fmt.Errorf("channel announcement proof for "+
 			"short_chan_id=%v isn't valid: %v", shortChanID, err)
-
 		log.Error(err)
 		nMsg.err <- err
 		return nil, false
 	}
 
-	// If the channel was returned by the router it means that existence of
-	// funding point and inclusion of nodes bitcoin keys in it already
-	// checked by the router. In this stage we should check that node keys
-	// attest to the bitcoin keys by validating the signatures of
-	// announcement. If proof is valid then we'll populate the channel edge
-	// with it, so we can announce it on peer connect.
-	err = d.cfg.Graph.AddProof(ann.ShortChannelID, dbProof)
+	// If the channel was returned by the router it means that
+	// existence of funding point and inclusion of nodes bitcoin
+	// keys in it already checked by the router. In this stage we
+	// should check that node keys attest to the bitcoin keys by
+	// validating the signatures of announcement. If proof is valid
+	// then we'll populate the channel edge with it, so we can
+	// announce it on peer connect.
+	err = d.cfg.Graph.AddProof(scid, dbProof)
 	if err != nil {
-		err := fmt.Errorf("unable add proof to the channel chanID=%v:"+
-			" %v", ann.ChannelID, err)
+		err := fmt.Errorf("unable add proof to the channel "+
+			"chanID=%v: %v", chanID, err)
 		log.Error(err)
 		nMsg.err <- err
 		return nil, false
@@ -3987,20 +3976,20 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 
 	err = d.cfg.WaitingProofStore.Remove(proof.OppositeKey())
 	if err != nil {
-		err := fmt.Errorf("unable to remove opposite proof for the "+
-			"channel with chanID=%v: %v", ann.ChannelID, err)
+		err := fmt.Errorf("unable to remove opposite proof for "+
+			"the channel with chanID=%v: %v", chanID, err)
 		log.Error(err)
 		nMsg.err <- err
 		return nil, false
 	}
 
-	// Proof was successfully created and now can announce the channel to
-	// the remain network.
-	log.Infof("Fully valid channel proof for short_chan_id=%v constructed"+
-		", adding to next ann batch", shortChanID)
+	// Proof was successfully created and now can announce the
+	// channel to the remain network.
+	log.Infof("Fully valid channel proof for short_chan_id=%v "+
+		"constructed, adding to next ann batch", shortChanID)
 
-	// Assemble the necessary announcements to add to the next broadcasting
-	// batch.
+	// Assemble the necessary announcements to add to the next
+	// broadcasting batch.
 	var announcements []networkMsg
 	announcements = append(announcements, networkMsg{
 		peer:   nMsg.peer,
@@ -4023,12 +4012,13 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	}
 
 	// We'll also send along the node announcements for each channel
-	// participant if we know of them. To ensure our node announcement
-	// propagates to our channel counterparty, we'll set the source for
-	// each announcement to the node it belongs to, otherwise we won't send
-	// it since the source gets skipped. This isn't necessary for channel
-	// updates and announcement signatures since we send those directly to
-	// our channel counterparty through the gossiper's reliable sender.
+	// participant if we know of them. To ensure our node
+	// announcement propagates to our channel counterparty, we'll
+	// set the source for each announcement to the node it belongs
+	// to, otherwise we won't send it since the source gets skipped.
+	// This isn't necessary for channel updates and announcement
+	// signatures since we send those directly to our channel
+	// counterparty through the gossiper's reliable sender.
 	node1Ann, err := d.fetchNodeAnn(ctx, chanInfo.NodeKey1Bytes)
 	if err != nil {
 		log.Debugf("Unable to fetch node announcement for %x: %v",
