@@ -2383,16 +2383,26 @@ func (c *KVStore) fetchNextChanUpdateBatch(
 	return batch, hasMore, nil
 }
 
-// ChanUpdatesInHorizon returns all the known channel edges which have at least
-// one edge that has an update timestamp within the specified horizon.
+// ChanUpdatesInHorizon returns channel updates within a versioned range.
 func (c *KVStore) ChanUpdatesInHorizon(_ context.Context,
-	startTime, endTime time.Time,
+	v lnwire.GossipVersion, r ChanUpdateRange,
 	opts ...IteratorOption) iter.Seq2[ChannelEdge, error] {
+
+	if err := r.validateForVersion(v); err != nil {
+		return chanUpdateRangeErrIter(err)
+	}
+
+	if v != lnwire.GossipVersion1 {
+		return chanUpdateRangeErrIter(ErrVersionNotSupportedForKVDB)
+	}
 
 	cfg := defaultIteratorConfig()
 	for _, opt := range opts {
 		opt(cfg)
 	}
+
+	startTime := r.StartTime.UnwrapOr(time.Time{})
+	endTime := r.EndTime.UnwrapOr(time.Time{})
 
 	return func(yield func(ChannelEdge, error) bool) {
 		iterState := newChanUpdatesIterator(
@@ -2446,7 +2456,7 @@ func (c *KVStore) ChanUpdatesInHorizon(_ context.Context,
 				iterState.total)
 		} else {
 			log.Tracef("ChanUpdatesInHorizon returned no edges "+
-				"in horizon (%s, %s)", startTime, endTime)
+				"in range (%s, %s)", startTime, endTime)
 		}
 	}
 }
@@ -2686,12 +2696,17 @@ func (c *KVStore) NodeUpdatesInHorizon(_ context.Context, startTime,
 // channels another peer knows of that we don't. The ChannelUpdateInfos for the
 // known zombies is also returned.
 func (c *KVStore) FilterKnownChanIDs(_ context.Context,
+	v lnwire.GossipVersion,
 	chansInfo []ChannelUpdateInfo) ([]uint64, []ChannelUpdateInfo, error) {
 
 	var (
 		newChanIDs   []uint64
 		knownZombies []ChannelUpdateInfo
 	)
+
+	if v != lnwire.GossipVersion1 {
+		return nil, nil, ErrVersionNotSupportedForKVDB
+	}
 
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()

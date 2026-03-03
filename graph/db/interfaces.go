@@ -256,10 +256,10 @@ type Store interface { //nolint:interfacebloat
 		uint64, error)
 
 	// ChanUpdatesInHorizon returns all the known channel edges which have
-	// at least one edge that has an update timestamp within the specified
-	// horizon.
-	ChanUpdatesInHorizon(ctx context.Context,
-		startTime, endTime time.Time,
+	// at least one edge update within the specified range for the given
+	// gossip version.
+	ChanUpdatesInHorizon(ctx context.Context, v lnwire.GossipVersion,
+		r ChanUpdateRange,
 		opts ...IteratorOption) iter.Seq2[ChannelEdge, error]
 
 	// FilterKnownChanIDs takes a set of channel IDs and return the subset
@@ -269,9 +269,9 @@ type Store interface { //nolint:interfacebloat
 	// callers to determine the set of channels another peer knows of that
 	// we don't. The ChannelUpdateInfos for the known zombies is also
 	// returned.
-	FilterKnownChanIDs(ctx context.Context,
-		chansInfo []ChannelUpdateInfo) ([]uint64, []ChannelUpdateInfo,
-		error)
+	FilterKnownChanIDs(ctx context.Context, v lnwire.GossipVersion,
+		chansInfo []ChannelUpdateInfo) ([]uint64,
+		[]ChannelUpdateInfo, error)
 
 	// FilterChannelRange returns the channel ID's of all known channels
 	// which were mined in a block height within the passed range for the

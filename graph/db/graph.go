@@ -522,10 +522,14 @@ func (c *ChannelGraph) PruneGraphNodes(ctx context.Context) error {
 // passed in. This method can be used by callers to determine the set of
 // channels another peer knows of that we don't.
 func (c *ChannelGraph) FilterKnownChanIDs(ctx context.Context,
-	chansInfo []ChannelUpdateInfo,
+	v lnwire.GossipVersion, chansInfo []ChannelUpdateInfo,
 	isZombieChan func(ChannelUpdateInfo) bool) ([]uint64, error) {
 
-	unknown, knownZombies, err := c.db.FilterKnownChanIDs(ctx, chansInfo)
+	if !isKnownGossipVersion(v) {
+		return nil, fmt.Errorf("unsupported gossip version: %d", v)
+	}
+
+	unknown, knownZombies, err := c.db.FilterKnownChanIDs(ctx, v, chansInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -695,13 +699,12 @@ func (c *ChannelGraph) HighestChanID(ctx context.Context,
 	return c.db.HighestChanID(ctx, v)
 }
 
-// ChanUpdatesInHorizon returns all known channel edges with updates in the
-// horizon.
+// ChanUpdatesInHorizon returns channel updates within a versioned range.
 func (c *ChannelGraph) ChanUpdatesInHorizon(ctx context.Context,
-	startTime, endTime time.Time,
+	v lnwire.GossipVersion, r ChanUpdateRange,
 	opts ...IteratorOption) iter.Seq2[ChannelEdge, error] {
 
-	return c.db.ChanUpdatesInHorizon(ctx, startTime, endTime, opts...)
+	return c.db.ChanUpdatesInHorizon(ctx, v, r, opts...)
 }
 
 // FilterChannelRange returns channel IDs within the passed block height range
@@ -918,6 +921,43 @@ func (c *VersionedGraph) IsZombieEdge(ctx context.Context,
 	chanID uint64) (bool, [33]byte, [33]byte, error) {
 
 	return c.db.IsZombieEdge(ctx, c.v, chanID)
+}
+
+// MarkEdgeZombie attempts to mark a channel identified by its channel ID as a
+// zombie for this version.
+func (c *VersionedGraph) MarkEdgeZombie(ctx context.Context, chanID uint64,
+	pubKey1, pubKey2 [33]byte) error {
+
+	return c.ChannelGraph.MarkEdgeZombie(
+		ctx, c.v, chanID, pubKey1, pubKey2,
+	)
+}
+
+// MarkEdgeLive clears an edge from our zombie index for this version, deeming
+// it as live.
+func (c *VersionedGraph) MarkEdgeLive(ctx context.Context,
+	chanID uint64) error {
+
+	return c.ChannelGraph.MarkEdgeLive(ctx, c.v, chanID)
+}
+
+// FilterKnownChanIDs takes a set of channel IDs and return the subset of chan
+// ID's that we don't know and are not known zombies of the passed set.
+func (c *VersionedGraph) FilterKnownChanIDs(ctx context.Context,
+	chansInfo []ChannelUpdateInfo,
+	isZombieChan func(ChannelUpdateInfo) bool) ([]uint64, error) {
+
+	return c.ChannelGraph.FilterKnownChanIDs(
+		ctx, c.v, chansInfo, isZombieChan,
+	)
+}
+
+// ChanUpdatesInHorizon returns channel updates within a versioned range.
+func (c *VersionedGraph) ChanUpdatesInHorizon(ctx context.Context,
+	r ChanUpdateRange, opts ...IteratorOption) iter.Seq2[ChannelEdge,
+	error] {
+
+	return c.db.ChanUpdatesInHorizon(ctx, c.v, r, opts...)
 }
 
 // AddrsForNode returns all known addresses for the target node public key.
