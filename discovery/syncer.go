@@ -1067,7 +1067,7 @@ func (g *GossipSyncer) processChanRangeReply(_ context.Context,
 	// channels.
 	isZombieChan := func(info graphdb.ChannelUpdateInfo) bool {
 		return g.cfg.isStillZombieChannel(
-			info.Node1UpdateTimestamp, info.Node2UpdateTimestamp,
+			info.Node1FreshnessTime(), info.Node2FreshnessTime(),
 		)
 	}
 	newChans, err := g.cfg.channelSeries.FilterKnownChanIDs(
