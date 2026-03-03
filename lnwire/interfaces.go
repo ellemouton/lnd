@@ -140,6 +140,16 @@ type NodeAnnouncement interface {
 	// timestamp of the announcement.
 	TimestampDesc() string
 
+	// HasZeroUpdateTime returns true if the update-ordering field of the
+	// announcement is zero. For v1 this is the timestamp, for v2 this is
+	// the block height.
+	HasZeroUpdateTime() bool
+
+	// UpdateTimestamp returns the update-ordering field of the
+	// announcement. For v1 this is a UnixTimestamp, for v2 this is a
+	// BlockHeightTimestamp.
+	UpdateTimestamp() Timestamp
+
 	Message
 	GossipMessage
 }
