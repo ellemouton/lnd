@@ -2595,7 +2595,9 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
 
 	// We'll quickly ask the router if it already has a newer update for
 	// this node so we can skip validating signatures if not required.
-	if d.cfg.Graph.IsStaleNode(ctx, nodeAnn.NodeID, timestamp) {
+	if d.cfg.Graph.IsStaleNode(ctx, lnwire.GossipVersion1, nodeAnn.NodeID,
+		lnwire.UnixTimestamp(nodeAnn.Timestamp)) {
+
 		log.Debugf("Skipped processing stale node: %x", nodeAnn.NodeID)
 		nMsg.err <- nil
 		return nil, true
@@ -2621,7 +2623,9 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
 	// In order to ensure we don't leak unadvertised nodes, we'll make a
 	// quick check to ensure this node intends to publicly advertise itself
 	// to the network.
-	isPublic, err := d.cfg.Graph.IsPublicNode(nodeAnn.NodeID)
+	isPublic, err := d.cfg.Graph.IsPublicNode(
+		lnwire.GossipVersion1, nodeAnn.NodeID,
+	)
 	if err != nil {
 		log.Errorf("Unable to determine if node %x is advertised: %v",
 			nodeAnn.NodeID, err)

@@ -316,16 +316,37 @@ func (r *mockGraphSource) FetchNode(_ context.Context,
 // IsStaleNode returns true if the graph source has a node announcement for the
 // target node with a more recent timestamp.
 func (r *mockGraphSource) IsStaleNode(_ context.Context,
-	nodePub route.Vertex, timestamp time.Time) bool {
+	v lnwire.GossipVersion, nodePub route.Vertex,
+	updateTimestamp lnwire.Timestamp) bool {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	for _, node := range r.nodes {
-		if node.PubKeyBytes == nodePub {
-			return node.LastUpdate.After(timestamp) ||
-				node.LastUpdate.Equal(timestamp)
+		if node.PubKeyBytes != nodePub {
+			continue
 		}
+
+		var nodeTimestamp lnwire.Timestamp
+		switch v {
+		case lnwire.GossipVersion1:
+			nodeTimestamp = lnwire.UnixTimestamp(
+				node.LastUpdate.Unix(),
+			)
+		case lnwire.GossipVersion2:
+			nodeTimestamp = lnwire.BlockHeightTimestamp(
+				node.LastBlockHeight,
+			)
+		default:
+			return true
+		}
+
+		cmp, err := nodeTimestamp.Cmp(updateTimestamp)
+		if err != nil {
+			return true
+		}
+
+		return cmp != lnwire.LessThan
 	}
 
 	// If we did not find the node among our existing graph nodes, we
@@ -344,7 +365,10 @@ func (r *mockGraphSource) IsStaleNode(_ context.Context,
 
 // IsPublicNode determines whether the given vertex is seen as a public node in
 // the graph from the graph's source node's point of view.
-func (r *mockGraphSource) IsPublicNode(node route.Vertex) (bool, error) {
+func (r *mockGraphSource) IsPublicNode(
+	_ lnwire.GossipVersion, node route.Vertex,
+) (bool, error) {
+
 	for _, info := range r.infos {
 		if !bytes.Equal(node[:], info.NodeKey1Bytes[:]) &&
 			!bytes.Equal(node[:], info.NodeKey2Bytes[:]) {

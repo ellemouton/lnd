@@ -1170,7 +1170,10 @@ func TestIsStaleNode(t *testing.T) {
 	// Before we add the node, if we query for staleness, we should get
 	// false, as we haven't added the full node.
 	updateTimeStamp := time.Unix(123, 0)
-	require.False(t, ctx.builder.IsStaleNode(ctxb, pub1, updateTimeStamp))
+	require.False(t, ctx.builder.IsStaleNode(
+		ctxb, lnwire.GossipVersion1, pub1,
+		lnwire.UnixTimestamp(uint64(updateTimeStamp.Unix())),
+	))
 
 	// With the node stub in the database, we'll add the fully node
 	// announcement to the database.
@@ -1188,12 +1191,18 @@ func TestIsStaleNode(t *testing.T) {
 
 	// If we use the same timestamp and query for staleness, we should get
 	// true.
-	require.True(t, ctx.builder.IsStaleNode(ctxb, pub1, updateTimeStamp))
+	require.True(t, ctx.builder.IsStaleNode(
+		ctxb, lnwire.GossipVersion1, pub1,
+		lnwire.UnixTimestamp(uint64(updateTimeStamp.Unix())),
+	))
 
 	// If we update the timestamp and once again query for staleness, it
 	// should report false.
 	newTimeStamp := time.Unix(1234, 0)
-	require.False(t, ctx.builder.IsStaleNode(ctxb, pub1, newTimeStamp))
+	require.False(t, ctx.builder.IsStaleNode(
+		ctxb, lnwire.GossipVersion1, pub1,
+		lnwire.UnixTimestamp(uint64(newTimeStamp.Unix())),
+	))
 }
 
 // TestIsKnownEdge tests that the IsKnownEdge method properly detects stale
