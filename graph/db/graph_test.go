@@ -4741,8 +4741,9 @@ func TestGraphZombieIndex(t *testing.T) {
 
 	// Similarly, if we mark the same edge as live, we should no longer see
 	// it within the index.
-	err = graph.MarkEdgeLive(ctx, lnwire.GossipVersion1, edge.ChannelID)
-	require.NoError(t, err)
+	require.NoError(
+		t, graph.MarkEdgeLive(ctx, lnwire.GossipVersion1, edge.ChannelID),
+	)
 
 	// Attempting to mark the edge as live again now that it is no longer
 	// in the zombie index should fail.
