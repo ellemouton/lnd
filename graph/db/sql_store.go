@@ -1213,8 +1213,62 @@ func extractMaxBlockHeight(
 
 // buildChannelFromRow constructs a ChannelEdge from a database row.
 // This includes building the nodes, channel info, and policies.
+//
+//nolint:dupl
 func (s *SQLStore) buildChannelFromRow(ctx context.Context, db SQLQueries,
 	row sqlc.GetChannelsByPolicyLastUpdateRangeRow) (ChannelEdge, error) {
+
+	node1, err := buildNode(ctx, s.cfg.QueryCfg, db, row.GraphNode)
+	if err != nil {
+		return ChannelEdge{}, fmt.Errorf("unable to build node1: %w",
+			err)
+	}
+
+	node2, err := buildNode(ctx, s.cfg.QueryCfg, db, row.GraphNode_2)
+	if err != nil {
+		return ChannelEdge{}, fmt.Errorf("unable to build node2: %w",
+			err)
+	}
+
+	channel, err := getAndBuildEdgeInfo(
+		ctx, s.cfg, db,
+		row.GraphChannel, node1.PubKeyBytes,
+		node2.PubKeyBytes,
+	)
+	if err != nil {
+		return ChannelEdge{}, fmt.Errorf("unable to build "+
+			"channel info: %w", err)
+	}
+
+	dbPol1, dbPol2, err := extractChannelPolicies(row)
+	if err != nil {
+		return ChannelEdge{}, fmt.Errorf("unable to extract "+
+			"channel policies: %w", err)
+	}
+
+	p1, p2, err := getAndBuildChanPolicies(
+		ctx, s.cfg.QueryCfg, db, dbPol1, dbPol2, channel.ChannelID,
+		node1.PubKeyBytes, node2.PubKeyBytes,
+	)
+	if err != nil {
+		return ChannelEdge{}, fmt.Errorf("unable to build "+
+			"channel policies: %w", err)
+	}
+
+	return ChannelEdge{
+		Info:    channel,
+		Policy1: p1,
+		Policy2: p2,
+		Node1:   node1,
+		Node2:   node2,
+	}, nil
+}
+
+// buildChannelFromBlockRow constructs a ChannelEdge from a block-range row.
+//
+//nolint:dupl
+func (s *SQLStore) buildChannelFromBlockRow(ctx context.Context, db SQLQueries,
+	row sqlc.GetChannelsByPolicyBlockRangeRow) (ChannelEdge, error) {
 
 	node1, err := buildNode(ctx, s.cfg.QueryCfg, db, row.GraphNode)
 	if err != nil {
@@ -3074,6 +3128,11 @@ func (s *SQLStore) FilterKnownChanIDs(ctx context.Context,
 		)
 	)
 
+	if !isKnownGossipVersion(v) {
+		return nil, nil, fmt.Errorf("unsupported gossip version: %d",
+			v)
+	}
+
 	// We first build a lookup map of the channel ID's to the
 	// ChannelUpdateInfo. This allows us to quickly delete channels that we
 	// already know about.
@@ -3093,7 +3152,7 @@ func (s *SQLStore) FilterKnownChanIDs(ctx context.Context,
 			return nil
 		}
 
-		err := s.forEachChanInSCIDList(ctx, db, cb, chansInfo)
+		err := s.forEachChanInSCIDList(ctx, db, v, cb, chansInfo)
 		if err != nil {
 			return fmt.Errorf("unable to iterate through "+
 				"channels: %w", err)
@@ -3112,7 +3171,7 @@ func (s *SQLStore) FilterKnownChanIDs(ctx context.Context,
 			isZombie, err := db.IsZombieChannel(
 				ctx, sqlc.IsZombieChannelParams{
 					Scid:    channelIDToBytes(channelID),
-					Version: int16(lnwire.GossipVersion1),
+					Version: int16(v),
 				},
 			)
 			if err != nil {
@@ -3151,6 +3210,7 @@ func (s *SQLStore) FilterKnownChanIDs(ctx context.Context,
 // ChannelUpdateInfo slice. The callback function is called for each channel
 // that is found.
 func (s *SQLStore) forEachChanInSCIDList(ctx context.Context, db SQLQueries,
+	v lnwire.GossipVersion,
 	cb func(ctx context.Context, channel sqlc.GraphChannel) error,
 	chansInfo []ChannelUpdateInfo) error {
 
@@ -3159,7 +3219,7 @@ func (s *SQLStore) forEachChanInSCIDList(ctx context.Context, db SQLQueries,
 
 		return db.GetChannelsBySCIDs(
 			ctx, sqlc.GetChannelsBySCIDsParams{
-				Version: int16(lnwire.GossipVersion1),
+				Version: int16(v),
 				Scids:   scids,
 			},
 		)

@@ -1002,6 +1002,24 @@ func (c *VersionedGraph) IsZombieEdge(ctx context.Context,
 	return c.db.IsZombieEdge(ctx, c.v, chanID)
 }
 
+// MarkEdgeZombie attempts to mark a channel identified by its channel ID as a
+// zombie for this version.
+func (c *VersionedGraph) MarkEdgeZombie(ctx context.Context, chanID uint64,
+	pubKey1, pubKey2 [33]byte) error {
+
+	return c.ChannelGraph.MarkEdgeZombie(
+		ctx, c.v, chanID, pubKey1, pubKey2,
+	)
+}
+
+// MarkEdgeLive clears an edge from our zombie index for this version, deeming
+// it as live.
+func (c *VersionedGraph) MarkEdgeLive(ctx context.Context,
+	chanID uint64) error {
+
+	return c.ChannelGraph.MarkEdgeLive(ctx, c.v, chanID)
+}
+
 // AddrsForNode returns all known addresses for the target node public key.
 func (c *VersionedGraph) AddrsForNode(ctx context.Context,
 	nodePub *btcec.PublicKey) (bool, []net.Addr, error) {

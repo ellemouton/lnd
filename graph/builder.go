@@ -648,9 +648,8 @@ func (b *Builder) pruneZombieChans() error {
 
 	startTime := time.Unix(0, 0)
 	endTime := time.Now().Add(-1 * chanExpiry)
-	oldEdgesIter := b.cfg.Graph.ChanUpdatesInHorizon(
-		context.TODO(), lnwire.GossipVersion1,
-		graphdb.ChanUpdateRange{
+	oldEdgesIter := b.v1Graph.ChanUpdatesInHorizon(
+		context.TODO(), graphdb.ChanUpdateRange{
 			StartTime: fn.Some(startTime),
 			EndTime:   fn.Some(endTime),
 		},

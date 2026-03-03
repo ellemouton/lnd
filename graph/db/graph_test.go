@@ -2407,9 +2407,10 @@ func testHighestChanID(t *testing.T, v lnwire.GossipVersion) {
 	require.Equal(t, chanID3.ToUint64(), bestID)
 }
 
-// TestChanUpdatesInHorizon tests the we're able to properly retrieve all known
-// channel updates within a specific time horizon. It also tests that upon
-// insertion of a new edge, the edge update index is updated properly.
+// TestChanUpdatesInHorizon tests that we're able to properly retrieve all
+// known channel updates within a specific time horizon using the time-based
+// ChanUpdatesInHorizon. It also tests that upon insertion of a new edge, the
+// edge update index is updated properly.
 func TestChanUpdatesInHorizon(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
@@ -2545,6 +2546,127 @@ func TestChanUpdatesInHorizon(t *testing.T) {
 
 			assertEdgeInfoEqual(t, chanExp.Info, chanRet.Info)
 
+			compareEdgePolicies(
+				t, chanExp.Policy1, chanRet.Policy1,
+			)
+			compareEdgePolicies(
+				t, chanExp.Policy2, chanRet.Policy2,
+			)
+		}
+	}
+}
+
+// TestChanUpdatesInBlockRange tests that we're able to properly retrieve all
+// known channel updates within a block-height range for v2.
+func TestChanUpdatesInBlockRange(t *testing.T) {
+	t.Parallel()
+
+	if !isSQLDB {
+		t.Skip("sql only")
+	}
+
+	testChanUpdatesInBlockRange(t, lnwire.GossipVersion2)
+}
+
+func testChanUpdatesInBlockRange(t *testing.T, v lnwire.GossipVersion) {
+	ctx := t.Context()
+	graph := NewVersionedGraph(MakeTestGraph(t), v)
+
+	// If we issue an arbitrary query before any channel updates are
+	// inserted in the database, we should get zero results.
+	chanIter := graph.ChanUpdatesInHorizon(ctx, ChanUpdateRange{
+		StartHeight: fn.Some(uint32(100)),
+		EndHeight:   fn.Some(uint32(200)),
+	})
+	chanUpdates, err := fn.CollectErr(chanIter)
+	require.NoError(t, err)
+	require.Len(t, chanUpdates, 0)
+
+	// Seed two nodes.
+	node1 := createTestVertex(t, v)
+	require.NoError(t, graph.AddNode(ctx, node1))
+	node2 := createTestVertex(t, v)
+	require.NoError(t, graph.AddNode(ctx, node2))
+
+	const numChans = 10
+	startHeight := uint32(1000)
+	endHeight := startHeight
+	edges := make([]ChannelEdge, 0, numChans)
+
+	for i := 0; i < numChans; i++ {
+		channel, chanID := createEdge(
+			v, uint32(i*10), 0, 0, 0, node1, node2,
+		)
+		require.NoError(t, graph.AddChannelEdge(ctx, channel))
+
+		edge1Height := endHeight
+		edge2Height := edge1Height + 1
+		endHeight += 10
+
+		edge1 := newEdgePolicy(v, chanID.ToUint64(), 0, true)
+		edge1.LastBlockHeight = edge1Height
+		edge1.ToNode = node2.PubKeyBytes
+		edge1.SigBytes = testSig.Serialize()
+		require.NoError(t, graph.UpdateEdgePolicy(ctx, edge1))
+
+		edge2 := newEdgePolicy(v, chanID.ToUint64(), 0, false)
+		edge2.LastBlockHeight = edge2Height
+		edge2.ToNode = node1.PubKeyBytes
+		edge2.SigBytes = testSig.Serialize()
+		require.NoError(t, graph.UpdateEdgePolicy(ctx, edge2))
+
+		edges = append(edges, ChannelEdge{
+			Info:    channel,
+			Policy1: edge1,
+			Policy2: edge2,
+		})
+	}
+
+	queryCases := []struct {
+		start uint32
+		end   uint32
+		resp  []ChannelEdge
+	}{
+		{
+			start: 10,
+			end:   20,
+		},
+		{
+			start: 20000,
+			end:   30000,
+		},
+		{
+			start: startHeight,
+			end:   startHeight + 10,
+			resp:  []ChannelEdge{edges[0]},
+		},
+		{
+			start: startHeight + 10,
+			end:   endHeight - 10,
+			resp:  edges[1:9],
+		},
+		{
+			start: startHeight,
+			end:   endHeight,
+			resp:  edges,
+		},
+	}
+
+	for _, queryCase := range queryCases {
+		respIter := graph.ChanUpdatesInHorizon(ctx, ChanUpdateRange{
+			StartHeight: fn.Some(queryCase.start),
+			EndHeight:   fn.Some(queryCase.end),
+		})
+
+		resp, err := fn.CollectErr(respIter)
+		require.NoError(t, err)
+		require.Len(t, resp, len(queryCase.resp))
+
+		for i := 0; i < len(resp); i++ {
+			chanExp := queryCase.resp[i]
+			chanRet := resp[i]
+
+			assertEdgeInfoEqual(t, chanExp.Info, chanRet.Info)
 			compareEdgePolicies(
 				t, chanExp.Policy1, chanRet.Policy1,
 			)
@@ -2949,12 +3071,11 @@ func TestChanUpdatesInHorizonBoundaryConditions(t *testing.T) {
 
 			// Now we'll run the main query, and verify that we get
 			// back the expected number of channels.
+			endTime := startTime.Add(26 * time.Hour)
 			iter := graph.ChanUpdatesInHorizon(
 				ctx, lnwire.GossipVersion1, ChanUpdateRange{
 					StartTime: fn.Some(startTime),
-					EndTime: fn.Some(
-						startTime.Add(26 * time.Hour),
-					),
+					EndTime:   fn.Some(endTime),
 				},
 				WithChanUpdateIterBatchSize(batchSize),
 			)
@@ -3015,15 +3136,14 @@ func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 
 	// Call FilterKnownChanIDs with an isStillZombie call-back that would
 	// result in the current zombies still be considered as zombies.
-	_, err = graph.FilterKnownChanIDs(
-		ctx, lnwire.GossipVersion1, []ChannelUpdateInfo{
+	_, err = graph.FilterKnownChanIDs(ctx, lnwire.GossipVersion1,
+		[]ChannelUpdateInfo{
 			{ShortChannelID: scid1, Version: lnwire.GossipVersion1},
 			{ShortChannelID: scid2, Version: lnwire.GossipVersion1},
 			{ShortChannelID: scid3, Version: lnwire.GossipVersion1},
 		}, func(_ ChannelUpdateInfo) bool {
 			return true
-		},
-	)
+		})
 	require.NoError(t, err)
 
 	require.True(t, isZombie(scid1))
@@ -3033,8 +3153,8 @@ func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 	// Now call it again but this time with a isStillZombie call-back that
 	// would result in channel with SCID 2 no longer being considered a
 	// zombie.
-	_, err = graph.FilterKnownChanIDs(
-		ctx, lnwire.GossipVersion1, []ChannelUpdateInfo{
+	_, err = graph.FilterKnownChanIDs(ctx, lnwire.GossipVersion1,
+		[]ChannelUpdateInfo{
 			{ShortChannelID: scid1, Version: lnwire.GossipVersion1},
 			{
 				ShortChannelID: scid2,
@@ -3044,8 +3164,7 @@ func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 			{ShortChannelID: scid3, Version: lnwire.GossipVersion1},
 		}, func(info ChannelUpdateInfo) bool {
 			return info.Node1Freshness != lnwire.UnixTimestamp(1000)
-		},
-	)
+		})
 	require.NoError(t, err)
 
 	// Show that SCID 2 has been marked as live.
@@ -3208,8 +3327,8 @@ func TestFilterKnownChanIDs(t *testing.T) {
 
 	for _, queryCase := range queryCases {
 		resp, err := graph.FilterKnownChanIDs(
-			ctx, lnwire.GossipVersion1,
-			queryCase.queryIDs, isZombieUpdate,
+			ctx, lnwire.GossipVersion1, queryCase.queryIDs,
+			isZombieUpdate,
 		)
 		require.NoError(t, err)
 
@@ -3389,8 +3508,7 @@ func TestStressTestChannelGraphAPI(t *testing.T) {
 				}
 
 				_, err := graph.FilterKnownChanIDs(
-					ctx, lnwire.GossipVersion1,
-					chanIDs,
+					ctx, lnwire.GossipVersion1, chanIDs,
 					func(_ ChannelUpdateInfo) bool {
 						return rand.Intn(2) == 0
 					},
@@ -3438,13 +3556,12 @@ func TestStressTestChannelGraphAPI(t *testing.T) {
 		{
 			name: "ChanUpdateInHorizon",
 			fn: func() error {
+				start := time.Now().Add(-time.Hour)
 				iter := graph.ChanUpdatesInHorizon(
 					ctx, lnwire.GossipVersion1,
 					ChanUpdateRange{
-						StartTime: fn.Some(
-							time.Now().Add(-time.Hour),
-						),
-						EndTime: fn.Some(time.Now()),
+						StartTime: fn.Some(start),
+						EndTime:   fn.Some(time.Now()),
 					},
 				)
 				_, err := fn.CollectErr(iter)
