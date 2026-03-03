@@ -2644,10 +2644,10 @@ func (c *KVStore) fetchNextNodeBatch(
 	return nodeBatch, hasMore, nil
 }
 
-// NodeUpdatesInHorizon returns all the known lightning node which have an
-// update timestamp within the passed range.
-func (c *KVStore) NodeUpdatesInHorizon(_ context.Context, startTime,
-	endTime time.Time,
+// NodeUpdatesInHorizon returns all the known lightning nodes which have
+// updates within the passed range.
+func (c *KVStore) NodeUpdatesInHorizon(_ context.Context,
+	v lnwire.GossipVersion, r NodeUpdateRange,
 	opts ...IteratorOption) iter.Seq2[*models.Node, error] {
 
 	cfg := defaultIteratorConfig()
@@ -2656,10 +2656,20 @@ func (c *KVStore) NodeUpdatesInHorizon(_ context.Context, startTime,
 	}
 
 	return func(yield func(*models.Node, error) bool) {
+		if v != lnwire.GossipVersion1 {
+			yield(nil, ErrVersionNotSupportedForKVDB)
+			return
+		}
+		if err := r.validateForVersion(v); err != nil {
+			yield(nil, err)
+			return
+		}
+
 		// Initialize iterator state.
 		state := newNodeUpdatesIterator(
 			cfg.nodeUpdateIterBatchSize,
-			startTime, endTime,
+			r.StartTime.UnwrapOr(time.Time{}),
+			r.EndTime.UnwrapOr(time.Time{}),
 			cfg.iterPublicNodes,
 		)
 

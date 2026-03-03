@@ -185,8 +185,10 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 		// update within the horizon as well. We send these second to
 		// ensure that they follow any active channels they have.
 		nodeAnnsInHorizon := c.graph.NodeUpdatesInHorizon(
-			context.TODO(), startTime, endTime,
-			graphdb.WithIterPublicNodesOnly(),
+			context.TODO(), graphdb.NodeUpdateRange{
+				StartTime: fn.Some(startTime),
+				EndTime:   fn.Some(endTime),
+			}, graphdb.WithIterPublicNodesOnly(),
 		)
 		for nodeAnn, err := range nodeAnnsInHorizon {
 			if err != nil {

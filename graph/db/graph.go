@@ -638,12 +638,12 @@ func (c *ChannelGraph) ForEachNodeCacheable(ctx context.Context,
 }
 
 // NodeUpdatesInHorizon returns all known lightning nodes with updates in the
-// range.
+// range for the given gossip version.
 func (c *ChannelGraph) NodeUpdatesInHorizon(ctx context.Context,
-	startTime, endTime time.Time,
+	v lnwire.GossipVersion, r NodeUpdateRange,
 	opts ...IteratorOption) iter.Seq2[*models.Node, error] {
 
-	return c.db.NodeUpdatesInHorizon(ctx, startTime, endTime, opts...)
+	return c.db.NodeUpdatesInHorizon(ctx, v, r, opts...)
 }
 
 // HasV1Node determines if the graph has a vertex identified by the target node
@@ -862,10 +862,10 @@ func (c *VersionedGraph) NumZombies(ctx context.Context) (uint64, error) {
 // NodeUpdatesInHorizon returns all known lightning nodes which have an update
 // timestamp within the passed range.
 func (c *VersionedGraph) NodeUpdatesInHorizon(ctx context.Context,
-	startTime, endTime time.Time,
+	r NodeUpdateRange,
 	opts ...IteratorOption) iter.Seq2[*models.Node, error] {
 
-	return c.db.NodeUpdatesInHorizon(ctx, startTime, endTime, opts...)
+	return c.db.NodeUpdatesInHorizon(ctx, c.v, r, opts...)
 }
 
 // ChannelView returns the verifiable edge information for each active channel.
