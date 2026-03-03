@@ -1939,10 +1939,6 @@ func (s *SQLStore) FilterChannelRange(ctx context.Context,
 		}
 
 		for _, dbChan := range dbChans {
-			if v != lnwire.GossipVersion(dbChan.Version) {
-				continue
-			}
-
 			cid := lnwire.NewShortChanIDFromInt(
 				byteOrder.Uint64(dbChan.Scid),
 			)
