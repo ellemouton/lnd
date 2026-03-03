@@ -1037,6 +1037,93 @@ func TestIsPolicyZombie(t *testing.T) {
 	}
 }
 
+// TestIsZombieChannel verifies that IsZombieChannel uses version-aware
+// freshness checks and applies strict zombie pruning correctly.
+func TestIsZombieChannel(t *testing.T) {
+	t.Parallel()
+
+	const (
+		pruneExpiry   = time.Hour
+		currentHeight = uint32(1000)
+	)
+
+	tests := []struct {
+		name                string
+		strictZombiePruning bool
+		info                graphdb.ChannelUpdateInfo
+		zombie              bool
+	}{
+		{
+			name: "v1 both stale",
+			info: graphdb.NewV1ChannelUpdateInfo(
+				lnwire.ShortChannelID{},
+				time.Now().Add(-2*pruneExpiry),
+				time.Now().Add(-2*pruneExpiry),
+			),
+			zombie: true,
+		},
+		{
+			name: "v1 one stale not strict",
+			info: graphdb.NewV1ChannelUpdateInfo(
+				lnwire.ShortChannelID{},
+				time.Now().Add(-2*pruneExpiry),
+				time.Now(),
+			),
+			zombie: false,
+		},
+		{
+			name:                "v1 one stale strict",
+			strictZombiePruning: true,
+			info: graphdb.NewV1ChannelUpdateInfo(
+				lnwire.ShortChannelID{},
+				time.Now().Add(-2*pruneExpiry),
+				time.Now(),
+			),
+			zombie: true,
+		},
+		{
+			name: "v2 both stale",
+			info: graphdb.NewV2ChannelUpdateInfo(
+				lnwire.ShortChannelID{}, 987, 988,
+			),
+			zombie: true,
+		},
+		{
+			name: "v2 one stale not strict",
+			info: graphdb.NewV2ChannelUpdateInfo(
+				lnwire.ShortChannelID{}, 987, 995,
+			),
+			zombie: false,
+		},
+		{
+			name:                "v2 one stale strict",
+			strictZombiePruning: true,
+			info: graphdb.NewV2ChannelUpdateInfo(
+				lnwire.ShortChannelID{}, 987, 995,
+			),
+			zombie: true,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			b := &Builder{
+				cfg: &Config{
+					ChannelPruneExpiry:  pruneExpiry,
+					StrictZombiePruning: test.strictZombiePruning,
+				},
+			}
+			b.bestHeight.Store(currentHeight)
+
+			require.Equal(t, test.zombie, b.IsZombieChannel(test.info))
+		})
+	}
+}
+
 // TestIsStaleNode tests that the IsStaleNode method properly detects stale
 // node announcements.
 func TestIsStaleNode(t *testing.T) {

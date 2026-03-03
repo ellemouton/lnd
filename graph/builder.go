@@ -465,28 +465,55 @@ func (b *Builder) syncGraphWithChain() error {
 	return nil
 }
 
-// isPolicyZombie returns true if the given edge policy is considered stale
-// based on version-specific freshness criteria. For v1 policies, staleness is
-// determined by wall-clock time since the last update. For v2 policies,
-// staleness is determined by how many blocks have elapsed since the last
-// update block height.
-func (b *Builder) isPolicyZombie(e *models.ChannelEdgePolicy) bool {
+// isTimestampStale returns true if the given freshness timestamp is considered
+// stale based on the gossip version. For v1, staleness is determined by
+// wall-clock time since the unix timestamp. For v2, staleness is determined by
+// how many blocks have elapsed since the block height timestamp.
+func (b *Builder) isTimestampStale(v lnwire.GossipVersion,
+	freshness lnwire.Timestamp) bool {
+
 	chanExpiry := b.cfg.ChannelPruneExpiry
 
-	switch e.Version {
+	switch v {
 	case lnwire.GossipVersion1:
-		return time.Since(e.LastUpdate) >= chanExpiry
+		ts, ok := freshness.(lnwire.UnixTimestamp)
+		if !ok || ts.IsZero() {
+			return true
+		}
+
+		t := time.Unix(int64(ts), 0)
+
+		return time.Since(t) >= chanExpiry
 
 	default:
+		h, ok := freshness.(lnwire.BlockHeightTimestamp)
+		if !ok || uint32(h) == 0 {
+			return true
+		}
+
 		expiryBlocks := uint32(chanExpiry / avgBitcoinBlockTime)
 		currentHeight := b.bestHeight.Load()
+		height := uint32(h)
 
-		if e.LastBlockHeight > currentHeight {
+		if height > currentHeight {
 			return false
 		}
 
-		return currentHeight-e.LastBlockHeight >= expiryBlocks
+		return currentHeight-height >= expiryBlocks
 	}
+}
+
+// isPolicyZombie returns true if the given edge policy is considered stale
+// based on version-specific freshness criteria.
+func (b *Builder) isPolicyZombie(e *models.ChannelEdgePolicy) bool {
+	var freshness lnwire.Timestamp
+	if e.Version == lnwire.GossipVersion1 {
+		freshness = lnwire.UnixTimestamp(e.LastUpdate.Unix())
+	} else {
+		freshness = lnwire.BlockHeightTimestamp(e.LastBlockHeight)
+	}
+
+	return b.isTimestampStale(e.Version, freshness)
 }
 
 // isZombieChannel takes two edge policy updates and determines if the
@@ -510,28 +537,17 @@ func (b *Builder) isZombieChannel(e1,
 	return e1Zombie, e2Zombie, e1Zombie && e2Zombie
 }
 
-// IsZombieChannel takes the timestamps of the latest channel updates for a
-// channel and returns true if the channel should be considered a zombie based
-// on these timestamps.
-func (b *Builder) IsZombieChannel(updateTime1,
-	updateTime2 time.Time) bool {
+// IsZombieChannel returns true if the channel described by info should be
+// considered a zombie. For v1 channels, freshness is a unix timestamp; for v2+
+// channels it is a block height.
+func (b *Builder) IsZombieChannel(info graphdb.ChannelUpdateInfo) bool {
+	e1Zombie := b.isTimestampStale(info.Version, info.Node1Freshness)
+	e2Zombie := b.isTimestampStale(info.Version, info.Node2Freshness)
 
-	chanExpiry := b.cfg.ChannelPruneExpiry
-
-	e1Zombie := updateTime1.IsZero() ||
-		time.Since(updateTime1) >= chanExpiry
-
-	e2Zombie := updateTime2.IsZero() ||
-		time.Since(updateTime2) >= chanExpiry
-
-	// If we're using strict zombie pruning, then a channel is only
-	// considered live if both edges have a recent update we know of.
 	if b.cfg.StrictZombiePruning {
 		return e1Zombie || e2Zombie
 	}
 
-	// Otherwise, if we're using the less strict variant, then a channel is
-	// considered live if either of the edges have a recent update.
 	return e1Zombie && e2Zombie
 }
 
