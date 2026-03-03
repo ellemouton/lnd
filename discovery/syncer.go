@@ -1061,9 +1061,17 @@ func (g *GossipSyncer) processChanRangeReply(_ context.Context,
 
 	// Otherwise, this is the final response, so we'll now check to see
 	// which channels they know of that we don't.
+	// TODO(elle): isStillZombieChannel only inspects v1 time-based
+	// timestamps; once the gossip sync protocol supports v2, this
+	// should be updated to handle block-height freshness for v2
+	// channels.
+	isZombieChan := func(info graphdb.ChannelUpdateInfo) bool {
+		return g.cfg.isStillZombieChannel(
+			info.Node1UpdateTimestamp, info.Node2UpdateTimestamp,
+		)
+	}
 	newChans, err := g.cfg.channelSeries.FilterKnownChanIDs(
-		g.cfg.chainHash, g.bufferedChanRangeReplies,
-		g.cfg.isStillZombieChannel,
+		g.cfg.chainHash, g.bufferedChanRangeReplies, isZombieChan,
 	)
 	if err != nil {
 		return fmt.Errorf("unable to filter chan ids: %w", err)
