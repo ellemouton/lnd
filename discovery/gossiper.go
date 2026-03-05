@@ -2563,7 +2563,7 @@ func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
 // the underlying graph with the new state.
 func (d *AuthenticatedGossiper) updateChannel(ctx context.Context,
 	info *models.ChannelEdgeInfo,
-	edge *models.ChannelEdgePolicy) (*lnwire.ChannelAnnouncement1,
+	edge *models.ChannelEdgePolicy) (lnwire.ChannelAnnouncement,
 	lnwire.ChannelUpdate, error) {
 
 	// Parse the unsigned edge into a channel update.
@@ -2616,9 +2616,9 @@ func (d *AuthenticatedGossiper) updateChannel(ctx context.Context,
 	// We'll also create the original channel announcement so the two can
 	// be broadcast along side each other (if necessary), but only if we
 	// have a full channel announcement for this channel.
-	var chanAnn *lnwire.ChannelAnnouncement1
+	var chanAnn lnwire.ChannelAnnouncement
 	if info.AuthProof != nil {
-		chanAnn, err = info.ToChannelAnnouncement()
+		chanAnn, err = info.ToWireAnnouncement()
 		if err != nil {
 			return nil, nil, err
 		}

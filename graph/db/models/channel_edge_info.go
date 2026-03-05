@@ -431,10 +431,10 @@ func (c *ChannelEdgeInfo) FundingPKScript() ([]byte, error) {
 	}
 }
 
-// ToChannelAnnouncement converts the ChannelEdgeInfo to a
+// toChannelAnnouncement1 converts the ChannelEdgeInfo to a
 // lnwire.ChannelAnnouncement1 message. Returns an error if AuthProof is nil
 // or if the version is not v1.
-func (c *ChannelEdgeInfo) ToChannelAnnouncement() (
+func (c *ChannelEdgeInfo) toChannelAnnouncement1() (
 	*lnwire.ChannelAnnouncement1, error) {
 
 	// We currently only support v1 channel announcements.
@@ -514,7 +514,7 @@ func (c *ChannelEdgeInfo) ToWireAnnouncement() (
 
 	switch c.Version {
 	case lnwire.GossipVersion1:
-		return c.ToChannelAnnouncement()
+		return c.toChannelAnnouncement1()
 
 	case lnwire.GossipVersion2:
 		return c.toChannelAnnouncement2()
