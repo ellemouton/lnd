@@ -2102,8 +2102,7 @@ func (d *AuthenticatedGossiper) processChanPolicyUpdate(ctx context.Context,
 
 			remotePubKey := remotePubFromChanInfo(
 				edgeInfo.Info,
-				chanUpdate.ChannelFlags&
-					lnwire.ChanUpdateDirection == 0,
+				chanUpdate.IsNode1(),
 			)
 			err := d.reliableSender.sendMessage(
 				ctx, chanUpdate, remotePubKey,
@@ -2530,7 +2529,7 @@ func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
 		// currently have stored within our graph to check if this
 		// message is stale by comparing its timestamp.
 		var p *models.ChannelEdgePolicy
-		if msg1.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
+		if msg1.IsNode1() {
 			p = p1
 		} else {
 			p = p2

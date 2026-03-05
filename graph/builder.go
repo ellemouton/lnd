@@ -1077,11 +1077,9 @@ func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 
 	var pubKey *btcec.PublicKey
 
-	switch msg.ChannelFlags & lnwire.ChanUpdateDirection {
-	case 0:
+	if msg.IsNode1() {
 		pubKey, _ = ch.NodeKey1()
-
-	case 1:
+	} else {
 		pubKey, _ = ch.NodeKey2()
 	}
 
@@ -1338,8 +1336,7 @@ func (b *Builder) updateEdge(ctx context.Context,
 		// the direction of the edge they control. Therefore, we first
 		// check if we already have the most up-to-date information for
 		// that edge.
-		switch policy.ChannelFlags & lnwire.ChanUpdateDirection {
-		case 0:
+		if policy.IsNode1() {
 			if !edge1Timestamp.Before(policy.LastUpdate) {
 				return NewErrf(ErrOutdated, "Ignoring "+
 					"outdated update (flags=%v|%v) "+
@@ -1348,8 +1345,7 @@ func (b *Builder) updateEdge(ctx context.Context,
 					policy.ChannelFlags,
 					policy.ChannelID)
 			}
-
-		case 1:
+		} else {
 			if !edge2Timestamp.Before(policy.LastUpdate) {
 				return NewErrf(ErrOutdated, "Ignoring "+
 					"outdated update (flags=%v|%v) "+
