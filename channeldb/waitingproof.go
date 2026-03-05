@@ -8,6 +8,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
@@ -182,55 +183,250 @@ func (s *WaitingProofStore) Get(key WaitingProofKey) (*WaitingProof, error) {
 }
 
 // WaitingProofKey is the proof key which uniquely identifies the waiting
-// proof object. The goal of this key is distinguish the local and remote
-// proof for the same channel id.
-type WaitingProofKey [9]byte
+// proof object. The key layout is: [type (1 byte) | SCID (8 bytes) | side (1
+// byte)]. The type byte ensures that v1 and v2 proofs for the same SCID are
+// stored under distinct keys.
+type WaitingProofKey [10]byte
+
+// WaitingProofType represents the type of proof encoded in a waiting proof
+// record.
+type WaitingProofType uint8
+
+const (
+	// WaitingProofTypeV1 represents a waiting proof containing an
+	// AnnounceSignatures1 message (gossip v1, P2WSH channels).
+	WaitingProofTypeV1 WaitingProofType = 0
+
+	// WaitingProofTypeV2 represents a waiting proof containing an
+	// AnnounceSignatures2 message (gossip v2, taproot channels).
+	WaitingProofTypeV2 WaitingProofType = 1
+)
+
+// typeToWaitingProof returns an empty instance of the WaitingProofInner
+// implementation corresponding to the given proof type.
+func typeToWaitingProof(pt WaitingProofType) (WaitingProofInner, bool) {
+	switch pt {
+	case WaitingProofTypeV1:
+		return &V1WaitingProof{}, true
+	case WaitingProofTypeV2:
+		return &V2WaitingProof{}, true
+	default:
+		return nil, false
+	}
+}
+
+// WaitingProofInner is an interface that must be implemented by any waiting
+// proof payload to be stored in the waiting proof store.
+type WaitingProofInner interface {
+	// SCID returns the short channel ID of the channel that the waiting
+	// proof is for.
+	SCID() lnwire.ShortChannelID
+
+	// Ann returns the announce signatures message contained in this proof.
+	Ann() lnwire.AnnounceSignatures
+
+	// Encode encodes the waiting proof to the given buffer.
+	Encode(w *bytes.Buffer, pver uint32) error
+
+	// Decode parses the bytes from the given reader to reconstruct the
+	// waiting proof.
+	Decode(r io.Reader, pver uint32) error
+
+	// Type returns the waiting proof type.
+	Type() WaitingProofType
+}
+
+// V1WaitingProof wraps an AnnounceSignatures1 message for storage as a
+// waiting proof.
+type V1WaitingProof struct {
+	lnwire.AnnounceSignatures1
+}
+
+// SCID returns the short channel ID of the channel.
+//
+// NOTE: this is part of the WaitingProofInner interface.
+func (p *V1WaitingProof) SCID() lnwire.ShortChannelID {
+	return p.ShortChannelID
+}
+
+// Ann returns the announce signatures message contained in this proof.
+//
+// NOTE: this is part of the WaitingProofInner interface.
+func (p *V1WaitingProof) Ann() lnwire.AnnounceSignatures {
+	return &p.AnnounceSignatures1
+}
+
+// Type returns the waiting proof type.
+//
+// NOTE: this is part of the WaitingProofInner interface.
+func (p *V1WaitingProof) Type() WaitingProofType {
+	return WaitingProofTypeV1
+}
+
+// A compile time check to ensure V1WaitingProof implements the
+// WaitingProofInner interface.
+var _ WaitingProofInner = (*V1WaitingProof)(nil)
+
+// V2WaitingProof wraps an AnnounceSignatures2 message for storage as a
+// waiting proof. It also stores the aggregate MuSig2 nonce needed to
+// reconstruct the final signature.
+type V2WaitingProof struct {
+	lnwire.AnnounceSignatures2
+
+	// AggNonce is the aggregate nonce used to construct the partial
+	// signatures. It will be used as the R value in the final signature.
+	AggNonce *btcec.PublicKey
+}
+
+// SCID returns the short channel ID of the channel.
+//
+// NOTE: this is part of the WaitingProofInner interface.
+func (p *V2WaitingProof) SCID() lnwire.ShortChannelID {
+	return p.ShortChannelID.Val
+}
+
+// Ann returns the announce signatures message contained in this proof.
+//
+// NOTE: this is part of the WaitingProofInner interface.
+func (p *V2WaitingProof) Ann() lnwire.AnnounceSignatures {
+	return &p.AnnounceSignatures2
+}
+
+// Decode parses the bytes from the given reader to reconstruct the waiting
+// proof.
+//
+// NOTE: this is part of the WaitingProofInner interface.
+func (p *V2WaitingProof) Decode(r io.Reader, pver uint32) error {
+	var aggNoncePresent bool
+	if err := binary.Read(r, byteOrder, &aggNoncePresent); err != nil {
+		return err
+	}
+
+	if aggNoncePresent {
+		var nonceBytes [btcec.PubKeyBytesLenCompressed]byte
+		if err := binary.Read(r, byteOrder, &nonceBytes); err != nil {
+			return err
+		}
+
+		nonce, err := btcec.ParsePubKey(nonceBytes[:])
+		if err != nil {
+			return err
+		}
+
+		p.AggNonce = nonce
+	}
+
+	return p.AnnounceSignatures2.Decode(r, pver)
+}
+
+// Encode encodes the waiting proof to the given buffer.
+//
+// NOTE: this is part of the WaitingProofInner interface.
+func (p *V2WaitingProof) Encode(w *bytes.Buffer, pver uint32) error {
+	aggNoncePresent := p.AggNonce != nil
+	if err := binary.Write(w, byteOrder, aggNoncePresent); err != nil {
+		return err
+	}
+
+	if aggNoncePresent {
+		err := binary.Write(
+			w, byteOrder, p.AggNonce.SerializeCompressed(),
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return p.AnnounceSignatures2.Encode(w, pver)
+}
+
+// Type returns the waiting proof type.
+//
+// NOTE: this is part of the WaitingProofInner interface.
+func (p *V2WaitingProof) Type() WaitingProofType {
+	return WaitingProofTypeV2
+}
+
+// A compile time check to ensure V2WaitingProof implements the
+// WaitingProofInner interface.
+var _ WaitingProofInner = (*V2WaitingProof)(nil)
 
 // WaitingProof is the storable object, which encapsulate the half proof and
 // the information about from which side this proof came. This structure is
 // needed to make channel proof exchange persistent, so that after client
 // restart we may receive remote/local half proof and process it.
 type WaitingProof struct {
-	AnnounceSignatures lnwire.AnnounceSignatures
-	isRemote           bool
+	WaitingProofInner
+	isRemote bool
 }
 
-// NewWaitingProof constructs a new waiting prof instance.
+// NewWaitingProof constructs a new waiting proof instance from an
+// AnnounceSignatures message, dispatching to the appropriate inner type.
 func NewWaitingProof(isRemote bool,
 	proof lnwire.AnnounceSignatures) *WaitingProof {
 
+	switch p := proof.(type) {
+	case *lnwire.AnnounceSignatures1:
+		return &WaitingProof{
+			WaitingProofInner: &V1WaitingProof{*p},
+			isRemote:          isRemote,
+		}
+	case *lnwire.AnnounceSignatures2:
+		return &WaitingProof{
+			WaitingProofInner: &V2WaitingProof{
+				AnnounceSignatures2: *p,
+			},
+			isRemote: isRemote,
+		}
+	default:
+		panic(fmt.Sprintf("unhandled AnnounceSignatures type: %T", proof))
+	}
+}
+
+// NewV2WaitingProof constructs a new waiting proof instance for an
+// AnnounceSignatures2 message.
+func NewV2WaitingProof(isRemote bool, proof *lnwire.AnnounceSignatures2,
+	aggNonce *btcec.PublicKey) *WaitingProof {
+
 	return &WaitingProof{
-		AnnounceSignatures: proof,
-		isRemote:           isRemote,
+		WaitingProofInner: &V2WaitingProof{
+			AnnounceSignatures2: *proof,
+			AggNonce:            aggNonce,
+		},
+		isRemote: isRemote,
 	}
 }
 
 // OppositeKey returns the key which uniquely identifies opposite waiting proof.
 func (p *WaitingProof) OppositeKey() WaitingProofKey {
-	var key [9]byte
-	binary.BigEndian.PutUint64(key[:8], p.AnnounceSignatures.SCID().
-		ToUint64())
+	var key WaitingProofKey
+	key[0] = byte(p.Type())
+	binary.BigEndian.PutUint64(key[1:9], p.SCID().ToUint64())
 
 	if !p.isRemote {
-		key[8] = 1
+		key[9] = 1
 	}
 	return key
 }
 
 // Key returns the key which uniquely identifies waiting proof.
 func (p *WaitingProof) Key() WaitingProofKey {
-	var key [9]byte
-	binary.BigEndian.PutUint64(key[:8], p.AnnounceSignatures.SCID().
-		ToUint64())
+	var key WaitingProofKey
+	key[0] = byte(p.Type())
+	binary.BigEndian.PutUint64(key[1:9], p.SCID().ToUint64())
 
 	if p.isRemote {
-		key[8] = 1
+		key[9] = 1
 	}
 	return key
 }
 
 // Encode writes the internal representation of waiting proof in byte stream.
 func (p *WaitingProof) Encode(w io.Writer) error {
+	if err := binary.Write(w, byteOrder, p.Type()); err != nil {
+		return err
+	}
+
 	if err := binary.Write(w, byteOrder, p.isRemote); err != nil {
 		return err
 	}
@@ -242,48 +438,31 @@ func (p *WaitingProof) Encode(w io.Writer) error {
 		return fmt.Errorf("expect io.Writer to be *bytes.Buffer")
 	}
 
-	_, err := lnwire.WriteMessage(buf, p.AnnounceSignatures, 0)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return p.WaitingProofInner.Encode(buf, 0)
 }
 
 // Decode reads the data from the byte stream and initializes the
 // waiting proof object with it.
 func (p *WaitingProof) Decode(r io.Reader) error {
+	var proofType WaitingProofType
+	if err := binary.Read(r, byteOrder, &proofType); err != nil {
+		return err
+	}
+
 	if err := binary.Read(r, byteOrder, &p.isRemote); err != nil {
 		return err
 	}
 
-	encoded, err := io.ReadAll(r)
-	if err != nil {
+	proof, ok := typeToWaitingProof(proofType)
+	if !ok {
+		return fmt.Errorf("unknown waiting proof type: %v", proofType)
+	}
+
+	if err := proof.Decode(r, 0); err != nil {
 		return err
 	}
 
-	// New format: encoded with lnwire.WriteMessage, so it includes the
-	// message type prefix and supports both v1 and v2 announce signatures.
-	msg, err := lnwire.ReadMessage(bytes.NewReader(encoded), 0)
-	if err == nil {
-		ann, ok := msg.(lnwire.AnnounceSignatures)
-		if !ok {
-			return fmt.Errorf("unexpected waiting proof message type: %T",
-				msg)
-		}
-
-		p.AnnounceSignatures = ann
-
-		return nil
-	}
-
-	// Legacy format: a raw AnnounceSignatures1 payload without message type.
-	legacy := &lnwire.AnnounceSignatures1{}
-	if err := legacy.Decode(bytes.NewReader(encoded), 0); err != nil {
-		return err
-	}
-
-	p.AnnounceSignatures = legacy
+	p.WaitingProofInner = proof
 
 	return nil
 }
