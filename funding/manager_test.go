@@ -16,6 +16,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -125,6 +126,19 @@ var (
 		TxPosition:  0,
 	}
 )
+
+// mockBestBlockView is a simple mock that satisfies chainntnfs.BestBlockView.
+type mockBestBlockView struct {
+	height uint32
+}
+
+func (m *mockBestBlockView) BestHeight() (uint32, error) {
+	return m.height, nil
+}
+
+func (m *mockBestBlockView) BestBlockHeader() (*wire.BlockHeader, error) {
+	return &wire.BlockHeader{}, nil
+}
 
 type mockChanFunder struct {
 	fundingAmt btcutil.Amount
@@ -473,6 +487,18 @@ func createTestFundingManager(t *testing.T, privKey *btcec.PrivateKey,
 
 			return testSig, nil
 		},
+		SignMessageSchnorr: func(loc keychain.KeyLocator, msg []byte,
+			doubleHash bool, taprootTweak []byte,
+			tag []byte) (*schnorr.Signature, error) {
+
+			return keyRing.SignMessageSchnorr(
+				loc, msg, doubleHash, taprootTweak, tag,
+			)
+		},
+		BestBlockView: &mockBestBlockView{
+			height: fundingBroadcastHeight,
+		},
+		GraphSupportsV2: true,
 		SendAnnouncement: func(msg lnwire.Message,
 			_ ...discovery.OptionalMsgField) chan error {
 
@@ -637,12 +663,15 @@ func recreateAliceFundingManager(t *testing.T, alice *testNode) {
 	chainedAcceptor := acpt.NewChainedAcceptor()
 
 	f, err := NewFundingManager(Config{
-		IDKey:        oldCfg.IDKey,
-		IDKeyLoc:     oldCfg.IDKeyLoc,
-		Wallet:       oldCfg.Wallet,
-		Notifier:     oldCfg.Notifier,
-		ChannelDB:    oldCfg.ChannelDB,
-		FeeEstimator: oldCfg.FeeEstimator,
+		IDKey:              oldCfg.IDKey,
+		IDKeyLoc:           oldCfg.IDKeyLoc,
+		Wallet:             oldCfg.Wallet,
+		Notifier:           oldCfg.Notifier,
+		ChannelDB:          oldCfg.ChannelDB,
+		FeeEstimator:       oldCfg.FeeEstimator,
+		SignMessageSchnorr: oldCfg.SignMessageSchnorr,
+		BestBlockView:      oldCfg.BestBlockView,
+		GraphSupportsV2:    oldCfg.GraphSupportsV2,
 		SignMessage: func(_ keychain.KeyLocator,
 			_ []byte, _ bool) (*ecdsa.Signature, error) {
 
@@ -1255,51 +1284,56 @@ func assertChannelAnnouncements(t *testing.T, alice, bob *testNode,
 
 		gotChannelAnnouncement := false
 		gotChannelUpdate := false
+
+		// The channel update sent by the node should advertise the
+		// MinHTLC value required by the _other_ node.
+		other := (j + 1) % 2
+		otherCfg := nodes[other].fundingMgr.cfg
+
+		minHtlc := otherCfg.DefaultMinHtlcIn
+		maxHtlc := aliceCfg.RequiredRemoteMaxValue(capacity)
+		baseFee := aliceCfg.DefaultRoutingPolicy.BaseFee
+		feeRate := aliceCfg.DefaultRoutingPolicy.FeeRate
+
+		if len(customMinHtlc) > 0 {
+			minHtlc = customMinHtlc[j]
+		}
+		if len(customMaxHtlc) > 0 {
+			maxHtlc = customMaxHtlc[j]
+		}
+		if len(baseFees) > 0 {
+			baseFee = baseFees[j]
+		}
+		if len(feeRates) > 0 {
+			feeRate = feeRates[j]
+		}
+
 		for _, msg := range announcements {
 			switch m := msg.(type) {
 			case *lnwire.ChannelAnnouncement1:
 				gotChannelAnnouncement = true
+
+			case *lnwire.ChannelAnnouncement2:
+				gotChannelAnnouncement = true
+
 			case *lnwire.ChannelUpdate1:
-
-				// The channel update sent by the node should
-				// advertise the MinHTLC value required by the
-				// _other_ node.
-				other := (j + 1) % 2
-				otherCfg := nodes[other].fundingMgr.cfg
-
-				minHtlc := otherCfg.DefaultMinHtlcIn
-				maxHtlc := aliceCfg.RequiredRemoteMaxValue(
-					capacity,
-				)
-				baseFee := aliceCfg.DefaultRoutingPolicy.BaseFee
-				feeRate := aliceCfg.DefaultRoutingPolicy.FeeRate
-
 				require.EqualValues(t, 1, m.MessageFlags)
-
-				// We might expect a custom MinHTLC value.
-				if len(customMinHtlc) > 0 {
-					minHtlc = customMinHtlc[j]
-				}
 				require.Equal(t, minHtlc, m.HtlcMinimumMsat)
-
-				// We might expect a custom MaxHltc value.
-				if len(customMaxHtlc) > 0 {
-					maxHtlc = customMaxHtlc[j]
-				}
 				require.Equal(t, maxHtlc, m.HtlcMaximumMsat)
-
-				// We might expect a custom baseFee value.
-				if len(baseFees) > 0 {
-					baseFee = baseFees[j]
-				}
 				require.EqualValues(t, baseFee, m.BaseFee)
-
-				// We might expect a custom feeRate value.
-				if len(feeRates) > 0 {
-					feeRate = feeRates[j]
-				}
 				require.EqualValues(t, feeRate, m.FeeRate)
+				gotChannelUpdate = true
 
+			case *lnwire.ChannelUpdate2:
+				require.Equal(t, minHtlc, m.HTLCMinimumMsat.Val)
+				require.Equal(t, maxHtlc, m.HTLCMaximumMsat.Val)
+				require.EqualValues(
+					t, baseFee, m.FeeBaseMsat.Val,
+				)
+				require.EqualValues(
+					t, feeRate,
+					m.FeeProportionalMillionths.Val,
+				)
 				gotChannelUpdate = true
 			}
 		}

@@ -1500,10 +1500,13 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		UpdateLabel: func(hash chainhash.Hash, label string) error {
 			return cc.Wallet.LabelTransaction(hash, label, true)
 		},
-		Notifier:     cc.ChainNotifier,
-		ChannelDB:    s.chanStateDB,
-		FeeEstimator: cc.FeeEstimator,
-		SignMessage:  cc.MsgSigner.SignMessage,
+		Notifier:           cc.ChainNotifier,
+		ChannelDB:          s.chanStateDB,
+		FeeEstimator:       cc.FeeEstimator,
+		SignMessage:        cc.MsgSigner.SignMessage,
+		SignMessageSchnorr: cc.KeyRing.SignMessageSchnorr,
+		BestBlockView:      s.cc.BestBlockTracker,
+		GraphSupportsV2:    cfg.DB.UseNativeSQL,
 		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement1,
 			error) {
 
