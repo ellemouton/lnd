@@ -290,14 +290,14 @@ type Config struct {
 	// use to determine which messages need to be resent for a given peer.
 	MessageStore GossipMessageStore
 
-	// AnnSigner is an instance of the MessageSigner interface which will
-	// be used to manually sign any outgoing channel updates. The signer
-	// implementation should be backed by the public key of the backing
-	// Lightning node.
+	// AnnSigner is an instance of the MessageSignerRing interface which
+	// will be used to manually sign any outgoing channel updates. The
+	// signer implementation should be backed by the public key of the
+	// backing Lightning node.
 	//
 	// TODO(roasbeef): extract ann crafting + sign from fundingMgr into
 	// here?
-	AnnSigner lnwallet.MessageSigner
+	AnnSigner keychain.MessageSignerRing
 
 	// ScidCloser is an instance of ClosedChannelTracker that helps the
 	// gossiper cut down on spam channel announcements for already closed
@@ -2559,27 +2559,38 @@ func (d *AuthenticatedGossiper) updateChannel(ctx context.Context,
 	*lnwire.ChannelUpdate1, error) {
 
 	// Parse the unsigned edge into a channel update.
-	chanUpdate := netann.UnsignedChannelUpdateFromEdge(info, edge)
+	chanUpdate, err := netann.UnsignedChannelUpdateFromEdge(info, edge)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	// We'll generate a new signature over a digest of the channel
 	// announcement itself and update the timestamp to ensure it propagate.
-	err := netann.SignChannelUpdate(
+	err = netann.SignChannelUpdate(
 		d.cfg.AnnSigner, d.selfKeyLoc, chanUpdate,
-		netann.ChanUpdSetTimestamp,
+		netann.ChanUpdSetTimestamp(0),
 	)
 	if err != nil {
 		return nil, nil, err
 	}
 
+	// Assert the update is a v1 channel update since this function is
+	// currently only used for v1 channels.
+	v1Update, ok := chanUpdate.(*lnwire.ChannelUpdate1)
+	if !ok {
+		return nil, nil, fmt.Errorf("expected v1 channel update, "+
+			"got %T", chanUpdate)
+	}
+
 	// Next, we'll set the new signature in place, and update the reference
 	// in the backing slice.
-	edge.LastUpdate = time.Unix(int64(chanUpdate.Timestamp), 0)
-	edge.SigBytes = chanUpdate.Signature.ToSignatureBytes()
+	edge.LastUpdate = time.Unix(int64(v1Update.Timestamp), 0)
+	edge.SigBytes = v1Update.Signature.ToSignatureBytes()
 
 	// To ensure that our signature is valid, we'll verify it ourself
 	// before committing it to the slice returned.
 	err = netann.ValidateChannelUpdateAnn(
-		d.selfKey, info.Capacity, chanUpdate,
+		d.selfKey, info.Capacity, v1Update,
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("generated invalid channel "+
@@ -2602,7 +2613,7 @@ func (d *AuthenticatedGossiper) updateChannel(ctx context.Context,
 		}
 	}
 
-	return chanAnn, chanUpdate, nil
+	return chanAnn, v1Update, nil
 }
 
 // SyncManager returns the gossiper's SyncManager instance.

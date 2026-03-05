@@ -221,3 +221,56 @@ func (s *SingleSigner) SignMessage(keyLoc keychain.KeyLocator,
 	}
 	return ecdsa.Sign(s.Privkey, digest), nil
 }
+
+// SignMessageCompact signs the given message in compact, public key recoverable
+// format.
+func (s *SingleSigner) SignMessageCompact(keyLoc keychain.KeyLocator,
+	msg []byte, doubleHash bool) ([]byte, error) {
+
+	mockKeyLoc := s.KeyLoc
+	if s.KeyLoc.IsEmpty() {
+		mockKeyLoc = idKeyLoc
+	}
+
+	if keyLoc != mockKeyLoc {
+		return nil, fmt.Errorf("unknown public key")
+	}
+
+	var digest []byte
+	if doubleHash {
+		digest = chainhash.DoubleHashB(msg)
+	} else {
+		digest = chainhash.HashB(msg)
+	}
+
+	return ecdsa.SignCompact(s.Privkey, digest, true), nil
+}
+
+// SignMessageSchnorr signs the given message using Schnorr signature scheme.
+func (s *SingleSigner) SignMessageSchnorr(keyLoc keychain.KeyLocator,
+	msg []byte, doubleHash bool, taprootTweak,
+	tag []byte) (*schnorr.Signature, error) {
+
+	mockKeyLoc := s.KeyLoc
+	if s.KeyLoc.IsEmpty() {
+		mockKeyLoc = idKeyLoc
+	}
+
+	if keyLoc != mockKeyLoc {
+		return nil, fmt.Errorf("unknown public key")
+	}
+
+	var digest []byte
+	if doubleHash {
+		digest = chainhash.DoubleHashB(msg)
+	} else {
+		digest = chainhash.HashB(msg)
+	}
+
+	privKey := s.Privkey
+	if len(taprootTweak) > 0 {
+		privKey = txscript.TweakTaprootPrivKey(*privKey, taprootTweak)
+	}
+
+	return schnorr.Sign(privKey, digest)
+}

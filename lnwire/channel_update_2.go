@@ -359,6 +359,16 @@ func (c *ChannelUpdate2) SetDisabledFlag(disabled bool) {
 	}
 }
 
+// SetSig sets the signature on the update from raw Schnorr signature bytes.
+//
+// NOTE: this is part of the ChannelUpdate interface.
+func (c *ChannelUpdate2) SetSig(b []byte) error {
+	var err error
+	c.Signature.Val, err = NewSigFromSchnorrRawSignature(b)
+
+	return err
+}
+
 // SetSCID can be used to overwrite the SCID of the update.
 //
 // NOTE: this is part of the ChannelUpdate interface.

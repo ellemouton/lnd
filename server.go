@@ -841,6 +841,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		ApplyChannelUpdate:       s.applyChannelUpdate,
 		DB:                       s.chanStateDB,
 		Graph:                    dbs.GraphDB,
+		BestBlockView:            s.cc.BestBlockTracker,
 	}
 
 	chanStatusMgr, err := netann.NewChanStatusManager(chanStatusMgrCfg)
@@ -1925,7 +1926,7 @@ func (s *server) signGossipAliasUpdate(update lnwire.ChannelUpdate) error {
 		return nil
 
 	case *lnwire.ChannelUpdate2:
-		return netann.SignChannelUpdate2(s.cc.KeyRing, s.identityKeyLoc, update)
+		return netann.SignChannelUpdate(s.nodeSigner, s.identityKeyLoc, update)
 
 	default:
 		return fmt.Errorf("unsupported channel update type: %T", update)
@@ -5272,16 +5273,21 @@ func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
 			return nil, err
 		}
 
-		return netann.ExtractChannelUpdate(
+		update, err := netann.ExtractChannelUpdate(
 			ourPubKey[:], info, edge1, edge2,
 		)
+		if err != nil {
+			return nil, err
+		}
+
+		return update.(*lnwire.ChannelUpdate1), nil
 	}
 }
 
 // applyChannelUpdate applies the channel update to the different sub-systems of
 // the server. The useAlias boolean denotes whether or not to send an alias in
 // place of the real SCID.
-func (s *server) applyChannelUpdate(update *lnwire.ChannelUpdate1,
+func (s *server) applyChannelUpdate(update lnwire.ChannelUpdate,
 	op *wire.OutPoint, useAlias bool) error {
 
 	var (

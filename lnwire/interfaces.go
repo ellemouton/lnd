@@ -133,6 +133,9 @@ type ChannelUpdate interface {
 	// SetDisabledFlag can be used to adjust the disabled flag of an update.
 	SetDisabledFlag(bool)
 
+	// SetSig sets the signature on the update from raw signature bytes.
+	SetSig(b []byte) error
+
 	// SetSCID can be used to overwrite the SCID of the update.
 	SetSCID(scid ShortChannelID)
 

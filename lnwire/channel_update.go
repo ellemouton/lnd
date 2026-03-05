@@ -424,6 +424,16 @@ func (a *ChannelUpdate1) SetDisabledFlag(disabled bool) {
 	}
 }
 
+// SetSig sets the signature on the update from raw ECDSA signature bytes.
+//
+// NOTE: this is part of the ChannelUpdate interface.
+func (a *ChannelUpdate1) SetSig(b []byte) error {
+	var err error
+	a.Signature, err = NewSigFromECDSARawSignature(b)
+
+	return err
+}
+
 // SetSCID can be used to overwrite the SCID of the update.
 //
 // NOTE: this is part of the ChannelUpdate interface.
