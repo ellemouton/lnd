@@ -1064,11 +1064,11 @@ func (b *Builder) MarkZombieEdge(v lnwire.GossipVersion, chanID uint64) error {
 
 // ApplyChannelUpdate validates a channel update and if valid, applies it to the
 // database. It returns a bool indicating whether the updates were successful.
-func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
+func (b *Builder) ApplyChannelUpdate(msg lnwire.ChannelUpdate) bool {
 	ctx := context.TODO()
 
 	ch, _, _, err := b.v1Graph.FetchChannelEdgesByID(
-		ctx, msg.ShortChannelID.ToUint64(),
+		ctx, msg.SCID().ToUint64(),
 	)
 	if err != nil {
 		log.Errorf("Unable to retrieve channel by id: %v", err)
@@ -1085,8 +1085,8 @@ func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 
 	// Exit early if the pubkey cannot be decided.
 	if pubKey == nil {
-		log.Errorf("Unable to decide pubkey with ChannelFlags=%v",
-			msg.ChannelFlags)
+		log.Errorf("Unable to decide pubkey for channel update: %v",
+			msg.SCID())
 		return false
 	}
 
@@ -1097,7 +1097,7 @@ func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 	}
 
 	update, err := models.ChanEdgePolicyFromWire(
-		msg.ShortChannelID.ToUint64(), msg,
+		msg.SCID().ToUint64(), msg,
 	)
 	if err != nil {
 		log.Errorf("Unable to parse channel update: %v", err)
