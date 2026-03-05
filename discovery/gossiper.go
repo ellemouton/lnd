@@ -2458,9 +2458,10 @@ func (d *AuthenticatedGossiper) processZombieUpdate(_ context.Context,
 // announcement fields and returns an error if they are invalid to prevent
 // forwarding invalid node announcements to our peers.
 func (d *AuthenticatedGossiper) fetchNodeAnn(ctx context.Context,
-	pubKey [33]byte) (*lnwire.NodeAnnouncement1, error) {
+	version lnwire.GossipVersion,
+	pubKey [33]byte) (lnwire.NodeAnnouncement, error) {
 
-	node, err := d.v1Graph.FetchNode(ctx, pubKey)
+	node, err := d.vGraph(version).FetchNode(ctx, pubKey)
 	if err != nil {
 		return nil, err
 	}
@@ -4087,7 +4088,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	// This isn't necessary for channel updates and announcement
 	// signatures since we send those directly to our channel
 	// counterparty through the gossiper's reliable sender.
-	node1Ann, err := d.fetchNodeAnn(ctx, chanInfo.NodeKey1Bytes)
+	node1Ann, err := d.fetchNodeAnn(ctx, chanInfo.Version, chanInfo.NodeKey1Bytes)
 	if err != nil {
 		log.Debugf("Unable to fetch node announcement for %x: %v",
 			chanInfo.NodeKey1Bytes, err)
@@ -4101,7 +4102,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 		}
 	}
 
-	node2Ann, err := d.fetchNodeAnn(ctx, chanInfo.NodeKey2Bytes)
+	node2Ann, err := d.fetchNodeAnn(ctx, chanInfo.Version, chanInfo.NodeKey2Bytes)
 	if err != nil {
 		log.Debugf("Unable to fetch node announcement for %x: %v",
 			chanInfo.NodeKey2Bytes, err)

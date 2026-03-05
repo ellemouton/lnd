@@ -949,7 +949,7 @@ func TestIsPolicyZombie(t *testing.T) {
 	t.Parallel()
 
 	const (
-		pruneExpiry  = time.Hour
+		pruneExpiry   = time.Hour
 		currentHeight = uint32(1000)
 	)
 

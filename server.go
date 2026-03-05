@@ -5742,7 +5742,19 @@ func (s *server) setSelfNode(ctx context.Context, nodePub route.Vertex,
 	}
 
 	selfNode.AuthSigBytes = authSig.Serialize()
-	nodeAnn.Signature, err = lnwire.NewSigFromECDSARawSignature(
+
+	// TODO(elle): once the self-node announcement path supports v2, remove
+	// this assertion and generalize currentNodeAnn to lnwire.NodeAnnouncement.
+	// The self-node is always a v1 node at this point, so we can safely
+	// assert the interface back to the concrete type to set the signature
+	// and update the cached announcement.
+	nodeAnn1, ok := nodeAnn.(*lnwire.NodeAnnouncement1)
+	if !ok {
+		return fmt.Errorf("expected v1 node announcement for self node,"+
+			" got %T", nodeAnn)
+	}
+
+	nodeAnn1.Signature, err = lnwire.NewSigFromECDSARawSignature(
 		selfNode.AuthSigBytes,
 	)
 	if err != nil {
@@ -5755,7 +5767,7 @@ func (s *server) setSelfNode(ctx context.Context, nodePub route.Vertex,
 		return fmt.Errorf("can't set self node: %w", err)
 	}
 
-	s.currentNodeAnn = nodeAnn
+	s.currentNodeAnn = nodeAnn1
 
 	return nil
 }

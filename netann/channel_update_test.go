@@ -257,7 +257,7 @@ func TestChanUpdSetTimestampV2(t *testing.T) {
 	signer := netann.NewNodeSigner(privKeySigner)
 
 	update := &lnwire.ChannelUpdate2{
-		BlockHeight: tlv.NewPrimitiveRecord[tlv.TlvType4](uint32(500)),
+		BlockHeight:       tlv.NewPrimitiveRecord[tlv.TlvType4](uint32(500)),
 		ExtraSignedFields: make(lnwire.ExtraSignedFields),
 	}
 

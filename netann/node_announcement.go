@@ -251,8 +251,13 @@ func ValidateNodeAnnFields(ann lnwire.NodeAnnouncement) error {
 		}
 
 	case *lnwire.NodeAnnouncement2:
-		// TODO(elle): add DNS TLV to NodeAnnouncement2 and validate it
-		// here.
+		var dnsErr error
+		a.DNSHostName.ValOpt().WhenSome(func(d lnwire.DNSAddress) {
+			dnsErr = lnwire.ValidateDNSAddr(d.Hostname, d.Port)
+		})
+		if dnsErr != nil {
+			return dnsErr
+		}
 	}
 
 	return nil
