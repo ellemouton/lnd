@@ -806,7 +806,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		Clock:                  clock.NewDefaultClock(),
 		MailboxDeliveryTimeout: cfg.Htlcswitch.MailboxDeliveryTimeout,
 		MaxFeeExposure:         thresholdMSats,
-		SignAliasUpdate:        s.signAliasUpdate,
+		SignAliasUpdate:        s.signGossipAliasUpdate,
 		IsAlias:                aliasmgr.IsAlias,
 	}, uint32(currentHeight))
 	if err != nil {
@@ -5256,10 +5256,10 @@ func (s *server) fetchNodeAdvertisedAddrs(ctx context.Context,
 // fetchLastChanUpdate returns a function which is able to retrieve our latest
 // channel update for a target channel.
 func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
-	*lnwire.ChannelUpdate1, error) {
+	lnwire.ChannelUpdate, error) {
 
 	ourPubKey := s.identityECDH.PubKey().SerializeCompressed()
-	return func(cid lnwire.ShortChannelID) (*lnwire.ChannelUpdate1, error) {
+	return func(cid lnwire.ShortChannelID) (lnwire.ChannelUpdate, error) {
 		info, edge1, edge2, err := s.graphDB.FetchChannelEdgesByID(
 			context.TODO(), lnwire.GossipVersion1, cid.ToUint64(),
 		)
@@ -5267,14 +5267,9 @@ func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
 			return nil, err
 		}
 
-		update, err := netann.ExtractChannelUpdate(
+		return netann.ExtractChannelUpdate(
 			ourPubKey[:], info, edge1, edge2,
 		)
-		if err != nil {
-			return nil, err
-		}
-
-		return update.(*lnwire.ChannelUpdate1), nil
 	}
 }
 
