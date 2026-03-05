@@ -1790,12 +1790,12 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 			},
 			AdvertisedIPs: advertisedIPs,
 			AnnounceNewIPs: netann.IPAnnouncer(
-				func(modifier ...netann.NodeAnnModifier) (
-					lnwire.NodeAnnouncement1, error) {
-
-					return s.genNodeAnnouncement(
+				func(modifier ...netann.NodeAnnModifier) error {
+					_, err := s.genNodeAnnouncement(
 						nil, modifier...,
 					)
+
+					return err
 				}),
 		})
 	}
@@ -3329,9 +3329,20 @@ func (s *server) createNewHiddenService(ctx context.Context) error {
 	// Now that the onion service has been created, we'll add the onion
 	// address it can be reached at to our list of advertised addresses.
 	newNodeAnn, err := s.genNodeAnnouncement(
-		nil, func(currentAnn *lnwire.NodeAnnouncement1) {
-			currentAnn.Addresses = append(currentAnn.Addresses, addr)
-		},
+		nil, netann.NodeAnnModifierFunc(
+			func(ann lnwire.NodeAnnouncement) error {
+				v1, ok := ann.(*lnwire.NodeAnnouncement1)
+				if !ok {
+					return fmt.Errorf("unsupported "+
+						"node ann type: %T", ann)
+				}
+				v1.Addresses = append(
+					v1.Addresses, addr,
+				)
+
+				return nil
+			},
+		),
 	)
 	if err != nil {
 		return fmt.Errorf("unable to generate new node "+
@@ -3421,28 +3432,11 @@ func (s *server) genNodeAnnouncement(features *lnwire.RawFeatureVector,
 
 	// Always update the timestamp when refreshing to ensure the update
 	// propagates.
-	modifiers = append(modifiers, netann.NodeAnnSetTimestamp)
-
-	// Apply the requested changes to the node announcement.
-	for _, modifier := range modifiers {
-		modifier(&newNodeAnn)
-	}
-
-	// The modifiers may have added duplicate addresses, so we need to
-	// de-duplicate them here.
-	uniqueAddrs := map[string]struct{}{}
-	dedupedAddrs := make([]net.Addr, 0)
-	for _, addr := range newNodeAnn.Addresses {
-		if _, ok := uniqueAddrs[addr.String()]; !ok {
-			uniqueAddrs[addr.String()] = struct{}{}
-			dedupedAddrs = append(dedupedAddrs, addr)
-		}
-	}
-	newNodeAnn.Addresses = dedupedAddrs
+	modifiers = append(modifiers, netann.NodeAnnSetTimestamp(time.Now()))
 
 	// Sign a new update after applying all of the passed modifiers.
 	err := netann.SignNodeAnnouncement(
-		s.nodeSigner, s.identityKeyLoc, &newNodeAnn,
+		s.nodeSigner, s.identityKeyLoc, &newNodeAnn, modifiers...,
 	)
 	if err != nil {
 		return lnwire.NodeAnnouncement1{}, err
