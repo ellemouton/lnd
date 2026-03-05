@@ -2111,7 +2111,7 @@ func (d *AuthenticatedGossiper) processChanPolicyUpdate(ctx context.Context,
 				log.Errorf("Unable to reliably send %v for "+
 					"channel=%v to peer=%x: %v",
 					chanUpdate.MsgType(),
-					chanUpdate.ShortChannelID,
+					chanUpdate.SCID(),
 					remotePubKey, err)
 			}
 			continue
@@ -2503,14 +2503,9 @@ func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
 		return chanInfo.AuthProof != nil
 
 	case lnwire.ChannelUpdate:
-		msg1, ok := msg.(*lnwire.ChannelUpdate1)
-		if !ok {
-			return false
-		}
-
-		vg := d.vGraph(msg1.GossipVersion())
+		vg := d.vGraph(msg.GossipVersion())
 		_, p1, p2, err := vg.FetchChannelEdgesByID(
-			context.TODO(), msg1.ShortChannelID.ToUint64(),
+			context.TODO(), msg.SCID().ToUint64(),
 		)
 
 		// If the channel cannot be found, it is most likely a leftover
@@ -2521,7 +2516,7 @@ func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
 		}
 		if err != nil {
 			log.Debugf("Unable to retrieve channel=%v from graph: "+
-				"%v", msg1.ShortChannelID, err)
+				"%v", msg.SCID(), err)
 			return false
 		}
 
@@ -2529,7 +2524,7 @@ func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
 		// currently have stored within our graph to check if this
 		// message is stale by comparing its timestamp.
 		var p *models.ChannelEdgePolicy
-		if msg1.IsNode1() {
+		if msg.IsNode1() {
 			p = p1
 		} else {
 			p = p2
@@ -2541,8 +2536,21 @@ func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
 			return false
 		}
 
-		timestamp := time.Unix(int64(msg1.Timestamp), 0)
-		return p.LastUpdate.After(timestamp)
+		policyTs, err := channelEdgePolicyTimestamp(p)
+		if err != nil {
+			log.Debugf("Unable to get policy timestamp for "+
+				"channel=%v: %v", msg.SCID(), err)
+			return false
+		}
+
+		cmp, err := msg.UpdateTimestamp().Cmp(policyTs)
+		if err != nil {
+			log.Debugf("Unable to compare timestamps for "+
+				"channel=%v: %v", msg.SCID(), err)
+			return false
+		}
+
+		return cmp == lnwire.LessThan
 
 	default:
 		// We'll make sure to not mark any unsupported messages as stale
@@ -2556,7 +2564,7 @@ func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
 func (d *AuthenticatedGossiper) updateChannel(ctx context.Context,
 	info *models.ChannelEdgeInfo,
 	edge *models.ChannelEdgePolicy) (*lnwire.ChannelAnnouncement1,
-	*lnwire.ChannelUpdate1, error) {
+	lnwire.ChannelUpdate, error) {
 
 	// Parse the unsigned edge into a channel update.
 	chanUpdate, err := netann.UnsignedChannelUpdateFromEdge(info, edge)
@@ -2574,23 +2582,26 @@ func (d *AuthenticatedGossiper) updateChannel(ctx context.Context,
 		return nil, nil, err
 	}
 
-	// Assert the update is a v1 channel update since this function is
-	// currently only used for v1 channels.
-	v1Update, ok := chanUpdate.(*lnwire.ChannelUpdate1)
-	if !ok {
-		return nil, nil, fmt.Errorf("expected v1 channel update, "+
-			"got %T", chanUpdate)
-	}
-
 	// Next, we'll set the new signature in place, and update the reference
 	// in the backing slice.
-	edge.LastUpdate = time.Unix(int64(v1Update.Timestamp), 0)
-	edge.SigBytes = v1Update.Signature.ToSignatureBytes()
+	switch upd := chanUpdate.(type) {
+	case *lnwire.ChannelUpdate1:
+		edge.LastUpdate = time.Unix(int64(upd.Timestamp), 0)
+		edge.SigBytes = upd.Signature.ToSignatureBytes()
+
+	case *lnwire.ChannelUpdate2:
+		edge.LastBlockHeight = upd.BlockHeight.Val
+		edge.SigBytes = upd.Signature.Val.ToSignatureBytes()
+
+	default:
+		return nil, nil, fmt.Errorf("unhandled channel update type: "+
+			"%T", chanUpdate)
+	}
 
 	// To ensure that our signature is valid, we'll verify it ourself
 	// before committing it to the slice returned.
 	err = netann.ValidateChannelUpdateAnn(
-		d.selfKey, info.Capacity, v1Update,
+		d.selfKey, info.Capacity, chanUpdate,
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("generated invalid channel "+
@@ -2613,7 +2624,7 @@ func (d *AuthenticatedGossiper) updateChannel(ctx context.Context,
 		}
 	}
 
-	return chanAnn, v1Update, nil
+	return chanAnn, chanUpdate, nil
 }
 
 // SyncManager returns the gossiper's SyncManager instance.
