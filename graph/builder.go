@@ -1536,4 +1536,3 @@ func (b *Builder) IsStaleEdgePolicy(policy *models.ChannelEdgePolicy) bool {
 
 	return false
 }
-
