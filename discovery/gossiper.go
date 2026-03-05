@@ -2200,7 +2200,7 @@ func (d *AuthenticatedGossiper) processRejectedEdge(_ context.Context,
 	// We'll then create then validate the new fully assembled
 	// announcement.
 	chanAnn, e1Ann, e2Ann, err := netann.CreateChanAnnouncement(
-		chanInfo, e1, e2,
+		chanInfo.AuthProof, chanInfo, e1, e2,
 	)
 	if err != nil {
 		return nil, err
@@ -3906,7 +3906,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 					"full proof to peer=%x", chanID, peerID)
 
 				ca, _, _, err := netann.CreateChanAnnouncement(
-					chanInfo, e1, e2,
+					chanInfo.AuthProof, chanInfo, e1, e2,
 				)
 				if err != nil {
 					log.Errorf("unable to gen ann: %v", err)
@@ -3995,7 +3995,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	chanInfo.AuthProof = dbProof
 
 	chanAnn, e1Ann, e2Ann, err := netann.CreateChanAnnouncement(
-		chanInfo, e1, e2,
+		chanInfo.AuthProof, chanInfo, e1, e2,
 	)
 	if err != nil {
 		log.Error(err)

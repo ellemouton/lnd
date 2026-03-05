@@ -48,52 +48,92 @@ func TestCreateChanAnnouncement(t *testing.T) {
 		expChanAnn.BitcoinSig1.ToSignatureBytes(),
 		expChanAnn.BitcoinSig2.ToSignatureBytes(),
 	)
-	chanInfo, err := models.NewV1Channel(
-		expChanAnn.ShortChannelID.ToUint64(), expChanAnn.ChainHash,
-		key, key, &models.ChannelV1Fields{
-			BitcoinKey1Bytes: key,
-			BitcoinKey2Bytes: key,
-			ExtraOpaqueData:  expChanAnn.ExtraOpaqueData,
-		},
-		models.WithChanProof(chanProof),
-		models.WithChannelPoint(wire.OutPoint{Index: 1}),
-		models.WithCapacity(btcutil.SatoshiPerBitcoin),
-		models.WithFeatures(features),
+	chanInfo := &models.ChannelEdgeInfo{
+		Version:      lnwire.GossipVersion1,
+		ChainHash:    expChanAnn.ChainHash,
+		ChannelID:    expChanAnn.ShortChannelID.ToUint64(),
+		ChannelPoint: wire.OutPoint{Index: 1},
+		Capacity:     btcutil.SatoshiPerBitcoin,
+		NodeKey1Bytes: key,
+		NodeKey2Bytes: key,
+		BitcoinKey1Bytes: fn.Some(route.Vertex(key)),
+		BitcoinKey2Bytes: fn.Some(route.Vertex(key)),
+		Features: lnwire.NewFeatureVector(
+			features, lnwire.Features,
+		),
+		ExtraOpaqueData: expChanAnn.ExtraOpaqueData,
+	}
+	chanAnn, _, _, err := CreateChanAnnouncement(
+		chanProof, chanInfo, nil, nil,
 	)
-	require.NoError(t, err)
-	chanAnn, _, _, err := CreateChanAnnouncement(chanInfo, nil, nil)
 	require.NoError(t, err, "unable to create channel announcement")
 
 	assert.Equal(t, expChanAnn, chanAnn)
 }
 
+// TestCreateChanAnnouncementV2 tests that CreateChanAnnouncement correctly
+// builds a ChannelAnnouncement2 from v2 edge info and auth proof.
 func TestCreateChanAnnouncementV2(t *testing.T) {
 	t.Parallel()
 
-	node1 := [33]byte{0x1}
-	node2 := [33]byte{0x2}
+	key := [33]byte{0x2}
+	var schnorrSigBytes [64]byte
+	schnorrSigBytes[0] = 0x01
+	sig, err := lnwire.NewSigFromSchnorrRawSignature(schnorrSigBytes[:])
+	require.NoError(t, err)
 
-	var sigBytes [64]byte
-	copy(sigBytes[:], bytes.Repeat([]byte{0x2}, 64))
+	features := lnwire.NewRawFeatureVector(lnwire.AnchorsRequired)
+	chanID := lnwire.ShortChannelID{BlockHeight: 1}
+	chanPoint := wire.OutPoint{Index: 2}
 
-	chanProof := models.NewV2ChannelAuthProof(sigBytes[:])
-	chanInfo, err := models.NewV2Channel(
-		lnwire.ShortChannelID{BlockHeight: 1}.ToUint64(),
-		chainhash.Hash{0x1}, node1, node2, &models.ChannelV2Fields{
-			BitcoinKey1Bytes: fn.Some(route.Vertex(node1)),
-			BitcoinKey2Bytes: fn.Some(route.Vertex(node2)),
-		},
-		models.WithChanProof(chanProof),
-		models.WithChannelPoint(wire.OutPoint{Index: 1}),
-		models.WithCapacity(btcutil.SatoshiPerBitcoin),
+	expChanAnn := &lnwire.ChannelAnnouncement2{
+		ChainHash: tlv.NewPrimitiveRecord[tlv.TlvType0](
+			chainhash.Hash{0x1},
+		),
+		Features: tlv.NewRecordT[tlv.TlvType2](*features),
+		ShortChannelID: tlv.NewRecordT[tlv.TlvType4](chanID),
+		Capacity: tlv.NewPrimitiveRecord[tlv.TlvType6](
+			uint64(btcutil.SatoshiPerBitcoin),
+		),
+		NodeID1: tlv.NewPrimitiveRecord[tlv.TlvType8, [33]byte](key),
+		NodeID2: tlv.NewPrimitiveRecord[tlv.TlvType10, [33]byte](key),
+		Outpoint: tlv.NewRecordT[tlv.TlvType18](
+			lnwire.OutPoint(chanPoint),
+		),
+		ExtraSignedFields: map[uint64][]byte{},
+	}
+	expChanAnn.Signature.Val = sig
+
+	expChanAnn.BitcoinKey1 = tlv.SomeRecordT(
+		tlv.NewPrimitiveRecord[tlv.TlvType12, [33]byte](key),
+	)
+	expChanAnn.BitcoinKey2 = tlv.SomeRecordT(
+		tlv.NewPrimitiveRecord[tlv.TlvType14, [33]byte](key),
+	)
+
+	chanProof := models.NewV2ChannelAuthProof(schnorrSigBytes[:])
+	chanInfo := &models.ChannelEdgeInfo{
+		Version:      lnwire.GossipVersion2,
+		ChainHash:    chainhash.Hash{0x1},
+		ChannelID:    chanID.ToUint64(),
+		ChannelPoint: chanPoint,
+		Capacity:     btcutil.SatoshiPerBitcoin,
+		NodeKey1Bytes:    key,
+		NodeKey2Bytes:    key,
+		BitcoinKey1Bytes: fn.Some(route.Vertex(key)),
+		BitcoinKey2Bytes: fn.Some(route.Vertex(key)),
+		Features: lnwire.NewFeatureVector(
+			features, lnwire.Features,
+		),
+		ExtraSignedFields: map[uint64][]byte{},
+	}
+
+	chanAnn, _, _, err := CreateChanAnnouncement(
+		chanProof, chanInfo, nil, nil,
 	)
 	require.NoError(t, err)
 
-	chanAnn, edge1, edge2, err := CreateChanAnnouncement(chanInfo, nil, nil)
-	require.NoError(t, err, "unable to create channel announcement")
-	require.IsType(t, &lnwire.ChannelAnnouncement2{}, chanAnn)
-	require.Nil(t, edge1)
-	require.Nil(t, edge2)
+	assert.Equal(t, expChanAnn, chanAnn)
 }
 
 // TestChanAnnounce2Validation checks that the various forms of the
