@@ -205,6 +205,11 @@ type Config struct {
 	// order to be included in the LN graph.
 	Graph graph.ChannelGraphSource
 
+	// GraphDB is the raw graph database. The gossiper derives versioned
+	// graph views from it directly for operations that don't require
+	// Builder-level validation logic.
+	GraphDB *graphdb.ChannelGraph
+
 	// ChainIO represents an abstraction over a source that can query the
 	// blockchain.
 	ChainIO lnwallet.BlockChainIO
@@ -564,6 +569,14 @@ type AuthenticatedGossiper struct {
 	// AuthenticatedGossiper lock.
 	chanUpdateRateLimiter map[uint64][2]*rate.Limiter
 
+	// v1Graph is a versioned view of the graph database for gossip v1
+	// messages (legacy channel announcements).
+	v1Graph *graphdb.VersionedGraph
+
+	// v2Graph is a versioned view of the graph database for gossip v2
+	// messages (taproot channel announcements).
+	v2Graph *graphdb.VersionedGraph
+
 	// vb is used to enforce job dependency ordering of gossip messages.
 	vb *ValidationBarrier
 
@@ -596,6 +609,13 @@ func New(cfg Config, selfKeyDesc *keychain.KeyDescriptor) *AuthenticatedGossiper
 		banman:                newBanman(cfg.BanThreshold),
 	}
 
+	gossiper.v1Graph = graphdb.NewVersionedGraph(
+		cfg.GraphDB, lnwire.GossipVersion1,
+	)
+	gossiper.v2Graph = graphdb.NewVersionedGraph(
+		cfg.GraphDB, lnwire.GossipVersion2,
+	)
+
 	gossiper.vb = NewValidationBarrier(1000, gossiper.quit)
 
 	gossiper.syncMgr = newSyncManager(&SyncManagerCfg{
@@ -623,6 +643,17 @@ func New(cfg Config, selfKeyDesc *keychain.KeyDescriptor) *AuthenticatedGossiper
 	})
 
 	return gossiper
+}
+
+// vGraph returns the versioned graph view for the given gossip version.
+func (d *AuthenticatedGossiper) vGraph(
+	v lnwire.GossipVersion) *graphdb.VersionedGraph {
+
+	if v == lnwire.GossipVersion2 {
+		return d.v2Graph
+	}
+
+	return d.v1Graph
 }
 
 // EdgeWithInfo contains the information that is required to update an edge.
@@ -1890,9 +1921,16 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
 		havePublicChannels bool
 		edgesToUpdate      []updateTuple
 	)
-	err := d.cfg.Graph.ForAllOutgoingChannels(ctx, func(
+	var selfVertex route.Vertex
+	copy(selfVertex[:], d.selfKey.SerializeCompressed())
+
+	err := d.v1Graph.ForEachNodeChannel(ctx, selfVertex, func(
 		info *models.ChannelEdgeInfo,
-		edge *models.ChannelEdgePolicy) error {
+		edge, _ *models.ChannelEdgePolicy) error {
+
+		if edge == nil {
+			return fmt.Errorf("channel from self node has no policy")
+		}
 
 		// If there's no auth proof attached to this edge, it means
 		// that it is a private channel not meant to be announced to
@@ -2120,11 +2158,12 @@ func (d *AuthenticatedGossiper) processRejectedEdge(_ context.Context,
 	proof *models.ChannelAuthProof) ([]networkMsg, error) {
 
 	scid := chanAnnMsg.SCID()
+	vg := d.vGraph(chanAnnMsg.GossipVersion())
 
 	// First, we'll fetch the state of the channel as we know if from the
 	// database.
-	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(
-		chanAnnMsg.GossipVersion(), scid,
+	chanInfo, e1, e2, err := vg.FetchChannelEdgesByID(
+		context.TODO(), scid.ToUint64(),
 	)
 	if err != nil {
 		return nil, err
@@ -2150,7 +2189,7 @@ func (d *AuthenticatedGossiper) processRejectedEdge(_ context.Context,
 
 	// If everything checks out, then we'll add the fully assembled proof
 	// to the database.
-	err = d.cfg.Graph.AddProof(scid, proof)
+	err = d.cfg.GraphDB.AddEdgeProof(context.TODO(), scid, proof)
 	if err != nil {
 		err := fmt.Errorf("unable to add proof to "+
 			"shortChanID=%v: %w", scid, err)
@@ -2361,6 +2400,8 @@ func (d *AuthenticatedGossiper) processZombieUpdate(_ context.Context,
 	chanInfo *models.ChannelEdgeInfo, scid lnwire.ShortChannelID,
 	msg lnwire.ChannelUpdate) error {
 
+	vg := d.vGraph(msg.GossipVersion())
+
 	// The least-significant bit in the flag on the channel update tells us
 	// which edge is being updated.
 	isNode1 := msg.IsNode1()
@@ -2391,7 +2432,7 @@ func (d *AuthenticatedGossiper) processZombieUpdate(_ context.Context,
 	// With the signature valid, we'll proceed to mark the
 	// edge as live and wait for the channel announcement to
 	// come through again.
-	err = d.cfg.Graph.MarkEdgeLive(msg.GossipVersion(), scid)
+	err = vg.MarkEdgeLive(context.TODO(), scid.ToUint64())
 	switch {
 	case errors.Is(err, graphdb.ErrZombieEdgeNotFound):
 		log.Errorf("edge with chan_id=%v was not found in the "+
@@ -2420,7 +2461,7 @@ func (d *AuthenticatedGossiper) processZombieUpdate(_ context.Context,
 func (d *AuthenticatedGossiper) fetchNodeAnn(ctx context.Context,
 	pubKey [33]byte) (*lnwire.NodeAnnouncement1, error) {
 
-	node, err := d.cfg.Graph.FetchNode(ctx, pubKey)
+	node, err := d.v1Graph.FetchNode(ctx, pubKey)
 	if err != nil {
 		return nil, err
 	}
@@ -2440,9 +2481,9 @@ func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
 
 	switch msg := msg.(type) {
 	case lnwire.AnnounceSignatures:
-		chanInfo, _, _, err := d.cfg.Graph.GetChannelByID(
-			msg.GossipVersion(),
-			msg.SCID(),
+		vg := d.vGraph(msg.GossipVersion())
+		chanInfo, _, _, err := vg.FetchChannelEdgesByID(
+			context.TODO(), msg.SCID().ToUint64(),
 		)
 
 		// If the channel cannot be found, it is most likely a leftover
@@ -2468,8 +2509,9 @@ func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
 			return false
 		}
 
-		_, p1, p2, err := d.cfg.Graph.GetChannelByID(
-			msg1.GossipVersion(), msg1.ShortChannelID,
+		vg := d.vGraph(msg1.GossipVersion())
+		_, p1, p2, err := vg.FetchChannelEdgesByID(
+			context.TODO(), msg1.ShortChannelID.ToUint64(),
 		)
 
 		// If the channel cannot be found, it is most likely a leftover
@@ -2744,6 +2786,7 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
 	ops []batch.SchedulerOption) ([]networkMsg, bool) {
 
 	nodePub := nodeAnn.NodePub()
+	vg := d.vGraph(nodeAnn.GossipVersion())
 
 	log.Debugf("Processing NodeAnnouncement: peer=%v, "+
 		"%v, node=%x, source=%x", nMsg.peer,
@@ -2798,9 +2841,7 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
 	// In order to ensure we don't leak unadvertised nodes, we'll make a
 	// quick check to ensure this node intends to publicly advertise itself
 	// to the network.
-	isPublic, err := d.cfg.Graph.IsPublicNode(
-		nodeAnn.GossipVersion(), nodePub,
-	)
+	isPublic, err := vg.IsPublicNode(ctx, nodePub)
 	if err != nil {
 		log.Errorf("Unable to determine if node %x is advertised: %v",
 			nodePub, err)
@@ -2844,6 +2885,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 	ops ...batch.SchedulerOption) ([]networkMsg, bool) {
 
 	scid := ann.SCID()
+	vg := d.vGraph(ann.GossipVersion())
 	chainHash := d.cfg.ChainParams.GenesisHash
 
 	log.Debugf("Processing ChannelAnnouncement: peer=%v, short_chan_id=%v",
@@ -2901,7 +2943,11 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 
 	// At this point, we'll now ask the router if this is a zombie/known
 	// edge. If so we can skip all the processing below.
-	if d.cfg.Graph.IsKnownEdge(ann.GossipVersion(), scid) {
+	exists, isZombie, err := vg.HasChannelEdge(ctx, scid.ToUint64())
+	if err != nil {
+		log.Warnf("Failed to check if edge chan_id=%v is known: %v",
+			scid, err)
+	} else if exists || isZombie {
 		nMsg.err <- nil
 		return nil, true
 	}
@@ -3280,6 +3326,7 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 	ops []batch.SchedulerOption) ([]networkMsg, bool) {
 
 	scid := upd.SCID()
+	vg := d.vGraph(upd.GossipVersion())
 
 	log.Debugf("Processing ChannelUpdate: peer=%v, short_chan_id=%v, ",
 		nMsg.peer, scid.ToUint64())
@@ -3417,8 +3464,8 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 	// Get the node pub key as far since we don't have it in the channel
 	// update announcement message. We'll need this to properly verify the
 	// message's signature.
-	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(
-		upd.GossipVersion(), graphScid,
+	chanInfo, e1, e2, err := vg.FetchChannelEdgesByID(
+		ctx, graphScid.ToUint64(),
 	)
 	switch {
 	// No error, break.
@@ -3729,6 +3776,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	nMsg *networkMsg, ann lnwire.AnnounceSignatures) ([]networkMsg, bool) {
 
 	scid := ann.SCID()
+	vg := d.vGraph(ann.GossipVersion())
 	needBlockHeight := scid.BlockHeight + d.cfg.ProofMatureDelta
 	shortChanID := scid.ToUint64()
 	chanID := ann.ChanID()
@@ -3763,9 +3811,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	d.channelMtx.Lock(scid.ToUint64())
 	defer d.channelMtx.Unlock(scid.ToUint64())
 
-	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(
-		ann.GossipVersion(), scid,
-	)
+	chanInfo, e1, e2, err := vg.FetchChannelEdgesByID(ctx, scid.ToUint64())
 	if err != nil {
 		_, err = d.cfg.FindChannel(nMsg.source, ann.ChanID())
 		if err != nil {
@@ -3965,7 +4011,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	// validating the signatures of announcement. If proof is valid
 	// then we'll populate the channel edge with it, so we can
 	// announce it on peer connect.
-	err = d.cfg.Graph.AddProof(scid, dbProof)
+	err = d.cfg.GraphDB.AddEdgeProof(ctx, scid, dbProof)
 	if err != nil {
 		err := fmt.Errorf("unable add proof to the channel "+
 			"chanID=%v: %v", chanID, err)
@@ -4094,6 +4140,7 @@ func (d *AuthenticatedGossiper) validateFundingTransaction(_ context.Context,
 	[]byte, error) {
 
 	scid := ann.SCID()
+	vg := d.vGraph(ann.GossipVersion())
 
 	// Before we can add the channel to the channel graph, we need to obtain
 	// the full funding outpoint that's encoded within the channel ID.
@@ -4122,8 +4169,9 @@ func (d *AuthenticatedGossiper) validateFundingTransaction(_ context.Context,
 			// we'll mark the edge itself as a zombie so we don't
 			// continue to request it. We use the "zero key" for
 			// both node pubkeys so this edge can't be resurrected.
-			zErr := d.cfg.Graph.MarkZombieEdge(
-				ann.GossipVersion(), scid.ToUint64(),
+			zErr := vg.MarkEdgeZombie(
+				context.TODO(), scid.ToUint64(),
+				emptyPubkey, emptyPubkey,
 			)
 			if zErr != nil {
 				return wire.OutPoint{}, 0, nil, zErr
@@ -4180,8 +4228,9 @@ func (d *AuthenticatedGossiper) validateFundingTransaction(_ context.Context,
 	if err != nil {
 		// Mark the edge as a zombie so we won't try to re-validate it
 		// on start up.
-		zErr := d.cfg.Graph.MarkZombieEdge(
-			ann.GossipVersion(), scid.ToUint64(),
+		zErr := vg.MarkEdgeZombie(
+			context.TODO(), scid.ToUint64(),
+			emptyPubkey, emptyPubkey,
 		)
 		if zErr != nil {
 			return wire.OutPoint{}, 0, nil, zErr
@@ -4199,8 +4248,9 @@ func (d *AuthenticatedGossiper) validateFundingTransaction(_ context.Context,
 	)
 	if err != nil {
 		if errors.Is(err, btcwallet.ErrOutputSpent) {
-			zErr := d.cfg.Graph.MarkZombieEdge(
-				ann.GossipVersion(), scid.ToUint64(),
+			zErr := vg.MarkEdgeZombie(
+				context.TODO(), scid.ToUint64(),
+				emptyPubkey, emptyPubkey,
 			)
 			if zErr != nil {
 				return wire.OutPoint{}, 0, nil, zErr

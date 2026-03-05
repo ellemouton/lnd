@@ -79,10 +79,12 @@ func TestAddProof(t *testing.T) {
 
 	// Now we'll attempt to update the proof and check that it has been
 	// properly updated.
-	require.NoError(t, ctx.builder.AddProof(*chanID, &testAuthProof))
+	require.NoError(t, ctx.builder.cfg.Graph.AddEdgeProof(
+		ctxb, *chanID, &testAuthProof,
+	))
 
-	info, _, _, err := ctx.builder.GetChannelByID(
-		lnwire.GossipVersion1, *chanID,
+	info, _, _, err := ctx.builder.v1Graph.FetchChannelEdgesByID(
+		ctxb, chanID.ToUint64(),
 	)
 	require.NoError(t, err, "unable to get channel")
 	require.NotNil(t, info.AuthProof)
@@ -1152,7 +1154,11 @@ func TestIsKnownEdge(t *testing.T) {
 
 	// Now that the edge has been inserted, query is the router already
 	// knows of the edge should return true.
-	require.True(t, ctx.builder.IsKnownEdge(lnwire.GossipVersion1, *chanID))
+	exists, isZombie, err := ctx.builder.v1Graph.HasChannelEdge(
+		ctxb, chanID.ToUint64(),
+	)
+	require.NoError(t, err)
+	require.True(t, exists || isZombie)
 }
 
 // TestIsStaleEdgePolicy tests that the IsStaleEdgePolicy properly detects

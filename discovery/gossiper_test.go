@@ -82,6 +82,10 @@ type mockGraphSource struct {
 	t          *testing.T
 	bestHeight uint32
 
+	// db is the real graph database used to mirror writes so that the
+	// gossiper's direct vGraph reads see consistent state.
+	db *graphdb.ChannelGraph
+
 	mu            sync.Mutex
 	nodes         []models.Node
 	infos         map[uint64]models.ChannelEdgeInfo
@@ -93,9 +97,12 @@ type mockGraphSource struct {
 	pauseGetChannelByID chan chan struct{}
 }
 
-func newMockRouter(t *testing.T, height uint32) *mockGraphSource {
+func newMockRouter(t *testing.T, height uint32,
+	db *graphdb.ChannelGraph) *mockGraphSource {
+
 	return &mockGraphSource{
 		t:          t,
+		db:         db,
 		bestHeight: height,
 		infos:      make(map[uint64]models.ChannelEdgeInfo),
 		edges: make(
@@ -116,26 +123,35 @@ func (r *mockGraphSource) AddNode(_ context.Context, node *models.Node,
 	defer r.mu.Unlock()
 
 	r.nodes = append(r.nodes, *node)
+
+	// Mirror to real DB so the gossiper's direct vGraph reads see the node.
+	_ = r.db.AddNode(context.Background(), node)
+
 	return nil
 }
 
-func (r *mockGraphSource) MarkZombieEdge(_ lnwire.GossipVersion,
-	scid uint64) error {
-
-	return r.MarkEdgeZombie(
-		lnwire.NewShortChanIDFromInt(scid), [33]byte{}, [33]byte{},
-	)
-}
-
+// IsZombieEdge returns true if the given channel is in the zombie index. It
+// checks both the in-memory map (for test-driven setup) and the real DB (for
+// state written directly by the gossiper via vGraph).
 func (r *mockGraphSource) IsZombieEdge(_ lnwire.GossipVersion,
 	chanID lnwire.ShortChannelID) (bool, error) {
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	_, inMock := r.zombies[chanID.ToUint64()]
+	r.mu.Unlock()
 
-	_, ok := r.zombies[chanID.ToUint64()]
+	if inMock {
+		return true, nil
+	}
 
-	return ok, nil
+	// Also check the real DB since the gossiper may have written zombie
+	// state directly via vGraph.
+	vg := graphdb.NewVersionedGraph(r.db, lnwire.GossipVersion1)
+	isZ, _, _, err := vg.IsZombieEdge(
+		context.Background(), chanID.ToUint64(),
+	)
+
+	return isZ, err
 }
 
 func (r *mockGraphSource) AddEdge(_ context.Context,
@@ -153,6 +169,10 @@ func (r *mockGraphSource) AddEdge(_ context.Context,
 	}
 
 	r.infos[info.ChannelID] = *info
+
+	// Mirror to real DB so the gossiper's direct vGraph reads see the edge.
+	_ = r.db.AddChannelEdge(context.Background(), info)
+
 	return nil
 }
 
@@ -181,6 +201,10 @@ func (r *mockGraphSource) UpdateEdge(_ context.Context,
 	} else {
 		r.edges[edge.ChannelID][1] = *edge
 	}
+
+	// Mirror to real DB so the gossiper's direct vGraph reads see the
+	// updated policy.
+	_ = r.db.UpdateEdgePolicy(context.Background(), edge)
 
 	return nil
 }
@@ -223,6 +247,18 @@ func (r *mockGraphSource) ForAllOutgoingChannels(_ context.Context,
 	chans := make(map[uint64]graphdb.ChannelEdge)
 	for _, info := range r.infos {
 		info := info
+
+		// If mock's AuthProof is nil, check real DB since the gossiper
+		// writes proofs directly there via AddEdgeProof.
+		if info.AuthProof == nil {
+			dbInfo, _, _, err := r.db.FetchChannelEdgesByID(
+				context.Background(), lnwire.GossipVersion1,
+				info.ChannelID,
+			)
+			if err == nil && dbInfo != nil && dbInfo.AuthProof != nil {
+				info.AuthProof = dbInfo.AuthProof
+			}
+		}
 
 		edgeInfo := chans[info.ChannelID]
 		edgeInfo.Info = &info
@@ -484,14 +520,21 @@ func (r *mockGraphSource) IsStaleEdgePolicy(
 }
 
 // MarkEdgeLive clears an edge from our zombie index, deeming it as live.
-//
-// NOTE: This method is part of the ChannelGraphSource interface.
 func (r *mockGraphSource) MarkEdgeLive(_ lnwire.GossipVersion,
 	chanID lnwire.ShortChannelID) error {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	delete(r.zombies, chanID.ToUint64())
+
+	// Mirror to real DB so the gossiper's direct vGraph reads see the
+	// live state.
+	_ = r.db.MarkEdgeLive(
+		context.Background(), lnwire.GossipVersion1,
+		chanID.ToUint64(),
+	)
+
 	return nil
 }
 
@@ -503,6 +546,13 @@ func (r *mockGraphSource) MarkEdgeZombie(chanID lnwire.ShortChannelID, pubKey1,
 	defer r.mu.Unlock()
 
 	r.zombies[chanID.ToUint64()] = [][33]byte{pubKey1, pubKey2}
+
+	// Mirror to real DB so the gossiper's direct vGraph reads see the
+	// zombie state.
+	_ = r.db.MarkEdgeZombie(
+		context.Background(), lnwire.GossipVersion1,
+		chanID.ToUint64(), pubKey1, pubKey2,
+	)
 
 	return nil
 }
@@ -985,7 +1035,19 @@ func createTestCtx(t *testing.T, startHeight uint32, isChanPeer bool) (
 	// any p2p functionality, the peer send and switch send,
 	// broadcast functions won't be populated.
 	notifier := newMockNotifier()
-	router := newMockRouter(t, startHeight)
+	graphDB := graphdb.MakeTestGraph(t)
+
+	// Set the source node so that IsPublicNode (called directly on the
+	// versioned graph) has access to our self key.
+	selfVertex := route.NewVertex(selfKeyDesc.PubKey)
+	require.NoError(t, graphDB.SetSourceNode(
+		context.Background(), &models.Node{
+			PubKeyBytes: selfVertex,
+			Version:     lnwire.GossipVersion1,
+		},
+	))
+
+	router := newMockRouter(t, startHeight, graphDB)
 	chain := &lnmock.MockChain{}
 	t.Cleanup(func() {
 		chain.AssertExpectations(t)
@@ -1059,6 +1121,7 @@ func createTestCtx(t *testing.T, startHeight uint32, isChanPeer bool) (
 			}, nil
 		},
 		Graph:                 router,
+		GraphDB:               graphDB,
 		TrickleDelay:          trickleDelay,
 		RetransmitTicker:      ticker.NewForce(retransmitDelay),
 		RebroadcastInterval:   rebroadcastInterval,
@@ -1757,6 +1820,7 @@ func TestSignatureAnnouncementRetryAtStartup(t *testing.T) {
 		FetchSelfAnnouncement:  tCtx.gossiper.cfg.FetchSelfAnnouncement,
 		UpdateSelfAnnouncement: tCtx.gossiper.cfg.UpdateSelfAnnouncement,
 		Graph:                  tCtx.gossiper.cfg.Graph,
+		GraphDB:                tCtx.gossiper.cfg.GraphDB,
 		TrickleDelay:           trickleDelay,
 		RetransmitTicker:       ticker.NewForce(retransmitDelay),
 		RebroadcastInterval:    rebroadcastInterval,
