@@ -1,6 +1,7 @@
 package netann
 
 import (
+	"fmt"
 	"net"
 	"sync"
 
@@ -170,8 +171,7 @@ func (h *HostAnnouncer) hostWatcher() {
 // NodeAnnUpdater describes a function that's able to update our current node
 // announcement on disk. It returns the updated node announcement given a set
 // of updates to be applied to the current node announcement.
-type NodeAnnUpdater func(modifier ...NodeAnnModifier,
-) (lnwire.NodeAnnouncement1, error)
+type NodeAnnUpdater func(modifier ...NodeAnnModifier) error
 
 // IPAnnouncer is a factory function that generates a new function that uses
 // the passed annUpdater function to to announce new IP changes for a given
@@ -180,25 +180,36 @@ func IPAnnouncer(annUpdater NodeAnnUpdater) func([]net.Addr,
 	map[string]struct{}) error {
 
 	return func(newAddrs []net.Addr, oldAddrs map[string]struct{}) error {
-		_, err := annUpdater(func(
-			currentNodeAnn *lnwire.NodeAnnouncement1) {
-			// To ensure we don't duplicate any addresses, we'll
-			// filter out the same of addresses we should no longer
-			// advertise.
-			filteredAddrs := make(
-				[]net.Addr, 0, len(currentNodeAnn.Addresses),
-			)
-			for _, addr := range currentNodeAnn.Addresses {
-				if _, ok := oldAddrs[addr.String()]; ok {
-					continue
+		return annUpdater(NodeAnnModifierFunc(
+			func(currentNodeAnn lnwire.NodeAnnouncement) error {
+				v1, ok := currentNodeAnn.(*lnwire.NodeAnnouncement1)
+				if !ok {
+					return fmt.Errorf("unsupported node "+
+						"announcement type: %T",
+						currentNodeAnn)
 				}
 
-				filteredAddrs = append(filteredAddrs, addr)
-			}
+				// To ensure we don't duplicate any addresses,
+				// we'll filter out the same of addresses we
+				// should no longer advertise.
+				filteredAddrs := make(
+					[]net.Addr, 0, len(v1.Addresses),
+				)
+				for _, addr := range v1.Addresses {
+					if _, ok := oldAddrs[addr.String()]; ok {
+						continue
+					}
 
-			filteredAddrs = append(filteredAddrs, newAddrs...)
-			currentNodeAnn.Addresses = filteredAddrs
-		})
-		return err
+					filteredAddrs = append(
+						filteredAddrs, addr,
+					)
+				}
+
+				filteredAddrs = append(filteredAddrs, newAddrs...)
+				v1.Addresses = filteredAddrs
+
+				return nil
+			},
+		))
 	}
 }
