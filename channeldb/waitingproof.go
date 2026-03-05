@@ -349,9 +349,27 @@ type WaitingProof struct {
 	isRemote bool
 }
 
-// NewWaitingProof constructs a new waiting proof instance for an
-// AnnounceSignatures1 message.
+// NewWaitingProof constructs a new waiting proof from an AnnounceSignatures
+// interface, dispatching to the appropriate inner type.
 func NewWaitingProof(isRemote bool,
+	proof lnwire.AnnounceSignatures) (*WaitingProof, error) {
+
+	switch p := proof.(type) {
+	case *lnwire.AnnounceSignatures1:
+		return NewV1WaitingProof(isRemote, p), nil
+
+	case *lnwire.AnnounceSignatures2:
+		return NewV2WaitingProof(isRemote, p, nil), nil
+
+	default:
+		return nil, fmt.Errorf("unhandled AnnounceSignatures "+
+			"type: %T", proof)
+	}
+}
+
+// NewV1WaitingProof constructs a new waiting proof instance for an
+// AnnounceSignatures1 message.
+func NewV1WaitingProof(isRemote bool,
 	proof *lnwire.AnnounceSignatures1) *WaitingProof {
 
 	return &WaitingProof{

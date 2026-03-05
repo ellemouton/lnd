@@ -3962,17 +3962,18 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 		return nil, false
 	}
 
+	// We now have both halves of the channel announcement proof. Derive
+	// the combined auth proof from both announce signatures.
 	dbProof, err := models.ChannelAuthProofFromAnnounceSignatures(
-		ann, oppProof.AnnounceSignatures, isFirstNode,
+		ann, oppProof.Ann(), isFirstNode,
 	)
 	if errors.Is(err, models.ErrV2AnnSigProofAssemblyPending) {
-		log.Infof("Received both v2 announce signatures halves for "+
+		log.Infof("Received both v2 announce signature halves for "+
 			"short_chan_id=%v; full proof assembly not yet "+
 			"implemented", shortChanID)
 
-		// Once both halves are observed, clear the opposite half to
-		// avoid indefinite retries while full v2 assembly is pending
-		// implementation.
+		// Remove the opposite half so we don't retry indefinitely
+		// while v2 proof assembly is pending implementation.
 		err = d.cfg.WaitingProofStore.Remove(proof.OppositeKey())
 		if err != nil && err != channeldb.ErrWaitingProofNotFound {
 			err := fmt.Errorf("unable to remove opposite proof for "+

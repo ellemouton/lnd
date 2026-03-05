@@ -21,7 +21,7 @@ func TestWaitingProofStore(t *testing.T) {
 	db, err := MakeTestDB(t)
 	require.NoError(t, err, "failed to make test database")
 
-	proof1 := NewWaitingProof(true, &lnwire.AnnounceSignatures1{
+	proof1 := NewV1WaitingProof(true, &lnwire.AnnounceSignatures1{
 		NodeSignature:    wireSig,
 		BitcoinSignature: wireSig,
 		ExtraOpaqueData:  make([]byte, 0),
@@ -64,7 +64,7 @@ func TestWaitingProofStore(t *testing.T) {
 func TestWaitingProofEncodePrefix(t *testing.T) {
 	t.Parallel()
 
-	proof := NewWaitingProof(true, &lnwire.AnnounceSignatures1{
+	proof := NewV1WaitingProof(true, &lnwire.AnnounceSignatures1{
 		NodeSignature:    wireSig,
 		BitcoinSignature: wireSig,
 		ExtraOpaqueData:  []byte{1, 2, 3},
@@ -242,7 +242,7 @@ func TestWaitingProofCrossVersionKeyIsolation(t *testing.T) {
 
 	scid := lnwire.NewShortChanIDFromInt(777)
 
-	v1Proof := NewWaitingProof(true, &lnwire.AnnounceSignatures1{
+	v1Proof := NewV1WaitingProof(true, &lnwire.AnnounceSignatures1{
 		ShortChannelID:   scid,
 		NodeSignature:    wireSig,
 		BitcoinSignature: wireSig,
