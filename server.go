@@ -1082,6 +1082,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 
 	s.authGossiper = discovery.New(discovery.Config{
 		Graph:                 s.graphBuilder,
+		GraphDB:               s.graphDB,
 		ChainIO:               s.cc.ChainIO,
 		Notifier:              s.cc.ChainNotifier,
 		ChainParams:           s.cfg.ActiveNetParams.Params,
@@ -5317,8 +5318,8 @@ func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
 
 	ourPubKey := s.identityECDH.PubKey().SerializeCompressed()
 	return func(cid lnwire.ShortChannelID) (*lnwire.ChannelUpdate1, error) {
-		info, edge1, edge2, err := s.graphBuilder.GetChannelByID(
-			lnwire.GossipVersion1, cid,
+		info, edge1, edge2, err := s.graphDB.FetchChannelEdgesByID(
+			context.TODO(), lnwire.GossipVersion1, cid.ToUint64(),
 		)
 		if err != nil {
 			return nil, err
