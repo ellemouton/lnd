@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -829,7 +828,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		Clock:                  clock.NewDefaultClock(),
 		MailboxDeliveryTimeout: cfg.Htlcswitch.MailboxDeliveryTimeout,
 		MaxFeeExposure:         thresholdMSats,
-		SignAliasUpdate:        s.signGossipAliasUpdate,
+		SignAliasUpdate:        s.signAliasUpdate,
 		IsAlias:                aliasmgr.IsAlias,
 	}, uint32(currentHeight))
 	if err != nil {
@@ -1115,7 +1114,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		MaxChannelUpdateBurst:   cfg.Gossip.MaxChannelUpdateBurst,
 		ChannelUpdateInterval:   cfg.Gossip.ChannelUpdateInterval,
 		IsAlias:                 aliasmgr.IsAlias,
-		SignAliasUpdate:         s.signGossipAliasUpdate,
+		SignAliasUpdate:         s.signAliasUpdate,
 		FindBaseByAlias:         s.aliasMgr.FindBaseSCID,
 		GetAlias:                s.aliasMgr.GetPeerAlias,
 		FindChannel:             s.findChannel,
@@ -1917,43 +1916,11 @@ func (s *server) registerBlockConsumers() {
 	s.blockbeatDispatcher.RegisterQueue(consumers)
 }
 
-// signAliasUpdate takes a ChannelUpdate and returns the signature. This is
+// signAliasUpdate re-signs an aliased gossip channel update in-place. This is
 // used for option_scid_alias channels where the ChannelUpdate to be sent back
 // may differ from what is on disk.
-func (s *server) signAliasUpdate(u *lnwire.ChannelUpdate1) (*ecdsa.Signature,
-	error) {
-
-	data, err := u.DataToSign()
-	if err != nil {
-		return nil, err
-	}
-
-	return s.cc.MsgSigner.SignMessage(s.identityKeyLoc, data, true)
-}
-
-// signGossipAliasUpdate re-signs an aliased gossip channel update in-place.
-func (s *server) signGossipAliasUpdate(update lnwire.ChannelUpdate) error {
-	switch update := update.(type) {
-	case *lnwire.ChannelUpdate1:
-		sig, err := s.signAliasUpdate(update)
-		if err != nil {
-			return err
-		}
-
-		lnSig, err := lnwire.NewSigFromSignature(sig)
-		if err != nil {
-			return err
-		}
-
-		update.Signature = lnSig
-		return nil
-
-	case *lnwire.ChannelUpdate2:
-		return netann.SignChannelUpdate(s.nodeSigner, s.identityKeyLoc, update)
-
-	default:
-		return fmt.Errorf("unsupported channel update type: %T", update)
-	}
+func (s *server) signAliasUpdate(u lnwire.ChannelUpdate) error {
+	return netann.SignChannelUpdate(s.cc.KeyRing, s.identityKeyLoc, u)
 }
 
 // createLivenessMonitor creates a set of health checks using our configured
