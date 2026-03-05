@@ -152,7 +152,7 @@ func ExtractChannelUpdate(ownerPubKey []byte,
 	// Helper function to extract the owner of the given policy.
 	owner := func(edge *models.ChannelEdgePolicy) []byte {
 		var pubKey *btcec.PublicKey
-		if edge.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
+		if edge.IsNode1() {
 			pubKey, _ = info.NodeKey1()
 		} else {
 			pubKey, _ = info.NodeKey2()

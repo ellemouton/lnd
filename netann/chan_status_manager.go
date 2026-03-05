@@ -684,7 +684,7 @@ func (m *ChanStatusManager) loadInitialChanState(
 	// Determine the channel's starting status by inspecting the disable bit
 	// on last announcement we sent out.
 	var initialStatus ChanStatus
-	if lastUpdate.ChannelFlags&lnwire.ChanUpdateDisabled == 0 {
+	if !lastUpdate.IsDisabled() {
 		initialStatus = ChanStatusEnabled
 	} else {
 		initialStatus = ChanStatusDisabled
