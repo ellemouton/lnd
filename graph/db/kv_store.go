@@ -253,7 +253,7 @@ func (c channelMapKey) String() string {
 
 // getChannelMap loads all channel edge policies from the database and stores
 // them in a map.
-func getChannelMap(edges kvdb.RBucket) (
+func getChannelMap(ctx context.Context, edges kvdb.RBucket) (
 	map[channelMapKey]*models.ChannelEdgePolicy, error) {
 
 	// Create a map to store all channel edge policies.
@@ -457,7 +457,9 @@ func forEachChannel(db kvdb.Backend, cb func(*models.ChannelEdgeInfo,
 
 		// First, load all edges in memory indexed by node and channel
 		// id.
-		channelMap, err := getChannelMap(edges)
+		channelMap, err := getChannelMap(
+			context.Background(), edges,
+		)
 		if err != nil {
 			return err
 		}
@@ -510,7 +512,7 @@ func forEachChannel(db kvdb.Backend, cb func(*models.ChannelEdgeInfo,
 //
 // NOTE: this method is like ForEachChannel but fetches only the data required
 // for the graph cache.
-func (c *KVStore) ForEachChannelCacheable(_ context.Context,
+func (c *KVStore) ForEachChannelCacheable(ctx context.Context,
 	v lnwire.GossipVersion, cb func(*models.CachedEdgeInfo,
 		*models.CachedEdgePolicy, *models.CachedEdgePolicy) error,
 	reset func()) error {
@@ -527,7 +529,7 @@ func (c *KVStore) ForEachChannelCacheable(_ context.Context,
 
 		// First, load all edges in memory indexed by node and channel
 		// id.
-		channelMap, err := getChannelMap(edges)
+		channelMap, err := getChannelMap(ctx, edges)
 		if err != nil {
 			return err
 		}
@@ -907,7 +909,7 @@ func forEachNode(db kvdb.Backend,
 // graph, executing the passed callback with each node encountered. If the
 // callback returns an error, then the transaction is aborted and the iteration
 // stops early.
-func (c *KVStore) ForEachNodeCacheable(_ context.Context,
+func (c *KVStore) ForEachNodeCacheable(ctx context.Context,
 	v lnwire.GossipVersion, cb func(route.Vertex,
 		*lnwire.FeatureVector) error, reset func()) error {
 
