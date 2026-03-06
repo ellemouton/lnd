@@ -268,6 +268,17 @@ func (c *ChannelGraph) GraphSession(ctx context.Context,
 	return c.db.GraphSession(ctx, cb, reset)
 }
 
+// ForEachNode iterates through all nodes in the graph across all gossip
+// versions, yielding each unique node exactly once. The callback receives the
+// best available Node (highest advertised version preferred, falling back to
+// shell nodes) and a versionsMask where bit 0 indicates a v1 entry exists and
+// bit 1 indicates a v2 entry exists.
+func (c *ChannelGraph) ForEachNode(ctx context.Context,
+	cb func(*models.Node, uint32) error, reset func()) error {
+
+	return c.db.ForEachNode(ctx, cb, reset)
+}
+
 // ForEachNodeCached iterates through all the stored vertices/nodes in the
 // graph, executing the passed callback with each node encountered.
 //
@@ -872,11 +883,17 @@ func (c *VersionedGraph) ForEachNodeCached(ctx context.Context,
 	return c.ChannelGraph.ForEachNodeCached(ctx, c.v, withAddrs, cb, reset)
 }
 
-// ForEachNode iterates through all stored vertices/nodes in the graph.
+// ForEachNode iterates through all stored vertices/nodes in the graph across
+// all gossip versions, yielding each unique node once. See Store.ForEachNode
+// for details on the versionsMask parameter.
 func (c *VersionedGraph) ForEachNode(ctx context.Context,
 	cb func(*models.Node) error, reset func()) error {
 
-	return c.db.ForEachNode(ctx, c.v, cb, reset)
+	return c.ChannelGraph.ForEachNode(
+		ctx, func(node *models.Node, _ uint32) error {
+			return cb(node)
+		}, reset,
+	)
 }
 
 // NumZombies returns the current number of zombie channels in the graph.

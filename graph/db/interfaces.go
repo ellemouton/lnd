@@ -95,12 +95,14 @@ type Store interface { //nolint:interfacebloat
 			chans map[uint64]*DirectedChannel) error,
 		reset func()) error
 
-	// ForEachNode iterates through all the stored vertices/nodes in the
-	// graph, executing the passed callback with each node encountered. If
-	// the callback returns an error, then the transaction is aborted and
-	// the iteration stops early.
-	ForEachNode(ctx context.Context, v lnwire.GossipVersion,
-		cb func(*models.Node) error, reset func()) error
+	// ForEachNode iterates through all nodes in the graph across all
+	// gossip versions, yielding each unique node exactly once. The
+	// callback receives the best available Node (highest advertised
+	// version preferred, falling back to shell nodes) and a versionsMask
+	// where bit 0 indicates a v1 entry exists and bit 1 indicates a v2
+	// entry exists.
+	ForEachNode(ctx context.Context,
+		cb func(*models.Node, uint32) error, reset func()) error
 
 	// ForEachNodeCacheable iterates through all the stored vertices/nodes
 	// in the graph, executing the passed callback with each node

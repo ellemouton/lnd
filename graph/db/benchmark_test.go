@@ -624,8 +624,8 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 			name: "ForEachNode",
 			fn: func(b testing.TB, store Store) {
 				err := store.ForEachNode(
-					ctx, lnwire.GossipVersion1,
-					func(_ *models.Node) error {
+					ctx, func(_ *models.Node,
+						_ uint32) error {
 						// Increment the counter to
 						// ensure the callback is doing
 						// something.
@@ -827,8 +827,8 @@ func BenchmarkFindOptimalSQLQueryConfig(b *testing.B) {
 					)
 
 					err := store.ForEachNode(
-						ctx, lnwire.GossipVersion1,
-						func(_ *models.Node) error {
+						ctx, func(_ *models.Node,
+							_ uint32) error {
 							numNodes++
 
 							return nil

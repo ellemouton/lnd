@@ -1038,24 +1038,99 @@ func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
 	}, reset)
 }
 
-// ForEachNode iterates through all the stored vertices/nodes in the graph,
-// executing the passed callback with each node encountered. If the callback
-// returns an error, then the transaction is aborted and the iteration stops
-// early.
+// ForEachNode iterates through all nodes in the graph across all gossip
+// versions, yielding each unique node exactly once. Both gossip v1 and v2
+// nodes are gathered in a single read transaction, merged by public key, and
+// the best available node (highest advertised version preferred, falling back
+// to shell nodes) is passed to the callback along with a versionsMask where
+// bit 0 indicates a v1 entry exists and bit 1 indicates a v2 entry exists.
 //
 // NOTE: part of the Store interface.
-func (s *SQLStore) ForEachNode(ctx context.Context, v lnwire.GossipVersion,
-	cb func(node *models.Node) error, reset func()) error {
+func (s *SQLStore) ForEachNode(ctx context.Context,
+	cb func(*models.Node, uint32) error, reset func()) error {
+
+	type nodeEntry struct {
+		v1Node *models.Node
+		v2Node *models.Node
+	}
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		return forEachNodePaginated(
-			ctx, s.cfg.QueryCfg, db,
-			v, func(_ context.Context, _ int64,
+		merged := make(map[route.Vertex]*nodeEntry)
+
+		// Gather all v1 nodes.
+		err := forEachNodePaginated(
+			ctx, s.cfg.QueryCfg, db, lnwire.GossipVersion1,
+			func(_ context.Context, _ int64,
 				node *models.Node) error {
 
-				return cb(node)
+				e := merged[node.PubKeyBytes]
+				if e == nil {
+					e = &nodeEntry{}
+					merged[node.PubKeyBytes] = e
+				}
+				e.v1Node = node
+
+				return nil
 			},
 		)
+		if err != nil {
+			return err
+		}
+
+		// Gather all v2 nodes.
+		err = forEachNodePaginated(
+			ctx, s.cfg.QueryCfg, db, lnwire.GossipVersion2,
+			func(_ context.Context, _ int64,
+				node *models.Node) error {
+
+				e := merged[node.PubKeyBytes]
+				if e == nil {
+					e = &nodeEntry{}
+					merged[node.PubKeyBytes] = e
+				}
+				e.v2Node = node
+
+				return nil
+			},
+		)
+		if err != nil {
+			return err
+		}
+
+		// Yield each unique node with its version mask.
+		for _, e := range merged {
+			var (
+				best         *models.Node
+				versionsMask uint32
+			)
+
+			if e.v1Node != nil {
+				versionsMask |= 1
+			}
+			if e.v2Node != nil {
+				versionsMask |= 2
+			}
+
+			// Prefer the highest version with a real announcement
+			// (i.e. not just a shell). Fall back to v1 shell, then
+			// v2 shell.
+			switch {
+			case e.v2Node != nil && e.v2Node.HaveAnnouncement():
+				best = e.v2Node
+			case e.v1Node != nil && e.v1Node.HaveAnnouncement():
+				best = e.v1Node
+			case e.v1Node != nil:
+				best = e.v1Node
+			default:
+				best = e.v2Node
+			}
+
+			if err := cb(best, versionsMask); err != nil {
+				return err
+			}
+		}
+
+		return nil
 	}, reset)
 }
 

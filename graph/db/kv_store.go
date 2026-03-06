@@ -830,23 +830,19 @@ func (c *KVStore) DisabledChannelIDs(
 	return disabledChanIDs, nil
 }
 
-// ForEachNode iterates through all the stored vertices/nodes in the graph,
-// executing the passed callback with each node encountered. If the callback
-// returns an error, then the transaction is aborted and the iteration stops
-// early.
+// ForEachNode iterates through all nodes in the graph, yielding each node with
+// versionsMask=1 (v1 only). The KV store only supports gossip v1, so no
+// cross-version merging is required.
 //
 // NOTE: this is part of the Store interface.
-func (c *KVStore) ForEachNode(_ context.Context, v lnwire.GossipVersion,
-	cb func(*models.Node) error, reset func()) error {
+func (c *KVStore) ForEachNode(_ context.Context,
+	cb func(*models.Node, uint32) error, reset func()) error {
 
-	if v != lnwire.GossipVersion1 {
-		return ErrVersionNotSupportedForKVDB
-	}
+	// The KV store only supports gossip v1, so the mask is always 1.
+	const versionsMask = uint32(1)
 
-	return forEachNode(c.db, func(tx kvdb.RTx,
-		node *models.Node) error {
-
-		return cb(node)
+	return forEachNode(c.db, func(_ kvdb.RTx, node *models.Node) error {
+		return cb(node, versionsMask)
 	}, reset)
 }
 
