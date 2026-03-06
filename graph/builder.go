@@ -107,6 +107,14 @@ type Config struct {
 	// IsAlias returns whether a passed ShortChannelID is an alias. This is
 	// only used for our local channels.
 	IsAlias func(scid lnwire.ShortChannelID) bool
+
+	// GraphSource is an optional read-only graph source that may combine
+	// local and remote graph data. When set, ApplyChannelUpdate will fall
+	// back to this source to look up channels that don't exist in the
+	// local graph DB (e.g. channels only known via a remote graph). Policy
+	// updates for such channels are applied directly to the graph cache
+	// without a DB write.
+	GraphSource graphdb.GraphSource
 }
 
 // Builder builds and maintains a view of the Lightning Network graph.
@@ -980,7 +988,17 @@ func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 
 	ch, _, _, err := b.GetChannelByID(msg.ShortChannelID)
 	if err != nil {
+		// If the channel isn't found in the local DB but we have a
+		// GraphSource (e.g. a remote graph), try looking it up there
+		// and apply the update directly to the graph cache.
+		if errors.Is(err, graphdb.ErrEdgeNotFound) &&
+			b.cfg.GraphSource != nil {
+
+			return b.applyChannelUpdateFromSource(ctx, msg)
+		}
+
 		log.Errorf("Unable to retrieve channel by id: %v", err)
+
 		return false
 	}
 
@@ -1020,6 +1038,97 @@ func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 		log.Errorf("Unable to apply channel update: %v", err)
 		return false
 	}
+
+	return true
+}
+
+// applyChannelUpdateFromSource handles channel updates for channels that only
+// exist in the GraphSource (e.g. via a remote graph) and not in the local DB.
+// It looks up the channel from the GraphSource, validates the update signature,
+// and applies the policy change directly to the graph cache.
+func (b *Builder) applyChannelUpdateFromSource(ctx context.Context,
+	msg *lnwire.ChannelUpdate1) bool {
+
+	chanID := msg.ShortChannelID.ToUint64()
+
+	ch, p1, p2, err := b.cfg.GraphSource.FetchChannelEdgesByID(ctx, chanID)
+	if err != nil {
+		log.Errorf("Unable to retrieve channel %v from graph "+
+			"source: %v", chanID, err)
+
+		return false
+	}
+
+	var pubKey *btcec.PublicKey
+
+	switch msg.ChannelFlags & lnwire.ChanUpdateDirection {
+	case 0:
+		pubKey, _ = ch.NodeKey1()
+
+	case 1:
+		pubKey, _ = ch.NodeKey2()
+	}
+
+	if pubKey == nil {
+		log.Errorf("Unable to decide pubkey with ChannelFlags=%v",
+			msg.ChannelFlags)
+
+		return false
+	}
+
+	err = netann.ValidateChannelUpdateAnn(pubKey, ch.Capacity, msg)
+	if err != nil {
+		log.Errorf("Unable to validate channel update: %v", err)
+
+		return false
+	}
+
+	// Check timestamp monotonicity per BOLT #7: only accept the
+	// update if its timestamp is newer than the existing policy.
+	var existingPolicy *models.ChannelEdgePolicy
+	if msg.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
+		existingPolicy = p1
+	} else {
+		existingPolicy = p2
+	}
+
+	if existingPolicy != nil &&
+		msg.Timestamp <= uint32(existingPolicy.LastUpdate.Unix()) {
+
+		log.Debugf("Ignoring stale channel update from graph "+
+			"source for chan_id=%v (timestamp %d <= %d)",
+			chanID, msg.Timestamp,
+			existingPolicy.LastUpdate.Unix())
+
+		return false
+	}
+
+	update, err := models.ChanEdgePolicyFromWire(chanID, msg)
+	if err != nil {
+		log.Errorf("Unable to parse channel update: %v", err)
+
+		return false
+	}
+
+	fromNode, _ := ch.NodeKey1()
+	toNode, _ := ch.NodeKey2()
+
+	if fromNode == nil || toNode == nil {
+		log.Errorf("Unable to get node keys for channel %v", chanID)
+
+		return false
+	}
+
+	b.cfg.Graph.ApplyCacheUpdate(func(cache *graphdb.GraphCache) {
+		cache.UpdatePolicy(
+			models.NewCachedPolicy(update),
+			route.NewVertex(fromNode),
+			route.NewVertex(toNode),
+		)
+	})
+
+	log.Debugf("Applied channel update from graph source for "+
+		"chan_id=%v directly to graph cache", chanID)
 
 	return true
 }
