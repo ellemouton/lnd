@@ -1,7 +1,6 @@
 package netann
 
 import (
-	"fmt"
 	"net"
 	"sync"
 
@@ -23,8 +22,8 @@ type HostAnnouncerConfig struct {
 	LookupHost func(string) (net.Addr, error)
 
 	// AdvertisedIPs is the set of IPs that we've already announced with
-	// our current NodeAnnouncement1. This set will be constructed to avoid
-	// unnecessary node NodeAnnouncement1 updates.
+	// our current NodeAnnouncement. This set will be constructed to avoid
+	// unnecessary NodeAnnouncement updates.
 	AdvertisedIPs map[string]struct{}
 
 	// AnnounceNewIPs announces a new set of IP addresses for the backing
@@ -37,7 +36,7 @@ type HostAnnouncerConfig struct {
 // HostAnnouncer is a sub-system that allows a user to specify a set of hosts
 // for lnd that will be continually resolved to notice any IP address changes.
 // If the target IP address for a host changes, then we'll generate a new
-// NodeAnnouncement1 that includes these new IPs.
+// NodeAnnouncement that includes these new IPs.
 type HostAnnouncer struct {
 	cfg HostAnnouncerConfig
 
@@ -181,21 +180,14 @@ func IPAnnouncer(annUpdater NodeAnnUpdater) func([]net.Addr,
 
 	return func(newAddrs []net.Addr, oldAddrs map[string]struct{}) error {
 		return annUpdater(NodeAnnModifierFunc(
-			func(currentNodeAnn lnwire.NodeAnnouncement) error {
-				v1, ok := currentNodeAnn.(*lnwire.NodeAnnouncement1)
-				if !ok {
-					return fmt.Errorf("unsupported node "+
-						"announcement type: %T",
-						currentNodeAnn)
-				}
-
+			func(ann lnwire.NodeAnnouncement) error {
 				// To ensure we don't duplicate any addresses,
-				// we'll filter out the same of addresses we
-				// should no longer advertise.
+				// filter out any that we should no longer
+				// advertise.
 				filteredAddrs := make(
-					[]net.Addr, 0, len(v1.Addresses),
+					[]net.Addr, 0, len(ann.NodeAddrs()),
 				)
-				for _, addr := range v1.Addresses {
+				for _, addr := range ann.NodeAddrs() {
 					if _, ok := oldAddrs[addr.String()]; ok {
 						continue
 					}
@@ -206,9 +198,8 @@ func IPAnnouncer(annUpdater NodeAnnUpdater) func([]net.Addr,
 				}
 
 				filteredAddrs = append(filteredAddrs, newAddrs...)
-				v1.Addresses = filteredAddrs
 
-				return nil
+				return ann.SetAddrs(filteredAddrs)
 			},
 		))
 	}
