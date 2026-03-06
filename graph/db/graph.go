@@ -63,6 +63,11 @@ func NewChannelGraph(v1Store Store,
 	return g, nil
 }
 
+// GraphCacheStore returns the graph cache if it is enabled, or nil otherwise.
+func (c *ChannelGraph) GraphCacheStore() *GraphCache {
+	return c.graphCache
+}
+
 // Start kicks off any goroutines required for the ChannelGraph to function.
 // If the graph cache is enabled, then it will be populated with the contents of
 // the database.
