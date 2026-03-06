@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -3813,6 +3814,78 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 	return announcements, true
 }
 
+// waitingProofFromMsg constructs the appropriate WaitingProof for the given
+// announce-signatures message. For v2 (taproot) announcements the aggregate
+// nonce is extracted from the message's optional fields and stored alongside
+// the partial signature so that the two halves can be combined later.
+func waitingProofFromMsg(nMsg *networkMsg,
+	ann lnwire.AnnounceSignatures) *channeldb.WaitingProof {
+
+	switch a := ann.(type) {
+	case *lnwire.AnnounceSignatures2:
+		var aggNonce *btcec.PublicKey
+		if nMsg.optionalMsgFields != nil {
+			aggNonce = nMsg.optionalMsgFields.aggNonce
+		}
+
+		return channeldb.NewV2WaitingProof(nMsg.isRemote, a, aggNonce)
+
+	default:
+		return channeldb.NewWaitingProof(nMsg.isRemote, ann)
+	}
+}
+
+// assembleChannelProof combines two opposing announce-signature halves into a
+// single ChannelAuthProof. For v1 channels the existing helper is used. For
+// v2 (taproot) channels the two MuSig2 partial signatures are combined with
+// musig2.CombineSigs using the stored aggregate nonce.
+func assembleChannelProof(ann lnwire.AnnounceSignatures,
+	oppProof *channeldb.WaitingProof,
+	isFirstNode bool) (*models.ChannelAuthProof, error) {
+
+	switch a := ann.(type) {
+	case *lnwire.AnnounceSignatures1:
+		return models.ChannelAuthProofFromAnnounceSignatures(
+			a, oppProof.Ann(), isFirstNode,
+		)
+
+	case *lnwire.AnnounceSignatures2:
+		opp, ok := oppProof.WaitingProofInner.(*channeldb.V2WaitingProof)
+		if !ok {
+			return nil, fmt.Errorf("expected *V2WaitingProof for "+
+				"opposite proof, got: %T",
+				oppProof.WaitingProofInner)
+		}
+
+		// At least one side must have supplied the aggregate nonce.
+		var aggNonce *btcec.PublicKey
+		switch {
+		case opp.AggNonce != nil:
+			aggNonce = opp.AggNonce
+		default:
+			return nil, fmt.Errorf("no aggregate nonce available " +
+				"for v2 proof assembly")
+		}
+
+		ps1 := musig2.NewPartialSignature(
+			&a.PartialSignature.Val.Sig, aggNonce,
+		)
+		ps2 := musig2.NewPartialSignature(
+			&opp.PartialSignature.Val.Sig, aggNonce,
+		)
+
+		combined := musig2.CombineSigs(
+			aggNonce, []*musig2.PartialSignature{&ps1, &ps2},
+		)
+
+		return models.NewV2ChannelAuthProof(combined.Serialize()), nil
+
+	default:
+		return nil, fmt.Errorf("unsupported announce signatures "+
+			"type: %T", ann)
+	}
+}
+
 // handleAnnSig processes a new announcement signatures message.
 //
 //nolint:funlen
@@ -3867,7 +3940,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 			return nil, false
 		}
 
-		proof := channeldb.NewWaitingProof(nMsg.isRemote, ann)
+		proof := waitingProofFromMsg(nMsg, ann)
 		err := d.cfg.WaitingProofStore.Add(proof)
 		if err != nil {
 			err := fmt.Errorf("unable to store the proof for "+
@@ -3970,7 +4043,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	// announcement. If we didn't receive the opposite half of the proof,
 	// then we should store this one and wait for the opposite to be
 	// received.
-	proof := channeldb.NewWaitingProof(nMsg.isRemote, ann)
+	proof := waitingProofFromMsg(nMsg, ann)
 	oppProof, err := d.cfg.WaitingProofStore.Get(proof.OppositeKey())
 	if err != nil && err != channeldb.ErrWaitingProofNotFound {
 		err := fmt.Errorf("unable to get the opposite proof for "+
@@ -3996,30 +4069,9 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 		return nil, false
 	}
 
-	// We now have both halves of the channel announcement proof. Derive
-	// the combined auth proof from both announce signatures.
-	dbProof, err := models.ChannelAuthProofFromAnnounceSignatures(
-		ann, oppProof.Ann(), isFirstNode,
-	)
-	if errors.Is(err, models.ErrV2AnnSigProofAssemblyPending) {
-		log.Infof("Received both v2 announce signature halves for "+
-			"short_chan_id=%v; full proof assembly not yet "+
-			"implemented", shortChanID)
-
-		// Remove the opposite half so we don't retry indefinitely
-		// while v2 proof assembly is pending implementation.
-		err = d.cfg.WaitingProofStore.Remove(proof.OppositeKey())
-		if err != nil && err != channeldb.ErrWaitingProofNotFound {
-			err := fmt.Errorf("unable to remove opposite proof for "+
-				"short_chan_id=%v: %v", shortChanID, err)
-			log.Error(err)
-			nMsg.err <- err
-			return nil, false
-		}
-
-		nMsg.err <- nil
-		return nil, false
-	}
+	// We now have both halves of the channel announcement proof. Assemble
+	// the combined auth proof.
+	dbProof, err := assembleChannelProof(ann, oppProof, isFirstNode)
 	if err != nil {
 		nMsg.err <- err
 		return nil, false
