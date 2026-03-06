@@ -260,6 +260,10 @@ func getChannelMap(edges kvdb.RBucket) (
 	channelMap := make(map[channelMapKey]*models.ChannelEdgePolicy)
 
 	err := kvdb.ForAll(edges, func(k, edgeBytes []byte) error {
+		if err := errContextDone(ctx); err != nil {
+			return err
+		}
+
 		// Skip embedded buckets.
 		if bytes.Equal(k, edgeIndexBucket) ||
 			bytes.Equal(k, edgeUpdateIndexBucket) ||
@@ -315,6 +319,16 @@ func getChannelMap(edges kvdb.RBucket) (
 	}
 
 	return channelMap, nil
+}
+
+// errContextDone returns the context error if the context is done (canceled or
+// deadline exceeded).
+func errContextDone(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+
+	return ctx.Err()
 }
 
 var graphTopLevelBuckets = [][]byte{
@@ -527,6 +541,10 @@ func (c *KVStore) ForEachChannelCacheable(_ context.Context,
 		// loaded above and invoke the callback.
 		return kvdb.ForAll(
 			edgeIndex, func(k, edgeInfoBytes []byte) error {
+				if err := errContextDone(ctx); err != nil {
+					return err
+				}
+
 				var chanID [8]byte
 				copy(chanID[:], k)
 
@@ -906,6 +924,10 @@ func (c *KVStore) ForEachNodeCacheable(_ context.Context,
 		}
 
 		return nodes.ForEach(func(pubKey, nodeBytes []byte) error {
+			if err := errContextDone(ctx); err != nil {
+				return err
+			}
+
 			// If this is the source key, then we skip this
 			// iteration as the value for this key is a pubKey
 			// rather than raw node information.
