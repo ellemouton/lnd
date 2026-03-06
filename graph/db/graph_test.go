@@ -5444,6 +5444,11 @@ func TestAsyncGraphCachePopulationFailureFallsBackToDB(t *testing.T) {
 	})
 
 	<-failingStore.cacheLoadAttempted
+
+	err = wait.Predicate(func() bool {
+		return graph.GraphCacheStatus() == GraphCacheStatusFailed
+	}, wait.DefaultTimeout)
+	require.NoError(t, err)
 	require.False(t, graph.cache.isLoaded())
 
 	var numChannels int
@@ -5464,6 +5469,93 @@ func TestAsyncGraphCachePopulationFailureFallsBackToDB(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, 1, numChannels)
+}
+
+// TestGraphCacheStatus asserts that the graph cache reports disabled, loading,
+// loaded and failed states as expected.
+func TestGraphCacheStatus(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	store := NewTestDB(t)
+
+	disabledGraph, err := NewChannelGraph(
+		store, WithUseGraphCache(false),
+	)
+	require.NoError(t, err)
+	require.Equal(
+		t, GraphCacheStatusDisabled, disabledGraph.GraphCacheStatus(),
+	)
+	require.NoError(t, disabledGraph.Start())
+	require.Equal(
+		t, GraphCacheStatusDisabled, disabledGraph.GraphCacheStatus(),
+	)
+	require.NoError(t, disabledGraph.Stop())
+
+	setupGraph, err := NewChannelGraph(
+		store, WithSyncGraphCachePopulation(),
+	)
+	require.NoError(t, err)
+	require.NoError(t, setupGraph.Start())
+
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
+	require.NoError(t, setupGraph.AddNode(ctx, node1))
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
+	require.NoError(t, setupGraph.AddNode(ctx, node2))
+
+	edgeInfo, edge1, edge2 := createChannelEdge(
+		node1, node2, lnwire.GossipVersion1,
+	)
+	require.NoError(t, setupGraph.AddChannelEdge(ctx, edgeInfo))
+	require.NoError(t, setupGraph.UpdateEdgePolicy(ctx, edge1))
+	require.NoError(t, setupGraph.UpdateEdgePolicy(ctx, edge2))
+	require.NoError(t, setupGraph.Stop())
+
+	blockingStore := &blockingCacheLoadStore{
+		Store:            store,
+		cacheLoadStarted: make(chan struct{}),
+		allowCacheLoad:   make(chan struct{}),
+	}
+
+	graph, err := NewChannelGraph(blockingStore)
+	require.NoError(t, err)
+	require.Equal(t, GraphCacheStatusLoading, graph.GraphCacheStatus())
+	require.NoError(t, graph.Start())
+	t.Cleanup(func() {
+		require.NoError(t, graph.Stop())
+	})
+
+	<-blockingStore.cacheLoadStarted
+	require.Equal(t, GraphCacheStatusLoading, graph.GraphCacheStatus())
+
+	close(blockingStore.allowCacheLoad)
+	err = wait.Predicate(func() bool {
+		return graph.GraphCacheStatus() == GraphCacheStatusLoaded
+	}, wait.DefaultTimeout)
+	require.NoError(t, err)
+	require.NoError(t, graph.Stop())
+
+	// Assert the failed state by using a store that errors during cache
+	// population.
+	populateErr := errors.New("cache population failed")
+	failingStore := &failingCacheLoadStore{
+		Store:              store,
+		cacheLoadAttempted: make(chan struct{}),
+		populateErr:        populateErr,
+	}
+
+	failedGraph, err := NewChannelGraph(failingStore)
+	require.NoError(t, err)
+	require.NoError(t, failedGraph.Start())
+	t.Cleanup(func() {
+		require.NoError(t, failedGraph.Stop())
+	})
+
+	<-failingStore.cacheLoadAttempted
+	err = wait.Predicate(func() bool {
+		return failedGraph.GraphCacheStatus() == GraphCacheStatusFailed
+	}, wait.DefaultTimeout)
+	require.NoError(t, err)
 }
 
 // TestKVCacheableIteratorsRespectCancellation asserts that KV-backed cache

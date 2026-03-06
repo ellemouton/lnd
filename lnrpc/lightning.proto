@@ -2058,6 +2058,13 @@ message PeerEvent {
 
 message GetInfoRequest {
 }
+enum GraphCacheStatus {
+    GRAPH_CACHE_STATUS_DISABLED = 0;
+    GRAPH_CACHE_STATUS_LOADING = 1;
+    GRAPH_CACHE_STATUS_LOADED = 2;
+    GRAPH_CACHE_STATUS_FAILED = 3;
+}
+
 message GetInfoResponse {
     // The version of the LND software that the node is running.
     string version = 14;
@@ -2136,6 +2143,9 @@ message GetInfoResponse {
     // Whether the wallet is fully synced to the best chain. This indicates the
     // wallet's internal sync state with the backing chain source.
     bool wallet_synced = 23;
+
+    // The current status of the in-memory graph cache.
+    GraphCacheStatus graph_cache_status = 24;
 }
 
 message GetDebugInfoRequest {
