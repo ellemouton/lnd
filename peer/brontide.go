@@ -270,6 +270,10 @@ type Config struct {
 	// gossiper and process remote channel announcements.
 	AuthGossiper *discovery.AuthenticatedGossiper
 
+	// NoGossipSync indicates that gossip syncing has been disabled. When
+	// set, we will not initiate gossip sync with our peers.
+	NoGossipSync bool
+
 	// ChanStatusMgr is used to set or un-set the disabled bit in channel
 	// updates.
 	ChanStatusMgr *netann.ChanStatusManager
@@ -995,6 +999,13 @@ func (p *Brontide) Start() error {
 // initGossipSync initializes either a gossip syncer or an initial routing
 // dump, depending on the negotiated synchronization method.
 func (p *Brontide) initGossipSync() {
+	// If gossip syncing has been disabled, we don't need to initialize a
+	// gossip syncer.
+	if p.cfg.NoGossipSync {
+		p.log.Info("Gossip syncing disabled, skipping init")
+		return
+	}
+
 	// If the remote peer knows of the new gossip queries feature, then
 	// we'll create a new gossipSyncer in the AuthenticatedGossiper for it.
 	if p.remoteFeatures.HasFeature(lnwire.GossipQueriesOptional) {
