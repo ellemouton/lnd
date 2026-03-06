@@ -852,12 +852,6 @@ func fundChannel(t *testing.T, alice, bob *testNode, localFundingAmt,
 		Err:             errChan,
 	}
 
-	// If this is a taproot channel, then we want to force it to be a
-	// private channel, as that's the only channel type supported for now.
-	if isTaprootChanType(chanType) {
-		initReq.Private = true
-	}
-
 	alice.fundingMgr.InitFundingWorkflow(initReq)
 
 	// Alice should have sent the OpenChannel message to Bob.
@@ -1417,6 +1411,38 @@ func assertNodeAnnSent(t *testing.T, alice, bob *testNode) {
 	}
 }
 
+// drainChannelAnnouncements reads two messages (expected to be a
+// ChannelAnnouncement + ChannelUpdate pair) from each node's announceChan
+// without asserting their types. Used to consume re-announcements that occur
+// at 6-conf for non-zero-conf scid-alias channels.
+func drainChannelAnnouncements(t *testing.T, alice, bob *testNode) {
+	t.Helper()
+
+	for _, node := range []*testNode{alice, bob} {
+		for i := 0; i < 2; i++ {
+			_, err := lnutils.RecvOrTimeout(
+				node.announceChan, time.Second*5,
+			)
+			require.NoError(t, err, "timed out draining channel "+
+				"announcements")
+		}
+	}
+}
+
+// assertNodeAnnBroadcast asserts that each node broadcasts exactly one
+// NodeAnnouncement1 via SendAnnouncement (i.e. to the gossiper).
+func assertNodeAnnBroadcast(t *testing.T, alice, bob *testNode) {
+	t.Helper()
+
+	for j, node := range []*testNode{alice, bob} {
+		ann, err := lnutils.RecvOrTimeout(
+			node.announceChan, time.Second*5,
+		)
+		require.NoError(t, err, "node %d did not broadcast announcement", j)
+		assertType[*lnwire.NodeAnnouncement1](t, *ann)
+	}
+}
+
 func waitForOpenUpdate(t *testing.T, updateChan chan *lnrpc.OpenStatusUpdate) {
 	var openUpdate *lnrpc.OpenStatusUpdate
 	select {
@@ -1632,6 +1658,7 @@ func testNormalWorkflow(t *testing.T, chanType *lnwire.ChannelType) {
 			lnwire.StaticRemoteKeyOptional,
 			lnwire.AnchorsZeroFeeHtlcTxOptional,
 			lnwire.SimpleTaprootChannelsOptionalStaging,
+			lnwire.TaprootGossipOptionalStaging,
 		}
 		alice.localFeatures = featureBits
 		alice.remoteFeatures = featureBits
@@ -1719,18 +1746,14 @@ func testNormalWorkflow(t *testing.T, chanType *lnwire.ChannelType) {
 		Tx: fundingTx,
 	}
 
-	switch {
-	// For taproot channels, we expect them to only send a node
-	// announcement message at this point. These channels aren't advertised
-	// so we don't expect the other messages.
-	case isTaprootChanType(chanType):
-		assertNodeAnnSent(t, alice, bob)
-
-	// For regular channels, we'll make sure the fundingManagers exchange
-	// announcement signatures.
-	case chanType == nil:
-		fallthrough
-	default:
+	// For taproot channels the chanProof (MuSig2 nonce exchange) is not
+	// yet implemented. The scid-alias feature also causes a
+	// re-announcement of the channel at 6-conf (for non-zero-conf
+	// channels), followed by a node announcement broadcast.
+	if isTaprootChanType(chanType) {
+		drainChannelAnnouncements(t, alice, bob)
+		assertNodeAnnBroadcast(t, alice, bob)
+	} else {
 		assertAnnouncementSignatures(t, alice, bob)
 	}
 
@@ -4655,6 +4678,7 @@ func testZeroConf(t *testing.T, chanType *lnwire.ChannelType) {
 		lnwire.StaticRemoteKeyOptional,
 		lnwire.AnchorsZeroFeeHtlcTxOptional,
 		lnwire.SimpleTaprootChannelsOptionalStaging,
+		lnwire.TaprootGossipOptionalStaging,
 	}
 	alice.localFeatures = featureBits
 	alice.remoteFeatures = featureBits
@@ -4775,12 +4799,9 @@ func testZeroConf(t *testing.T, chanType *lnwire.ChannelType) {
 		t.Fatalf("did not call ReportShortChanID in time")
 	}
 
-	// For taproot channels, we don't expect them to be announced atm.
-	if !isTaprootChanType(chanType) {
-		assertChannelAnnouncements(
-			t, alice, bob, fundingAmt, nil, nil, nil, nil,
-		)
-	}
+	assertChannelAnnouncements(
+		t, alice, bob, fundingAmt, nil, nil, nil, nil,
+	)
 
 	// Send along the 6-confirmation channel so that announcement sigs can
 	// be exchanged.
@@ -4791,18 +4812,16 @@ func testZeroConf(t *testing.T, chanType *lnwire.ChannelType) {
 		Tx: fundingTx,
 	}
 
-	switch {
-	// For taproot channels, we expect them to only send a node
-	// announcement message at this point. These channels aren't advertised
-	// so we don't expect the other messages.
-	case isTaprootChanType(chanType):
-		assertNodeAnnSent(t, alice, bob)
-
-	// For regular channels, we'll make sure the fundingManagers exchange
-	// announcement signatures.
-	case chanType == nil:
-		fallthrough
-	default:
+	// For taproot channels the chanProof (MuSig2 nonce exchange) is not
+	// yet implemented. However the scid-alias feature causes a
+	// re-announcement of the channel at 6-conf, followed by a node
+	// announcement broadcast.
+	// For taproot channels the chanProof (MuSig2 nonce exchange) is not
+	// yet implemented, so only a node announcement is broadcast. Zero-conf
+	// taproot channels skip the scid-alias re-announce at 6-conf.
+	if isTaprootChanType(chanType) {
+		assertNodeAnnBroadcast(t, alice, bob)
+	} else {
 		assertAnnouncementSignatures(t, alice, bob)
 	}
 
