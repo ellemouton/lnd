@@ -14,6 +14,21 @@ var (
 	announcementNoncesBucket = []byte("announcement-nonces")
 )
 
+// AnnouncementNonceStore is an interface for persisting and retrieving
+// announcement nonces used for ChannelAnnouncement2 MuSig2 signing.
+type AnnouncementNonceStore interface {
+	SaveAnnouncementNonces(chanID lnwire.ChannelID,
+		nonces *AnnouncementNonces) error
+
+	GetAllAnnouncementNonces() (map[lnwire.ChannelID]AnnouncementNonces,
+		error)
+
+	DeleteAnnouncementNonces(chanID lnwire.ChannelID) error
+
+	GetAnnouncementNonces(chanID lnwire.ChannelID) (*AnnouncementNonces,
+		error)
+}
+
 // AnnouncementNonces holds the nonces used during the creating of a
 // ChannelAnnouncement2.
 type AnnouncementNonces struct {

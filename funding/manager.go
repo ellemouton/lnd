@@ -406,6 +406,10 @@ type Config struct {
 		doubleHash bool, taprootTweak []byte,
 		tag []byte) (*schnorr.Signature, error)
 
+	// MuSig2Signer is used to create MuSig2 sessions and produce partial
+	// signatures for taproot channel announcements.
+	MuSig2Signer input.MuSig2Signer
+
 	// BestBlockView gives access to the current best block information,
 	// which is used to timestamp v2 channel announcements.
 	BestBlockView chainntnfs.BestBlockView
@@ -641,6 +645,8 @@ type Manager struct {
 	// TODO(roasbeef): replace w/ generic concurrent map
 	pendingMusigNonces map[lnwire.ChannelID]*musig2.Nonces
 
+	nonceMgr *nonceManager
+
 	// activeReservations is a map which houses the state of all pending
 	// funding workflows.
 	activeReservations map[serializedPubKey]pendingChannels
@@ -735,7 +741,8 @@ func NewFundingManager(cfg Config) (*Manager, error) {
 		pendingMusigNonces: make(
 			map[lnwire.ChannelID]*musig2.Nonces,
 		),
-		quit: make(chan struct{}),
+		nonceMgr: newNonceManager(cfg.ChannelDB, cfg.IDKey),
+		quit:     make(chan struct{}),
 	}, nil
 }
 
@@ -751,6 +758,10 @@ func (f *Manager) Start() error {
 }
 
 func (f *Manager) start() error {
+	if err := f.nonceMgr.start(); err != nil {
+		return err
+	}
+
 	// Upon restart, the Funding Manager will check the database to load any
 	// channels that were  waiting for their funding transactions to be
 	// confirmed on the blockchain at the time when the daemon last went
@@ -1281,6 +1292,13 @@ func (f *Manager) stateStep(channel *channeldb.OpenChannel,
 		if err != nil {
 			return fmt.Errorf("error sending channel "+
 				"announcement: %v", err)
+		}
+
+		chanID := lnwire.NewChanIDFromOutPoint(channel.FundingOutpoint)
+		err = f.nonceMgr.completed(chanID)
+		if err != nil {
+			log.Errorf("could not delete announcement sigs for "+
+				"chanID: %x", chanID)
 		}
 
 		// We delete the channel opening state from our internal
@@ -3516,11 +3534,12 @@ func (f *Manager) sendChannelReady(completeChan *channeldb.OpenChannel,
 	}
 	channelReadyMsg := lnwire.NewChannelReady(chanID, nextRevocation)
 
+	public := completeChan.ChannelFlags&lnwire.FFAnnounceChannel != 0
+
 	// If this is a taproot channel, then we also need to send along our
 	// set of musig2 nonces as well.
 	if completeChan.ChanType.IsTaproot() {
-		log.Infof("ChanID(%v): generating musig2 nonces...",
-			chanID)
+		log.Infof("ChanID(%v): generating musig2 nonces...", chanID)
 
 		f.nonceMtx.Lock()
 		localNonce, ok := f.pendingMusigNonces[chanID]
@@ -3546,6 +3565,32 @@ func (f *Manager) sendChannelReady(completeChan *channeldb.OpenChannel,
 		channelReadyMsg.NextLocalNonce = lnwire.SomeMusig2Nonce(
 			localNonce.PubNonce,
 		)
+
+		if public {
+			btcNonce, nodeNonce, err := f.nonceMgr.getNoncesToSend(
+				chanID, completeChan.RevocationProducer,
+				completeChan.LocalChanCfg.MultiSigKey.PubKey,
+			)
+			if err != nil {
+				return err
+			}
+
+			annNodeNonce := tlv.ZeroRecordT[
+				tlv.TlvType0, lnwire.Musig2Nonce,
+			]()
+			annNodeNonce.Val = nodeNonce.PubNonce
+			channelReadyMsg.AnnouncementNodeNonce = tlv.SomeRecordT(
+				annNodeNonce,
+			)
+
+			annBtcNonce := tlv.ZeroRecordT[
+				tlv.TlvType2, lnwire.Musig2Nonce,
+			]()
+			annBtcNonce.Val = btcNonce.PubNonce
+			channelReadyMsg.AnnouncementBitcoinNonce = tlv.SomeRecordT( //nolint:lll
+				annBtcNonce,
+			)
+		}
 	}
 
 	// If the channel negotiated the option-scid-alias feature bit, we'll
@@ -3677,6 +3722,14 @@ func (f *Manager) receivedChannelReady(node *btcec.PublicKey,
 		return false, nil
 	}
 
+	isPublic := channel.ChannelFlags&lnwire.FFAnnounceChannel != 0
+	if channel.ChanType.IsTaproot() && isPublic {
+		_, _, haveNonces := f.nonceMgr.getReceivedNonces(chanID)
+		if !haveNonces {
+			return false, nil
+		}
+	}
+
 	// Finally, the barrier signal is removed once we finish
 	// `handleChannelReady`. If we can still find the signal, we haven't
 	// finished processing it yet.
@@ -3736,7 +3789,7 @@ func (f *Manager) addToGraph(completeChan *channeldb.OpenChannel,
 		f.cfg.IDKey, completeChan.IdentityPub,
 		&completeChan.LocalChanCfg.MultiSigKey,
 		completeChan.RemoteChanCfg.MultiSigKey.PubKey, *shortChanID,
-		chanID, fwdMinHTLC, fwdMaxHTLC, ourPolicy, completeChan,
+		chanID, fwdMinHTLC, fwdMaxHTLC, ourPolicy, completeChan, false,
 	)
 	if err != nil {
 		return fmt.Errorf("error generating channel "+
@@ -3929,7 +3982,8 @@ func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
 			f.cfg.IDKey, completeChan.IdentityPub,
 			&completeChan.LocalChanCfg.MultiSigKey,
 			completeChan.RemoteChanCfg.MultiSigKey.PubKey,
-			*shortChanID, chanID, completeChan,
+			*shortChanID, chanID, completeChan.ChanType,
+			completeChan,
 		)
 		if err != nil {
 			return fmt.Errorf("channel announcement failed: %w",
@@ -4148,14 +4202,32 @@ func (f *Manager) handleChannelReady(peer lnpeer.Peer, //nolint:funlen
 		return
 	}
 
+	public := channel.ChannelFlags&lnwire.FFAnnounceChannel != 0
+
 	// If this is a taproot channel, then we can generate the set of nonces
 	// the remote party needs to send the next remote commitment here.
-	var firstVerNonce *musig2.Nonces
+	var (
+		firstVerNonce *musig2.Nonces
+		btcNonce      *musig2.Nonces
+		nodeNonce     *musig2.Nonces
+	)
 	if channel.ChanType.IsTaproot() {
 		firstVerNonce, err = genFirstStateMusigNonce(channel)
 		if err != nil {
 			log.Error(err)
 			return
+		}
+
+		if public {
+			btcNonce, nodeNonce, err = f.nonceMgr.getNoncesToSend(
+				chanID, channel.RevocationProducer,
+				channel.LocalChanCfg.MultiSigKey.PubKey,
+			)
+			if err != nil {
+				log.Error(err)
+
+				return
+			}
 		}
 	}
 
@@ -4225,6 +4297,24 @@ func (f *Manager) handleChannelReady(peer lnpeer.Peer, //nolint:funlen
 			if firstVerNonce != nil {
 				channelReadyMsg.NextLocalNonce = lnwire.SomeMusig2Nonce( //nolint:ll
 					firstVerNonce.PubNonce,
+				)
+			}
+
+			if public && btcNonce != nil && nodeNonce != nil {
+				annNodeNonce := tlv.ZeroRecordT[
+					tlv.TlvType0, lnwire.Musig2Nonce,
+				]()
+				annNodeNonce.Val = nodeNonce.PubNonce
+				channelReadyMsg.AnnouncementNodeNonce = tlv.SomeRecordT( //nolint:lll
+					annNodeNonce,
+				)
+
+				annBtcNonce := tlv.ZeroRecordT[
+					tlv.TlvType2, lnwire.Musig2Nonce,
+				]()
+				annBtcNonce.Val = btcNonce.PubNonce
+				channelReadyMsg.AnnouncementBitcoinNonce = tlv.SomeRecordT( //nolint:lll
+					annBtcNonce,
 				)
 			}
 
@@ -4306,6 +4396,48 @@ func (f *Manager) handleChannelReady(peer lnpeer.Peer, //nolint:funlen
 			f.sendWarning(peer, cid, err)
 
 			return
+		}
+
+		if public {
+			if msg.AnnouncementBitcoinNonce.IsNone() ||
+				msg.AnnouncementNodeNonce.IsNone() {
+
+				log.Errorf("remote announcement nonces are nil")
+
+				return
+			}
+
+			var (
+				annBtcNonce  lnwire.Musig2Nonce
+				annNodeNonce lnwire.Musig2Nonce
+			)
+
+			msg.AnnouncementNodeNonce.WhenSome(
+				func(nonce tlv.RecordT[tlv.TlvType0,
+					lnwire.Musig2Nonce]) {
+
+					annNodeNonce = nonce.Val
+				},
+			)
+
+			msg.AnnouncementBitcoinNonce.WhenSome(
+				func(nonce tlv.RecordT[tlv.TlvType2,
+					lnwire.Musig2Nonce]) {
+
+					annBtcNonce = nonce.Val
+				},
+			)
+
+			err = f.nonceMgr.receivedNonces(
+				chanID, annNodeNonce, annBtcNonce,
+				channel.RevocationProducer,
+				channel.LocalChanCfg.MultiSigKey.PubKey,
+			)
+			if err != nil {
+				log.Errorf("%v", err)
+
+				return
+			}
 		}
 	}
 
@@ -4488,7 +4620,8 @@ func (f *Manager) ensureInitialForwardingPolicy(chanID lnwire.ChannelID,
 type chanAnnouncement struct {
 	chanAnn       lnwire.ChannelAnnouncement
 	chanUpdateAnn lnwire.ChannelUpdate
-	chanProof     *lnwire.AnnounceSignatures1
+	chanProof     lnwire.AnnounceSignatures
+	opts          []discovery.OptionalMsgField
 }
 
 // newChanAnnouncement creates the authenticated channel announcement messages
@@ -4504,7 +4637,8 @@ func (f *Manager) newChanAnnouncement(localPubKey,
 	remoteFundingKey *btcec.PublicKey, shortChanID lnwire.ShortChannelID,
 	chanID lnwire.ChannelID, fwdMinHTLC, fwdMaxHTLC lnwire.MilliSatoshi,
 	ourPolicy *models.ChannelEdgePolicy,
-	channel *channeldb.OpenChannel) (*chanAnnouncement, error) {
+	channel *channeldb.OpenChannel, withProof bool) (*chanAnnouncement,
+	error) {
 
 	// Taproot channels use v2 announcement messages when the graph backend
 	// supports gossip v2 (i.e. native SQL). Fall through to the v1 path
@@ -4513,7 +4647,7 @@ func (f *Manager) newChanAnnouncement(localPubKey,
 		return f.newTaprootChanAnnouncement(
 			localPubKey, remotePubKey, localFundingKey,
 			remoteFundingKey, shortChanID, chanID, fwdMinHTLC,
-			fwdMaxHTLC, ourPolicy, channel,
+			fwdMaxHTLC, ourPolicy, channel, withProof,
 		)
 	}
 
@@ -4724,7 +4858,8 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 	remoteFundingKey *btcec.PublicKey, shortChanID lnwire.ShortChannelID,
 	chanID lnwire.ChannelID, fwdMinHTLC, fwdMaxHTLC lnwire.MilliSatoshi,
 	ourPolicy *models.ChannelEdgePolicy,
-	channel *channeldb.OpenChannel) (*chanAnnouncement, error) {
+	channel *channeldb.OpenChannel, withProof bool) (*chanAnnouncement,
+	error) {
 
 	chainHash := *f.cfg.Wallet.Cfg.NetParams.GenesisHash
 
@@ -4859,9 +4994,101 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 			"update announcement signature: %w", err)
 	}
 
+	if !withProof {
+		return &chanAnnouncement{
+			chanAnn:       &chanAnn,
+			chanUpdateAnn: &chanUpdateAnn,
+		}, nil
+	}
+
+	chanAnnMsg, err := netann.ChanAnn2DigestToSign(&chanAnn)
+	if err != nil {
+		return nil, err
+	}
+
+	pubKeys := []*btcec.PublicKey{
+		localPubKey,
+		remotePubKey,
+		localFundingKey.PubKey,
+		remoteFundingKey,
+	}
+
+	rBtc, rNode, haveReceivedNonces := f.nonceMgr.getReceivedNonces(chanID)
+	if !haveReceivedNonces {
+		return nil, fmt.Errorf("havent received all the necessary " +
+			"nonces yet")
+	}
+
+	sBtc, sNode, err := f.nonceMgr.getNoncesToSend(
+		chanID, channel.RevocationProducer,
+		channel.LocalChanCfg.MultiSigKey.PubKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	musigBtcSess, err := f.cfg.MuSig2Signer.MuSig2CreateSession(
+		input.MuSig2Version100RC2, localFundingKey.KeyLocator,
+		pubKeys, &input.MuSig2Tweaks{},
+		[][66]byte{sNode.PubNonce, rBtc, rNode}, sBtc,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	bitcoinPartialSig, err := f.cfg.MuSig2Signer.MuSig2Sign(
+		musigBtcSess.SessionID, *chanAnnMsg, true,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	musigNodeSess, err := f.cfg.MuSig2Signer.MuSig2CreateSession(
+		input.MuSig2Version100RC2, f.cfg.IDKeyLoc, pubKeys,
+		&input.MuSig2Tweaks{},
+		[][66]byte{sBtc.PubNonce, rBtc, rNode}, sNode,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	nodePartialSig, err := f.cfg.MuSig2Signer.MuSig2Sign(
+		musigNodeSess.SessionID, *chanAnnMsg, true,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to generate node "+
+			"partial signature for channel announcement: %v", err)
+	}
+
+	// Combine the two partial signatures.
+	ps := musig2.NewPartialSignature(
+		bitcoinPartialSig.S.Add(nodePartialSig.S), bitcoinPartialSig.R,
+	)
+
+	// Finally, we'll generate the announcement proof which we'll use to
+	// provide the other side with the necessary signatures required to
+	// allow them to reconstruct the full channel announcement.
+	proof := &lnwire.AnnounceSignatures2{
+		ChannelID:      tlv.NewRecordT[tlv.TlvType0](chanID),
+		ShortChannelID: tlv.NewRecordT[tlv.TlvType2](shortChanID),
+		PartialSignature: tlv.NewRecordT[tlv.TlvType4](
+			lnwire.NewPartialSig(*ps.S),
+		),
+	}
+
+	fundingScript, err := MakeFundingScript(channel)
+	if err != nil {
+		return nil, err
+	}
+
 	return &chanAnnouncement{
 		chanAnn:       &chanAnn,
 		chanUpdateAnn: &chanUpdateAnn,
+		chanProof:     proof,
+		opts: []discovery.OptionalMsgField{
+			discovery.AggregateNonce(ps.R),
+			discovery.FundingPKScript(fundingScript),
+		},
 	}, nil
 }
 
@@ -4875,7 +5102,8 @@ func (f *Manager) newTaprootChanAnnouncement(localPubKey,
 func (f *Manager) announceChannel(localIDKey, remoteIDKey *btcec.PublicKey,
 	localFundingKey *keychain.KeyDescriptor,
 	remoteFundingKey *btcec.PublicKey, shortChanID lnwire.ShortChannelID,
-	chanID lnwire.ChannelID, channel *channeldb.OpenChannel) error {
+	chanID lnwire.ChannelID, chanType channeldb.ChannelType,
+	channel *channeldb.OpenChannel) error {
 
 	// First, we'll create the batch of announcements to be sent upon
 	// initial channel creation. This includes the channel announcement
@@ -4886,7 +5114,7 @@ func (f *Manager) announceChannel(localIDKey, remoteIDKey *btcec.PublicKey,
 	// only use the channel announcement message from the returned struct.
 	ann, err := f.newChanAnnouncement(
 		localIDKey, remoteIDKey, localFundingKey, remoteFundingKey,
-		shortChanID, chanID, 0, 0, nil, channel,
+		shortChanID, chanID, 0, 0, nil, channel, true,
 	)
 	if err != nil {
 		log.Errorf("can't generate channel announcement: %v", err)
@@ -4897,11 +5125,8 @@ func (f *Manager) announceChannel(localIDKey, remoteIDKey *btcec.PublicKey,
 	// because addToGraph previously sent the ChannelAnnouncement and
 	// the ChannelUpdate announcement messages. The channel proof and node
 	// announcements are broadcast to the greater network.
-	//
-	// For taproot channels the chanProof requires MuSig2 nonce exchange
-	// during channel_ready, which is not yet implemented. Skip it if nil.
 	if ann.chanProof != nil {
-		errChan := f.cfg.SendAnnouncement(ann.chanProof)
+		errChan := f.cfg.SendAnnouncement(ann.chanProof, ann.opts...)
 		select {
 		case err := <-errChan:
 			if err != nil {

@@ -112,10 +112,12 @@ var (
 // can provide that serve useful when processing a specific network
 // announcement.
 type optionalMsgFields struct {
-	capacity      *btcutil.Amount
-	channelPoint  *wire.OutPoint
-	remoteAlias   *lnwire.ShortChannelID
-	tapscriptRoot fn.Option[chainhash.Hash]
+	capacity        *btcutil.Amount
+	channelPoint    *wire.OutPoint
+	remoteAlias     *lnwire.ShortChannelID
+	tapscriptRoot   fn.Option[chainhash.Hash]
+	fundingPkScript fn.Option[[]byte]
+	aggNonce        *btcec.PublicKey
 }
 
 // apply applies the optional fields within the functional options.
@@ -163,6 +165,23 @@ func TapscriptRoot(root fn.Option[chainhash.Hash]) OptionalMsgField {
 func RemoteAlias(alias *lnwire.ShortChannelID) OptionalMsgField {
 	return func(f *optionalMsgFields) {
 		f.remoteAlias = alias
+	}
+}
+
+// FundingPKScript is an optional field that lets the gossiper know the funding
+// output's pkscript. This is used for ChannelAnnouncement2 verification.
+func FundingPKScript(script []byte) OptionalMsgField {
+	return func(f *optionalMsgFields) {
+		f.fundingPkScript = fn.Some(script)
+	}
+}
+
+// AggregateNonce is an optional field that lets the gossiper know of the
+// aggregate nonce used in the construction of the channel announcement
+// signature.
+func AggregateNonce(nonce *btcec.PublicKey) OptionalMsgField {
+	return func(f *optionalMsgFields) {
+		f.aggNonce = nonce
 	}
 }
 
