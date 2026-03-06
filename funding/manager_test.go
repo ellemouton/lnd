@@ -475,6 +475,17 @@ func createTestFundingManager(t *testing.T, privKey *btcec.PrivateKey,
 
 	chainedAcceptor := acpt.NewChainedAcceptor()
 
+	muSig2Signer := input.NewMusigSessionManager(
+		func(desc *keychain.KeyDescriptor) (*btcec.PrivateKey, error) {
+			// For the node identity key, return this node's own
+			// private key so that the nonce matches.
+			if desc.KeyLocator == testKeyLoc {
+				return privKey, nil
+			}
+			return keyRing.DerivePrivKey(*desc)
+		},
+	)
+
 	fundingCfg := Config{
 		IDKey:        privKey.PubKey(),
 		IDKeyLoc:     testKeyLoc,
@@ -495,6 +506,7 @@ func createTestFundingManager(t *testing.T, privKey *btcec.PrivateKey,
 				loc, msg, doubleHash, taprootTweak, tag,
 			)
 		},
+		MuSig2Signer: muSig2Signer,
 		BestBlockView: &mockBestBlockView{
 			height: fundingBroadcastHeight,
 		},
@@ -670,6 +682,7 @@ func recreateAliceFundingManager(t *testing.T, alice *testNode) {
 		ChannelDB:          oldCfg.ChannelDB,
 		FeeEstimator:       oldCfg.FeeEstimator,
 		SignMessageSchnorr: oldCfg.SignMessageSchnorr,
+		MuSig2Signer:       oldCfg.MuSig2Signer,
 		BestBlockView:      oldCfg.BestBlockView,
 		GraphSupportsV2:    oldCfg.GraphSupportsV2,
 		SignMessage: func(_ keychain.KeyLocator,
@@ -1713,6 +1726,16 @@ func testNormalWorkflow(t *testing.T, chanType *lnwire.ChannelType) {
 	if isTaprootChanType(chanType) {
 		require.NotNil(t, channelReadyAlice.NextLocalNonce)
 		require.NotNil(t, channelReadyBob.NextLocalNonce)
+		// Also verify that announcement nonces are present for public
+		// taproot channels.
+		require.True(t, channelReadyAlice.AnnouncementNodeNonce.IsSome(),
+			"alice's channel_ready should have ann node nonce")
+		require.True(t, channelReadyAlice.AnnouncementBitcoinNonce.IsSome(),
+			"alice's channel_ready should have ann btc nonce")
+		require.True(t, channelReadyBob.AnnouncementNodeNonce.IsSome(),
+			"bob's channel_ready should have ann node nonce")
+		require.True(t, channelReadyBob.AnnouncementBitcoinNonce.IsSome(),
+			"bob's channel_ready should have ann btc nonce")
 	}
 
 	// Check that the state machine is updated accordingly
@@ -1746,12 +1769,20 @@ func testNormalWorkflow(t *testing.T, chanType *lnwire.ChannelType) {
 		Tx: fundingTx,
 	}
 
-	// For taproot channels the chanProof (MuSig2 nonce exchange) is not
-	// yet implemented. The scid-alias feature also causes a
-	// re-announcement of the channel at 6-conf (for non-zero-conf
-	// channels), followed by a node announcement broadcast.
+	// For taproot channels, the scid-alias feature causes a
+	// re-announcement (ChannelAnnouncement2 + ChannelUpdate2) at 6-conf,
+	// followed by the MuSig2 partial-signature proof (AnnounceSignatures2)
+	// and a node announcement broadcast.
 	if isTaprootChanType(chanType) {
 		drainChannelAnnouncements(t, alice, bob)
+		for _, node := range []*testNode{alice, bob} {
+			ann, err := lnutils.RecvOrTimeout(
+				node.announceChan, time.Second*5,
+			)
+			require.NoError(t, err, "timed out waiting for "+
+				"AnnounceSignatures2")
+			assertType[*lnwire.AnnounceSignatures2](t, *ann)
+		}
 		assertNodeAnnBroadcast(t, alice, bob)
 	} else {
 		assertAnnouncementSignatures(t, alice, bob)
@@ -4812,14 +4843,19 @@ func testZeroConf(t *testing.T, chanType *lnwire.ChannelType) {
 		Tx: fundingTx,
 	}
 
-	// For taproot channels the chanProof (MuSig2 nonce exchange) is not
-	// yet implemented. However the scid-alias feature causes a
-	// re-announcement of the channel at 6-conf, followed by a node
-	// announcement broadcast.
-	// For taproot channels the chanProof (MuSig2 nonce exchange) is not
-	// yet implemented, so only a node announcement is broadcast. Zero-conf
-	// taproot channels skip the scid-alias re-announce at 6-conf.
+	// For taproot channels, the MuSig2 partial-signature proof
+	// (AnnounceSignatures2) is sent at 6-conf, followed by a node
+	// announcement broadcast. Zero-conf taproot channels skip the
+	// scid-alias re-announce at 6-conf, so only two messages are expected.
 	if isTaprootChanType(chanType) {
+		for _, node := range []*testNode{alice, bob} {
+			ann, err := lnutils.RecvOrTimeout(
+				node.announceChan, time.Second*5,
+			)
+			require.NoError(t, err, "timed out waiting for "+
+				"AnnounceSignatures2")
+			assertType[*lnwire.AnnounceSignatures2](t, *ann)
+		}
 		assertNodeAnnBroadcast(t, alice, bob)
 	} else {
 		assertAnnouncementSignatures(t, alice, bob)
