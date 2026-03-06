@@ -2,6 +2,8 @@ package lnwire
 
 import (
 	"fmt"
+	"image/color"
+	"net"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 )
@@ -151,6 +153,18 @@ type NodeAnnouncement interface {
 
 	// NodeFeatures returns the set of features supported by the node.
 	NodeFeatures() *FeatureVector
+
+	// NodeAddrs returns the addresses advertised by the node.
+	NodeAddrs() []net.Addr
+
+	// SetAddrs sets the addresses advertised by the node.
+	SetAddrs(addrs []net.Addr) error
+
+	// NodeAlias returns the human-readable alias of the node.
+	NodeAlias() string
+
+	// NodeColor returns the RGB colour of the node.
+	NodeColor() color.RGBA
 
 	// TimestampDesc returns a human-readable description of the
 	// timestamp of the announcement.
