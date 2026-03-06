@@ -1068,7 +1068,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		NotifyWhenOnline:      s.NotifyWhenOnline,
 		NotifyWhenOffline:     s.NotifyWhenOffline,
 		FetchSelfAnnouncement: s.getNodeAnnouncement,
-		UpdateSelfAnnouncement: func() (lnwire.NodeAnnouncement1,
+		UpdateSelfAnnouncement: func() (lnwire.NodeAnnouncement,
 			error) {
 
 			return s.genNodeAnnouncement(nil)
@@ -1484,7 +1484,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		SignMessageSchnorr: cc.KeyRing.SignMessageSchnorr,
 		BestBlockView:      s.cc.BestBlockTracker,
 		GraphSupportsV2:    cfg.DB.UseNativeSQL,
-		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement1,
+		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement,
 			error) {
 
 			return s.genNodeAnnouncement(nil)
@@ -2885,7 +2885,7 @@ out:
 			// the previous IP is no longer valid.
 			currentNodeAnn := s.getNodeAnnouncement()
 
-			for _, addr := range currentNodeAnn.Addresses {
+			for _, addr := range currentNodeAnn.NodeAddrs() {
 				host, _, err := net.SplitHostPort(addr.String())
 				if err != nil {
 					srvrLog.Debugf("Unable to determine "+
@@ -2914,7 +2914,7 @@ out:
 				continue
 			}
 
-			err = s.BroadcastMessage(nil, &newNodeAnn)
+			err = s.BroadcastMessage(nil, newNodeAnn)
 			if err != nil {
 				srvrLog.Debugf("Unable to broadcast new node "+
 					"announcement to peers: %v", err)
@@ -3321,14 +3321,19 @@ func (s *server) createNewHiddenService(ctx context.Context) error {
 
 	// Finally, we'll update the on-disk version of our announcement so it
 	// will eventually propagate to nodes in the network.
+	ann1, ok := newNodeAnn.(*lnwire.NodeAnnouncement1)
+	if !ok {
+		return fmt.Errorf("unexpected node announcement type: %T",
+			newNodeAnn)
+	}
 	selfNode := models.NewV1Node(
 		route.NewVertex(s.identityECDH.PubKey()), &models.NodeV1Fields{
-			Addresses:    newNodeAnn.Addresses,
-			Features:     newNodeAnn.Features,
-			AuthSigBytes: newNodeAnn.Signature.ToSignatureBytes(),
-			Color:        newNodeAnn.RGBColor,
-			Alias:        newNodeAnn.Alias.String(),
-			LastUpdate:   time.Unix(int64(newNodeAnn.Timestamp), 0),
+			Addresses:    ann1.Addresses,
+			Features:     ann1.Features,
+			AuthSigBytes: ann1.Signature.ToSignatureBytes(),
+			Color:        ann1.RGBColor,
+			Alias:        ann1.Alias.String(),
+			LastUpdate:   time.Unix(int64(ann1.Timestamp), 0),
 		},
 	)
 
@@ -3360,18 +3365,18 @@ func (s *server) findChannel(node *btcec.PublicKey, chanID lnwire.ChannelID) (
 }
 
 // getNodeAnnouncement fetches the current, fully signed node announcement.
-func (s *server) getNodeAnnouncement() lnwire.NodeAnnouncement1 {
+func (s *server) getNodeAnnouncement() lnwire.NodeAnnouncement {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return *s.currentNodeAnn
+	return s.currentNodeAnn
 }
 
 // genNodeAnnouncement generates and returns the current fully signed node
 // announcement. The time stamp of the announcement will be updated in order
 // to ensure it propagates through the network.
 func (s *server) genNodeAnnouncement(features *lnwire.RawFeatureVector,
-	modifiers ...netann.NodeAnnModifier) (lnwire.NodeAnnouncement1, error) {
+	modifiers ...netann.NodeAnnModifier) (lnwire.NodeAnnouncement, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -3389,7 +3394,7 @@ func (s *server) genNodeAnnouncement(features *lnwire.RawFeatureVector,
 		}
 		err := s.featureMgr.UpdateFeatureSets(proposedFeatures)
 		if err != nil {
-			return lnwire.NodeAnnouncement1{}, err
+			return nil, err
 		}
 
 		// If we could successfully update our feature manager, add
@@ -3409,13 +3414,13 @@ func (s *server) genNodeAnnouncement(features *lnwire.RawFeatureVector,
 		s.nodeSigner, s.identityKeyLoc, &newNodeAnn, modifiers...,
 	)
 	if err != nil {
-		return lnwire.NodeAnnouncement1{}, err
+		return nil, err
 	}
 
 	// If signing succeeds, update the current announcement.
 	*s.currentNodeAnn = newNodeAnn
 
-	return *s.currentNodeAnn, nil
+	return s.currentNodeAnn, nil
 }
 
 // updateAndBroadcastSelfNode generates a new node announcement
@@ -3440,12 +3445,18 @@ func (s *server) updateAndBroadcastSelfNode(ctx context.Context,
 		return fmt.Errorf("unable to get current source node: %w", err)
 	}
 
-	selfNode.LastUpdate = time.Unix(int64(newNodeAnn.Timestamp), 0)
-	selfNode.Addresses = newNodeAnn.Addresses
-	selfNode.Alias = fn.Some(newNodeAnn.Alias.String())
+	ann1, ok := newNodeAnn.(*lnwire.NodeAnnouncement1)
+	if !ok {
+		return fmt.Errorf("unexpected node announcement type: %T",
+			newNodeAnn)
+	}
+
+	selfNode.LastUpdate = time.Unix(int64(ann1.Timestamp), 0)
+	selfNode.Addresses = ann1.Addresses
+	selfNode.Alias = fn.Some(ann1.Alias.String())
 	selfNode.Features = s.featureMgr.Get(feature.SetNodeAnn)
-	selfNode.Color = fn.Some(newNodeAnn.RGBColor)
-	selfNode.AuthSigBytes = newNodeAnn.Signature.ToSignatureBytes()
+	selfNode.Color = fn.Some(ann1.RGBColor)
+	selfNode.AuthSigBytes = ann1.Signature.ToSignatureBytes()
 
 	copy(selfNode.PubKeyBytes[:], s.identityECDH.PubKey().SerializeCompressed())
 
@@ -3454,7 +3465,7 @@ func (s *server) updateAndBroadcastSelfNode(ctx context.Context,
 	}
 
 	// Finally, propagate it to the nodes in the network.
-	err = s.BroadcastMessage(nil, &newNodeAnn)
+	err = s.BroadcastMessage(nil, newNodeAnn)
 	if err != nil {
 		rpcsLog.Debugf("Unable to broadcast new node "+
 			"announcement to peers: %v", err)
@@ -4400,7 +4411,7 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 		DisconnectPeer:          s.DisconnectPeer,
 		OnionMessageServer:      s.onionMessageServer,
 		GenNodeAnnouncement: func(...netann.NodeAnnModifier) (
-			lnwire.NodeAnnouncement1, error) {
+			lnwire.NodeAnnouncement, error) {
 
 			return s.genNodeAnnouncement(nil)
 		},

@@ -511,10 +511,10 @@ func createTestFundingManager(t *testing.T, privKey *btcec.PrivateKey,
 			}
 			return errChan
 		},
-		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement1,
+		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement,
 			error) {
 
-			return lnwire.NodeAnnouncement1{}, nil
+			return &lnwire.NodeAnnouncement1{}, nil
 		},
 		TempChanIDSeed: chanIDSeed,
 		FindChannel: func(node *btcec.PublicKey,
@@ -689,10 +689,10 @@ func recreateAliceFundingManager(t *testing.T, alice *testNode) {
 			}
 			return errChan
 		},
-		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement1,
+		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement,
 			error) {
 
-			return lnwire.NodeAnnouncement1{}, nil
+			return &lnwire.NodeAnnouncement1{}, nil
 		},
 		NotifyWhenOnline: func(peer [33]byte,
 			connectedChan chan<- lnpeer.Peer) {

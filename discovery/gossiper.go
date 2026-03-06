@@ -250,11 +250,11 @@ type Config struct {
 	// FetchSelfAnnouncement retrieves our current node announcement, for
 	// use when determining whether we should update our peers about our
 	// presence in the network.
-	FetchSelfAnnouncement func() lnwire.NodeAnnouncement1
+	FetchSelfAnnouncement func() lnwire.NodeAnnouncement
 
 	// UpdateSelfAnnouncement produces a new announcement for our node with
 	// an updated timestamp which can be broadcast to our peers.
-	UpdateSelfAnnouncement func() (lnwire.NodeAnnouncement1, error)
+	UpdateSelfAnnouncement func() (lnwire.NodeAnnouncement, error)
 
 	// ProofMatureDelta the number of confirmations which is needed before
 	// exchange the channel announcement proofs.
@@ -2012,9 +2012,12 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
 		return nil
 	}
 
-	// We'll also check that our NodeAnnouncement1 is not too old.
+	// We'll also check that our node announcement is not too old.
 	currentNodeAnn := d.cfg.FetchSelfAnnouncement()
-	timestamp := time.Unix(int64(currentNodeAnn.Timestamp), 0)
+	var timestamp time.Time
+	if ts, ok := currentNodeAnn.UpdateTimestamp().(lnwire.UnixTimestamp); ok {
+		timestamp = time.Unix(int64(ts), 0)
+	}
 	timeElapsed := now.Sub(timestamp)
 
 	// If it's been a full day since we've re-broadcasted the
@@ -2027,12 +2030,12 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
 				"announcement: %v", err)
 		}
 
-		signedUpdates = append(signedUpdates, &newNodeAnn)
+		signedUpdates = append(signedUpdates, newNodeAnn)
 		nodeAnnStr = " and our refreshed node announcement"
 
 		// Before broadcasting the refreshed node announcement, add it
 		// to our own graph.
-		if err := d.addNode(ctx, &newNodeAnn); err != nil {
+		if err := d.addNode(ctx, newNodeAnn); err != nil {
 			log.Errorf("Unable to add refreshed node announcement "+
 				"to graph: %v", err)
 		}

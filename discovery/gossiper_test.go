@@ -1107,15 +1107,15 @@ func createTestCtx(t *testing.T, startHeight uint32, isChanPeer bool) (
 			c := make(chan struct{})
 			return c
 		},
-		FetchSelfAnnouncement: func() lnwire.NodeAnnouncement1 {
-			return lnwire.NodeAnnouncement1{
+		FetchSelfAnnouncement: func() lnwire.NodeAnnouncement {
+			return &lnwire.NodeAnnouncement1{
 				Timestamp: testTimestamp,
 			}
 		},
-		UpdateSelfAnnouncement: func() (lnwire.NodeAnnouncement1,
+		UpdateSelfAnnouncement: func() (lnwire.NodeAnnouncement,
 			error) {
 
-			return lnwire.NodeAnnouncement1{
+			return &lnwire.NodeAnnouncement1{
 				Timestamp: testTimestamp,
 			}, nil
 		},
