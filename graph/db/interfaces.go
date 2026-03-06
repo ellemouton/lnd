@@ -163,21 +163,17 @@ type Store interface { //nolint:interfacebloat
 	GraphSession(ctx context.Context,
 		cb func(graph NodeTraverser) error, reset func()) error
 
-	// ForEachChannel iterates through all the channel edges stored within
-	// the graph and invokes the passed callback for each edge. The callback
-	// takes two edges as since this is a directed graph, both the in/out
-	// edges are visited. If the callback returns an error, then the
-	// transaction is aborted and the iteration stops early.
-	//
-	// NOTE: If an edge can't be found, or wasn't advertised, then a nil
-	// pointer for that particular channel edge routing policy will be
-	// passed into the callback.
-	//
-	// TODO(elle): add a cross-version iteration API and make this iterate
-	// over all versions.
-	ForEachChannel(ctx context.Context, v lnwire.GossipVersion,
+	// ForEachChannel iterates through all channel edges stored within the
+	// graph across all gossip versions, yielding each unique channel
+	// exactly once. The callback receives the edge info, both directional
+	// policies, and a versionsMask where bit 0 indicates a v1 entry exists
+	// and bit 1 indicates a v2 entry exists. When both versions are
+	// present, v2 is preferred. Nil pointers are passed for policies that
+	// haven't been advertised.
+	ForEachChannel(ctx context.Context,
 		cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
-			*models.ChannelEdgePolicy) error, reset func()) error
+			*models.ChannelEdgePolicy, uint32) error,
+		reset func()) error
 
 	// ForEachChannelCacheable iterates through all the channel edges stored
 	// within the graph and invokes the passed callback for each edge. The

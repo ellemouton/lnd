@@ -6904,30 +6904,33 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 		return nil, err
 	}
 
-	// TODO(elle): switch ForEachChannel to a cross-version graph view.
-	graph := r.server.v1Graph
-
 	// Next, for each active channel we know of within the graph, create a
 	// similar response which details both the edge information as well as
-	// the routing policies of th nodes connecting the two edges.
-	err = graph.ForEachChannel(ctx, func(edgeInfo *models.ChannelEdgeInfo,
-		c1, c2 *models.ChannelEdgePolicy) error {
+	// the routing policies of the nodes connecting the two edges. We use
+	// the cross-version graph view so channels from any gossip version are
+	// included.
+	err = r.server.graphDB.ForEachChannel(ctx,
+		func(edgeInfo *models.ChannelEdgeInfo,
+			c1, c2 *models.ChannelEdgePolicy, _ uint32) error {
 
-		// Do not include unannounced channels unless specifically
-		// requested. Unannounced channels include both private channels as
-		// well as public channels whose authentication proof were not
-		// confirmed yet, hence were not announced.
-		if !includeUnannounced && edgeInfo.AuthProof == nil {
+			// Do not include unannounced channels unless
+			// specifically requested. Unannounced channels include
+			// both private channels as well as public channels whose
+			// authentication proof were not confirmed yet, hence were
+			// not announced.
+			if !includeUnannounced && edgeInfo.AuthProof == nil {
+				return nil
+			}
+
+			edge := marshalDBEdge(
+				edgeInfo, c1, c2, req.IncludeAuthProof,
+			)
+			resp.Edges = append(resp.Edges, edge)
+
 			return nil
-		}
-
-		edge := marshalDBEdge(edgeInfo, c1, c2, req.IncludeAuthProof)
-		resp.Edges = append(resp.Edges, edge)
-
-		return nil
-	}, func() {
-		resp.Edges = nil
-	})
+		}, func() {
+			resp.Edges = nil
+		})
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
 		return nil, err
 	}

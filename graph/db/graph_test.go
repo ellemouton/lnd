@@ -6071,6 +6071,102 @@ func TestLightningNodePersistence(t *testing.T) {
 	require.Equal(t, nodeAnnBytes, b.Bytes())
 }
 
+// TestForEachChannelCrossVersion verifies that ChannelGraph.ForEachChannel
+// correctly merges channels from v1 and v2, yields each unique channel once,
+// and sets the versionsMask appropriately. When both versions have an entry for
+// the same channel, v2 is preferred.
+func TestForEachChannelCrossVersion(t *testing.T) {
+	t.Parallel()
+
+	if !isSQLDB {
+		t.Skip("cross-version channel iteration requires SQL backend")
+	}
+
+	ctx := t.Context()
+	graph := MakeTestGraph(t)
+
+	// Create two node pairs — each pair anchors one channel.
+	nodeA1 := createTestVertex(t, lnwire.GossipVersion1)
+	nodeA2 := createTestVertex(t, lnwire.GossipVersion1)
+	nodeB1 := createTestVertex(t, lnwire.GossipVersion1)
+	nodeB2 := createTestVertex(t, lnwire.GossipVersion1)
+	nodeC1 := createTestVertex(t, lnwire.GossipVersion1)
+	nodeC2 := createTestVertex(t, lnwire.GossipVersion1)
+
+	for _, n := range []*models.Node{
+		nodeA1, nodeA2, nodeB1, nodeB2, nodeC1, nodeC2,
+	} {
+		require.NoError(t, graph.AddNode(ctx, n))
+	}
+
+	// chanV1Only: a channel that only has a v1 entry (mask=1).
+	edgeV1Only, scidV1Only := createEdge(
+		lnwire.GossipVersion1, 100, 0, 0, 0, nodeA1, nodeA2,
+	)
+	require.NoError(t, graph.AddChannelEdge(ctx, edgeV1Only))
+
+	// chanV2Only: a channel that only has a v2 entry (mask=2).
+	edgeV2Only, scidV2Only := createEdge(
+		lnwire.GossipVersion2, 200, 0, 0, 1, nodeB1, nodeB2,
+	)
+	require.NoError(t, graph.AddChannelEdge(ctx, edgeV2Only))
+
+	// chanBoth: a channel present in both v1 and v2 (mask=3, v2 preferred).
+	edgeV1Both, scidBoth := createEdge(
+		lnwire.GossipVersion1, 300, 0, 0, 2, nodeC1, nodeC2,
+	)
+	// The v2 entry for the same channel reuses the same SCID.
+	edgeV2Both, _ := createEdge(
+		lnwire.GossipVersion2, 300, 0, 0, 3, nodeC1, nodeC2,
+	)
+	// Force the same channel ID so they are treated as the same channel.
+	edgeV2Both.ChannelID = edgeV1Both.ChannelID
+
+	require.NoError(t, graph.AddChannelEdge(ctx, edgeV1Both))
+	require.NoError(t, graph.AddChannelEdge(ctx, edgeV2Both))
+
+	// Collect results.
+	type result struct {
+		edge         *models.ChannelEdgeInfo
+		versionsMask uint32
+	}
+	results := make(map[uint64]result)
+
+	err := graph.ForEachChannel(ctx,
+		func(edge *models.ChannelEdgeInfo,
+			_, _ *models.ChannelEdgePolicy, mask uint32) error {
+
+			results[edge.ChannelID] = result{edge, mask}
+
+			return nil
+		}, func() {
+			results = make(map[uint64]result)
+		},
+	)
+	require.NoError(t, err)
+
+	// We expect exactly 3 unique channels.
+	require.Len(t, results, 3)
+
+	// chanV1Only: mask=1, edge should be the v1 entry.
+	r, ok := results[scidV1Only.ToUint64()]
+	require.True(t, ok, "expected v1-only channel to be present")
+	require.Equal(t, uint32(1), r.versionsMask)
+	require.Equal(t, lnwire.GossipVersion1, r.edge.Version)
+
+	// chanV2Only: mask=2, edge should be the v2 entry.
+	r, ok = results[scidV2Only.ToUint64()]
+	require.True(t, ok, "expected v2-only channel to be present")
+	require.Equal(t, uint32(2), r.versionsMask)
+	require.Equal(t, lnwire.GossipVersion2, r.edge.Version)
+
+	// chanBoth: mask=3, v2 preferred.
+	r, ok = results[scidBoth.ToUint64()]
+	require.True(t, ok, "expected both-version channel to be present")
+	require.Equal(t, uint32(3), r.versionsMask)
+	require.Equal(t, lnwire.GossipVersion2, r.edge.Version)
+}
+
 // TestForEachNodeCrossVersion verifies that ChannelGraph.ForEachNode correctly
 // merges nodes from v1 and v2, yields each unique node once, and sets the
 // versionsMask appropriately.

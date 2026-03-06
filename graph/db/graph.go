@@ -665,13 +665,15 @@ func (c *ChannelGraph) HasV1Node(ctx context.Context,
 	return c.db.HasV1Node(ctx, nodePub)
 }
 
-// ForEachChannel iterates through all channel edges stored within the graph.
+// ForEachChannel iterates through all channel edges stored within the graph
+// across all gossip versions, yielding each unique channel exactly once.
+// See Store.ForEachChannel for details on the versionsMask parameter.
 func (c *ChannelGraph) ForEachChannel(ctx context.Context,
-	v lnwire.GossipVersion, cb func(*models.ChannelEdgeInfo,
-		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error,
+	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, uint32) error,
 	reset func()) error {
 
-	return c.db.ForEachChannel(ctx, v, cb, reset)
+	return c.db.ForEachChannel(ctx, cb, reset)
 }
 
 // DisabledChannelIDs returns the channel ids of disabled channels.
@@ -1091,12 +1093,21 @@ func (c *VersionedGraph) ForEachNodeChannel(ctx context.Context,
 	return c.db.ForEachNodeChannel(ctx, c.v, nodePub, cb, reset)
 }
 
-// ForEachChannel iterates through all channel edges stored within the graph.
+// ForEachChannel iterates through all channel edges stored within the graph
+// across all gossip versions, yielding each unique channel once. See
+// Store.ForEachChannel for details on the versionsMask parameter. The mask is
+// discarded here to preserve the existing call-site signature.
 func (c *VersionedGraph) ForEachChannel(ctx context.Context,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error, reset func()) error {
 
-	return c.db.ForEachChannel(ctx, c.v, cb, reset)
+	return c.ChannelGraph.ForEachChannel(
+		ctx, func(edge *models.ChannelEdgeInfo,
+			p1, p2 *models.ChannelEdgePolicy, _ uint32) error {
+
+			return cb(edge, p1, p2)
+		}, reset,
+	)
 }
 
 // ForEachNodeCacheable iterates through all stored vertices/nodes in the graph.

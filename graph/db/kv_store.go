@@ -408,15 +408,23 @@ func (c *KVStore) AddrsForNode(ctx context.Context, v lnwire.GossipVersion,
 // NOTE: If an edge can't be found, or wasn't advertised, then a nil pointer
 // for that particular channel edge routing policy will be passed into the
 // callback.
-func (c *KVStore) ForEachChannel(_ context.Context, v lnwire.GossipVersion,
+// ForEachChannel iterates through all channel edges stored in the graph,
+// yielding each channel with versionsMask=1 (v1 only). The KV store only
+// supports gossip v1, so no cross-version merging is required.
+//
+// NOTE: part of the Store interface.
+func (c *KVStore) ForEachChannel(_ context.Context,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
-		*models.ChannelEdgePolicy) error, reset func()) error {
+		*models.ChannelEdgePolicy, uint32) error, reset func()) error {
 
-	if v != lnwire.GossipVersion1 {
-		return ErrVersionNotSupportedForKVDB
-	}
+	// The KV store only supports gossip v1, so the mask is always 1.
+	const versionsMask = uint32(1)
 
-	return forEachChannel(c.db, cb, reset)
+	return forEachChannel(c.db, func(edge *models.ChannelEdgeInfo,
+		p1, p2 *models.ChannelEdgePolicy) error {
+
+		return cb(edge, p1, p2, versionsMask)
+	}, reset)
 }
 
 // forEachChannel iterates through all the channel edges stored within the

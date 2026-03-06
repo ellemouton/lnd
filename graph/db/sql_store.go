@@ -1976,17 +1976,88 @@ func (s *SQLStore) ForEachChannelCacheable(ctx context.Context,
 // callback.
 //
 // NOTE: part of the Store interface.
+// ForEachChannel iterates through all channel edges stored within the graph
+// across all gossip versions, yielding each unique channel exactly once. Both
+// v1 and v2 channels are gathered in a single read transaction, merged by
+// channel ID, and the best entry (v2 preferred over v1) is passed to the
+// callback along with a versionsMask where bit 0 indicates a v1 entry exists
+// and bit 1 indicates a v2 entry exists.
+//
+// NOTE: part of the Store interface.
 func (s *SQLStore) ForEachChannel(ctx context.Context,
-	v lnwire.GossipVersion, cb func(*models.ChannelEdgeInfo,
-		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error,
+	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, uint32) error,
 	reset func()) error {
 
-	if !isKnownGossipVersion(v) {
-		return fmt.Errorf("unsupported gossip version: %d", v)
+	type chanEntry struct {
+		edge       *models.ChannelEdgeInfo
+		p1, p2     *models.ChannelEdgePolicy
+		versionBit uint32
 	}
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		return forEachChannelWithPolicies(ctx, db, s.cfg, v, cb)
+		merged := make(map[uint64]*chanEntry)
+
+		// Gather all v1 channels.
+		err := forEachChannelWithPolicies(
+			ctx, db, s.cfg, lnwire.GossipVersion1,
+			func(edge *models.ChannelEdgeInfo,
+				p1, p2 *models.ChannelEdgePolicy) error {
+
+				merged[edge.ChannelID] = &chanEntry{
+					edge:       edge,
+					p1:         p1,
+					p2:         p2,
+					versionBit: 1,
+				}
+
+				return nil
+			},
+		)
+		if err != nil {
+			return err
+		}
+
+		// Gather all v2 channels. A v2 entry wins over v1 for the same
+		// channel ID.
+		err = forEachChannelWithPolicies(
+			ctx, db, s.cfg, lnwire.GossipVersion2,
+			func(edge *models.ChannelEdgeInfo,
+				p1, p2 *models.ChannelEdgePolicy) error {
+
+				if e, ok := merged[edge.ChannelID]; ok {
+					// Keep the v1 bit and add the v2 bit,
+					// but replace the edge data with v2.
+					merged[edge.ChannelID] = &chanEntry{
+						edge:       edge,
+						p1:         p1,
+						p2:         p2,
+						versionBit: e.versionBit | 2,
+					}
+				} else {
+					merged[edge.ChannelID] = &chanEntry{
+						edge:       edge,
+						p1:         p1,
+						p2:         p2,
+						versionBit: 2,
+					}
+				}
+
+				return nil
+			},
+		)
+		if err != nil {
+			return err
+		}
+
+		// Yield each unique channel with its version mask.
+		for _, e := range merged {
+			if err := cb(e.edge, e.p1, e.p2, e.versionBit); err != nil {
+				return err
+			}
+		}
+
+		return nil
 	}, reset)
 }
 

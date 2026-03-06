@@ -372,9 +372,9 @@ func TestPopulateDBs(t *testing.T) {
 			numPolicies = 0
 		)
 		err := graph.ForEachChannel(
-			ctx, lnwire.GossipVersion1,
-			func(info *models.ChannelEdgeInfo, policy,
-				policy2 *models.ChannelEdgePolicy) error {
+			ctx, func(info *models.ChannelEdgeInfo, policy,
+				policy2 *models.ChannelEdgePolicy,
+				_ uint32) error {
 
 				numChans++
 				if policy != nil {
@@ -500,9 +500,10 @@ func syncGraph(t *testing.T, src, dest *ChannelGraph) {
 	}
 
 	var wgChans sync.WaitGroup
-	err = src.ForEachChannel(ctx, lnwire.GossipVersion1,
+	err = src.ForEachChannel(ctx,
 		func(info *models.ChannelEdgeInfo,
-			policy1, policy2 *models.ChannelEdgePolicy) error {
+			policy1, policy2 *models.ChannelEdgePolicy,
+			_ uint32) error {
 
 			// Add each channel & policy. We do this in a goroutine
 			// to take advantage of batch processing.
@@ -642,10 +643,10 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 			fn: func(b testing.TB, store Store) {
 				//nolint:ll
 				err := store.ForEachChannel(
-					ctx, lnwire.GossipVersion1,
-					func(_ *models.ChannelEdgeInfo,
+					ctx, func(_ *models.ChannelEdgeInfo,
 						_ *models.ChannelEdgePolicy,
-						_ *models.ChannelEdgePolicy) error {
+						_ *models.ChannelEdgePolicy,
+						_ uint32) error {
 
 						// Increment the counter to
 						// ensure the callback is doing
@@ -838,10 +839,10 @@ func BenchmarkFindOptimalSQLQueryConfig(b *testing.B) {
 
 					//nolint:ll
 					err = store.ForEachChannel(
-						ctx, lnwire.GossipVersion1,
-						func(_ *models.ChannelEdgeInfo,
+						ctx, func(_ *models.ChannelEdgeInfo,
 							_,
-							_ *models.ChannelEdgePolicy) error {
+							_ *models.ChannelEdgePolicy,
+							_ uint32) error {
 
 							numChannels++
 
