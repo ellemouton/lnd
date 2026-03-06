@@ -708,11 +708,13 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	if cfg.RemoteGraph.Enable {
 		selfPub := route.NewVertex(nodeKeyECDH.PubKey())
 
-		if dbs.GraphDB.GraphCacheStatus() == graphdb.GraphCacheStatusDisabled {
+		status := dbs.GraphDB.GraphCacheStatus()
+		if status == graphdb.GraphCacheStatusDisabled {
 			return nil, fmt.Errorf("remote graph requires the " +
 				"graph cache to be enabled")
 		}
 
+		graphDB := dbs.GraphDB
 		remoteGraphClient = sources.NewRPCClient(
 			&sources.RPCConfig{
 				RPCHost:      cfg.RemoteGraph.RPCHost,
@@ -725,6 +727,52 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 
 					return parseAddr(
 						addr, cfg.net,
+					)
+				},
+			},
+			&sources.TopologyCallbacks{
+				OnChannel: func(info *models.CachedEdgeInfo) {
+					graphDB.ApplyCacheUpdate(
+						func(c *graphdb.GraphCache) {
+							c.AddChannel(
+								info, nil, nil,
+							)
+						},
+					)
+				},
+				OnChannelUpdate: func(
+					policy *models.CachedEdgePolicy,
+					fromNode, toNode route.Vertex) {
+
+					graphDB.ApplyCacheUpdate(
+						func(c *graphdb.GraphCache) {
+							c.UpdatePolicy(
+								policy,
+								fromNode,
+								toNode,
+							)
+						},
+					)
+				},
+				OnNodeUpdate: func(
+					node route.Vertex,
+					features *lnwire.FeatureVector) {
+
+					graphDB.ApplyCacheUpdate(
+						func(c *graphdb.GraphCache) {
+							c.AddNodeFeatures(
+								node, features,
+							)
+						},
+					)
+				},
+				OnChannelClosed: func(chanID uint64) {
+					graphDB.ApplyCacheUpdate(
+						func(c *graphdb.GraphCache) {
+							c.RemoveChannelByID(
+								chanID,
+							)
+						},
 					)
 				},
 			},
@@ -2218,14 +2266,6 @@ func (s *server) Start(ctx context.Context) error {
 			return
 		}
 
-		if s.remoteGraphClient != nil {
-			cleanup = cleanup.add(s.remoteGraphClient.Stop)
-			if err := s.remoteGraphClient.Start(ctx); err != nil {
-				startErr = err
-				return
-			}
-		}
-
 		cleanup = cleanup.add(s.customMessageServer.Stop)
 		if err := s.customMessageServer.Start(); err != nil {
 			startErr = err
@@ -2384,6 +2424,14 @@ func (s *server) Start(ctx context.Context) error {
 		if err := s.graphDB.Start(); err != nil {
 			startErr = err
 			return
+		}
+
+		if s.remoteGraphClient != nil {
+			cleanup = cleanup.add(s.remoteGraphClient.Stop)
+			if err := s.remoteGraphClient.Start(ctx); err != nil {
+				startErr = err
+				return
+			}
 		}
 
 		cleanup = cleanup.add(s.graphBuilder.Stop)
