@@ -317,6 +317,14 @@ const (
 	// support for the special custom taproot overlay channel.
 	SimpleTaprootOverlayChansRequired = 2026
 
+	// TaprootGossipRequiredFinal is the final required feature bit that
+	// indicates support for the taproot gossip protocol.
+	TaprootGossipRequiredFinal FeatureBit = 32
+
+	// TaprootGossipOptionalFinal is the final optional feature bit that
+	// indicates support for the taproot gossip protocol.
+	TaprootGossipOptionalFinal FeatureBit = 33
+
 	// OnionMessagesRequired is a required feature bit that indicates that
 	// the node can forward onion messages.
 	OnionMessagesRequired = 38
@@ -324,6 +332,14 @@ const (
 	// OnionMessagesOptional is an optional feature bit that indicates
 	// that the node can forward onion messages.
 	OnionMessagesOptional = 39
+
+	// TaprootGossipRequiredStaging is the required staging feature bit for
+	// the taproot gossip protocol.
+	TaprootGossipRequiredStaging FeatureBit = 132
+
+	// TaprootGossipOptionalStaging is the optional staging feature bit for
+	// the taproot gossip protocol.
+	TaprootGossipOptionalStaging FeatureBit = 133
 
 	// MaxBolt11Feature is the maximum feature bit value allowed in bolt 11
 	// invoices.
@@ -403,8 +419,12 @@ var Features = map[FeatureBit]string{
 	RbfCoopCloseRequired:                 "rbf-coop-close",
 	RbfCoopCloseOptionalStaging:          "rbf-coop-close-x",
 	RbfCoopCloseRequiredStaging:          "rbf-coop-close-x",
+	TaprootGossipRequiredFinal:           "taproot-gossip",
+	TaprootGossipOptionalFinal:           "taproot-gossip",
 	OnionMessagesOptional:                "onion-messages",
 	OnionMessagesRequired:                "onion-messages",
+	TaprootGossipRequiredStaging:         "taproot-gossip-x",
+	TaprootGossipOptionalStaging:         "taproot-gossip-x",
 }
 
 // RawFeatureVector represents a set of feature bits as defined in BOLT-09.  A
