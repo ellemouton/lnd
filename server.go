@@ -673,6 +673,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		NoExperimentalAccountability: cfg.ProtocolOptions.NoExpAccountability(),
 		NoQuiescence:                 cfg.ProtocolOptions.NoQuiescence(),
 		NoRbfCoopClose:               !cfg.ProtocolOptions.RbfCoopClose,
+		NoGossipQueries:              cfg.Gossip.NoSync,
 	})
 	if err != nil {
 		return nil, err
@@ -1128,6 +1129,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		FilterConcurrency:       cfg.Gossip.FilterConcurrency,
 		BanThreshold:            cfg.Gossip.BanThreshold,
 		PeerMsgRateBytes:        cfg.Gossip.PeerMsgRateBytes,
+		NoGossipSync:            cfg.Gossip.NoSync,
 	}, nodeKeyDesc)
 
 	accessCfg := &accessManConfig{
@@ -4440,6 +4442,7 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 		ChannelGraph:            s.graphSource,
 		ChainArb:                s.chainArb,
 		AuthGossiper:            s.authGossiper,
+		NoGossipSync:            s.cfg.Gossip.NoSync,
 		ChanStatusMgr:           s.chanStatusMgr,
 		ChainIO:                 s.cc.ChainIO,
 		FeeEstimator:            s.cc.FeeEstimator,
