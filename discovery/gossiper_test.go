@@ -252,8 +252,7 @@ func (r *mockGraphSource) ForAllOutgoingChannels(_ context.Context,
 		// writes proofs directly there via AddEdgeProof.
 		if info.AuthProof == nil {
 			dbInfo, _, _, err := r.db.FetchChannelEdgesByID(
-				context.Background(), lnwire.GossipVersion1,
-				info.ChannelID,
+				context.Background(), info.ChannelID,
 			)
 			if err == nil && dbInfo != nil && dbInfo.AuthProof != nil {
 				info.AuthProof = dbInfo.AuthProof

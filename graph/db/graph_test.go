@@ -5415,7 +5415,7 @@ func TestEdgePolicyMissingMaxHTLC(t *testing.T) {
 	// are not aware of the policy (indicated by the policy returned being
 	// nil)
 	dbEdgeInfo, dbEdge1, dbEdge2, err := graph.FetchChannelEdgesByID(
-		ctx, lnwire.GossipVersion1, chanID,
+		ctx, chanID,
 	)
 	require.NoError(t, err, "unable to fetch channel by ID")
 
@@ -5429,7 +5429,7 @@ func TestEdgePolicyMissingMaxHTLC(t *testing.T) {
 	require.NoError(t, graph.UpdateEdgePolicy(ctx, edge1))
 
 	dbEdgeInfo, dbEdge1, dbEdge2, err = graph.FetchChannelEdgesByID(
-		ctx, lnwire.GossipVersion1, chanID,
+		ctx, chanID,
 	)
 	require.NoError(t, err, "unable to fetch channel by ID")
 	compareEdgePolicies(t, dbEdge1, edge1)

@@ -98,6 +98,7 @@ type SQLQueries interface {
 	GetChannelsByOutpoints(ctx context.Context, outpoints []string) ([]sqlc.GetChannelsByOutpointsRow, error)
 	GetChannelsBySCIDRange(ctx context.Context, arg sqlc.GetChannelsBySCIDRangeParams) ([]sqlc.GetChannelsBySCIDRangeRow, error)
 	GetChannelBySCIDWithPolicies(ctx context.Context, arg sqlc.GetChannelBySCIDWithPoliciesParams) (sqlc.GetChannelBySCIDWithPoliciesRow, error)
+	GetChannelBySCIDPreferHighestVersionWithPolicies(ctx context.Context, scid []byte) (sqlc.GetChannelBySCIDPreferHighestVersionWithPoliciesRow, error)
 	GetChannelsBySCIDWithPolicies(ctx context.Context, arg sqlc.GetChannelsBySCIDWithPoliciesParams) ([]sqlc.GetChannelsBySCIDWithPoliciesRow, error)
 	GetChannelsByIDs(ctx context.Context, ids []int64) ([]sqlc.GetChannelsByIDsRow, error)
 	GetChannelAndNodesBySCID(ctx context.Context, arg sqlc.GetChannelAndNodesBySCIDParams) (sqlc.GetChannelAndNodesBySCIDRow, error)
@@ -110,9 +111,12 @@ type SQLQueries interface {
 	ListChannelsPaginatedV2(ctx context.Context, arg sqlc.ListChannelsPaginatedV2Params) ([]sqlc.ListChannelsPaginatedV2Row, error)
 	GetChannelsByPolicyLastUpdateRange(ctx context.Context, arg sqlc.GetChannelsByPolicyLastUpdateRangeParams) ([]sqlc.GetChannelsByPolicyLastUpdateRangeRow, error)
 	GetChannelByOutpointWithPolicies(ctx context.Context, arg sqlc.GetChannelByOutpointWithPoliciesParams) (sqlc.GetChannelByOutpointWithPoliciesRow, error)
+	GetChannelByOutpointPreferHighestVersionWithPolicies(ctx context.Context, outpoint string) (sqlc.GetChannelByOutpointPreferHighestVersionWithPoliciesRow, error)
 	GetPublicV1ChannelsBySCID(ctx context.Context, arg sqlc.GetPublicV1ChannelsBySCIDParams) ([]sqlc.GraphChannel, error)
 	GetPublicV2ChannelsBySCID(ctx context.Context, arg sqlc.GetPublicV2ChannelsBySCIDParams) ([]sqlc.GraphChannel, error)
 	GetSCIDByOutpoint(ctx context.Context, arg sqlc.GetSCIDByOutpointParams) ([]byte, error)
+	GetVersionsBySCID(ctx context.Context, scid []byte) ([]int16, error)
+	GetVersionsByOutpoint(ctx context.Context, outpoint string) ([]int16, error)
 	DeleteChannels(ctx context.Context, ids []int64) error
 
 	UpsertChannelExtraType(ctx context.Context, arg sqlc.UpsertChannelExtraTypeParams) error
@@ -2543,6 +2547,260 @@ func (s *SQLStore) FetchChannelEdgesByOutpoint(ctx context.Context,
 	}
 
 	return edge, policy1, policy2, nil
+}
+
+// FetchChannelEdgesByIDPreferHighest looks up the channel by SCID and returns
+// the record with the highest gossip version. If the channel does not exist,
+// ErrEdgeNotFound is returned. If it is a zombie, ErrZombieEdge is returned.
+//
+// NOTE: part of the Store interface.
+func (s *SQLStore) FetchChannelEdgesByIDPreferHighest(ctx context.Context,
+	chanID uint64) (
+	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy, error) {
+
+	var (
+		edge             *models.ChannelEdgeInfo
+		policy1, policy2 *models.ChannelEdgePolicy
+		chanIDB          = channelIDToBytes(chanID)
+	)
+
+	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+		row, err := db.GetChannelBySCIDPreferHighestVersionWithPolicies(
+			ctx, chanIDB,
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			// Check if it is in the zombie index for any version.
+			// We check both known versions and return zombie if
+			// found in either.
+			for _, v := range []lnwire.GossipVersion{
+				lnwire.GossipVersion1,
+				lnwire.GossipVersion2,
+			} {
+				zombie, zErr := db.GetZombieChannel(
+					ctx, sqlc.GetZombieChannelParams{
+						Scid:    chanIDB,
+						Version: int16(v),
+					},
+				)
+				if errors.Is(zErr, sql.ErrNoRows) {
+					continue
+				} else if zErr != nil {
+					return fmt.Errorf("unable to check "+
+						"if channel is zombie: %w",
+						zErr)
+				}
+
+				node1, nErr := route.NewVertexFromBytes(
+					zombie.NodeKey1,
+				)
+				if nErr != nil {
+					return nErr
+				}
+				node2, nErr := route.NewVertexFromBytes(
+					zombie.NodeKey2,
+				)
+				if nErr != nil {
+					return nErr
+				}
+
+				switch v {
+				case lnwire.GossipVersion1:
+					zombieEdge, nErr := models.NewV1Channel(
+						0, chainhash.Hash{}, node1,
+						node2, &models.ChannelV1Fields{},
+					)
+					if nErr != nil {
+						return nErr
+					}
+					edge = zombieEdge
+
+				case lnwire.GossipVersion2:
+					zombieEdge, nErr := models.NewV2Channel(
+						0, chainhash.Hash{}, node1,
+						node2, &models.ChannelV2Fields{},
+					)
+					if nErr != nil {
+						return nErr
+					}
+					edge = zombieEdge
+
+				default:
+					return fmt.Errorf("unsupported gossip "+
+						"version: %d", v)
+				}
+
+				return ErrZombieEdge
+			}
+
+			return ErrEdgeNotFound
+		} else if err != nil {
+			return fmt.Errorf("unable to fetch channel: %w", err)
+		}
+
+		node1, node2, err := buildNodeVertices(
+			row.GraphNode.PubKey, row.GraphNode_2.PubKey,
+		)
+		if err != nil {
+			return err
+		}
+
+		edge, err = getAndBuildEdgeInfo(
+			ctx, s.cfg, db, row.GraphChannel, node1, node2,
+		)
+		if err != nil {
+			return fmt.Errorf("unable to build channel info: %w",
+				err)
+		}
+
+		dbPol1, dbPol2, err := extractChannelPolicies(row)
+		if err != nil {
+			return fmt.Errorf("unable to extract channel "+
+				"policies: %w", err)
+		}
+
+		policy1, policy2, err = getAndBuildChanPolicies(
+			ctx, s.cfg.QueryCfg, db, dbPol1, dbPol2, edge.ChannelID,
+			node1, node2,
+		)
+		if err != nil {
+			return fmt.Errorf("unable to build channel "+
+				"policies: %w", err)
+		}
+
+		return nil
+	}, sqldb.NoOpReset)
+	if err != nil {
+		return edge, nil, nil, fmt.Errorf("could not fetch channel: %w",
+			err)
+	}
+
+	return edge, policy1, policy2, nil
+}
+
+// FetchChannelEdgesByOutpointPreferHighest looks up the channel by funding
+// outpoint and returns the record with the highest gossip version. If the
+// channel does not exist, ErrEdgeNotFound is returned.
+//
+// NOTE: part of the Store interface.
+func (s *SQLStore) FetchChannelEdgesByOutpointPreferHighest(
+	ctx context.Context, op *wire.OutPoint) (
+	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy, error) {
+
+	var (
+		edge             *models.ChannelEdgeInfo
+		policy1, policy2 *models.ChannelEdgePolicy
+	)
+
+	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+		row, err := db.GetChannelByOutpointPreferHighestVersionWithPolicies(
+			ctx, op.String(),
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrEdgeNotFound
+		} else if err != nil {
+			return fmt.Errorf("unable to fetch channel: %w", err)
+		}
+
+		node1, node2, err := buildNodeVertices(
+			row.Node1Pubkey, row.Node2Pubkey,
+		)
+		if err != nil {
+			return err
+		}
+
+		edge, err = getAndBuildEdgeInfo(
+			ctx, s.cfg, db, row.GraphChannel, node1, node2,
+		)
+		if err != nil {
+			return fmt.Errorf("unable to build channel info: %w",
+				err)
+		}
+
+		dbPol1, dbPol2, err := extractChannelPolicies(row)
+		if err != nil {
+			return fmt.Errorf("unable to extract channel "+
+				"policies: %w", err)
+		}
+
+		policy1, policy2, err = getAndBuildChanPolicies(
+			ctx, s.cfg.QueryCfg, db, dbPol1, dbPol2, edge.ChannelID,
+			node1, node2,
+		)
+		if err != nil {
+			return fmt.Errorf("unable to build channel "+
+				"policies: %w", err)
+		}
+
+		return nil
+	}, sqldb.NoOpReset)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("could not fetch channel: %w",
+			err)
+	}
+
+	return edge, policy1, policy2, nil
+}
+
+// GetVersionsBySCID returns the gossip versions for which a channel with the
+// given SCID exists in the database, ordered ascending.
+//
+// NOTE: part of the Store interface.
+func (s *SQLStore) GetVersionsBySCID(ctx context.Context,
+	chanID uint64) ([]lnwire.GossipVersion, error) {
+
+	chanIDB := channelIDToBytes(chanID)
+
+	var versions []lnwire.GossipVersion
+	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+		rows, err := db.GetVersionsBySCID(ctx, chanIDB)
+		if err != nil {
+			return fmt.Errorf("unable to fetch versions: %w", err)
+		}
+
+		for _, v := range rows {
+			versions = append(
+				versions, lnwire.GossipVersion(v),
+			)
+		}
+
+		return nil
+	}, sqldb.NoOpReset)
+	if err != nil {
+		return nil, err
+	}
+
+	return versions, nil
+}
+
+// GetVersionsByOutpoint returns the gossip versions for which a channel with
+// the given funding outpoint exists in the database, ordered ascending.
+//
+// NOTE: part of the Store interface.
+func (s *SQLStore) GetVersionsByOutpoint(ctx context.Context,
+	op *wire.OutPoint) ([]lnwire.GossipVersion, error) {
+
+	var versions []lnwire.GossipVersion
+	err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+		rows, err := db.GetVersionsByOutpoint(ctx, op.String())
+		if err != nil {
+			return fmt.Errorf("unable to fetch versions: %w", err)
+		}
+
+		for _, v := range rows {
+			versions = append(
+				versions, lnwire.GossipVersion(v),
+			)
+		}
+
+		return nil
+	}, sqldb.NoOpReset)
+	if err != nil {
+		return nil, err
+	}
+
+	return versions, nil
 }
 
 // HasV1ChannelEdge returns true if the database knows of a channel edge
@@ -5522,7 +5780,103 @@ func extractChannelPolicies(row any) (*sqlc.GraphChannelPolicy,
 
 		return policy1, policy2, nil
 
+	case sqlc.GetChannelBySCIDPreferHighestVersionWithPoliciesRow:
+		if r.Policy1ID.Valid {
+			policy1 = &sqlc.GraphChannelPolicy{
+				ID:                      r.Policy1ID.Int64,
+				Version:                 r.Policy1Version.Int16,
+				ChannelID:               r.GraphChannel.ID,
+				NodeID:                  r.Policy1NodeID.Int64,
+				Timelock:                r.Policy1Timelock.Int32,
+				FeePpm:                  r.Policy1FeePpm.Int64,
+				BaseFeeMsat:             r.Policy1BaseFeeMsat.Int64,
+				MinHtlcMsat:             r.Policy1MinHtlcMsat.Int64,
+				MaxHtlcMsat:             r.Policy1MaxHtlcMsat,
+				LastUpdate:              r.Policy1LastUpdate,
+				InboundBaseFeeMsat:      r.Policy1InboundBaseFeeMsat,
+				InboundFeeRateMilliMsat: r.Policy1InboundFeeRateMilliMsat,
+				Disabled:                r.Policy1Disabled,
+				MessageFlags:            r.Policy1MessageFlags,
+				ChannelFlags:            r.Policy1ChannelFlags,
+				Signature:               r.Policy1Signature,
+				BlockHeight:             r.Policy1BlockHeight,
+				DisableFlags:            r.Policy1DisableFlags,
+			}
+		}
+		if r.Policy2ID.Valid {
+			policy2 = &sqlc.GraphChannelPolicy{
+				ID:                      r.Policy2ID.Int64,
+				Version:                 r.Policy2Version.Int16,
+				ChannelID:               r.GraphChannel.ID,
+				NodeID:                  r.Policy2NodeID.Int64,
+				Timelock:                r.Policy2Timelock.Int32,
+				FeePpm:                  r.Policy2FeePpm.Int64,
+				BaseFeeMsat:             r.Policy2BaseFeeMsat.Int64,
+				MinHtlcMsat:             r.Policy2MinHtlcMsat.Int64,
+				MaxHtlcMsat:             r.Policy2MaxHtlcMsat,
+				LastUpdate:              r.Policy2LastUpdate,
+				InboundBaseFeeMsat:      r.Policy2InboundBaseFeeMsat,
+				InboundFeeRateMilliMsat: r.Policy2InboundFeeRateMilliMsat,
+				Disabled:                r.Policy2Disabled,
+				MessageFlags:            r.Policy2MessageFlags,
+				ChannelFlags:            r.Policy2ChannelFlags,
+				Signature:               r.Policy2Signature,
+				BlockHeight:             r.Policy2BlockHeight,
+				DisableFlags:            r.Policy2DisableFlags,
+			}
+		}
+
+		return policy1, policy2, nil
+
 	case sqlc.GetChannelByOutpointWithPoliciesRow:
+		if r.Policy1ID.Valid {
+			policy1 = &sqlc.GraphChannelPolicy{
+				ID:                      r.Policy1ID.Int64,
+				Version:                 r.Policy1Version.Int16,
+				ChannelID:               r.GraphChannel.ID,
+				NodeID:                  r.Policy1NodeID.Int64,
+				Timelock:                r.Policy1Timelock.Int32,
+				FeePpm:                  r.Policy1FeePpm.Int64,
+				BaseFeeMsat:             r.Policy1BaseFeeMsat.Int64,
+				MinHtlcMsat:             r.Policy1MinHtlcMsat.Int64,
+				MaxHtlcMsat:             r.Policy1MaxHtlcMsat,
+				LastUpdate:              r.Policy1LastUpdate,
+				InboundBaseFeeMsat:      r.Policy1InboundBaseFeeMsat,
+				InboundFeeRateMilliMsat: r.Policy1InboundFeeRateMilliMsat,
+				Disabled:                r.Policy1Disabled,
+				MessageFlags:            r.Policy1MessageFlags,
+				ChannelFlags:            r.Policy1ChannelFlags,
+				Signature:               r.Policy1Signature,
+				BlockHeight:             r.Policy1BlockHeight,
+				DisableFlags:            r.Policy1DisableFlags,
+			}
+		}
+		if r.Policy2ID.Valid {
+			policy2 = &sqlc.GraphChannelPolicy{
+				ID:                      r.Policy2ID.Int64,
+				Version:                 r.Policy2Version.Int16,
+				ChannelID:               r.GraphChannel.ID,
+				NodeID:                  r.Policy2NodeID.Int64,
+				Timelock:                r.Policy2Timelock.Int32,
+				FeePpm:                  r.Policy2FeePpm.Int64,
+				BaseFeeMsat:             r.Policy2BaseFeeMsat.Int64,
+				MinHtlcMsat:             r.Policy2MinHtlcMsat.Int64,
+				MaxHtlcMsat:             r.Policy2MaxHtlcMsat,
+				LastUpdate:              r.Policy2LastUpdate,
+				InboundBaseFeeMsat:      r.Policy2InboundBaseFeeMsat,
+				InboundFeeRateMilliMsat: r.Policy2InboundFeeRateMilliMsat,
+				Disabled:                r.Policy2Disabled,
+				MessageFlags:            r.Policy2MessageFlags,
+				ChannelFlags:            r.Policy2ChannelFlags,
+				Signature:               r.Policy2Signature,
+				BlockHeight:             r.Policy2BlockHeight,
+				DisableFlags:            r.Policy2DisableFlags,
+			}
+		}
+
+		return policy1, policy2, nil
+
+	case sqlc.GetChannelByOutpointPreferHighestVersionWithPoliciesRow:
 		if r.Policy1ID.Valid {
 			policy1 = &sqlc.GraphChannelPolicy{
 				ID:                      r.Policy1ID.Int64,

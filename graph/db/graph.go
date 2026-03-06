@@ -736,23 +736,40 @@ func (c *ChannelGraph) FetchChanInfos(ctx context.Context,
 	return c.db.FetchChanInfos(ctx, v, chanIDs)
 }
 
-// FetchChannelEdgesByOutpoint attempts to lookup directed edges by funding
-// outpoint.
+// FetchChannelEdgesByOutpoint looks up directed edges by funding outpoint,
+// preferring the highest gossip version if multiple exist.
 func (c *ChannelGraph) FetchChannelEdgesByOutpoint(ctx context.Context,
-	v lnwire.GossipVersion, op *wire.OutPoint) (
+	op *wire.OutPoint) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
-	return c.db.FetchChannelEdgesByOutpoint(ctx, v, op)
+	return c.db.FetchChannelEdgesByOutpointPreferHighest(ctx, op)
 }
 
-// FetchChannelEdgesByID attempts to lookup directed edges by channel ID.
+// FetchChannelEdgesByID looks up directed edges by channel ID, preferring the
+// highest gossip version if multiple exist.
 func (c *ChannelGraph) FetchChannelEdgesByID(ctx context.Context,
-	v lnwire.GossipVersion, chanID uint64) (
+	chanID uint64) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
-	return c.db.FetchChannelEdgesByID(ctx, v, chanID)
+	return c.db.FetchChannelEdgesByIDPreferHighest(ctx, chanID)
+}
+
+// GetVersionsBySCID returns the gossip versions for which a channel with the
+// given SCID is recorded in the database.
+func (c *ChannelGraph) GetVersionsBySCID(ctx context.Context,
+	chanID uint64) ([]lnwire.GossipVersion, error) {
+
+	return c.db.GetVersionsBySCID(ctx, chanID)
+}
+
+// GetVersionsByOutpoint returns the gossip versions for which a channel with
+// the given funding outpoint is recorded in the database.
+func (c *ChannelGraph) GetVersionsByOutpoint(ctx context.Context,
+	op *wire.OutPoint) ([]lnwire.GossipVersion, error) {
+
+	return c.db.GetVersionsByOutpoint(ctx, op)
 }
 
 // PutClosedScid stores a SCID for a closed channel in the database.

@@ -7127,35 +7127,91 @@ func (r *rpcServer) GetChanInfo(ctx context.Context,
 	graph := r.server.graphDB
 
 	var (
-		edgeInfo     *models.ChannelEdgeInfo
-		edge1, edge2 *models.ChannelEdgePolicy
-		err          error
+		edgeInfo          *models.ChannelEdgeInfo
+		edge1, edge2      *models.ChannelEdgePolicy
+		versionsPresent   []lnwire.GossipVersion
+		err               error
 	)
 
-	switch {
-	case in.ChanId != 0:
-		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByID(
-			ctx, lnwire.GossipVersion1, in.ChanId,
-		)
-
-	case in.ChanPoint != "":
-		var chanPoint *wire.OutPoint
+	// If the caller specified a particular gossip version, create a
+	// version-specific view of the graph. Otherwise we use the
+	// version-agnostic ChannelGraph methods which prefer the highest
+	// available version.
+	var chanPoint *wire.OutPoint
+	if in.ChanPoint != "" {
 		chanPoint, err = wire.NewOutPointFromString(in.ChanPoint)
 		if err != nil {
 			return nil, err
 		}
-		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByOutpoint(
-			ctx, lnwire.GossipVersion1, chanPoint,
-		)
-
-	default:
-		return nil, fmt.Errorf("specify either chan_id or chan_point")
 	}
+
+	if in.Version != 0 {
+		// Version-specific lookup: use a VersionedGraph so we fetch
+		// exactly the requested gossip version.
+		v := lnwire.GossipVersion(in.Version)
+		vGraph := graphdb.NewVersionedGraph(graph, v)
+
+		switch {
+		case in.ChanId != 0:
+			edgeInfo, edge1, edge2, err =
+				vGraph.FetchChannelEdgesByID(ctx, in.ChanId)
+
+		case chanPoint != nil:
+			edgeInfo, edge1, edge2, err =
+				vGraph.FetchChannelEdgesByOutpoint(ctx, chanPoint)
+
+		default:
+			return nil, fmt.Errorf("specify either chan_id or " +
+				"chan_point")
+		}
+	} else {
+		// Default: prefer the highest available version.
+		switch {
+		case in.ChanId != 0:
+			edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByID(
+				ctx, in.ChanId,
+			)
+
+		case chanPoint != nil:
+			edgeInfo, edge1, edge2, err =
+				graph.FetchChannelEdgesByOutpoint(
+					ctx, chanPoint,
+				)
+
+		default:
+			return nil, fmt.Errorf("specify either chan_id or " +
+				"chan_point")
+		}
+	}
+
 	switch {
 	case errors.Is(err, graphdb.ErrEdgeNotFound):
 		return nil, status.Error(codes.NotFound, err.Error())
 	case err != nil:
 		return nil, err
+	}
+
+	// Fetch the set of gossip versions that have a record of this channel
+	// so we can populate the versions_present bitmask.
+	switch {
+	case in.ChanId != 0:
+		versionsPresent, err = graph.GetVersionsBySCID(ctx, in.ChanId)
+
+	case chanPoint != nil:
+		versionsPresent, err = graph.GetVersionsByOutpoint(
+			ctx, chanPoint,
+		)
+	}
+	if err != nil {
+		rpcsLog.Warnf("GetChanInfo: could not fetch versions for "+
+			"channel: %v", err)
+	}
+
+	// Build the versions_present bitmask: bit 0 = v1 present,
+	// bit 1 = v2 present.
+	var versionsMask uint32
+	for _, v := range versionsPresent {
+		versionsMask |= 1 << uint(v-1)
 	}
 
 	// Convert the database's edge format into the network/RPC edge format
@@ -7164,6 +7220,7 @@ func (r *rpcServer) GetChanInfo(ctx context.Context,
 	channelEdge := marshalDBEdge(
 		edgeInfo, edge1, edge2, in.IncludeAuthProof,
 	)
+	channelEdge.VersionsPresent = versionsMask
 
 	return channelEdge, nil
 }

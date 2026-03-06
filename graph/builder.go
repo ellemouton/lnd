@@ -1380,7 +1380,7 @@ func (b *Builder) updateEdge(ctx context.Context,
 		// For v2, updates are ordered by block height,
 		// not by wall clock timestamp.
 		_, edge1, edge2, err := b.cfg.Graph.FetchChannelEdgesByID(
-			ctx, policy.Version, policy.ChannelID,
+			ctx, policy.ChannelID,
 		)
 		if err != nil &&
 			!errors.Is(err, graphdb.ErrEdgeNotFound) {
@@ -1516,7 +1516,7 @@ func (b *Builder) IsStaleEdgePolicy(policy *models.ChannelEdgePolicy) bool {
 
 	case lnwire.GossipVersion2:
 		_, p1, p2, err := b.cfg.Graph.FetchChannelEdgesByID(
-			context.TODO(), policy.Version, policy.ChannelID,
+			context.TODO(), policy.ChannelID,
 		)
 		if err != nil {
 			if errors.Is(err, graphdb.ErrEdgeNotFound) {
