@@ -3839,7 +3839,7 @@ func waitingProofFromMsg(nMsg *networkMsg,
 // single ChannelAuthProof. For v1 channels the existing helper is used. For
 // v2 (taproot) channels the two MuSig2 partial signatures are combined with
 // musig2.CombineSigs using the stored aggregate nonce.
-func assembleChannelProof(ann lnwire.AnnounceSignatures,
+func assembleChannelProof(nMsg *networkMsg, ann lnwire.AnnounceSignatures,
 	oppProof *channeldb.WaitingProof,
 	isFirstNode bool) (*models.ChannelAuthProof, error) {
 
@@ -3857,11 +3857,17 @@ func assembleChannelProof(ann lnwire.AnnounceSignatures,
 				oppProof.WaitingProofInner)
 		}
 
-		// At least one side must have supplied the aggregate nonce.
+		// The aggregate nonce is supplied by the local side. It may be
+		// stored on the opposite proof (if the local half arrived first)
+		// or on the current message's optional fields (if local arrives
+		// second).
 		var aggNonce *btcec.PublicKey
 		switch {
 		case opp.AggNonce != nil:
 			aggNonce = opp.AggNonce
+		case nMsg.optionalMsgFields != nil &&
+			nMsg.optionalMsgFields.aggNonce != nil:
+			aggNonce = nMsg.optionalMsgFields.aggNonce
 		default:
 			return nil, fmt.Errorf("no aggregate nonce available " +
 				"for v2 proof assembly")
@@ -4071,7 +4077,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 
 	// We now have both halves of the channel announcement proof. Assemble
 	// the combined auth proof.
-	dbProof, err := assembleChannelProof(ann, oppProof, isFirstNode)
+	dbProof, err := assembleChannelProof(nMsg, ann, oppProof, isFirstNode)
 	if err != nil {
 		nMsg.err <- err
 		return nil, false
