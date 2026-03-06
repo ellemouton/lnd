@@ -6896,27 +6896,26 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 		}
 	}
 
-	// Obtain the pointer to the V1 channel graph. This will provide a
-	// consistent view of the graph due to bolt db's transactional model.
-	//
-	// TODO(elle): switch to a cross-version graph view when available.
-	graph := r.server.v1Graph
-
 	// First iterate through all the known nodes (connected or unconnected
 	// within the graph), collating their current state into the RPC
-	// response.
-	err := graph.ForEachNode(ctx, func(node *models.Node) error {
-		lnNode := marshalNode(node)
+	// response. We use the cross-version graph view so that nodes
+	// advertised on any gossip version are included.
+	err := r.server.graphDB.ForEachNode(ctx,
+		func(node *models.Node, _ uint32) error {
+			lnNode := marshalNode(node)
 
-		resp.Nodes = append(resp.Nodes, lnNode)
+			resp.Nodes = append(resp.Nodes, lnNode)
 
-		return nil
-	}, func() {
-		resp.Nodes = nil
-	})
+			return nil
+		}, func() {
+			resp.Nodes = nil
+		})
 	if err != nil {
 		return nil, err
 	}
+
+	// TODO(elle): switch ForEachChannel to a cross-version graph view.
+	graph := r.server.v1Graph
 
 	// Next, for each active channel we know of within the graph, create a
 	// similar response which details both the edge information as well as
@@ -7137,10 +7136,10 @@ func (r *rpcServer) GetChanInfo(ctx context.Context,
 	graph := r.server.graphDB
 
 	var (
-		edgeInfo          *models.ChannelEdgeInfo
-		edge1, edge2      *models.ChannelEdgePolicy
-		versionsPresent   []lnwire.GossipVersion
-		err               error
+		edgeInfo        *models.ChannelEdgeInfo
+		edge1, edge2    *models.ChannelEdgePolicy
+		versionsPresent []lnwire.GossipVersion
+		err             error
 	)
 
 	// If the caller specified a particular gossip version, create a

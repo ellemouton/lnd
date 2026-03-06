@@ -5760,3 +5760,105 @@ func TestLightningNodePersistence(t *testing.T) {
 
 	require.Equal(t, nodeAnnBytes, b.Bytes())
 }
+
+// TestForEachNodeCrossVersion verifies that ChannelGraph.ForEachNode correctly
+// merges nodes from v1 and v2, yields each unique node once, and sets the
+// versionsMask appropriately.
+func TestForEachNodeCrossVersion(t *testing.T) {
+	t.Parallel()
+
+	if !isSQLDB {
+		t.Skip("cross-version node iteration requires SQL backend")
+	}
+
+	ctx := t.Context()
+	graph := MakeTestGraph(t)
+
+	// Generate distinct key pairs for each test node.
+	privV1Only, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	privV2Only, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	privBothV1Ann, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	privBothV2Ann, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	// nodeV1Only: advertised only on v1 (mask=1, yields v1 node).
+	nodeV1Only := createNode(t, lnwire.GossipVersion1, privV1Only)
+	require.NoError(t, graph.AddNode(ctx, nodeV1Only))
+
+	// nodeV2Only: advertised only on v2 (mask=2, yields v2 node).
+	nodeV2Only := createNode(t, lnwire.GossipVersion2, privV2Only)
+	require.NoError(t, graph.AddNode(ctx, nodeV2Only))
+
+	// nodeBothV1Ann: present in both graphs, but only has a v1
+	// announcement and a v2 shell. We add the v1 node announcement first,
+	// then a v2 shell (no AuthSig). Expected: mask=3, yields v1 node.
+	v1BothNode := createNode(t, lnwire.GossipVersion1, privBothV1Ann)
+	require.NoError(t, graph.AddNode(ctx, v1BothNode))
+	v2ShellNode := models.NewShellNode(
+		lnwire.GossipVersion2, v1BothNode.PubKeyBytes,
+	)
+	require.NoError(t, graph.AddNode(ctx, v2ShellNode))
+
+	// nodeBothFullyAnn: present in both graphs with full announcements on
+	// both. Expected: mask=3, yields v2 node (higher version preference).
+	v1FullNode := createNode(t, lnwire.GossipVersion1, privBothV2Ann)
+	require.NoError(t, graph.AddNode(ctx, v1FullNode))
+	v2FullNode := createNode(t, lnwire.GossipVersion2, privBothV2Ann)
+	require.NoError(t, graph.AddNode(ctx, v2FullNode))
+
+	// Collect results from ForEachNode.
+	type result struct {
+		node         *models.Node
+		versionsMask uint32
+	}
+	results := make(map[route.Vertex]result)
+
+	err = graph.ForEachNode(ctx, func(node *models.Node,
+		mask uint32) error {
+
+		results[node.PubKeyBytes] = result{node, mask}
+
+		return nil
+	}, func() {
+		results = make(map[route.Vertex]result)
+	})
+	require.NoError(t, err)
+
+	// We expect exactly 4 unique nodes.
+	require.Len(t, results, 4)
+
+	// nodeV1Only: mask=1 (v1 only), version should be v1.
+	r, ok := results[nodeV1Only.PubKeyBytes]
+	require.True(t, ok, "expected v1-only node to be present")
+	require.Equal(t, uint32(1), r.versionsMask)
+	require.Equal(t, lnwire.GossipVersion1, r.node.Version)
+	require.True(t, r.node.HaveAnnouncement())
+
+	// nodeV2Only: mask=2 (v2 only), version should be v2.
+	r, ok = results[nodeV2Only.PubKeyBytes]
+	require.True(t, ok, "expected v2-only node to be present")
+	require.Equal(t, uint32(2), r.versionsMask)
+	require.Equal(t, lnwire.GossipVersion2, r.node.Version)
+	require.True(t, r.node.HaveAnnouncement())
+
+	// nodeBothV1Ann: mask=3 (both), but only v1 has announcement, so v1
+	// node is preferred.
+	r, ok = results[v1BothNode.PubKeyBytes]
+	require.True(t, ok, "expected both-v1-ann node to be present")
+	require.Equal(t, uint32(3), r.versionsMask)
+	require.Equal(t, lnwire.GossipVersion1, r.node.Version)
+	require.True(t, r.node.HaveAnnouncement())
+
+	// nodeBothFullyAnn: mask=3 (both), v2 is preferred as higher version.
+	r, ok = results[v1FullNode.PubKeyBytes]
+	require.True(t, ok, "expected both-fully-ann node to be present")
+	require.Equal(t, uint32(3), r.versionsMask)
+	require.Equal(t, lnwire.GossipVersion2, r.node.Version)
+	require.True(t, r.node.HaveAnnouncement())
+}
