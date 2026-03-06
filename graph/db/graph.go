@@ -64,6 +64,8 @@ func NewChannelGraph(v1Store Store,
 }
 
 // GraphCacheStore returns the graph cache if it is enabled, or nil otherwise.
+// This is used by the remote graph subscription handler to update the cache
+// with topology changes from the remote graph source.
 func (c *ChannelGraph) GraphCacheStore() *GraphCache {
 	return c.graphCache
 }
