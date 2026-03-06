@@ -268,11 +268,23 @@ func (c *ChannelGraph) GraphSession(ctx context.Context,
 	return c.db.GraphSession(ctx, cb, reset)
 }
 
+// ForEachNode iterates through all nodes in the graph across all gossip
+// versions, yielding each unique node exactly once. The callback receives the
+// best available Node (highest advertised version preferred, falling back to
+// shell nodes) and a versionsMask where bit 0 indicates a v1 entry exists and
+// bit 1 indicates a v2 entry exists.
+func (c *ChannelGraph) ForEachNode(ctx context.Context,
+	cb func(*models.Node, uint32) error, reset func()) error {
+
+	return c.db.ForEachNode(ctx, cb, reset)
+}
+
 // ForEachNodeCached iterates through all the stored vertices/nodes in the
 // graph, executing the passed callback with each node encountered.
 //
 // NOTE: The callback contents MUST not be modified.
-func (c *ChannelGraph) ForEachNodeCached(ctx context.Context, withAddrs bool,
+func (c *ChannelGraph) ForEachNodeCached(ctx context.Context,
+	v lnwire.GossipVersion, withAddrs bool,
 	cb func(ctx context.Context, node route.Vertex, addrs []net.Addr,
 		chans map[uint64]*DirectedChannel) error, reset func()) error {
 
@@ -286,7 +298,7 @@ func (c *ChannelGraph) ForEachNodeCached(ctx context.Context, withAddrs bool,
 		)
 	}
 
-	return c.db.ForEachNodeCached(ctx, withAddrs, cb, reset)
+	return c.db.ForEachNodeCached(ctx, v, withAddrs, cb, reset)
 }
 
 // AddNode adds a vertex/node to the graph database. If the node is not
@@ -345,11 +357,13 @@ func (c *ChannelGraph) AddChannelEdge(ctx context.Context,
 	return nil
 }
 
-// MarkEdgeLive clears an edge from our zombie index, deeming it as live.
-// If the cache is enabled, the edge will be added back to the graph cache if
-// we still have a record of this channel in the DB.
-func (c *ChannelGraph) MarkEdgeLive(ctx context.Context, chanID uint64) error {
-	err := c.db.MarkEdgeLive(ctx, chanID)
+// MarkEdgeLive clears an edge from our zombie index for the given gossip
+// version, deeming it as live. If the cache is enabled, the edge will be added
+// back to the graph cache if we still have a record of this channel in the DB.
+func (c *ChannelGraph) MarkEdgeLive(ctx context.Context,
+	v lnwire.GossipVersion, chanID uint64) error {
+
+	err := c.db.MarkEdgeLive(ctx, v, chanID)
 	if err != nil {
 		return err
 	}
@@ -357,9 +371,7 @@ func (c *ChannelGraph) MarkEdgeLive(ctx context.Context, chanID uint64) error {
 	if c.graphCache != nil {
 		// We need to add the channel back into our graph cache,
 		// otherwise we won't use it for path finding.
-		infos, err := c.db.FetchChanInfos(
-			ctx, lnwire.GossipVersion1, []uint64{chanID},
-		)
+		infos, err := c.db.FetchChanInfos(ctx, v, []uint64{chanID})
 		if err != nil {
 			return err
 		}
@@ -395,11 +407,11 @@ func (c *ChannelGraph) MarkEdgeLive(ctx context.Context, chanID uint64) error {
 // that resurrects the channel from its zombie state. The markZombie bool
 // denotes whether to mark the channel as a zombie.
 func (c *ChannelGraph) DeleteChannelEdges(ctx context.Context,
-	strictZombiePruning, markZombie bool, chanIDs ...uint64) error {
+	v lnwire.GossipVersion, strictZombiePruning, markZombie bool,
+	chanIDs ...uint64) error {
 
 	infos, err := c.db.DeleteChannelEdges(
-		ctx, lnwire.GossipVersion1, strictZombiePruning, markZombie,
-		chanIDs...,
+		ctx, v, strictZombiePruning, markZombie, chanIDs...,
 	)
 	if err != nil {
 		return err
@@ -521,10 +533,14 @@ func (c *ChannelGraph) PruneGraphNodes(ctx context.Context) error {
 // passed in. This method can be used by callers to determine the set of
 // channels another peer knows of that we don't.
 func (c *ChannelGraph) FilterKnownChanIDs(ctx context.Context,
-	chansInfo []ChannelUpdateInfo,
-	isZombieChan func(time.Time, time.Time) bool) ([]uint64, error) {
+	v lnwire.GossipVersion, chansInfo []ChannelUpdateInfo,
+	isZombieChan func(ChannelUpdateInfo) bool) ([]uint64, error) {
 
-	unknown, knownZombies, err := c.db.FilterKnownChanIDs(ctx, chansInfo)
+	if !isKnownGossipVersion(v) {
+		return nil, fmt.Errorf("unsupported gossip version: %d", v)
+	}
+
+	unknown, knownZombies, err := c.db.FilterKnownChanIDs(ctx, v, chansInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -541,20 +557,17 @@ func (c *ChannelGraph) FilterKnownChanIDs(ctx context.Context,
 		// recent. During the querying of the gossip msg verification
 		// happens as usual. However we should start punishing peers
 		// when they don't provide us honest data ?
-		isStillZombie := isZombieChan(
-			info.Node1UpdateTimestamp, info.Node2UpdateTimestamp,
-		)
-
-		if isStillZombie {
+		if isZombieChan(info) {
 			continue
 		}
 
 		// If we have marked it as a zombie but the latest update
-		// timestamps could bring it back from the dead, then we mark it
+		// info could bring it back from the dead, then we mark it
 		// alive, and we let it be added to the set of IDs to query our
 		// peer for.
 		err := c.db.MarkEdgeLive(
-			ctx, info.ShortChannelID.ToUint64(),
+			ctx, v,
+			info.ShortChannelID.ToUint64(),
 		)
 		// Since there is a chance that the edge could have been marked
 		// as "live" between the FilterKnownChanIDs call and the
@@ -569,12 +582,13 @@ func (c *ChannelGraph) FilterKnownChanIDs(ctx context.Context,
 }
 
 // MarkEdgeZombie attempts to mark a channel identified by its channel ID as a
-// zombie. This method is used on an ad-hoc basis, when channels need to be
-// marked as zombies outside the normal pruning cycle.
-func (c *ChannelGraph) MarkEdgeZombie(ctx context.Context, chanID uint64,
+// zombie for the given gossip version. This method is used on an ad-hoc basis,
+// when channels need to be marked as zombies outside the normal pruning cycle.
+func (c *ChannelGraph) MarkEdgeZombie(ctx context.Context,
+	v lnwire.GossipVersion, chanID uint64,
 	pubKey1, pubKey2 [33]byte) error {
 
-	err := c.db.MarkEdgeZombie(ctx, chanID, pubKey1, pubKey2)
+	err := c.db.MarkEdgeZombie(ctx, v, chanID, pubKey1, pubKey2)
 	if err != nil {
 		return err
 	}
@@ -626,13 +640,6 @@ func (c *ChannelGraph) ForEachNodeChannel(ctx context.Context,
 	return c.db.ForEachNodeChannel(ctx, v, nodePub, cb, reset)
 }
 
-// ForEachNode iterates through all stored vertices/nodes in the graph.
-func (c *ChannelGraph) ForEachNode(ctx context.Context,
-	cb func(*models.Node) error, reset func()) error {
-
-	return c.db.ForEachNode(ctx, cb, reset)
-}
-
 // ForEachNodeCacheable iterates through all stored vertices/nodes in the graph.
 func (c *ChannelGraph) ForEachNodeCacheable(ctx context.Context,
 	v lnwire.GossipVersion, cb func(route.Vertex,
@@ -642,12 +649,12 @@ func (c *ChannelGraph) ForEachNodeCacheable(ctx context.Context,
 }
 
 // NodeUpdatesInHorizon returns all known lightning nodes with updates in the
-// range.
+// range for the given gossip version.
 func (c *ChannelGraph) NodeUpdatesInHorizon(ctx context.Context,
-	startTime, endTime time.Time,
+	v lnwire.GossipVersion, r NodeUpdateRange,
 	opts ...IteratorOption) iter.Seq2[*models.Node, error] {
 
-	return c.db.NodeUpdatesInHorizon(ctx, startTime, endTime, opts...)
+	return c.db.NodeUpdatesInHorizon(ctx, v, r, opts...)
 }
 
 // HasV1Node determines if the graph has a vertex identified by the target node
@@ -658,20 +665,15 @@ func (c *ChannelGraph) HasV1Node(ctx context.Context,
 	return c.db.HasV1Node(ctx, nodePub)
 }
 
-// IsPublicNode determines whether the node is seen as public in the graph.
-func (c *ChannelGraph) IsPublicNode(ctx context.Context,
-	pubKey [33]byte) (bool, error) {
-
-	return c.db.IsPublicNode(ctx, lnwire.GossipVersion1, pubKey)
-}
-
-// ForEachChannel iterates through all channel edges stored within the graph.
+// ForEachChannel iterates through all channel edges stored within the graph
+// across all gossip versions, yielding each unique channel exactly once.
+// See Store.ForEachChannel for details on the versionsMask parameter.
 func (c *ChannelGraph) ForEachChannel(ctx context.Context,
-	v lnwire.GossipVersion, cb func(*models.ChannelEdgeInfo,
-		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error,
+	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, uint32) error,
 	reset func()) error {
 
-	return c.db.ForEachChannel(ctx, v, cb, reset)
+	return c.db.ForEachChannel(ctx, cb, reset)
 }
 
 // DisabledChannelIDs returns the channel ids of disabled channels.
@@ -710,22 +712,33 @@ func (c *ChannelGraph) HighestChanID(ctx context.Context,
 	return c.db.HighestChanID(ctx, v)
 }
 
-// ChanUpdatesInHorizon returns all known channel edges with updates in the
-// horizon.
+// ChanUpdatesInHorizon returns channel updates within a versioned range.
 func (c *ChannelGraph) ChanUpdatesInHorizon(ctx context.Context,
-	startTime, endTime time.Time,
+	v lnwire.GossipVersion, r ChanUpdateRange,
 	opts ...IteratorOption) iter.Seq2[ChannelEdge, error] {
 
-	return c.db.ChanUpdatesInHorizon(ctx, startTime, endTime, opts...)
+	return c.db.ChanUpdatesInHorizon(ctx, v, r, opts...)
 }
 
-// FilterChannelRange returns channel IDs within the passed block height range.
+// FilterChannelRange returns channel IDs within the passed block height range
+// for the given gossip version.
 func (c *ChannelGraph) FilterChannelRange(ctx context.Context,
-	startHeight, endHeight uint32, withTimestamps bool) (
-	[]BlockChannelRange, error) {
+	v lnwire.GossipVersion, startHeight, endHeight uint32,
+	withTimestamps bool) ([]BlockChannelRange, error) {
 
 	return c.db.FilterChannelRange(
-		ctx, startHeight, endHeight, withTimestamps,
+		ctx, v, startHeight, endHeight, withTimestamps,
+	)
+}
+
+// FilterChannelRange returns channel IDs within the passed block height range
+// for this graph's gossip version.
+func (c *VersionedGraph) FilterChannelRange(ctx context.Context,
+	startHeight, endHeight uint32,
+	withTimestamps bool) ([]BlockChannelRange, error) {
+
+	return c.db.FilterChannelRange(
+		ctx, c.v, startHeight, endHeight, withTimestamps,
 	)
 }
 
@@ -736,44 +749,40 @@ func (c *ChannelGraph) FetchChanInfos(ctx context.Context,
 	return c.db.FetchChanInfos(ctx, v, chanIDs)
 }
 
-// FetchChannelEdgesByOutpoint attempts to lookup directed edges by funding
-// outpoint.
+// FetchChannelEdgesByOutpoint looks up directed edges by funding outpoint,
+// preferring the highest gossip version if multiple exist.
 func (c *ChannelGraph) FetchChannelEdgesByOutpoint(ctx context.Context,
 	op *wire.OutPoint) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
-	return c.db.FetchChannelEdgesByOutpoint(
-		ctx, lnwire.GossipVersion1, op,
-	)
+	return c.db.FetchChannelEdgesByOutpointPreferHighest(ctx, op)
 }
 
-// FetchChannelEdgesByID attempts to lookup directed edges by channel ID.
+// FetchChannelEdgesByID looks up directed edges by channel ID, preferring the
+// highest gossip version if multiple exist.
 func (c *ChannelGraph) FetchChannelEdgesByID(ctx context.Context,
 	chanID uint64) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
-	return c.db.FetchChannelEdgesByID(
-		ctx, lnwire.GossipVersion1, chanID,
-	)
+	return c.db.FetchChannelEdgesByIDPreferHighest(ctx, chanID)
 }
 
-// ChannelView returns the verifiable edge information for each active channel.
-func (c *ChannelGraph) ChannelView(ctx context.Context) ([]EdgePoint, error) {
-	return c.db.ChannelView(ctx)
+// GetVersionsBySCID returns the gossip versions for which a channel with the
+// given SCID is recorded in the database.
+func (c *ChannelGraph) GetVersionsBySCID(ctx context.Context,
+	chanID uint64) ([]lnwire.GossipVersion, error) {
+
+	return c.db.GetVersionsBySCID(ctx, chanID)
 }
 
-// IsZombieEdge returns whether the edge is considered zombie.
-func (c *ChannelGraph) IsZombieEdge(ctx context.Context,
-	chanID uint64) (bool, [33]byte, [33]byte, error) {
+// GetVersionsByOutpoint returns the gossip versions for which a channel with
+// the given funding outpoint is recorded in the database.
+func (c *ChannelGraph) GetVersionsByOutpoint(ctx context.Context,
+	op *wire.OutPoint) ([]lnwire.GossipVersion, error) {
 
-	return c.db.IsZombieEdge(ctx, lnwire.GossipVersion1, chanID)
-}
-
-// NumZombies returns the current number of zombie channels in the graph.
-func (c *ChannelGraph) NumZombies(ctx context.Context) (uint64, error) {
-	return c.db.NumZombies(ctx)
+	return c.db.GetVersionsByOutpoint(ctx, op)
 }
 
 // PutClosedScid stores a SCID for a closed channel in the database.
@@ -821,6 +830,110 @@ func NewVersionedGraph(c *ChannelGraph,
 	}
 }
 
+// Version returns the gossip version for this graph.
+func (c *VersionedGraph) Version() lnwire.GossipVersion {
+	return c.v
+}
+
+// FetchNodeFeatures returns the features of the given node. If no features are
+// known for the node, an empty feature vector is returned. If the graphCache is
+// available, it will be used instead of the database.
+//
+// NOTE: This is part of the graphdb.NodeTraverser interface.
+func (c *VersionedGraph) FetchNodeFeatures(ctx context.Context,
+	node route.Vertex) (*lnwire.FeatureVector, error) {
+
+	if c.graphCache != nil {
+		return c.graphCache.GetFeatures(node), nil
+	}
+
+	return c.db.FetchNodeFeatures(ctx, c.v, node)
+}
+
+// ForEachNodeDirectedChannel iterates through all channels of a given node,
+// executing the passed callback on the directed edge representing the channel
+// and its incoming policy. If the callback returns an error, then the iteration
+// is halted with the error propagated back up to the caller. If the graphCache
+// is available, then it will be used to retrieve the node's channels instead
+// of the database.
+//
+// Unknown policies are passed into the callback as nil values.
+//
+// NOTE: This is part of the graphdb.NodeTraverser interface.
+func (c *VersionedGraph) ForEachNodeDirectedChannel(ctx context.Context,
+	node route.Vertex, cb func(channel *DirectedChannel) error,
+	reset func()) error {
+
+	if c.graphCache != nil {
+		return c.graphCache.ForEachChannel(node, cb)
+	}
+
+	// TODO(elle): once the no-cache path needs to support
+	// pathfinding across gossip versions, this should iterate
+	// across all versions rather than defaulting to v1.
+	return c.db.ForEachNodeDirectedChannel(ctx, c.v, node, cb, reset)
+}
+
+// ForEachNodeCached iterates through all stored vertices/nodes in the graph,
+// delegating to the embedded ChannelGraph.
+func (c *VersionedGraph) ForEachNodeCached(ctx context.Context,
+	withAddrs bool, cb func(ctx context.Context, node route.Vertex,
+		addrs []net.Addr,
+		chans map[uint64]*DirectedChannel) error,
+	reset func()) error {
+
+	return c.ChannelGraph.ForEachNodeCached(ctx, c.v, withAddrs, cb, reset)
+}
+
+// ForEachNode iterates through all stored vertices/nodes in the graph across
+// all gossip versions, yielding each unique node once. See Store.ForEachNode
+// for details on the versionsMask parameter.
+func (c *VersionedGraph) ForEachNode(ctx context.Context,
+	cb func(*models.Node) error, reset func()) error {
+
+	return c.ChannelGraph.ForEachNode(
+		ctx, func(node *models.Node, _ uint32) error {
+			return cb(node)
+		}, reset,
+	)
+}
+
+// NumZombies returns the current number of zombie channels in the graph.
+func (c *VersionedGraph) NumZombies(ctx context.Context) (uint64, error) {
+	return c.db.NumZombies(ctx, c.v)
+}
+
+// NodeUpdatesInHorizon returns all known lightning nodes which have an update
+// timestamp within the passed range.
+func (c *VersionedGraph) NodeUpdatesInHorizon(ctx context.Context,
+	r NodeUpdateRange,
+	opts ...IteratorOption) iter.Seq2[*models.Node, error] {
+
+	return c.db.NodeUpdatesInHorizon(ctx, c.v, r, opts...)
+}
+
+// ChannelView returns the verifiable edge information for each active channel.
+func (c *VersionedGraph) ChannelView(ctx context.Context) ([]EdgePoint,
+	error) {
+
+	return c.db.ChannelView(ctx, c.v)
+}
+
+// GraphSession provides the callback with access to a NodeTraverser instance
+// for performing queries against the channel graph. If the graph cache is
+// enabled, the callback receives the VersionedGraph directly (which implements
+// NodeTraverser using the cache). Otherwise a read-only database session is
+// used.
+func (c *VersionedGraph) GraphSession(ctx context.Context,
+	cb func(graph NodeTraverser) error, reset func()) error {
+
+	if c.graphCache != nil {
+		return cb(c)
+	}
+
+	return c.db.GraphSession(ctx, cb, reset)
+}
+
 // FetchNode attempts to look up a target node by its identity public key.
 func (c *VersionedGraph) FetchNode(ctx context.Context,
 	nodePub route.Vertex) (*models.Node, error) {
@@ -852,6 +965,43 @@ func (c *VersionedGraph) IsZombieEdge(ctx context.Context,
 	chanID uint64) (bool, [33]byte, [33]byte, error) {
 
 	return c.db.IsZombieEdge(ctx, c.v, chanID)
+}
+
+// MarkEdgeZombie attempts to mark a channel identified by its channel ID as a
+// zombie for this version.
+func (c *VersionedGraph) MarkEdgeZombie(ctx context.Context, chanID uint64,
+	pubKey1, pubKey2 [33]byte) error {
+
+	return c.ChannelGraph.MarkEdgeZombie(
+		ctx, c.v, chanID, pubKey1, pubKey2,
+	)
+}
+
+// MarkEdgeLive clears an edge from our zombie index for this version, deeming
+// it as live.
+func (c *VersionedGraph) MarkEdgeLive(ctx context.Context,
+	chanID uint64) error {
+
+	return c.ChannelGraph.MarkEdgeLive(ctx, c.v, chanID)
+}
+
+// FilterKnownChanIDs takes a set of channel IDs and return the subset of chan
+// ID's that we don't know and are not known zombies of the passed set.
+func (c *VersionedGraph) FilterKnownChanIDs(ctx context.Context,
+	chansInfo []ChannelUpdateInfo,
+	isZombieChan func(ChannelUpdateInfo) bool) ([]uint64, error) {
+
+	return c.ChannelGraph.FilterKnownChanIDs(
+		ctx, c.v, chansInfo, isZombieChan,
+	)
+}
+
+// ChanUpdatesInHorizon returns channel updates within a versioned range.
+func (c *VersionedGraph) ChanUpdatesInHorizon(ctx context.Context,
+	r ChanUpdateRange, opts ...IteratorOption) iter.Seq2[ChannelEdge,
+	error] {
+
+	return c.db.ChanUpdatesInHorizon(ctx, c.v, r, opts...)
 }
 
 // AddrsForNode returns all known addresses for the target node public key.
@@ -911,23 +1061,9 @@ func (c *VersionedGraph) SourceNode(ctx context.Context) (*models.Node,
 func (c *VersionedGraph) DeleteChannelEdges(ctx context.Context,
 	strictZombiePruning, markZombie bool, chanIDs ...uint64) error {
 
-	infos, err := c.db.DeleteChannelEdges(
+	return c.ChannelGraph.DeleteChannelEdges(
 		ctx, c.v, strictZombiePruning, markZombie, chanIDs...,
 	)
-	if err != nil {
-		return err
-	}
-
-	if c.graphCache != nil {
-		for _, info := range infos {
-			c.graphCache.RemoveChannel(
-				info.NodeKey1Bytes, info.NodeKey2Bytes,
-				info.ChannelID,
-			)
-		}
-	}
-
-	return err
 }
 
 // HasChannelEdge returns true if the database knows of a channel edge with the
@@ -957,12 +1093,21 @@ func (c *VersionedGraph) ForEachNodeChannel(ctx context.Context,
 	return c.db.ForEachNodeChannel(ctx, c.v, nodePub, cb, reset)
 }
 
-// ForEachChannel iterates through all channel edges stored within the graph.
+// ForEachChannel iterates through all channel edges stored within the graph
+// across all gossip versions, yielding each unique channel once. See
+// Store.ForEachChannel for details on the versionsMask parameter. The mask is
+// discarded here to preserve the existing call-site signature.
 func (c *VersionedGraph) ForEachChannel(ctx context.Context,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error, reset func()) error {
 
-	return c.db.ForEachChannel(ctx, c.v, cb, reset)
+	return c.ChannelGraph.ForEachChannel(
+		ctx, func(edge *models.ChannelEdgeInfo,
+			p1, p2 *models.ChannelEdgePolicy, _ uint32) error {
+
+			return cb(edge, p1, p2)
+		}, reset,
+	)
 }
 
 // ForEachNodeCacheable iterates through all stored vertices/nodes in the graph.

@@ -199,6 +199,100 @@ func (n *NodeAnnouncement2) MsgType() MessageType {
 	return MsgNodeAnnouncement2
 }
 
+// NodeAddrs returns the addresses advertised by the node.
+//
+// NOTE: part of the NodeAnnouncement interface.
+func (n *NodeAnnouncement2) NodeAddrs() []net.Addr {
+	var addrs []net.Addr
+
+	n.IPV4Addrs.WhenSome(func(r tlv.RecordT[tlv.TlvType5, IPV4Addrs]) {
+		for _, a := range r.Val {
+			addrs = append(addrs, a)
+		}
+	})
+
+	n.IPV6Addrs.WhenSome(func(r tlv.RecordT[tlv.TlvType7, IPV6Addrs]) {
+		for _, a := range r.Val {
+			addrs = append(addrs, a)
+		}
+	})
+
+	n.TorV3Addrs.WhenSome(func(r tlv.RecordT[tlv.TlvType9, TorV3Addrs]) {
+		for _, a := range r.Val {
+			addrs = append(addrs, a)
+		}
+	})
+
+	return addrs
+}
+
+// SetAddrs sets the addresses advertised by the node, distributing them into
+// the appropriate TLV address fields by type.
+//
+// NOTE: part of the NodeAnnouncement interface.
+func (n *NodeAnnouncement2) SetAddrs(addrs []net.Addr) error {
+	var (
+		ipv4Addrs  IPV4Addrs
+		ipv6Addrs  IPV6Addrs
+		torV3Addrs TorV3Addrs
+	)
+
+	for _, address := range addrs {
+		switch addr := address.(type) {
+		case *net.TCPAddr:
+			if addr.IP.To4() != nil {
+				ipv4Addrs = append(ipv4Addrs, addr)
+			} else {
+				ipv6Addrs = append(ipv6Addrs, addr)
+			}
+
+		case *tor.OnionAddr:
+			torV3Addrs = append(torV3Addrs, addr)
+
+		default:
+			return fmt.Errorf("unknown address type: %T", addr)
+		}
+	}
+
+	ipv4Record := tlv.ZeroRecordT[tlv.TlvType5, IPV4Addrs]()
+	ipv4Record.Val = ipv4Addrs
+	n.IPV4Addrs = tlv.SomeRecordT(ipv4Record)
+
+	ipv6Record := tlv.ZeroRecordT[tlv.TlvType7, IPV6Addrs]()
+	ipv6Record.Val = ipv6Addrs
+	n.IPV6Addrs = tlv.SomeRecordT(ipv6Record)
+
+	torV3Record := tlv.ZeroRecordT[tlv.TlvType9, TorV3Addrs]()
+	torV3Record.Val = torV3Addrs
+	n.TorV3Addrs = tlv.SomeRecordT(torV3Record)
+
+	return nil
+}
+
+// NodeAlias returns the human-readable alias of the node.
+//
+// NOTE: part of the NodeAnnouncement interface.
+func (n *NodeAnnouncement2) NodeAlias() string {
+	var alias NodeAlias2
+	n.Alias.WhenSome(func(r tlv.RecordT[tlv.TlvType3, NodeAlias2]) {
+		alias = r.Val
+	})
+
+	return string(bytes.TrimRight(alias, "\x00"))
+}
+
+// NodeColor returns the RGB colour of the node.
+//
+// NOTE: part of the NodeAnnouncement interface.
+func (n *NodeAnnouncement2) NodeColor() color.RGBA {
+	var c color.RGBA
+	n.Color.WhenSome(func(r tlv.RecordT[tlv.TlvType1, Color]) {
+		c = color.RGBA(r.Val)
+	})
+
+	return c
+}
+
 // NodePub returns the identity public key of the node.
 //
 // NOTE: part of the NodeAnnouncement interface.
@@ -221,11 +315,48 @@ func (n *NodeAnnouncement2) TimestampDesc() string {
 	return fmt.Sprintf("block_height=%d", n.BlockHeight.Val)
 }
 
+// HasZeroUpdateTime returns true if the update-ordering field is zero.
+//
+// NOTE: part of the NodeAnnouncement interface.
+func (n *NodeAnnouncement2) HasZeroUpdateTime() bool {
+	return n.UpdateTimestamp().IsZero()
+}
+
+// UpdateTimestamp returns the update-ordering field.
+//
+// NOTE: part of the NodeAnnouncement interface.
+func (n *NodeAnnouncement2) UpdateTimestamp() Timestamp {
+	return BlockHeightTimestamp(n.BlockHeight.Val)
+}
+
 // GossipVersion returns the gossip version that this message is part of.
 //
 // NOTE: this is part of the GossipMessage interface.
 func (n *NodeAnnouncement2) GossipVersion() GossipVersion {
 	return GossipVersion2
+}
+
+// CmpAge can be used to determine if this announcement is older or newer than
+// the passed announcement.
+//
+// NOTE: this is part of the NodeAnnouncement interface.
+func (n *NodeAnnouncement2) CmpAge(announcement NodeAnnouncement) (
+	CompareResult, error) {
+
+	other, ok := announcement.(*NodeAnnouncement2)
+	if !ok {
+		return 0, fmt.Errorf("expected *NodeAnnouncement2, got: %T",
+			announcement)
+	}
+
+	switch {
+	case n.BlockHeight.Val < other.BlockHeight.Val:
+		return LessThan, nil
+	case n.BlockHeight.Val > other.BlockHeight.Val:
+		return GreaterThan, nil
+	default:
+		return EqualTo, nil
+	}
 }
 
 // A compile-time check to ensure NodeAnnouncement2 implements the Message

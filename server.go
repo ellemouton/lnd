@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -841,6 +840,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		ApplyChannelUpdate:       s.applyChannelUpdate,
 		DB:                       s.chanStateDB,
 		Graph:                    dbs.GraphDB,
+		BestBlockView:            s.cc.BestBlockTracker,
 	}
 
 	chanStatusMgr, err := netann.NewChanStatusManager(chanStatusMgrCfg)
@@ -993,7 +993,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		return nil, fmt.Errorf("error getting source node: %w", err)
 	}
 	paymentSessionSource := &routing.SessionSource{
-		GraphSessionFactory: dbs.GraphDB,
+		GraphSessionFactory: s.v1Graph,
 		SourceNode:          sourceNode,
 		MissionControl:      s.defaultMC,
 		GetLink:             s.htlcSwitch.GetLinkByShortID,
@@ -1024,7 +1024,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 
 	s.chanRouter, err = routing.New(routing.Config{
 		SelfNode:                  nodePubKey,
-		RoutingGraph:              dbs.GraphDB,
+		RoutingGraph:              s.v1Graph,
 		Chain:                     cc.ChainIO,
 		Payer:                     s.htlcSwitch,
 		Control:                   s.controlTower,
@@ -1059,6 +1059,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 
 	s.authGossiper = discovery.New(discovery.Config{
 		Graph:                 s.graphBuilder,
+		GraphDB:               s.graphDB,
 		ChainIO:               s.cc.ChainIO,
 		Notifier:              s.cc.ChainNotifier,
 		ChainParams:           s.cfg.ActiveNetParams.Params,
@@ -1067,7 +1068,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		NotifyWhenOnline:      s.NotifyWhenOnline,
 		NotifyWhenOffline:     s.NotifyWhenOffline,
 		FetchSelfAnnouncement: s.getNodeAnnouncement,
-		UpdateSelfAnnouncement: func() (lnwire.NodeAnnouncement1,
+		UpdateSelfAnnouncement: func() (lnwire.NodeAnnouncement,
 			error) {
 
 			return s.genNodeAnnouncement(nil)
@@ -1476,11 +1477,15 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		UpdateLabel: func(hash chainhash.Hash, label string) error {
 			return cc.Wallet.LabelTransaction(hash, label, true)
 		},
-		Notifier:     cc.ChainNotifier,
-		ChannelDB:    s.chanStateDB,
-		FeeEstimator: cc.FeeEstimator,
-		SignMessage:  cc.MsgSigner.SignMessage,
-		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement1,
+		Notifier:           cc.ChainNotifier,
+		ChannelDB:          s.chanStateDB,
+		FeeEstimator:       cc.FeeEstimator,
+		SignMessage:        cc.MsgSigner.SignMessage,
+		SignMessageSchnorr: cc.KeyRing.SignMessageSchnorr,
+		MuSig2Signer:      cc.Wallet.Cfg.Signer,
+		BestBlockView:      s.cc.BestBlockTracker,
+		GraphSupportsV2:    cfg.DB.UseNativeSQL,
+		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement,
 			error) {
 
 			return s.genNodeAnnouncement(nil)
@@ -1788,12 +1793,12 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 			},
 			AdvertisedIPs: advertisedIPs,
 			AnnounceNewIPs: netann.IPAnnouncer(
-				func(modifier ...netann.NodeAnnModifier) (
-					lnwire.NodeAnnouncement1, error) {
-
-					return s.genNodeAnnouncement(
+				func(modifier ...netann.NodeAnnModifier) error {
+					_, err := s.genNodeAnnouncement(
 						nil, modifier...,
 					)
+
+					return err
 				}),
 		})
 	}
@@ -1892,18 +1897,11 @@ func (s *server) registerBlockConsumers() {
 	s.blockbeatDispatcher.RegisterQueue(consumers)
 }
 
-// signAliasUpdate takes a ChannelUpdate and returns the signature. This is
+// signAliasUpdate re-signs an aliased gossip channel update in-place. This is
 // used for option_scid_alias channels where the ChannelUpdate to be sent back
 // may differ from what is on disk.
-func (s *server) signAliasUpdate(u *lnwire.ChannelUpdate1) (*ecdsa.Signature,
-	error) {
-
-	data, err := u.DataToSign()
-	if err != nil {
-		return nil, err
-	}
-
-	return s.cc.MsgSigner.SignMessage(s.identityKeyLoc, data, true)
+func (s *server) signAliasUpdate(u lnwire.ChannelUpdate) error {
+	return netann.SignChannelUpdate(s.cc.KeyRing, s.identityKeyLoc, u)
 }
 
 // createLivenessMonitor creates a set of health checks using our configured
@@ -2888,7 +2886,7 @@ out:
 			// the previous IP is no longer valid.
 			currentNodeAnn := s.getNodeAnnouncement()
 
-			for _, addr := range currentNodeAnn.Addresses {
+			for _, addr := range currentNodeAnn.NodeAddrs() {
 				host, _, err := net.SplitHostPort(addr.String())
 				if err != nil {
 					srvrLog.Debugf("Unable to determine "+
@@ -2917,7 +2915,7 @@ out:
 				continue
 			}
 
-			err = s.BroadcastMessage(nil, &newNodeAnn)
+			err = s.BroadcastMessage(nil, newNodeAnn)
 			if err != nil {
 				srvrLog.Debugf("Unable to broadcast new node "+
 					"announcement to peers: %v", err)
@@ -2943,7 +2941,7 @@ func initNetworkBootstrappers(s *server) ([]discovery.NetworkPeerBootstrapper, e
 	// First, we'll create an instance of the ChannelGraphBootstrapper as
 	// this can be used by default if we've already partially seeded the
 	// network.
-	chanGraph := autopilot.ChannelGraphFromDatabase(s.graphDB)
+	chanGraph := autopilot.ChannelGraphFromDatabase(s.v1Graph)
 	graphBootstrapper, err := discovery.NewGraphBootstrapper(
 		chanGraph, s.cfg.Bitcoin.IsLocalNetwork(),
 	)
@@ -3302,9 +3300,20 @@ func (s *server) createNewHiddenService(ctx context.Context) error {
 	// Now that the onion service has been created, we'll add the onion
 	// address it can be reached at to our list of advertised addresses.
 	newNodeAnn, err := s.genNodeAnnouncement(
-		nil, func(currentAnn *lnwire.NodeAnnouncement1) {
-			currentAnn.Addresses = append(currentAnn.Addresses, addr)
-		},
+		nil, netann.NodeAnnModifierFunc(
+			func(ann lnwire.NodeAnnouncement) error {
+				v1, ok := ann.(*lnwire.NodeAnnouncement1)
+				if !ok {
+					return fmt.Errorf("unsupported "+
+						"node ann type: %T", ann)
+				}
+				v1.Addresses = append(
+					v1.Addresses, addr,
+				)
+
+				return nil
+			},
+		),
 	)
 	if err != nil {
 		return fmt.Errorf("unable to generate new node "+
@@ -3313,14 +3322,19 @@ func (s *server) createNewHiddenService(ctx context.Context) error {
 
 	// Finally, we'll update the on-disk version of our announcement so it
 	// will eventually propagate to nodes in the network.
+	ann1, ok := newNodeAnn.(*lnwire.NodeAnnouncement1)
+	if !ok {
+		return fmt.Errorf("unexpected node announcement type: %T",
+			newNodeAnn)
+	}
 	selfNode := models.NewV1Node(
 		route.NewVertex(s.identityECDH.PubKey()), &models.NodeV1Fields{
-			Addresses:    newNodeAnn.Addresses,
-			Features:     newNodeAnn.Features,
-			AuthSigBytes: newNodeAnn.Signature.ToSignatureBytes(),
-			Color:        newNodeAnn.RGBColor,
-			Alias:        newNodeAnn.Alias.String(),
-			LastUpdate:   time.Unix(int64(newNodeAnn.Timestamp), 0),
+			Addresses:    ann1.Addresses,
+			Features:     ann1.Features,
+			AuthSigBytes: ann1.Signature.ToSignatureBytes(),
+			Color:        ann1.RGBColor,
+			Alias:        ann1.Alias.String(),
+			LastUpdate:   time.Unix(int64(ann1.Timestamp), 0),
 		},
 	)
 
@@ -3352,18 +3366,18 @@ func (s *server) findChannel(node *btcec.PublicKey, chanID lnwire.ChannelID) (
 }
 
 // getNodeAnnouncement fetches the current, fully signed node announcement.
-func (s *server) getNodeAnnouncement() lnwire.NodeAnnouncement1 {
+func (s *server) getNodeAnnouncement() lnwire.NodeAnnouncement {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return *s.currentNodeAnn
+	return s.currentNodeAnn
 }
 
 // genNodeAnnouncement generates and returns the current fully signed node
 // announcement. The time stamp of the announcement will be updated in order
 // to ensure it propagates through the network.
 func (s *server) genNodeAnnouncement(features *lnwire.RawFeatureVector,
-	modifiers ...netann.NodeAnnModifier) (lnwire.NodeAnnouncement1, error) {
+	modifiers ...netann.NodeAnnModifier) (lnwire.NodeAnnouncement, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -3381,7 +3395,7 @@ func (s *server) genNodeAnnouncement(features *lnwire.RawFeatureVector,
 		}
 		err := s.featureMgr.UpdateFeatureSets(proposedFeatures)
 		if err != nil {
-			return lnwire.NodeAnnouncement1{}, err
+			return nil, err
 		}
 
 		// If we could successfully update our feature manager, add
@@ -3394,37 +3408,20 @@ func (s *server) genNodeAnnouncement(features *lnwire.RawFeatureVector,
 
 	// Always update the timestamp when refreshing to ensure the update
 	// propagates.
-	modifiers = append(modifiers, netann.NodeAnnSetTimestamp)
-
-	// Apply the requested changes to the node announcement.
-	for _, modifier := range modifiers {
-		modifier(&newNodeAnn)
-	}
-
-	// The modifiers may have added duplicate addresses, so we need to
-	// de-duplicate them here.
-	uniqueAddrs := map[string]struct{}{}
-	dedupedAddrs := make([]net.Addr, 0)
-	for _, addr := range newNodeAnn.Addresses {
-		if _, ok := uniqueAddrs[addr.String()]; !ok {
-			uniqueAddrs[addr.String()] = struct{}{}
-			dedupedAddrs = append(dedupedAddrs, addr)
-		}
-	}
-	newNodeAnn.Addresses = dedupedAddrs
+	modifiers = append(modifiers, netann.NodeAnnSetTimestamp(time.Now()))
 
 	// Sign a new update after applying all of the passed modifiers.
 	err := netann.SignNodeAnnouncement(
-		s.nodeSigner, s.identityKeyLoc, &newNodeAnn,
+		s.nodeSigner, s.identityKeyLoc, &newNodeAnn, modifiers...,
 	)
 	if err != nil {
-		return lnwire.NodeAnnouncement1{}, err
+		return nil, err
 	}
 
 	// If signing succeeds, update the current announcement.
 	*s.currentNodeAnn = newNodeAnn
 
-	return *s.currentNodeAnn, nil
+	return s.currentNodeAnn, nil
 }
 
 // updateAndBroadcastSelfNode generates a new node announcement
@@ -3449,12 +3446,18 @@ func (s *server) updateAndBroadcastSelfNode(ctx context.Context,
 		return fmt.Errorf("unable to get current source node: %w", err)
 	}
 
-	selfNode.LastUpdate = time.Unix(int64(newNodeAnn.Timestamp), 0)
-	selfNode.Addresses = newNodeAnn.Addresses
-	selfNode.Alias = fn.Some(newNodeAnn.Alias.String())
+	ann1, ok := newNodeAnn.(*lnwire.NodeAnnouncement1)
+	if !ok {
+		return fmt.Errorf("unexpected node announcement type: %T",
+			newNodeAnn)
+	}
+
+	selfNode.LastUpdate = time.Unix(int64(ann1.Timestamp), 0)
+	selfNode.Addresses = ann1.Addresses
+	selfNode.Alias = fn.Some(ann1.Alias.String())
 	selfNode.Features = s.featureMgr.Get(feature.SetNodeAnn)
-	selfNode.Color = fn.Some(newNodeAnn.RGBColor)
-	selfNode.AuthSigBytes = newNodeAnn.Signature.ToSignatureBytes()
+	selfNode.Color = fn.Some(ann1.RGBColor)
+	selfNode.AuthSigBytes = ann1.Signature.ToSignatureBytes()
 
 	copy(selfNode.PubKeyBytes[:], s.identityECDH.PubKey().SerializeCompressed())
 
@@ -3463,7 +3466,7 @@ func (s *server) updateAndBroadcastSelfNode(ctx context.Context,
 	}
 
 	// Finally, propagate it to the nodes in the network.
-	err = s.BroadcastMessage(nil, &newNodeAnn)
+	err = s.BroadcastMessage(nil, newNodeAnn)
 	if err != nil {
 		rpcsLog.Debugf("Unable to broadcast new node "+
 			"announcement to peers: %v", err)
@@ -4409,7 +4412,7 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 		DisconnectPeer:          s.DisconnectPeer,
 		OnionMessageServer:      s.onionMessageServer,
 		GenNodeAnnouncement: func(...netann.NodeAnnModifier) (
-			lnwire.NodeAnnouncement1, error) {
+			lnwire.NodeAnnouncement, error) {
 
 			return s.genNodeAnnouncement(nil)
 		},
@@ -5132,6 +5135,28 @@ func (s *server) OpenChannel(
 	req.Peer = peer
 	s.mu.RUnlock()
 
+	// If the desired channel is for an advertised taproot channel, then
+	// the peer must support taproot gossip.
+	if req.ChannelType != nil {
+		rfv := lnwire.RawFeatureVector(*req.ChannelType)
+		fv := lnwire.NewFeatureVector(&rfv, lnwire.Features)
+
+		if fv.HasFeature(lnwire.SimpleTaprootChannelsOptionalStaging) &&
+			!req.Private {
+
+			if !peer.RemoteFeatures().HasFeature(
+				lnwire.TaprootGossipOptionalStaging,
+			) {
+
+				req.Err <- fmt.Errorf("peer %x does not "+
+					"support announced taproot channels",
+					pubKeyBytes)
+
+				return req.Updates, req.Err
+			}
+		}
+	}
+
 	// We'll wait until the peer is active before beginning the channel
 	// opening process.
 	select {
@@ -5235,11 +5260,13 @@ func (s *server) fetchNodeAdvertisedAddrs(ctx context.Context,
 // fetchLastChanUpdate returns a function which is able to retrieve our latest
 // channel update for a target channel.
 func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
-	*lnwire.ChannelUpdate1, error) {
+	lnwire.ChannelUpdate, error) {
 
 	ourPubKey := s.identityECDH.PubKey().SerializeCompressed()
-	return func(cid lnwire.ShortChannelID) (*lnwire.ChannelUpdate1, error) {
-		info, edge1, edge2, err := s.graphBuilder.GetChannelByID(cid)
+	return func(cid lnwire.ShortChannelID) (lnwire.ChannelUpdate, error) {
+		info, edge1, edge2, err := s.graphDB.FetchChannelEdgesByID(
+			context.TODO(), cid.ToUint64(),
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -5253,7 +5280,7 @@ func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
 // applyChannelUpdate applies the channel update to the different sub-systems of
 // the server. The useAlias boolean denotes whether or not to send an alias in
 // place of the real SCID.
-func (s *server) applyChannelUpdate(update *lnwire.ChannelUpdate1,
+func (s *server) applyChannelUpdate(update lnwire.ChannelUpdate,
 	op *wire.OutPoint, useAlias bool) error {
 
 	var (
@@ -5714,7 +5741,19 @@ func (s *server) setSelfNode(ctx context.Context, nodePub route.Vertex,
 	}
 
 	selfNode.AuthSigBytes = authSig.Serialize()
-	nodeAnn.Signature, err = lnwire.NewSigFromECDSARawSignature(
+
+	// TODO(elle): once the self-node announcement path supports v2, remove
+	// this assertion and generalize currentNodeAnn to lnwire.NodeAnnouncement.
+	// The self-node is always a v1 node at this point, so we can safely
+	// assert the interface back to the concrete type to set the signature
+	// and update the cached announcement.
+	nodeAnn1, ok := nodeAnn.(*lnwire.NodeAnnouncement1)
+	if !ok {
+		return fmt.Errorf("expected v1 node announcement for self node,"+
+			" got %T", nodeAnn)
+	}
+
+	nodeAnn1.Signature, err = lnwire.NewSigFromECDSARawSignature(
 		selfNode.AuthSigBytes,
 	)
 	if err != nil {
@@ -5727,7 +5766,7 @@ func (s *server) setSelfNode(ctx context.Context, nodePub route.Vertex,
 		return fmt.Errorf("can't set self node: %w", err)
 	}
 
-	s.currentNodeAnn = nodeAnn
+	s.currentNodeAnn = nodeAnn1
 
 	return nil
 }

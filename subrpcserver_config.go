@@ -122,7 +122,7 @@ func (s *subRPCServerConfigs) PopulateDependencies(cfg *Config,
 	tcpResolver lncfg.TCPResolver,
 	genInvoiceFeatures func() *lnwire.FeatureVector,
 	genAmpInvoiceFeatures func() *lnwire.FeatureVector,
-	getNodeAnnouncement func() lnwire.NodeAnnouncement1,
+	getNodeAnnouncement func() lnwire.NodeAnnouncement,
 	updateNodeAnnouncement func(ctx context.Context,
 		features *lnwire.RawFeatureVector,
 		modifiers ...netann.NodeAnnModifier) error,
@@ -265,7 +265,9 @@ func (s *subRPCServerConfigs) PopulateDependencies(cfg *Config,
 				reflect.ValueOf(defaultDelta),
 			)
 			subCfgValue.FieldByName("Graph").Set(
-				reflect.ValueOf(graphDB),
+				reflect.ValueOf(graphdb.NewVersionedGraph(
+					graphDB, lnwire.GossipVersion1,
+				)),
 			)
 			subCfgValue.FieldByName("ChanStateDB").Set(
 				reflect.ValueOf(chanStateDB),

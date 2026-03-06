@@ -88,18 +88,21 @@ type Store interface { //nolint:interfacebloat
 	// the addresses are actually needed.
 	//
 	// NOTE: The callback contents MUST not be modified.
-	ForEachNodeCached(ctx context.Context, withAddrs bool,
+	ForEachNodeCached(ctx context.Context, v lnwire.GossipVersion,
+		withAddrs bool,
 		cb func(ctx context.Context, node route.Vertex,
 			addrs []net.Addr,
 			chans map[uint64]*DirectedChannel) error,
 		reset func()) error
 
-	// ForEachNode iterates through all the stored vertices/nodes in the
-	// graph, executing the passed callback with each node encountered. If
-	// the callback returns an error, then the transaction is aborted and
-	// the iteration stops early.
-	ForEachNode(ctx context.Context, cb func(*models.Node) error,
-		reset func()) error
+	// ForEachNode iterates through all nodes in the graph across all
+	// gossip versions, yielding each unique node exactly once. The
+	// callback receives the best available Node (highest advertised
+	// version preferred, falling back to shell nodes) and a versionsMask
+	// where bit 0 indicates a v1 entry exists and bit 1 indicates a v2
+	// entry exists.
+	ForEachNode(ctx context.Context,
+		cb func(*models.Node, uint32) error, reset func()) error
 
 	// ForEachNodeCacheable iterates through all the stored vertices/nodes
 	// in the graph, executing the passed callback with each node
@@ -119,11 +122,12 @@ type Store interface { //nolint:interfacebloat
 	DeleteNode(ctx context.Context, v lnwire.GossipVersion,
 		nodePub route.Vertex) error
 
-	// NodeUpdatesInHorizon returns all the known lightning node which have
-	// an update timestamp within the passed range. This method can be used
-	// by two nodes to quickly determine if they have the same set of up to
-	// date node announcements.
-	NodeUpdatesInHorizon(ctx context.Context, startTime, endTime time.Time,
+	// NodeUpdatesInHorizon returns all the known lightning nodes which have
+	// updates within the passed range for the given gossip version. This
+	// method can be used by two nodes to quickly determine if they have the
+	// same set of up to date node announcements.
+	NodeUpdatesInHorizon(ctx context.Context, v lnwire.GossipVersion,
+		r NodeUpdateRange,
 		opts ...IteratorOption) iter.Seq2[*models.Node, error]
 
 	// FetchNode attempts to look up a target node by its identity
@@ -159,21 +163,17 @@ type Store interface { //nolint:interfacebloat
 	GraphSession(ctx context.Context,
 		cb func(graph NodeTraverser) error, reset func()) error
 
-	// ForEachChannel iterates through all the channel edges stored within
-	// the graph and invokes the passed callback for each edge. The callback
-	// takes two edges as since this is a directed graph, both the in/out
-	// edges are visited. If the callback returns an error, then the
-	// transaction is aborted and the iteration stops early.
-	//
-	// NOTE: If an edge can't be found, or wasn't advertised, then a nil
-	// pointer for that particular channel edge routing policy will be
-	// passed into the callback.
-	//
-	// TODO(elle): add a cross-version iteration API and make this iterate
-	// over all versions.
-	ForEachChannel(ctx context.Context, v lnwire.GossipVersion,
+	// ForEachChannel iterates through all channel edges stored within the
+	// graph across all gossip versions, yielding each unique channel
+	// exactly once. The callback receives the edge info, both directional
+	// policies, and a versionsMask where bit 0 indicates a v1 entry exists
+	// and bit 1 indicates a v2 entry exists. When both versions are
+	// present, v2 is preferred. Nil pointers are passed for policies that
+	// haven't been advertised.
+	ForEachChannel(ctx context.Context,
 		cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
-			*models.ChannelEdgePolicy) error, reset func()) error
+			*models.ChannelEdgePolicy, uint32) error,
+		reset func()) error
 
 	// ForEachChannelCacheable iterates through all the channel edges stored
 	// within the graph and invokes the passed callback for each edge. The
@@ -255,10 +255,10 @@ type Store interface { //nolint:interfacebloat
 		uint64, error)
 
 	// ChanUpdatesInHorizon returns all the known channel edges which have
-	// at least one edge that has an update timestamp within the specified
-	// horizon.
-	ChanUpdatesInHorizon(ctx context.Context,
-		startTime, endTime time.Time,
+	// at least one edge update within the specified range for the given
+	// gossip version.
+	ChanUpdatesInHorizon(ctx context.Context, v lnwire.GossipVersion,
+		r ChanUpdateRange,
 		opts ...IteratorOption) iter.Seq2[ChannelEdge, error]
 
 	// FilterKnownChanIDs takes a set of channel IDs and return the subset
@@ -268,20 +268,20 @@ type Store interface { //nolint:interfacebloat
 	// callers to determine the set of channels another peer knows of that
 	// we don't. The ChannelUpdateInfos for the known zombies is also
 	// returned.
-	FilterKnownChanIDs(ctx context.Context,
-		chansInfo []ChannelUpdateInfo) ([]uint64, []ChannelUpdateInfo,
-		error)
+	FilterKnownChanIDs(ctx context.Context, v lnwire.GossipVersion,
+		chansInfo []ChannelUpdateInfo) ([]uint64,
+		[]ChannelUpdateInfo, error)
 
 	// FilterChannelRange returns the channel ID's of all known channels
-	// which were mined in a block height within the passed range. The
-	// channel IDs are grouped by their common block height. This method can
-	// be used to quickly share with a peer the set of channels we know of
-	// within a particular range to catch them up after a period of time
-	// offline. If withTimestamps is true then the timestamp info of the
-	// latest received channel update messages of the channel will be
-	// included in the response.
-	FilterChannelRange(ctx context.Context, startHeight,
-		endHeight uint32,
+	// which were mined in a block height within the passed range for the
+	// given gossip version. The channel IDs are grouped by their common
+	// block height. This method can be used to quickly share with a peer
+	// the set of channels we know of within a particular range to catch
+	// them up after a period of time offline. If withTimestamps is true
+	// then the timestamp info of the latest received channel update
+	// messages of the channel will be included in the response.
+	FilterChannelRange(ctx context.Context, v lnwire.GossipVersion,
+		startHeight, endHeight uint32,
 		withTimestamps bool) ([]BlockChannelRange, error)
 
 	// FetchChanInfos returns the set of channel edges that correspond to
@@ -320,21 +320,56 @@ type Store interface { //nolint:interfacebloat
 		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy, error)
 
+	// FetchChannelEdgesByIDPreferHighest behaves like FetchChannelEdgesByID
+	// but is version-agnostic: if the channel exists under multiple gossip
+	// versions it returns the record with the highest version number. This
+	// is the appropriate call for display/API paths that should always
+	// surface the most up-to-date representation of a channel.
+	FetchChannelEdgesByIDPreferHighest(ctx context.Context,
+		chanID uint64) (
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, error)
+
+	// FetchChannelEdgesByOutpointPreferHighest behaves like
+	// FetchChannelEdgesByOutpoint but is version-agnostic: if the channel
+	// exists under multiple gossip versions it returns the record with the
+	// highest version number.
+	FetchChannelEdgesByOutpointPreferHighest(ctx context.Context,
+		op *wire.OutPoint) (
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, error)
+
+	// GetVersionsBySCID returns the list of gossip versions for which a
+	// channel with the given SCID exists in the database, ordered
+	// ascending.
+	GetVersionsBySCID(ctx context.Context,
+		chanID uint64) ([]lnwire.GossipVersion, error)
+
+	// GetVersionsByOutpoint returns the list of gossip versions for which
+	// a channel with the given funding outpoint exists in the database,
+	// ordered ascending.
+	GetVersionsByOutpoint(ctx context.Context,
+		op *wire.OutPoint) ([]lnwire.GossipVersion, error)
+
 	// ChannelView returns the verifiable edge information for each active
-	// channel within the known channel graph. The set of UTXO's (along with
-	// their scripts) returned are the ones that need to be watched on chain
-	// to detect channel closes on the resident blockchain.
-	ChannelView(ctx context.Context) ([]EdgePoint, error)
+	// channel within the known channel graph for the given gossip version.
+	// The set of UTXO's (along with their scripts) returned are the ones
+	// that need to be watched on chain to detect channel closes on the
+	// resident blockchain.
+	ChannelView(ctx context.Context, v lnwire.GossipVersion) ([]EdgePoint,
+		error)
 
 	// MarkEdgeZombie attempts to mark a channel identified by its channel
-	// ID as a zombie. This method is used on an ad-hoc basis, when channels
-	// need to be marked as zombies outside the normal pruning cycle.
-	MarkEdgeZombie(ctx context.Context, chanID uint64,
-		pubKey1, pubKey2 [33]byte) error
+	// ID as a zombie for the given gossip version. This method is used on
+	// an ad-hoc basis, when channels need to be marked as zombies outside
+	// the normal pruning cycle.
+	MarkEdgeZombie(ctx context.Context, v lnwire.GossipVersion,
+		chanID uint64, pubKey1, pubKey2 [33]byte) error
 
-	// MarkEdgeLive clears an edge from our zombie index, deeming it as
-	// live.
-	MarkEdgeLive(ctx context.Context, chanID uint64) error
+	// MarkEdgeLive clears an edge from our zombie index for the given
+	// gossip version, deeming it as live.
+	MarkEdgeLive(ctx context.Context, v lnwire.GossipVersion,
+		chanID uint64) error
 
 	// IsZombieEdge returns whether the edge is considered zombie. If it is
 	// a zombie, then the two node public keys corresponding to this edge
@@ -344,7 +379,7 @@ type Store interface { //nolint:interfacebloat
 
 	// NumZombies returns the current number of zombie channels in the
 	// graph.
-	NumZombies(ctx context.Context) (uint64, error)
+	NumZombies(ctx context.Context, v lnwire.GossipVersion) (uint64, error)
 
 	// PutClosedScid stores a SCID for a closed channel in the database.
 	// This is so that we can ignore channel announcements that we know to

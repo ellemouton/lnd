@@ -284,10 +284,9 @@ type gossipSyncerCfg struct {
 	// for a single QueryChannelRange request.
 	maxQueryChanRangeReplies uint32
 
-	// isStillZombieChannel takes the timestamps of the latest channel
-	// updates for a channel and returns true if the channel should be
-	// considered a zombie based on these timestamps.
-	isStillZombieChannel func(time.Time, time.Time) bool
+	// isStillZombieChannel returns true if the channel described by info
+	// should still be considered a zombie.
+	isStillZombieChannel func(graphdb.ChannelUpdateInfo) bool
 
 	// timestampQueueSize is the size of the timestamp range queue. If not
 	// set, defaults to the global timestampQueueSize constant.
@@ -974,39 +973,40 @@ func (g *GossipSyncer) processChanRangeReply(_ context.Context,
 	g.prevReplyChannelRange = msg
 
 	for i, scid := range msg.ShortChanIDs {
-		info := graphdb.NewChannelUpdateInfo(
+		info := graphdb.NewV1ChannelUpdateInfo(
 			scid, time.Time{}, time.Time{},
 		)
 
 		if len(msg.Timestamps) != 0 {
-			t1 := time.Unix(int64(msg.Timestamps[i].Timestamp1), 0)
-			info.Node1UpdateTimestamp = t1
+			info.Node1Freshness = lnwire.UnixTimestamp(
+				msg.Timestamps[i].Timestamp1,
+			)
 
+			info.Node2Freshness = lnwire.UnixTimestamp(
+				msg.Timestamps[i].Timestamp2,
+			)
+
+			t1 := time.Unix(int64(msg.Timestamps[i].Timestamp1), 0)
 			t2 := time.Unix(int64(msg.Timestamps[i].Timestamp2), 0)
-			info.Node2UpdateTimestamp = t2
 
 			// Sort out all channels with outdated or skewed
 			// timestamps. Both timestamps need to be out of
 			// boundaries for us to skip the channel and not query
 			// it later on.
 			switch {
-			case isStale(info.Node1UpdateTimestamp) &&
-				isStale(info.Node2UpdateTimestamp):
+			case isStale(t1) && isStale(t2):
 
 				continue
 
-			case isSkewed(info.Node1UpdateTimestamp) &&
-				isSkewed(info.Node2UpdateTimestamp):
+			case isSkewed(t1) && isSkewed(t2):
 
 				continue
 
-			case isStale(info.Node1UpdateTimestamp) &&
-				isSkewed(info.Node2UpdateTimestamp):
+			case isStale(t1) && isSkewed(t2):
 
 				continue
 
-			case isStale(info.Node2UpdateTimestamp) &&
-				isSkewed(info.Node1UpdateTimestamp):
+			case isStale(t2) && isSkewed(t1):
 
 				continue
 			}
@@ -1268,11 +1268,11 @@ func (g *GossipSyncer) replyChanRangeQuery(ctx context.Context,
 			}
 
 			timestamps[i].Timestamp1 = uint32(
-				info.Node1UpdateTimestamp.Unix(),
+				info.Node1FreshnessTime().Unix(),
 			)
 
 			timestamps[i].Timestamp2 = uint32(
-				info.Node2UpdateTimestamp.Unix(),
+				info.Node2FreshnessTime().Unix(),
 			)
 		}
 
@@ -1611,13 +1611,19 @@ func (g *GossipSyncer) FilterGossipMsgs(ctx context.Context,
 		map[lnwire.ShortChannelID][]*lnwire.ChannelUpdate1,
 	)
 	for _, msg := range msgs {
-		chanUpdate, ok := msg.msg.(*lnwire.ChannelUpdate1)
+		chanUpdate, ok := msg.msg.(lnwire.ChannelUpdate)
 		if !ok {
 			continue
 		}
 
-		chanUpdateIndex[chanUpdate.ShortChannelID] = append(
-			chanUpdateIndex[chanUpdate.ShortChannelID], chanUpdate,
+		chanUpdate1, ok := chanUpdate.(*lnwire.ChannelUpdate1)
+		if !ok {
+			continue
+		}
+
+		scid := chanUpdate1.ShortChannelID
+		chanUpdateIndex[scid] = append(
+			chanUpdateIndex[scid], chanUpdate1,
 		)
 	}
 
@@ -1648,20 +1654,22 @@ func (g *GossipSyncer) FilterGossipMsgs(ctx context.Context,
 		// For each channel announcement message, we'll only send this
 		// message if the channel updates for the channel are between
 		// our time range.
-		case *lnwire.ChannelAnnouncement1:
+		case lnwire.ChannelAnnouncement:
+			scid := msg.SCID()
+
 			// First, we'll check if the channel updates are in
 			// this message batch.
-			chanUpdates, ok := chanUpdateIndex[msg.ShortChannelID]
+			chanUpdates, ok := chanUpdateIndex[scid]
 			if !ok {
 				// If not, we'll attempt to query the database
 				// to see if we know of the updates.
 				chanUpdates, err = g.cfg.channelSeries.FetchChanUpdates(
-					g.cfg.chainHash, msg.ShortChannelID,
+					g.cfg.chainHash, scid,
 				)
 				if err != nil {
 					log.Warnf("no channel updates found for "+
 						"short_chan_id=%v",
-						msg.ShortChannelID)
+						scid)
 					continue
 				}
 			}
@@ -1679,15 +1687,17 @@ func (g *GossipSyncer) FilterGossipMsgs(ctx context.Context,
 
 		// For each channel update, we'll only send if it the timestamp
 		// is between our time range.
-		case *lnwire.ChannelUpdate1:
-			if passesFilter(msg.Timestamp) {
+		case lnwire.ChannelUpdate:
+			msg1, ok := msg.(*lnwire.ChannelUpdate1)
+			if ok && passesFilter(msg1.Timestamp) {
 				msgsToSend = append(msgsToSend, msg)
 			}
 
 		// Similarly, we only send node announcements if the update
 		// timestamp ifs between our set gossip filter time range.
-		case *lnwire.NodeAnnouncement1:
-			if passesFilter(msg.Timestamp) {
+		case lnwire.NodeAnnouncement:
+			msg1, ok := msg.(*lnwire.NodeAnnouncement1)
+			if ok && passesFilter(msg1.Timestamp) {
 				msgsToSend = append(msgsToSend, msg)
 			}
 		}

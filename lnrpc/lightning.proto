@@ -3652,6 +3652,14 @@ message ChannelEdge {
     // This field is not filled by default. Pass include_auth_proof flag to
     // DescribeGraph, GetNodeInfo or GetChanInfo to get this data.
     ChannelAuthProof auth_proof = 10;
+
+    /*
+    A bitmask indicating which gossip protocol versions have a record of this
+    channel. Bit 0 (value 1) is set if a gossip v1 record exists; bit 1
+    (value 2) is set if a gossip v2 record exists. Only populated by the
+    GetChanInfo RPC.
+    */
+    uint32 versions_present = 11;
 }
 
 message ChannelGraphRequest {
@@ -3718,6 +3726,13 @@ message ChanInfoRequest {
 
     // If true, will include announcements' signatures into ChannelEdge.
     bool include_auth_proof = 3;
+
+    /*
+    The gossip version of the channel to look up. When set to 0 (the default),
+    the highest available gossip version is returned. Set to 1 for gossip v1
+    or 2 for gossip v2.
+    */
+    uint32 version = 4;
 }
 
 message NetworkInfoRequest {

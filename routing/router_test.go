@@ -135,7 +135,7 @@ func createTestCtxFromGraphInstanceAssumeValid(t *testing.T,
 	sourceNode, err := graphInstance.v1Graph.SourceNode(t.Context())
 	require.NoError(t, err)
 	sessionSource := &SessionSource{
-		GraphSessionFactory: graphInstance.graph,
+		GraphSessionFactory: graphInstance.v1Graph,
 		SourceNode:          sourceNode,
 		GetLink:             graphInstance.getLink,
 		PathFindingConfig:   pathFindingConfig,
@@ -146,7 +146,7 @@ func createTestCtxFromGraphInstanceAssumeValid(t *testing.T,
 
 	router, err := New(Config{
 		SelfNode:       sourceNode.PubKeyBytes,
-		RoutingGraph:   graphInstance.graph,
+		RoutingGraph:   graphInstance.v1Graph,
 		Chain:          chain,
 		Payer:          &mockPaymentAttemptDispatcherOld{},
 		Control:        makeMockControlTower(),
@@ -509,7 +509,7 @@ func TestChannelUpdateValidation(t *testing.T) {
 		func(firstHop lnwire.ShortChannelID) ([32]byte, error) {
 			return [32]byte{}, htlcswitch.NewForwardingError(
 				&lnwire.FailFeeInsufficient{
-					Update: errChanUpdate,
+					Update: &errChanUpdate,
 				},
 				1,
 			)
@@ -632,7 +632,7 @@ func TestSendPaymentErrorRepeatedFeeInsufficient(t *testing.T) {
 				// reflect the new fee schedule for the
 				// node/channel.
 				&lnwire.FailFeeInsufficient{
-					Update: errChanUpdate,
+					Update: &errChanUpdate,
 				}, 1,
 			)
 		}
@@ -743,7 +743,7 @@ func TestSendPaymentErrorFeeInsufficientPrivateEdge(t *testing.T) {
 				// reflect the new fee schedule for the
 				// node/channel.
 				&lnwire.FailFeeInsufficient{
-					Update: errChanUpdate,
+					Update: &errChanUpdate,
 				}, 1,
 			)
 		},
@@ -871,7 +871,7 @@ func TestSendPaymentPrivateEdgeUpdateFeeExceedsLimit(t *testing.T) {
 				// reflect the new fee schedule for the
 				// node/channel.
 				&lnwire.FailFeeInsufficient{
-					Update: errChanUpdate,
+					Update: &errChanUpdate,
 				}, 1,
 			)
 		},
@@ -972,7 +972,7 @@ func TestSendPaymentErrorNonFinalTimeLockErrors(t *testing.T) {
 			if firstHop == roasbeefSongoku {
 				return [32]byte{}, htlcswitch.NewForwardingError(
 					&lnwire.FailExpiryTooSoon{
-						Update: errChanUpdate,
+						Update: &errChanUpdate,
 					}, 1,
 				)
 			}
@@ -1022,7 +1022,7 @@ func TestSendPaymentErrorNonFinalTimeLockErrors(t *testing.T) {
 			if firstHop == roasbeefSongoku {
 				return [32]byte{}, htlcswitch.NewForwardingError(
 					&lnwire.FailIncorrectCltvExpiry{
-						Update: errChanUpdate,
+						Update: &errChanUpdate,
 					}, 1,
 				)
 			}
@@ -1418,7 +1418,7 @@ func TestSendToRouteStructuredError(t *testing.T) {
 	testCases := map[int]lnwire.FailureMessage{
 		finalHopIndex: lnwire.NewFailIncorrectDetails(payAmt, 100),
 		1: &lnwire.FailFeeInsufficient{
-			Update: lnwire.ChannelUpdate1{},
+			Update: &lnwire.ChannelUpdate1{},
 		},
 	}
 
@@ -2995,13 +2995,13 @@ func (m *mockGraphBuilder) setNextReject(reject bool) {
 	m.rejectUpdate = reject
 }
 
-func (m *mockGraphBuilder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
+func (m *mockGraphBuilder) ApplyChannelUpdate(msg lnwire.ChannelUpdate) bool {
 	if m.rejectUpdate {
 		return false
 	}
 
 	update, err := models.ChanEdgePolicyFromWire(
-		msg.ShortChannelID.ToUint64(), msg,
+		msg.SCID().ToUint64(), msg,
 	)
 	if err != nil {
 		return false

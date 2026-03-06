@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/lightningnetwork/lnd/fn/v2"
 	graphdb "github.com/lightningnetwork/lnd/graph/db"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/netann"
@@ -40,7 +41,7 @@ type ChannelGraphTimeSeries interface {
 	// passed superSet.
 	FilterKnownChanIDs(chain chainhash.Hash,
 		superSet []graphdb.ChannelUpdateInfo,
-		isZombieChan func(time.Time, time.Time) bool) (
+		isZombieChan func(graphdb.ChannelUpdateInfo) bool) (
 		[]lnwire.ShortChannelID, error)
 
 	// FilterChannelRange returns the set of channels that we created
@@ -115,7 +116,10 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 		// First, we'll query for all the set of channels that have an
 		// update that falls within the specified horizon.
 		chansInHorizon := c.graph.ChanUpdatesInHorizon(
-			context.TODO(), startTime, endTime,
+			context.TODO(), graphdb.ChanUpdateRange{
+				StartTime: fn.Some(startTime),
+				EndTime:   fn.Some(endTime),
+			},
 		)
 
 		for channel, err := range chansInHorizon {
@@ -133,7 +137,8 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 
 			//nolint:ll
 			chanAnn, edge1, edge2, err := netann.CreateChanAnnouncement(
-				channel.Info, channel.Policy1, channel.Policy2,
+				channel.Info.AuthProof, channel.Info,
+				channel.Policy1, channel.Policy2,
 			)
 			if err != nil {
 				if !yield(nil, err) {
@@ -181,8 +186,10 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 		// update within the horizon as well. We send these second to
 		// ensure that they follow any active channels they have.
 		nodeAnnsInHorizon := c.graph.NodeUpdatesInHorizon(
-			context.TODO(), startTime, endTime,
-			graphdb.WithIterPublicNodesOnly(),
+			context.TODO(), graphdb.NodeUpdateRange{
+				StartTime: fn.Some(startTime),
+				EndTime:   fn.Some(endTime),
+			}, graphdb.WithIterPublicNodesOnly(),
 		)
 		for nodeAnn, err := range nodeAnnsInHorizon {
 			if err != nil {
@@ -212,7 +219,7 @@ func (c *ChanSeries) UpdatesInHorizon(chain chainhash.Hash,
 // NOTE: This is part of the ChannelGraphTimeSeries interface.
 func (c *ChanSeries) FilterKnownChanIDs(_ chainhash.Hash,
 	superSet []graphdb.ChannelUpdateInfo,
-	isZombieChan func(time.Time, time.Time) bool) (
+	isZombieChan func(graphdb.ChannelUpdateInfo) bool) (
 	[]lnwire.ShortChannelID, error) {
 
 	newChanIDs, err := c.graph.FilterKnownChanIDs(
@@ -283,7 +290,8 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 		}
 
 		chanAnn, edge1, edge2, err := netann.CreateChanAnnouncement(
-			channel.Info, channel.Policy1, channel.Policy2,
+			channel.Info.AuthProof, channel.Info,
+			channel.Policy1, channel.Policy2,
 		)
 		if err != nil {
 			return nil, err
@@ -309,7 +317,7 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 				if err != nil {
 					log.Debugf("Skipping forwarding "+
 						"invalid node announcement "+
-						"%x: %v", nodeAnn.NodeID, err)
+						"%x: %v", nodeAnn.NodePub(), err)
 				} else {
 					chanAnns = append(chanAnns, nodeAnn)
 					nodePubsSent[nodePub] = struct{}{}
@@ -335,7 +343,7 @@ func (c *ChanSeries) FetchChanAnns(chain chainhash.Hash,
 				if err != nil {
 					log.Debugf("Skipping forwarding "+
 						"invalid node announcement "+
-						"%x: %v", nodeAnn.NodeID, err)
+						"%x: %v", nodeAnn.NodePub(), err)
 				} else {
 					chanAnns = append(chanAnns, nodeAnn)
 					nodePubsSent[nodePub] = struct{}{}
@@ -369,7 +377,10 @@ func (c *ChanSeries) FetchChanUpdates(chain chainhash.Hash,
 			return nil, err
 		}
 
-		chanUpdates = append(chanUpdates, chanUpdate)
+		chanUpdates = append(
+			chanUpdates,
+			chanUpdate.(*lnwire.ChannelUpdate1),
+		)
 	}
 	if e2 != nil {
 		chanUpdate, err := netann.ChannelUpdateFromEdge(chanInfo, e2)
@@ -377,7 +388,10 @@ func (c *ChanSeries) FetchChanUpdates(chain chainhash.Hash,
 			return nil, err
 		}
 
-		chanUpdates = append(chanUpdates, chanUpdate)
+		chanUpdates = append(
+			chanUpdates,
+			chanUpdate.(*lnwire.ChannelUpdate1),
+		)
 	}
 
 	return chanUpdates, nil
