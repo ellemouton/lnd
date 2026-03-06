@@ -322,8 +322,9 @@ type server struct {
 
 	fundingMgr *funding.Manager
 
-	graphDB *graphdb.ChannelGraph
-	v1Graph *graphdb.VersionedGraph
+	graphDB     *graphdb.ChannelGraph
+	graphSource graphdb.GraphSource
+	v1Graph     *graphdb.VersionedGraph
 
 	chanStateDB *channeldb.ChannelStateDB
 
@@ -693,13 +694,15 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	v1Graph := graphdb.NewVersionedGraph(
 		dbs.GraphDB, lnwire.GossipVersion1,
 	)
+	graphSource := graphdb.NewDBGraphSource(dbs.GraphDB)
 
-	addrSource := channeldb.NewMultiAddrSource(dbs.ChanStateDB, v1Graph)
+	addrSource := channeldb.NewMultiAddrSource(dbs.ChanStateDB, graphSource)
 
 	s := &server{
 		cfg:            cfg,
 		implCfg:        implCfg,
 		graphDB:        dbs.GraphDB,
+		graphSource:    graphSource,
 		v1Graph:        v1Graph,
 		chanStateDB:    dbs.ChanStateDB.ChannelStateDB(),
 		addrSource:     addrSource,
@@ -863,7 +866,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		IsChannelActive:          s.htlcSwitch.HasActiveLink,
 		ApplyChannelUpdate:       s.applyChannelUpdate,
 		DB:                       s.chanStateDB,
-		Graph:                    dbs.GraphDB,
+		Graph:                    s.graphSource,
 	}
 
 	chanStatusMgr, err := netann.NewChanStatusManager(chanStatusMgrCfg)
@@ -1011,12 +1014,12 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		MinProbability: routingConfig.MinRouteProbability,
 	}
 
-	sourceNode, err := s.v1Graph.SourceNode(ctx)
+	sourceNode, err := s.graphSource.SourceNode(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("error getting source node: %w", err)
 	}
 	paymentSessionSource := &routing.SessionSource{
-		GraphSessionFactory: s.v1Graph,
+		GraphSessionFactory: s.graphSource,
 		SourceNode:          sourceNode,
 		MissionControl:      s.defaultMC,
 		GetLink:             s.htlcSwitch.GetLinkByShortID,
@@ -1157,7 +1160,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 				*models.ChannelEdgePolicy) error,
 			reset func()) error {
 
-			return s.v1Graph.ForEachNodeChannel(
+			return s.graphSource.ForEachNodeChannel(
 				ctx, selfVertex,
 				func(c *models.ChannelEdgeInfo,
 					e *models.ChannelEdgePolicy,
@@ -1420,7 +1423,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	deleteAliasEdge := func(scid lnwire.ShortChannelID) (
 		*models.ChannelEdgePolicy, error) {
 
-		info, e1, e2, err := s.graphDB.FetchChannelEdgesByID(
+		info, e1, e2, err := s.graphSource.FetchChannelEdgesByID(
 			context.TODO(), scid.ToUint64(),
 		)
 		if errors.Is(err, graphdb.ErrEdgeNotFound) {
@@ -2991,7 +2994,7 @@ func initNetworkBootstrappers(s *server) ([]discovery.NetworkPeerBootstrapper, e
 	// First, we'll create an instance of the ChannelGraphBootstrapper as
 	// this can be used by default if we've already partially seeded the
 	// network.
-	chanGraph := autopilot.ChannelGraphFromDatabase(s.v1Graph)
+	chanGraph := autopilot.ChannelGraphFromDatabase(s.graphSource)
 	graphBootstrapper, err := discovery.NewGraphBootstrapper(
 		chanGraph, s.cfg.Bitcoin.IsLocalNetwork(),
 	)
@@ -3492,7 +3495,7 @@ func (s *server) updateAndBroadcastSelfNode(ctx context.Context,
 	// Update the on-disk version of our announcement.
 	// Load and modify self node istead of creating anew instance so we
 	// don't risk overwriting any existing values.
-	selfNode, err := s.v1Graph.SourceNode(ctx)
+	selfNode, err := s.graphSource.SourceNode(ctx)
 	if err != nil {
 		return fmt.Errorf("unable to get current source node: %w", err)
 	}
@@ -3628,9 +3631,7 @@ func (s *server) establishPersistentConnections(ctx context.Context) error {
 		return nil
 	}
 
-	// TODO(elle): for now, we only fetch our V1 channels. This should be
-	//  updated to fetch channels across all versions.
-	err = s.v1Graph.ForEachSourceNodeChannel(
+	err = s.graphSource.ForEachSourceNodeChannel(
 		ctx, forEachSrcNodeChan, func() {
 			clear(graphAddrs)
 		},
@@ -4436,7 +4437,7 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 		Switch:                  s.htlcSwitch,
 		InterceptSwitch:         s.interceptableSwitch,
 		ChannelDB:               s.chanStateDB,
-		ChannelGraph:            s.graphDB,
+		ChannelGraph:            s.graphSource,
 		ChainArb:                s.chainArb,
 		AuthGossiper:            s.authGossiper,
 		ChanStatusMgr:           s.chanStatusMgr,
@@ -5273,7 +5274,7 @@ func (s *server) fetchNodeAdvertisedAddrs(ctx context.Context,
 		return nil, err
 	}
 
-	node, err := s.v1Graph.FetchNode(ctx, vertex)
+	node, err := s.graphSource.FetchNode(ctx, vertex)
 	if err != nil {
 		return nil, err
 	}
@@ -5698,7 +5699,7 @@ func (s *server) setSelfNode(ctx context.Context, nodePub route.Vertex,
 		nodeLastUpdate = time.Now()
 	)
 
-	srcNode, err := s.v1Graph.SourceNode(ctx)
+	srcNode, err := s.graphSource.SourceNode(ctx)
 	switch {
 	case err == nil:
 		// If we have a source node persisted in the DB already, then we
