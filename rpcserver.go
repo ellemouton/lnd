@@ -3406,9 +3406,9 @@ func (r *rpcServer) GetInfo(_ context.Context,
 	// to set the URIs.
 	nodeAnn := r.server.getNodeAnnouncement()
 
-	addrs := nodeAnn.Addresses
-	uris := make([]string, len(addrs))
-	for i, addr := range addrs {
+	nodeAddrs := nodeAnn.NodeAddrs()
+	uris := make([]string, len(nodeAddrs))
+	for i, addr := range nodeAddrs {
 		uris[i] = fmt.Sprintf("%s@%s", encodedIDPub, addr.String())
 	}
 
@@ -3431,7 +3431,7 @@ func (r *rpcServer) GetInfo(_ context.Context,
 	// TODO(roasbeef): add synced height n stuff
 
 	isTestNet := chainreg.IsTestnet(&r.cfg.ActiveNetParams)
-	nodeColor := graphdb.EncodeHexColor(nodeAnn.RGBColor)
+	nodeColor := graphdb.EncodeHexColor(nodeAnn.NodeColor())
 	version := build.Version() + " commit=" + build.Commit
 
 	return &lnrpc.GetInfoResponse{
@@ -3446,7 +3446,7 @@ func (r *rpcServer) GetInfo(_ context.Context,
 		Testnet:                   isTestNet,
 		Chains:                    activeChains,
 		Uris:                      uris,
-		Alias:                     nodeAnn.Alias.String(),
+		Alias:                     nodeAnn.NodeAlias(),
 		Color:                     nodeColor,
 		BestHeaderTimestamp:       syncInfo.timestamp,
 		Version:                   version,
