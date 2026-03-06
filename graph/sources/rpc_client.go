@@ -104,15 +104,17 @@ func (c *RPCClient) rpcCtx(
 	return context.WithTimeout(ctx, c.cfg.Timeout)
 }
 
-// Start connects the client to the remote graph server.
-func (c *RPCClient) Start(ctx context.Context) error {
+// Start connects the client to the remote graph server, populates the graph
+// cache from a full snapshot, and launches the topology subscription goroutine
+// to keep the cache in sync with incremental updates.
+func (c *RPCClient) Start() error {
 	if !c.started.CompareAndSwap(false, true) {
 		return nil
 	}
 
 	log.Info("Remote graph RPC client starting")
 
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(context.Background())
 	c.cancel = fn.Some(cancel)
 
 	conn, err := connectRPC(
@@ -124,6 +126,11 @@ func (c *RPCClient) Start(ctx context.Context) error {
 	}
 	c.grpcConn = conn
 	c.conn = lnrpc.NewLightningClient(conn)
+
+	if c.cb != nil {
+		c.wg.Add(1)
+		go c.populateAndSubscribe(ctx)
+	}
 
 	return nil
 }
@@ -149,24 +156,53 @@ func (c *RPCClient) Stop() error {
 	return nil
 }
 
-// StartSubscription launches the topology subscription goroutine that keeps
-// the local cache in sync with the remote graph. This should be called after
-// PopulateCache to avoid the subscription overwriting the initial snapshot
-// with stale data.
-func (c *RPCClient) StartSubscription(ctx context.Context) {
-	if c.cb == nil {
-		return
+// populateAndSubscribe runs the initial cache population with retry logic,
+// then hands off to the topology subscription loop. Both phases run in a
+// single goroutine to avoid wg.Add races with Stop().
+//
+// NOTE: this MUST be run as a goroutine.
+func (c *RPCClient) populateAndSubscribe(ctx context.Context) {
+	defer c.wg.Done()
+
+	backoff := time.Second
+	const maxBackoff = time.Minute
+
+	for {
+		err := c.populateCache(ctx)
+		if err == nil {
+			break
+		}
+
+		// If the context was cancelled, we're shutting down.
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		log.Warnf("Failed to populate cache from remote graph "+
+			"(retrying in %v): %v", backoff, err)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
 	}
 
-	c.wg.Add(1)
-	go c.handleNetworkUpdates(ctx)
+	c.handleNetworkUpdates(ctx)
 }
 
-// PopulateCache performs an initial full fetch of the remote graph and feeds
-// all nodes and channels into the registered topology callbacks. This must be
-// called after Start to seed the local graph cache before relying on the
-// incremental subscription for updates.
-func (c *RPCClient) PopulateCache(ctx context.Context) error {
+// populateCache performs an initial full fetch of the remote graph and feeds
+// all nodes and channels into the registered topology callbacks. Once the
+// cache is populated, it launches the topology subscription goroutine to keep
+// the cache in sync with incremental updates.
+func (c *RPCClient) populateCache(ctx context.Context) error {
 	if c.cb == nil {
 		return nil
 	}
@@ -245,19 +281,22 @@ func (c *RPCClient) PopulateCache(ctx context.Context) error {
 
 	return nil
 }
+
 // handleNetworkUpdates subscribes to topology updates from the remote LND
 // node and forwards them to the registered callbacks. If the subscription
-// drops, it reconnects with exponential backoff.
-//
-// NOTE: this MUST be run as a goroutine.
+// drops, it reconnects with exponential backoff. The backoff resets after
+// each successful subscription period.
 func (c *RPCClient) handleNetworkUpdates(ctx context.Context) {
-	defer c.wg.Done()
-
 	backoff := time.Second
 	const maxBackoff = time.Minute
 
 	for {
 		err := c.subscribeAndProcess(ctx)
+
+		// Reset backoff after a successful subscription period so
+		// that transient failures after long stable runs don't
+		// start at the max delay.
+		backoff = time.Second
 
 		// If the context was cancelled, we're shutting down.
 		select {
@@ -266,7 +305,7 @@ func (c *RPCClient) handleNetworkUpdates(ctx context.Context) {
 		default:
 		}
 
-		log.Errorf("Remote graph subscription error (retrying in "+
+		log.Warnf("Remote graph subscription error (retrying in "+
 			"%v): %v", backoff, err)
 
 		select {
@@ -358,7 +397,7 @@ func (c *RPCClient) handleChannelUpdate(
 
 	// Lexicographically sort the pubkeys to determine node1/node2.
 	var node1, node2 route.Vertex
-	if bytes.Compare(fromNode[:], toNode[:]) == -1 {
+	if bytes.Compare(fromNode[:], toNode[:]) < 0 {
 		node1 = fromNode
 		node2 = toNode
 	} else {
