@@ -47,7 +47,6 @@ func createFlagCombos() []flagCombo {
 			if isTaproot {
 				flags = append(flags, node.CfgSimpleTaproot...)
 				flagCombo.commitType = lnrpc.CommitmentType_SIMPLE_TAPROOT //nolint:ll
-				flagCombo.private = true
 			}
 
 			flagCombo.flags = flags
