@@ -1422,7 +1422,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		*models.ChannelEdgePolicy, error) {
 
 		info, e1, e2, err := s.graphDB.FetchChannelEdgesByID(
-			context.TODO(), lnwire.GossipVersion1, scid.ToUint64(),
+			context.TODO(), scid.ToUint64(),
 		)
 		if errors.Is(err, graphdb.ErrEdgeNotFound) {
 			// This is unlikely but there is a slim chance of this
@@ -5284,7 +5284,7 @@ func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
 	ourPubKey := s.identityECDH.PubKey().SerializeCompressed()
 	return func(cid lnwire.ShortChannelID) (lnwire.ChannelUpdate, error) {
 		info, edge1, edge2, err := s.graphDB.FetchChannelEdgesByID(
-			context.TODO(), lnwire.GossipVersion1, cid.ToUint64(),
+			context.TODO(), cid.ToUint64(),
 		)
 		if err != nil {
 			return nil, err

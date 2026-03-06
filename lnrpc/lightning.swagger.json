@@ -1234,6 +1234,14 @@
             "in": "query",
             "required": false,
             "type": "boolean"
+          },
+          {
+            "name": "version",
+            "description": "The gossip version of the channel to look up. When set to 0 (the default),\nthe highest available gossip version is returned. Set to 1 for gossip v1\nor 2 for gossip v2.",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int64"
           }
         ],
         "tags": [
@@ -4580,6 +4588,11 @@
         "auth_proof": {
           "$ref": "#/definitions/lnrpcChannelAuthProof",
           "description": "Authentication proof for this channel. This proof contains a set of\nsignatures binding four identities, which attests to the legitimacy of\nthe advertised channel. This only is available for advertised channels.\nThis field is not filled by default. Pass include_auth_proof flag to\nDescribeGraph, GetNodeInfo or GetChanInfo to get this data."
+        },
+        "versions_present": {
+          "type": "integer",
+          "format": "int64",
+          "description": "A bitmask indicating which gossip protocol versions have a record of this\nchannel. Bit 0 (value 1) is set if a gossip v1 record exists; bit 1\n(value 2) is set if a gossip v2 record exists. Only populated by the\nGetChanInfo RPC."
         }
       },
       "description": "A fully authenticated channel along with all its unique attributes.\nOnce an authenticated channel announcement has been processed on the network,\nthen an instance of ChannelEdgeInfo encapsulating the channels attributes is\nstored. The other portions relevant to routing policy of a channel are stored\nwithin a ChannelEdgePolicy for each direction of the channel."

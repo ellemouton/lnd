@@ -2200,7 +2200,7 @@ func runRouteFailMaxHTLC(t *testing.T, useCache bool) {
 	// msat.
 	graph := ctx.testGraphInstance.graph
 	_, midEdge, _, err := graph.FetchChannelEdgesByID(
-		t.Context(), lnwire.GossipVersion1, firstToSecondID,
+		t.Context(), firstToSecondID,
 	)
 	require.NoError(t, err, "unable to fetch channel edges by ID")
 	midEdge.MessageFlags = 1
@@ -2246,7 +2246,7 @@ func runRouteFailDisabledEdge(t *testing.T, useCache bool) {
 	// channels (and roasbeef is the source).
 	roasToPham := uint64(999991)
 	_, e1, e2, err := graph.graph.FetchChannelEdgesByID(
-		t.Context(), lnwire.GossipVersion1, roasToPham,
+		t.Context(), roasToPham,
 	)
 	require.NoError(t, err, "unable to fetch edge")
 	e1.ChannelFlags |= lnwire.ChanUpdateDisabled
@@ -2271,7 +2271,7 @@ func runRouteFailDisabledEdge(t *testing.T, useCache bool) {
 	// it's disabled.
 	phamToSophon := uint64(99999)
 	_, e, _, err := graph.graph.FetchChannelEdgesByID(
-		t.Context(), lnwire.GossipVersion1, phamToSophon,
+		t.Context(), phamToSophon,
 	)
 	require.NoError(t, err, "unable to fetch edge")
 	e.ChannelFlags |= lnwire.ChanUpdateDisabled
@@ -2356,7 +2356,7 @@ func runPathSourceEdgesBandwidth(t *testing.T, useCache bool) {
 	// disable flag.
 	bandwidths.hints[roasToSongoku] = 2 * payAmt
 	_, e1, e2, err := graph.graph.FetchChannelEdgesByID(
-		t.Context(), lnwire.GossipVersion1, roasToSongoku,
+		t.Context(), roasToSongoku,
 	)
 	require.NoError(t, err, "unable to fetch edge")
 	e1.ChannelFlags |= lnwire.ChanUpdateDisabled
