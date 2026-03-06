@@ -1620,6 +1620,22 @@ func (f *Manager) fundeeProcessOpenChannel(peer lnpeer.Peer,
 		scid     bool
 	)
 
+	// Announced taproot channels are only allowed if our peer also supports
+	// taproot gossip.
+	public := msg.ChannelFlags&lnwire.FFAnnounceChannel != 0
+	if public && commitType.IsTaproot() {
+		if !peer.RemoteFeatures().HasFeature(
+			lnwire.TaprootGossipOptionalStaging,
+		) {
+
+			err := fmt.Errorf("peer does not support taproot " +
+				"gossip")
+			log.Errorf("%v", err)
+			f.failFundingFlow(peer, cid, err)
+			return
+		}
+	}
+
 	// Only echo back a channel type in AcceptChannel if we actually used
 	// explicit negotiation above.
 	if chanType != nil {
@@ -1663,7 +1679,6 @@ func (f *Manager) fundeeProcessOpenChannel(peer lnpeer.Peer,
 		}
 	}
 
-	public := msg.ChannelFlags&lnwire.FFAnnounceChannel != 0
 	switch {
 	// Sending the option-scid-alias channel type for a public channel is
 	// disallowed.
@@ -1672,16 +1687,6 @@ func (f *Manager) fundeeProcessOpenChannel(peer lnpeer.Peer,
 			"channel")
 		log.Errorf("Cancelling funding flow for public channel %v "+
 			"with scid-alias: %v", cid, err)
-		f.failFundingFlow(peer, cid, err)
-
-		return
-
-	// The current variant of taproot channels can only be used with
-	// unadvertised channels for now.
-	case commitType.IsTaproot() && public:
-		err = fmt.Errorf("taproot channel type for public channel")
-		log.Errorf("Cancelling funding flow for public taproot "+
-			"channel %v: %v", cid, err)
 		f.failFundingFlow(peer, cid, err)
 
 		return
@@ -4892,24 +4897,29 @@ func (f *Manager) announceChannel(localIDKey, remoteIDKey *btcec.PublicKey,
 	// because addToGraph previously sent the ChannelAnnouncement and
 	// the ChannelUpdate announcement messages. The channel proof and node
 	// announcements are broadcast to the greater network.
-	errChan := f.cfg.SendAnnouncement(ann.chanProof)
-	select {
-	case err := <-errChan:
-		if err != nil {
-			if graph.IsError(err, graph.ErrOutdated,
-				graph.ErrIgnored) {
+	//
+	// For taproot channels the chanProof requires MuSig2 nonce exchange
+	// during channel_ready, which is not yet implemented. Skip it if nil.
+	if ann.chanProof != nil {
+		errChan := f.cfg.SendAnnouncement(ann.chanProof)
+		select {
+		case err := <-errChan:
+			if err != nil {
+				if graph.IsError(err, graph.ErrOutdated,
+					graph.ErrIgnored) {
 
-				log.Debugf("Graph rejected "+
-					"AnnounceSignatures: %v", err)
-			} else {
-				log.Errorf("Unable to send channel "+
-					"proof: %v", err)
-				return err
+					log.Debugf("Graph rejected "+
+						"AnnounceSignatures: %v", err)
+				} else {
+					log.Errorf("Unable to send channel "+
+						"proof: %v", err)
+					return err
+				}
 			}
-		}
 
-	case <-f.quit:
-		return ErrFundingManagerShuttingDown
+		case <-f.quit:
+			return ErrFundingManagerShuttingDown
+		}
 	}
 
 	// Now that the channel is announced to the network, we will also
@@ -4922,7 +4932,7 @@ func (f *Manager) announceChannel(localIDKey, remoteIDKey *btcec.PublicKey,
 		return err
 	}
 
-	errChan = f.cfg.SendAnnouncement(nodeAnn)
+	errChan := f.cfg.SendAnnouncement(nodeAnn)
 	select {
 	case err := <-errChan:
 		if err != nil {
