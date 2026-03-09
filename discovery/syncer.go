@@ -1608,7 +1608,7 @@ func (g *GossipSyncer) FilterGossipMsgs(ctx context.Context,
 	// to quickly check if we should forward a chan ann, based on the known
 	// channel updates for a channel.
 	chanUpdateIndex := make(
-		map[lnwire.ShortChannelID][]*lnwire.ChannelUpdate1,
+		map[lnwire.ShortChannelID][]lnwire.ChannelUpdate,
 	)
 	for _, msg := range msgs {
 		chanUpdate, ok := msg.msg.(lnwire.ChannelUpdate)
@@ -1616,26 +1616,31 @@ func (g *GossipSyncer) FilterGossipMsgs(ctx context.Context,
 			continue
 		}
 
-		chanUpdate1, ok := chanUpdate.(*lnwire.ChannelUpdate1)
-		if !ok {
-			continue
-		}
-
-		scid := chanUpdate1.ShortChannelID
+		scid := chanUpdate.SCID()
 		chanUpdateIndex[scid] = append(
-			chanUpdateIndex[scid], chanUpdate1,
+			chanUpdateIndex[scid], chanUpdate,
 		)
 	}
 
-	// We'll construct a helper function that we'll us below to determine
-	// if a given messages passes the gossip msg filter.
+	// We'll construct a helper function that we'll use below to determine
+	// if a given message passes the gossip msg filter. For v1 messages,
+	// we compare the unix timestamp against the filter range. For v2
+	// messages that use block heights, we always pass them through since
+	// the GossipTimestampRange filter is unix-time based.
 	startTime := time.Unix(int64(filter.FirstTimestamp), 0)
 	endTime := startTime.Add(
 		time.Duration(filter.TimestampRange) * time.Second,
 	)
 
-	passesFilter := func(timeStamp uint32) bool {
-		t := time.Unix(int64(timeStamp), 0)
+	passesFilter := func(ts lnwire.Timestamp) bool {
+		unixTS, ok := ts.(lnwire.UnixTimestamp)
+		if !ok {
+			// Non-unix timestamps (e.g. block height) always
+			// pass the filter.
+			return true
+		}
+
+		t := time.Unix(int64(unixTS), 0)
 		return t.Equal(startTime) ||
 			(t.After(startTime) && t.Before(endTime))
 	}
@@ -1675,7 +1680,7 @@ func (g *GossipSyncer) FilterGossipMsgs(ctx context.Context,
 			}
 
 			for _, chanUpdate := range chanUpdates {
-				if passesFilter(chanUpdate.Timestamp) {
+				if passesFilter(chanUpdate.UpdateTimestamp()) {
 					msgsToSend = append(msgsToSend, msg)
 					break
 				}
@@ -1688,16 +1693,14 @@ func (g *GossipSyncer) FilterGossipMsgs(ctx context.Context,
 		// For each channel update, we'll only send if it the timestamp
 		// is between our time range.
 		case lnwire.ChannelUpdate:
-			msg1, ok := msg.(*lnwire.ChannelUpdate1)
-			if ok && passesFilter(msg1.Timestamp) {
+			if passesFilter(msg.UpdateTimestamp()) {
 				msgsToSend = append(msgsToSend, msg)
 			}
 
 		// Similarly, we only send node announcements if the update
-		// timestamp ifs between our set gossip filter time range.
+		// timestamp is between our set gossip filter time range.
 		case lnwire.NodeAnnouncement:
-			msg1, ok := msg.(*lnwire.NodeAnnouncement1)
-			if ok && passesFilter(msg1.Timestamp) {
+			if passesFilter(msg.UpdateTimestamp()) {
 				msgsToSend = append(msgsToSend, msg)
 			}
 		}

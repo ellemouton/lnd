@@ -1071,6 +1071,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 
 	chanSeries := discovery.NewChanSeries(
 		graphdb.NewVersionedGraph(s.graphDB, lnwire.GossipVersion1),
+		graphdb.NewVersionedGraph(s.graphDB, lnwire.GossipVersion2),
 	)
 	gossipMessageStore, err := discovery.NewMessageStore(dbs.ChanStateDB)
 	if err != nil {

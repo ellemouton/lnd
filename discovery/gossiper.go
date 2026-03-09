@@ -1946,66 +1946,99 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
 	var selfVertex route.Vertex
 	copy(selfVertex[:], d.selfKey.SerializeCompressed())
 
-	err := d.v1Graph.ForEachNodeChannel(ctx, selfVertex, func(
-		info *models.ChannelEdgeInfo,
-		edge, _ *models.ChannelEdgePolicy) error {
+	// collectStaleEdges iterates a single versioned graph and appends
+	// stale channel edges to the provided slices, skipping channels
+	// already seen in a different version.
+	seenChans := make(map[uint64]struct{})
+	collectStaleEdges := func(g *graphdb.VersionedGraph) error {
+		return g.ForEachNodeChannel(ctx, selfVertex, func(
+			info *models.ChannelEdgeInfo,
+			edge, _ *models.ChannelEdgePolicy) error {
 
-		if edge == nil {
-			return fmt.Errorf("channel from self node has no policy")
-		}
+			if edge == nil {
+				return fmt.Errorf("channel from self node " +
+					"has no policy")
+			}
 
-		// If there's no auth proof attached to this edge, it means
-		// that it is a private channel not meant to be announced to
-		// the greater network, so avoid sending channel updates for
-		// this channel to not leak its
-		// existence.
-		if info.AuthProof == nil {
-			log.Debugf("Skipping retransmission of channel "+
-				"without AuthProof: %v", info.ChannelID)
+			// Skip channels already seen from a previous graph
+			// version.
+			if _, ok := seenChans[info.ChannelID]; ok {
+				return nil
+			}
+			seenChans[info.ChannelID] = struct{}{}
+
+			// If there's no auth proof attached to this edge, it
+			// means that it is a private channel not meant to be
+			// announced to the greater network, so avoid sending
+			// channel updates for this channel to not leak its
+			// existence.
+			if info.AuthProof == nil {
+				log.Debugf("Skipping retransmission of "+
+					"channel without AuthProof: %v",
+					info.ChannelID)
+				return nil
+			}
+
+			// We make a note that we have at least one public
+			// channel. We use this to determine whether we
+			// should send a node announcement below.
+			havePublicChannels = true
+
+			// If this edge has a ChannelUpdate that was created
+			// before the introduction of the MaxHTLC field, then
+			// we'll update this edge to propagate this
+			// information in the network.
+			if !edge.MessageFlags.HasMaxHtlc() {
+				edge.MessageFlags |= lnwire.ChanUpdateRequiredMaxHtlc
+				edge.MaxHTLC = lnwire.NewMSatFromSatoshis(
+					info.Capacity,
+				)
+
+				edgesToUpdate = append(
+					edgesToUpdate, updateTuple{
+						info: info,
+						edge: edge,
+					},
+				)
+				return nil
+			}
+
+			timeElapsed := now.Sub(edge.LastUpdate)
+
+			// If it's been longer than RebroadcastInterval since
+			// we've re-broadcasted the channel, add the channel
+			// to the set of edges we need to update.
+			if timeElapsed >= d.cfg.RebroadcastInterval {
+				edgesToUpdate = append(
+					edgesToUpdate, updateTuple{
+						info: info,
+						edge: edge,
+					},
+				)
+			}
+
 			return nil
-		}
+		}, func() {
+			havePublicChannels = false
+			edgesToUpdate = nil
+			seenChans = make(map[uint64]struct{})
+		})
+	}
 
-		// We make a note that we have at least one public channel. We
-		// use this to determine whether we should send a node
-		// announcement below.
-		havePublicChannels = true
-
-		// If this edge has a ChannelUpdate that was created before the
-		// introduction of the MaxHTLC field, then we'll update this
-		// edge to propagate this information in the network.
-		if !edge.MessageFlags.HasMaxHtlc() {
-			// We'll make sure we support the new max_htlc field if
-			// not already present.
-			edge.MessageFlags |= lnwire.ChanUpdateRequiredMaxHtlc
-			edge.MaxHTLC = lnwire.NewMSatFromSatoshis(info.Capacity)
-
-			edgesToUpdate = append(edgesToUpdate, updateTuple{
-				info: info,
-				edge: edge,
-			})
-			return nil
-		}
-
-		timeElapsed := now.Sub(edge.LastUpdate)
-
-		// If it's been longer than RebroadcastInterval since we've
-		// re-broadcasted the channel, add the channel to the set of
-		// edges we need to update.
-		if timeElapsed >= d.cfg.RebroadcastInterval {
-			edgesToUpdate = append(edgesToUpdate, updateTuple{
-				info: info,
-				edge: edge,
-			})
-		}
-
-		return nil
-	}, func() {
-		havePublicChannels = false
-		edgesToUpdate = nil
-	})
+	// Iterate v1 graph first, then v2.
+	err := collectStaleEdges(d.v1Graph)
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
 		return fmt.Errorf("unable to retrieve outgoing channels: %w",
 			err)
+	}
+
+	err = collectStaleEdges(d.v2Graph)
+	if err != nil &&
+		!errors.Is(err, graphdb.ErrGraphNoEdgesFound) &&
+		!errors.Is(err, graphdb.ErrVersionNotSupportedForKVDB) {
+
+		return fmt.Errorf("unable to retrieve v2 outgoing "+
+			"channels: %w", err)
 	}
 
 	var signedUpdates []lnwire.Message
