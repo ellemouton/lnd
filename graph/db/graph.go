@@ -893,9 +893,6 @@ func (c *VersionedGraph) ForEachNodeDirectedChannel(ctx context.Context,
 		return c.graphCache.ForEachChannel(node, cb)
 	}
 
-	// TODO(elle): once the no-cache path needs to support
-	// pathfinding across gossip versions, this should iterate
-	// across all versions rather than defaulting to v1.
 	return c.db.ForEachNodeDirectedChannel(ctx, c.v, node, cb, reset)
 }
 

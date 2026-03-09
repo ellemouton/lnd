@@ -5958,3 +5958,208 @@ func TestForEachNodeCrossVersion(t *testing.T) {
 	require.Equal(t, lnwire.GossipVersion2, r.node.Version)
 	require.True(t, r.node.HaveAnnouncement())
 }
+
+// TestFetchNodeFeaturesPreferHighest verifies that FetchNodeFeatures returns
+// v2 features when a node has both v1 and v2 announcements, and falls back to
+// v1 when only a v1 announcement exists.
+func TestFetchNodeFeaturesPreferHighest(t *testing.T) {
+	t.Parallel()
+
+	if !isSQLDB {
+		t.Skip("prefer-highest requires SQL backend")
+	}
+
+	ctx := t.Context()
+
+	// Create a graph without the cache so we exercise the no-cache
+	// code path in ChannelGraph.FetchNodeFeatures.
+	graph := MakeTestGraph(t, WithUseGraphCache(false))
+
+	// Create a node with v1 features only.
+	privV1Only, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	nodeV1Only := createNode(t, lnwire.GossipVersion1, privV1Only)
+	require.NoError(t, graph.AddNode(ctx, nodeV1Only))
+
+	features, err := graph.FetchNodeFeatures(ctx, nodeV1Only.PubKeyBytes)
+	require.NoError(t, err)
+	require.Equal(t, testFeatures, features)
+
+	// Create a node with both v1 and v2 announcements. The v2 features
+	// should be preferred.
+	privBoth, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	v1Node := createNode(t, lnwire.GossipVersion1, privBoth)
+	require.NoError(t, graph.AddNode(ctx, v1Node))
+
+	v2Node := createNode(t, lnwire.GossipVersion2, privBoth)
+	require.NoError(t, graph.AddNode(ctx, v2Node))
+
+	features, err = graph.FetchNodeFeatures(ctx, v1Node.PubKeyBytes)
+	require.NoError(t, err)
+	require.Equal(t, testFeatures, features)
+
+	// Also verify via GraphSession (sqlNodeTraverser path).
+	err = graph.db.GraphSession(ctx, func(g NodeTraverser) error {
+		f, err := g.FetchNodeFeatures(ctx, v1Node.PubKeyBytes)
+		require.NoError(t, err)
+		require.Equal(t, testFeatures, f)
+
+		return nil
+	}, func() {})
+	require.NoError(t, err)
+}
+
+// TestForEachNodeDirectedChannelPreferHighest verifies that
+// ForEachNodeDirectedChannel returns channels from both v1 and v2 graphs,
+// preferring v2 when the same channel exists in both versions.
+func TestForEachNodeDirectedChannelPreferHighest(t *testing.T) {
+	t.Parallel()
+
+	if !isSQLDB {
+		t.Skip("prefer-highest requires SQL backend")
+	}
+
+	ctx := t.Context()
+
+	// Disable the cache so we exercise the no-cache code path.
+	graph := MakeTestGraph(t, WithUseGraphCache(false))
+
+	// Create two nodes with both v1 and v2 announcements.
+	privA, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	privB, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	nodeA1 := createNode(t, lnwire.GossipVersion1, privA)
+	nodeA2 := createNode(t, lnwire.GossipVersion2, privA)
+	nodeB1 := createNode(t, lnwire.GossipVersion1, privB)
+	nodeB2 := createNode(t, lnwire.GossipVersion2, privB)
+
+	for _, n := range []*models.Node{nodeA1, nodeA2, nodeB1, nodeB2} {
+		require.NoError(t, graph.AddNode(ctx, n))
+	}
+
+	// Create a v1-only channel between A and B.
+	edgeV1, scidV1 := createEdge(
+		lnwire.GossipVersion1, 100, 0, 0, 0, nodeA1, nodeB1,
+	)
+	require.NoError(t, graph.AddChannelEdge(ctx, edgeV1))
+
+	polV1 := newEdgePolicy(
+		lnwire.GossipVersion1, scidV1.ToUint64(), 1000, true,
+	)
+	polV1.ToNode = nodeB1.PubKeyBytes
+	polV1.SigBytes = testSig.Serialize()
+	require.NoError(t, graph.UpdateEdgePolicy(ctx, polV1))
+
+	// Create a v2-only channel between A and B (different SCID).
+	edgeV2, scidV2 := createEdge(
+		lnwire.GossipVersion2, 200, 0, 0, 1, nodeA2, nodeB2,
+	)
+	require.NoError(t, graph.AddChannelEdge(ctx, edgeV2))
+
+	polV2 := newEdgePolicy(
+		lnwire.GossipVersion2, scidV2.ToUint64(), 2000, true,
+	)
+	polV2.ToNode = nodeB2.PubKeyBytes
+	polV2.SigBytes = testSig.Serialize()
+	require.NoError(t, graph.UpdateEdgePolicy(ctx, polV2))
+
+	// Query ForEachNodeDirectedChannel on the ChannelGraph (no-cache
+	// path). We should see both channels.
+	chanIDs := make(map[uint64]struct{})
+	err = graph.ForEachNodeDirectedChannel(
+		ctx, nodeA1.PubKeyBytes,
+		func(d *DirectedChannel) error {
+			chanIDs[d.ChannelID] = struct{}{}
+			return nil
+		}, func() {
+			chanIDs = make(map[uint64]struct{})
+		},
+	)
+	require.NoError(t, err)
+
+	_, hasV1 := chanIDs[scidV1.ToUint64()]
+	_, hasV2 := chanIDs[scidV2.ToUint64()]
+	require.True(t, hasV1, "expected v1 channel")
+	require.True(t, hasV2, "expected v2 channel")
+
+	// Also verify via GraphSession (sqlNodeTraverser path).
+	err = graph.db.GraphSession(ctx, func(g NodeTraverser) error {
+		chanIDs2 := make(map[uint64]struct{})
+		err := g.ForEachNodeDirectedChannel(
+			ctx, nodeA1.PubKeyBytes,
+			func(d *DirectedChannel) error {
+				chanIDs2[d.ChannelID] = struct{}{}
+				return nil
+			}, func() {
+				chanIDs2 = make(map[uint64]struct{})
+			},
+		)
+		require.NoError(t, err)
+
+		_, hasV1 := chanIDs2[scidV1.ToUint64()]
+		_, hasV2 := chanIDs2[scidV2.ToUint64()]
+		require.True(t, hasV1, "expected v1 channel via session")
+		require.True(t, hasV2, "expected v2 channel via session")
+
+		return nil
+	}, func() {})
+	require.NoError(t, err)
+}
+
+// TestForEachNodeCachedUsesVersion verifies that ForEachNodeCached correctly
+// uses the version parameter for channel queries instead of hardcoding v1.
+func TestForEachNodeCachedUsesVersion(t *testing.T) {
+	t.Parallel()
+
+	if !isSQLDB {
+		t.Skip("ForEachNodeCached version fix requires SQL backend")
+	}
+
+	ctx := t.Context()
+	graph := MakeTestGraph(t)
+
+	// Create nodes and a channel using v2 only.
+	nodeA := createTestVertex(t, lnwire.GossipVersion2)
+	nodeB := createTestVertex(t, lnwire.GossipVersion2)
+	require.NoError(t, graph.AddNode(ctx, nodeA))
+	require.NoError(t, graph.AddNode(ctx, nodeB))
+
+	edge, _ := createEdge(
+		lnwire.GossipVersion2, 100, 0, 0, 0, nodeA, nodeB,
+	)
+	require.NoError(t, graph.AddChannelEdge(ctx, edge))
+
+	pol := newEdgePolicy(
+		lnwire.GossipVersion2, edge.ChannelID, 1000, true,
+	)
+	pol.ToNode = nodeB.PubKeyBytes
+	pol.SigBytes = testSig.Serialize()
+	require.NoError(t, graph.UpdateEdgePolicy(ctx, pol))
+
+	// Call ForEachNodeCached with v2. Before the fix at line 1730, this
+	// would return no channels because it hardcoded GossipVersion1 for the
+	// channel query.
+	var foundChannels int
+	err := graph.ForEachNodeCached(
+		ctx, lnwire.GossipVersion2, false,
+		func(_ context.Context, _ route.Vertex, _ []net.Addr,
+			chans map[uint64]*DirectedChannel) error {
+
+			foundChannels += len(chans)
+
+			return nil
+		}, func() {
+			foundChannels = 0
+		},
+	)
+	require.NoError(t, err)
+	// The single channel is seen from both node A and node B's
+	// perspective, so the total count is 2.
+	require.Equal(t, 2, foundChannels, "expected v2 channel from both "+
+		"node perspectives")
+}
