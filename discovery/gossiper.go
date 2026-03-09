@@ -267,14 +267,16 @@ type Config struct {
 	// notification for when it reconnects.
 	NotifyWhenOffline func(peerPubKey [33]byte) <-chan struct{}
 
-	// FetchSelfAnnouncement retrieves our current node announcement, for
+	// FetchSelfAnnouncements retrieves our current node announcements, for
 	// use when determining whether we should update our peers about our
-	// presence in the network.
-	FetchSelfAnnouncement func() lnwire.NodeAnnouncement
+	// presence in the network. The v1 announcement is always first; v2 is
+	// appended if available.
+	FetchSelfAnnouncements func() []lnwire.NodeAnnouncement
 
-	// UpdateSelfAnnouncement produces a new announcement for our node with
-	// an updated timestamp which can be broadcast to our peers.
-	UpdateSelfAnnouncement func() (lnwire.NodeAnnouncement, error)
+	// UpdateSelfAnnouncements produces new announcements for our node with
+	// an updated timestamp which can be broadcast to our peers. The v1
+	// announcement is always first; v2 is appended if available.
+	UpdateSelfAnnouncements func() ([]lnwire.NodeAnnouncement, error)
 
 	// ProofMatureDelta the number of confirmations which is needed before
 	// exchange the channel announcement proofs.
@@ -2033,10 +2035,12 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
 	}
 
 	// We'll also check that our node announcement is not too old.
-	currentNodeAnn := d.cfg.FetchSelfAnnouncement()
+	currentAnns := d.cfg.FetchSelfAnnouncements()
 	var timestamp time.Time
-	if ts, ok := currentNodeAnn.UpdateTimestamp().(lnwire.UnixTimestamp); ok {
-		timestamp = time.Unix(int64(ts), 0)
+	if len(currentAnns) > 0 {
+		if ts, ok := currentAnns[0].UpdateTimestamp().(lnwire.UnixTimestamp); ok {
+			timestamp = time.Unix(int64(ts), 0)
+		}
 	}
 	timeElapsed := now.Sub(timestamp)
 
@@ -2044,20 +2048,24 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
 	// node announcement, refresh it and resend it.
 	nodeAnnStr := ""
 	if timeElapsed >= d.cfg.RebroadcastInterval {
-		newNodeAnn, err := d.cfg.UpdateSelfAnnouncement()
+		newNodeAnns, err := d.cfg.UpdateSelfAnnouncements()
 		if err != nil {
 			return fmt.Errorf("unable to get refreshed node "+
 				"announcement: %v", err)
 		}
 
-		signedUpdates = append(signedUpdates, newNodeAnn)
+		for _, ann := range newNodeAnns {
+			signedUpdates = append(signedUpdates, ann)
+		}
 		nodeAnnStr = " and our refreshed node announcement"
 
-		// Before broadcasting the refreshed node announcement, add it
-		// to our own graph.
-		if err := d.addNode(ctx, newNodeAnn); err != nil {
-			log.Errorf("Unable to add refreshed node announcement "+
-				"to graph: %v", err)
+		// Before broadcasting the refreshed node announcements, add
+		// them to our own graph.
+		for _, ann := range newNodeAnns {
+			if err := d.addNode(ctx, ann); err != nil {
+				log.Errorf("Unable to add refreshed node "+
+					"announcement to graph: %v", err)
+			}
 		}
 	}
 
@@ -3806,10 +3814,10 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 		})
 	}
 
-	nMsg.err <- nil
-
 	log.Debugf("Processed ChannelUpdate: peer=%v, short_chan_id=%v, %v",
 		nMsg.peer, upd.SCID().ToUint64(), upd.TimeDesc())
+
+	nMsg.err <- nil
 
 	return announcements, true
 }
@@ -4314,9 +4322,10 @@ func (d *AuthenticatedGossiper) validateFundingTransaction(_ context.Context,
 	var fundingPkScript []byte
 	switch ann := ann.(type) {
 	case *lnwire.ChannelAnnouncement1:
-		// TODO(elle): remove this v1 reconstruction
-		// once the funding manager emits native
-		// ChannelAnnouncement2 for taproot channels.
+		// TODO(elle): once the KV graph backend is removed,
+		// this can be replaced with edge.FundingPKScript()
+		// since taproot channels will only use
+		// ChannelAnnouncement2.
 		fundingPkScript, err = makeFundingScript(
 			ann.BitcoinKey1[:], ann.BitcoinKey2[:], ann.Features,
 			tapscriptRoot,
