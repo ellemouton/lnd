@@ -165,10 +165,6 @@ var versionedTests = []versionedTest{
 		test: testGraphTraversalCacheable,
 	},
 	{
-		name: "filter channel range",
-		test: testFilterChannelRange,
-	},
-	{
 		name: "filter known chan ids",
 		test: testFilterKnownChanIDs,
 	},
@@ -209,18 +205,6 @@ var versionedTests = []versionedTest{
 		test: testGraphCacheForEachNodeChannel,
 	},
 	{
-		name: "graph traversal",
-		test: testGraphTraversal,
-	},
-	{
-		name: "graph cache traversal",
-		test: testGraphCacheTraversal,
-	},
-	{
-		name: "prune graph nodes",
-		test: testPruneGraphNodes,
-	},
-	{
 		name: "highest chan id",
 		test: testHighestChanID,
 	},
@@ -229,52 +213,8 @@ var versionedTests = []versionedTest{
 		test: testFetchChanInfos,
 	},
 	{
-		name: "graph pruning",
-		test: testGraphPruning,
-	},
-	{
-		name: "node pruning update index",
-		test: testNodePruningUpdateIndexDeletion,
-	},
-	{
 		name: "channel view",
 		test: testChannelView,
-	},
-	{
-		name: "filter channel range",
-		test: testFilterChannelRange,
-	},
-	{
-		name: "graph traversal",
-		test: testGraphTraversal,
-	},
-	{
-		name: "graph cache traversal",
-		test: testGraphCacheTraversal,
-	},
-	{
-		name: "graph zombie index",
-		test: testGraphZombieIndex,
-	},
-	{
-		name: "prune graph nodes",
-		test: testPruneGraphNodes,
-	},
-	{
-		name: "graph pruning",
-		test: testGraphPruning,
-	},
-	{
-		name: "node pruning update index",
-		test: testNodePruningUpdateIndexDeletion,
-	},
-	{
-		name: "graph loading",
-		test: testGraphLoading,
-	},
-	{
-		name: "disconnect block at height",
-		test: testDisconnectBlockAtHeight,
 	},
 }
 
@@ -2223,7 +2163,7 @@ func assertNumChans(t *testing.T, graph *ChannelGraph, n int) {
 
 func assertNumNodes(t *testing.T, graph *ChannelGraph, n int) {
 	numNodes := 0
-	vGraph := NewVersionedGraph(graph, v)
+	vGraph := NewVersionedGraph(graph, lnwire.GossipVersion1)
 	err := vGraph.ForEachNode(t.Context(), func(_ *models.Node) error {
 		numNodes++
 
@@ -2349,7 +2289,7 @@ func TestGraphPruning(t *testing.T) {
 
 	// With all the channel points added, we'll consult the graph to ensure
 	// it has the same channel view as the one we just constructed.
-	channelView, err := graph.ChannelView(ctx)
+	channelView, err := graph.db.ChannelView(ctx, lnwire.GossipVersion1)
 	require.NoError(t, err, "unable to get graph channel view")
 	assertChanViewEqual(t, channelView, edgePoints)
 
@@ -2376,7 +2316,7 @@ func TestGraphPruning(t *testing.T) {
 	assertNumChans(t, graph, 2)
 
 	// Those channels should also be missing from the channel view.
-	channelView, err = graph.ChannelView(ctx)
+	channelView, err = graph.db.ChannelView(ctx, lnwire.GossipVersion1)
 	require.NoError(t, err, "unable to get graph channel view")
 	assertChanViewEqualChanPoints(t, channelView, channelPoints[2:])
 
@@ -2425,7 +2365,7 @@ func TestGraphPruning(t *testing.T) {
 	// Finally, the channel view at this point in the graph should now be
 	// completely empty.  Those channels should also be missing from the
 	// channel view.
-	channelView, err = graph.ChannelView(ctx)
+	channelView, err = graph.db.ChannelView(ctx, lnwire.GossipVersion1)
 	require.NoError(t, err, "unable to get graph channel view")
 	require.Empty(t, channelView)
 }
@@ -3764,7 +3704,7 @@ func TestFilterChannelRange(t *testing.T) {
 
 		return ChannelUpdateInfo{
 			ShortChannelID: scid,
-			Version:        v,
+			Version:        lnwire.GossipVersion1,
 			Node1Freshness: fresh1,
 			Node2Freshness: fresh2,
 		}
@@ -3772,7 +3712,7 @@ func TestFilterChannelRange(t *testing.T) {
 
 	// zeroFresh returns the zero freshness value for the test version.
 	zeroFresh := func() lnwire.Timestamp {
-		if v == lnwire.GossipVersion2 {
+		if lnwire.GossipVersion1 == lnwire.GossipVersion2 {
 			return lnwire.BlockHeightTimestamp(0)
 		}
 		return lnwire.UnixTimestamp(0)
@@ -3803,7 +3743,7 @@ func TestFilterChannelRange(t *testing.T) {
 		}
 		updateTimeSeed++
 
-		if v == lnwire.GossipVersion2 {
+		if lnwire.GossipVersion1 == lnwire.GossipVersion2 {
 			return lnwire.BlockHeightTimestamp(updateBlock)
 		}
 
@@ -5162,7 +5102,7 @@ func putSerializedPolicy(t *testing.T, db kvdb.Backend, from []byte,
 func assertNumZombies(t *testing.T, graph *ChannelGraph, expZombies uint64) {
 	t.Helper()
 
-	numZombies, err := graph.NumZombies(t.Context())
+	numZombies, err := graph.db.NumZombies(t.Context(), lnwire.GossipVersion1)
 	require.NoError(t, err, "unable to query number of zombies")
 	require.Equal(t, expZombies, numZombies)
 }
@@ -5191,7 +5131,9 @@ func TestGraphZombieIndex(t *testing.T) {
 
 	// Since the edge is known the graph and it isn't a zombie, IsZombieEdge
 	// should not report the channel as a zombie.
-	isZombie, _, _, err := graph.IsZombieEdge(ctx, edge.ChannelID)
+	isZombie, _, _, err := graph.db.IsZombieEdge(
+		ctx, lnwire.GossipVersion1, edge.ChannelID,
+	)
 	require.NoError(t, err)
 	require.False(t, isZombie)
 	assertNumZombies(t, graph, 0)
@@ -5202,8 +5144,8 @@ func TestGraphZombieIndex(t *testing.T) {
 		ctx, lnwire.GossipVersion1, false, true, edge.ChannelID,
 	)
 	require.NoError(t, err, "unable to mark edge as zombie")
-	isZombie, pubKey1, pubKey2, err := graph.IsZombieEdge(
-		ctx, edge.ChannelID,
+	isZombie, pubKey1, pubKey2, err := graph.db.IsZombieEdge(
+		ctx, lnwire.GossipVersion1, edge.ChannelID,
 	)
 	require.NoError(t, err)
 	require.True(t, isZombie)
@@ -5225,7 +5167,9 @@ func TestGraphZombieIndex(t *testing.T) {
 		ErrZombieEdgeNotFound,
 	)
 
-	isZombie, _, _, err = graph.IsZombieEdge(ctx, edge.ChannelID)
+	isZombie, _, _, err = graph.db.IsZombieEdge(
+		ctx, lnwire.GossipVersion1, edge.ChannelID,
+	)
 	require.NoError(t, err)
 	require.False(t, isZombie)
 
@@ -5239,7 +5183,9 @@ func TestGraphZombieIndex(t *testing.T) {
 	)
 	require.NoError(t, err, "unable to mark edge as zombie")
 
-	isZombie, _, _, err = graph.IsZombieEdge(ctx, edge.ChannelID)
+	isZombie, _, _, err = graph.db.IsZombieEdge(
+		ctx, lnwire.GossipVersion1, edge.ChannelID,
+	)
 	require.NoError(t, err)
 	require.True(t, isZombie)
 	assertNumZombies(t, graph, 1)

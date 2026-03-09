@@ -1069,7 +1069,7 @@ func (s *SQLStore) ForEachNode(ctx context.Context,
 					}
 
 					// Set version bit.
-					entry.versionsMask |= 1 << uint(v)
+					entry.versionsMask |= 1 << (v - 1)
 
 					// Prefer highest version with an
 					// announcement, fall back to shell
@@ -1903,7 +1903,7 @@ func (s *SQLStore) ForEachChannel(ctx context.Context,
 						order = append(order, id)
 					}
 
-					entry.versionsMask |= 1 << uint(v)
+					entry.versionsMask |= 1 << (v - 1)
 
 					// Always prefer highest version.
 					entry.info = info
@@ -3865,9 +3865,27 @@ func (s *sqlNodeTraverser) ForEachNodeDirectedChannel(
 	ctx context.Context, nodePub route.Vertex,
 	cb func(channel *DirectedChannel) error, _ func()) error {
 
-	return forEachNodeDirectedChannel(
-		ctx, s.db, lnwire.GossipVersion1, nodePub, cb,
-	)
+	// Iterate across all gossip versions (highest first) so that
+	// channels announced via v2 are preferred over v1.
+	seen := make(map[uint64]struct{})
+	for _, v := range []lnwire.GossipVersion{gossipV2, gossipV1} {
+		err := forEachNodeDirectedChannel(
+			ctx, s.db, v, nodePub,
+			func(channel *DirectedChannel) error {
+				if _, ok := seen[channel.ChannelID]; ok {
+					return nil
+				}
+				seen[channel.ChannelID] = struct{}{}
+
+				return cb(channel)
+			},
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // FetchNodeFeatures returns the features of the given node. If the node is
