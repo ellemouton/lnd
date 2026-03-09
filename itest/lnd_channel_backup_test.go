@@ -628,13 +628,6 @@ func runChanRestoreScenarioCommitTypes(ht *lntest.HarnessTest,
 	multi, err := os.ReadFile(backupFilePath)
 	require.NoError(ht, err)
 
-	// If this was a zero conf taproot channel, then since it's private,
-	// we'll need to mine an extra block (framework won't mine extra blocks
-	// otherwise).
-	if ct == lnrpc.CommitmentType_SIMPLE_TAPROOT && zeroConf {
-		ht.MineBlocksAndAssertNumTxes(1, 1)
-	}
-
 	// Now that we have Dave's backup file, we'll create a new nodeRestorer
 	// that we'll restore using the on-disk channels.backup.
 	restoredNodeFunc := chanRestoreViaRPC(
