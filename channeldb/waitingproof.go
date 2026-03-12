@@ -181,10 +181,20 @@ func (s *WaitingProofStore) Get(key WaitingProofKey) (*WaitingProof, error) {
 	return proof, err
 }
 
-// WaitingProofKey is the proof key which uniquely identifies the waiting
-// proof object. The goal of this key is distinguish the local and remote
-// proof for the same channel id.
-type WaitingProofKey [9]byte
+// WaitingProofKey is the proof key which uniquely identifies the waiting proof
+// object. The key includes proof type, short channel ID, and side
+// (local/remote) to avoid cross-version collisions.
+type WaitingProofKey [10]byte
+
+// WaitingProofType represents the type of proof encoded in a waiting proof
+// record.
+type WaitingProofType uint8
+
+const (
+	// WaitingProofTypeV1 represents a waiting proof containing an
+	// AnnounceSignatures1 message (gossip v1, P2WSH channels).
+	WaitingProofTypeV1 WaitingProofType = 0
+)
 
 // WaitingProof is the storable object, which encapsulate the half proof and
 // the information about from which side this proof came. This structure is
@@ -207,28 +217,34 @@ func NewWaitingProof(isRemote bool,
 
 // OppositeKey returns the key which uniquely identifies opposite waiting proof.
 func (p *WaitingProof) OppositeKey() WaitingProofKey {
-	var key [9]byte
-	binary.BigEndian.PutUint64(key[:8], p.ShortChannelID.ToUint64())
+	var key WaitingProofKey
+	key[0] = byte(WaitingProofTypeV1)
+	binary.BigEndian.PutUint64(key[1:9], p.ShortChannelID.ToUint64())
 
 	if !p.isRemote {
-		key[8] = 1
+		key[9] = 1
 	}
 	return key
 }
 
 // Key returns the key which uniquely identifies waiting proof.
 func (p *WaitingProof) Key() WaitingProofKey {
-	var key [9]byte
-	binary.BigEndian.PutUint64(key[:8], p.ShortChannelID.ToUint64())
+	var key WaitingProofKey
+	key[0] = byte(WaitingProofTypeV1)
+	binary.BigEndian.PutUint64(key[1:9], p.ShortChannelID.ToUint64())
 
 	if p.isRemote {
-		key[8] = 1
+		key[9] = 1
 	}
 	return key
 }
 
 // Encode writes the internal representation of waiting proof in byte stream.
 func (p *WaitingProof) Encode(w io.Writer) error {
+	if err := binary.Write(w, byteOrder, WaitingProofTypeV1); err != nil {
+		return err
+	}
+
 	if err := binary.Write(w, byteOrder, p.isRemote); err != nil {
 		return err
 	}
@@ -250,6 +266,15 @@ func (p *WaitingProof) Encode(w io.Writer) error {
 // Decode reads the data from the byte stream and initializes the
 // waiting proof object with it.
 func (p *WaitingProof) Decode(r io.Reader) error {
+	var proofType WaitingProofType
+	if err := binary.Read(r, byteOrder, &proofType); err != nil {
+		return err
+	}
+
+	if proofType != WaitingProofTypeV1 {
+		return fmt.Errorf("unknown waiting proof type: %v", proofType)
+	}
+
 	if err := binary.Read(r, byteOrder, &p.isRemote); err != nil {
 		return err
 	}
