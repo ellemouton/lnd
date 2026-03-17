@@ -1789,7 +1789,7 @@ func TestGraphTraversal(t *testing.T) {
 	// Iterate through all the known channels within the graph DB, once
 	// again if the map is empty that indicates that all edges have
 	// properly been reached.
-	err = graph.ForEachChannel(ctx, lnwire.GossipVersion1,
+	err = graph.ForEachChannel(ctx,
 		func(ei *models.ChannelEdgeInfo,
 			_ *models.ChannelEdgePolicy,
 			_ *models.ChannelEdgePolicy) error {
@@ -2138,7 +2138,7 @@ func assertPruneTip(t *testing.T, graph *ChannelGraph,
 func assertNumChans(t *testing.T, graph *ChannelGraph, n int) {
 	numChans := 0
 	err := graph.ForEachChannel(
-		t.Context(), lnwire.GossipVersion1,
+		t.Context(),
 		func(*models.ChannelEdgeInfo,
 			*models.ChannelEdgePolicy,
 			*models.ChannelEdgePolicy) error {
