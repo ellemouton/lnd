@@ -5786,3 +5786,207 @@ func TestLightningNodePersistence(t *testing.T) {
 
 	require.Equal(t, nodeAnnBytes, b.Bytes())
 }
+
+// TestUpdateRangeValidateForVersion verifies that ChanUpdateRange and
+// NodeUpdateRange reject invalid field combinations for each gossip version.
+func TestUpdateRangeValidateForVersion(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+
+	tests := []struct {
+		name    string
+		fn      func() error
+		wantErr string
+	}{
+		{
+			name: "v1 chan range with time - ok",
+			fn: func() error {
+				r := ChanUpdateRange{
+					StartTime: fn.Some(now),
+					EndTime:   fn.Some(now),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion1,
+				)
+			},
+		},
+		{
+			name: "v1 chan range with height - rejected",
+			fn: func() error {
+				r := ChanUpdateRange{
+					StartHeight: fn.Some(uint32(1)),
+					EndHeight:   fn.Some(uint32(100)),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion1,
+				)
+			},
+			wantErr: "v1 chan update range must use time",
+		},
+		{
+			name: "v2 chan range with height - ok",
+			fn: func() error {
+				r := ChanUpdateRange{
+					StartHeight: fn.Some(uint32(1)),
+					EndHeight:   fn.Some(uint32(100)),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion2,
+				)
+			},
+		},
+		{
+			name: "v2 chan range with time - rejected",
+			fn: func() error {
+				r := ChanUpdateRange{
+					StartTime: fn.Some(now),
+					EndTime:   fn.Some(now),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion2,
+				)
+			},
+			wantErr: "v2 chan update range must use blocks",
+		},
+		{
+			name: "mixed chan range - rejected",
+			fn: func() error {
+				r := ChanUpdateRange{
+					StartTime:   fn.Some(now),
+					StartHeight: fn.Some(uint32(1)),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion1,
+				)
+			},
+			wantErr: "both time and block",
+		},
+		{
+			name: "v1 node range with time - ok",
+			fn: func() error {
+				r := NodeUpdateRange{
+					StartTime: fn.Some(now),
+					EndTime:   fn.Some(now),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion1,
+				)
+			},
+		},
+		{
+			name: "v2 node range with height - ok",
+			fn: func() error {
+				r := NodeUpdateRange{
+					StartHeight: fn.Some(uint32(1)),
+					EndHeight:   fn.Some(uint32(100)),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion2,
+				)
+			},
+		},
+		{
+			name: "v2 node range with time - rejected",
+			fn: func() error {
+				r := NodeUpdateRange{
+					StartTime: fn.Some(now),
+					EndTime:   fn.Some(now),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion2,
+				)
+			},
+			wantErr: "v2 node update range must use height",
+		},
+		{
+			name: "v1 chan range missing bounds - rejected",
+			fn: func() error {
+				r := ChanUpdateRange{
+					StartTime: fn.Some(now),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion1,
+				)
+			},
+			wantErr: "missing time bounds",
+		},
+		{
+			name: "v1 chan range inverted - rejected",
+			fn: func() error {
+				r := ChanUpdateRange{
+					StartTime: fn.Some(now.Add(time.Hour)),
+					EndTime:   fn.Some(now),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion1,
+				)
+			},
+			wantErr: "start time after end time",
+		},
+		{
+			name: "v2 chan range inverted - rejected",
+			fn: func() error {
+				r := ChanUpdateRange{
+					StartHeight: fn.Some(uint32(100)),
+					EndHeight:   fn.Some(uint32(50)),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion2,
+				)
+			},
+			wantErr: "start height after end height",
+		},
+		{
+			name: "v1 node range inverted - rejected",
+			fn: func() error {
+				r := NodeUpdateRange{
+					StartTime: fn.Some(now.Add(time.Hour)),
+					EndTime:   fn.Some(now),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion1,
+				)
+			},
+			wantErr: "start time after end time",
+		},
+		{
+			name: "v2 node range inverted - rejected",
+			fn: func() error {
+				r := NodeUpdateRange{
+					StartHeight: fn.Some(uint32(100)),
+					EndHeight:   fn.Some(uint32(50)),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion2,
+				)
+			},
+			wantErr: "start height after end height",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.fn()
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err,
+					tc.wantErr)
+			}
+		})
+	}
+}
