@@ -522,10 +522,10 @@ func (c *ChannelGraph) PruneGraphNodes(ctx context.Context) error {
 // passed in. This method can be used by callers to determine the set of
 // channels another peer knows of that we don't.
 func (c *ChannelGraph) FilterKnownChanIDs(ctx context.Context,
-	chansInfo []ChannelUpdateInfo,
+	v lnwire.GossipVersion, chansInfo []ChannelUpdateInfo,
 	isZombieChan func(ChannelUpdateInfo) bool) ([]uint64, error) {
 
-	unknown, knownZombies, err := c.db.FilterKnownChanIDs(ctx, chansInfo)
+	unknown, knownZombies, err := c.db.FilterKnownChanIDs(ctx, v, chansInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -863,6 +863,17 @@ func (c *VersionedGraph) NodeUpdatesInHorizon(ctx context.Context,
 	opts ...IteratorOption) iter.Seq2[*models.Node, error] {
 
 	return c.db.NodeUpdatesInHorizon(ctx, c.v, r, opts...)
+}
+
+// FilterKnownChanIDs filters channel IDs for the versioned graph's gossip
+// version.
+func (c *VersionedGraph) FilterKnownChanIDs(ctx context.Context,
+	chansInfo []ChannelUpdateInfo,
+	isZombieChan func(ChannelUpdateInfo) bool) ([]uint64, error) {
+
+	return c.ChannelGraph.FilterKnownChanIDs(
+		ctx, c.v, chansInfo, isZombieChan,
+	)
 }
 
 // ChanUpdatesInHorizon returns all known channel edges with updates in the
