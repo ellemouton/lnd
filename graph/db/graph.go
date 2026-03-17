@@ -230,12 +230,37 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(ctx context.Context,
 		return c.graphCache.ForEachChannel(node, cb)
 	}
 
-	// TODO(elle): once the no-cache path needs to support
-	// pathfinding across gossip versions, this should iterate
-	// across all versions rather than defaulting to v1.
-	return c.db.ForEachNodeDirectedChannel(
-		ctx, gossipV1, node, cb, reset,
-	)
+	// Iterate across all gossip versions (highest first) so that
+	// channels announced via v2 are preferred over v1.
+	seen := make(map[uint64]struct{})
+	for _, v := range []lnwire.GossipVersion{gossipV2, gossipV1} {
+		err := c.db.ForEachNodeDirectedChannel(
+			ctx, v, node,
+			func(channel *DirectedChannel) error {
+				if _, ok := seen[channel.ChannelID]; ok {
+					return nil
+				}
+				seen[channel.ChannelID] = struct{}{}
+
+				return cb(channel)
+			},
+			// Use a no-op reset for individual version
+			// queries. The ExecTx reset callback fires on
+			// every attempt (including the first), so
+			// passing the caller's reset here would clear
+			// results accumulated from earlier versions.
+			func() {
+				seen = make(map[uint64]struct{})
+			},
+		)
+		if err != nil &&
+			!errors.Is(err, ErrVersionNotSupportedForKVDB) {
+
+			return err
+		}
+	}
+
+	return nil
 }
 
 // FetchNodeFeatures returns the features of the given node. If no features are
@@ -251,7 +276,22 @@ func (c *ChannelGraph) FetchNodeFeatures(ctx context.Context,
 		return c.graphCache.GetFeatures(node), nil
 	}
 
-	return c.db.FetchNodeFeatures(ctx, lnwire.GossipVersion1, node)
+	// Try v2 first, fall back to v1 if the v2 features are empty.
+	for _, v := range []lnwire.GossipVersion{gossipV2, gossipV1} {
+		features, err := c.db.FetchNodeFeatures(ctx, v, node)
+		if errors.Is(err, ErrVersionNotSupportedForKVDB) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		if !features.IsEmpty() {
+			return features, nil
+		}
+	}
+
+	return lnwire.EmptyFeatureVector(), nil
 }
 
 // GraphSession will provide the call-back with access to a NodeTraverser
@@ -735,26 +775,39 @@ func (c *ChannelGraph) FetchChanInfos(ctx context.Context,
 }
 
 // FetchChannelEdgesByOutpoint attempts to lookup directed edges by funding
-// outpoint.
+// outpoint, returning the highest available gossip version.
 func (c *ChannelGraph) FetchChannelEdgesByOutpoint(ctx context.Context,
 	op *wire.OutPoint) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
-	return c.db.FetchChannelEdgesByOutpoint(
-		ctx, lnwire.GossipVersion1, op,
-	)
+	return c.db.FetchChannelEdgesByOutpointPreferHighest(ctx, op)
 }
 
-// FetchChannelEdgesByID attempts to lookup directed edges by channel ID.
+// FetchChannelEdgesByID attempts to lookup directed edges by channel ID,
+// returning the highest available gossip version.
 func (c *ChannelGraph) FetchChannelEdgesByID(ctx context.Context,
 	chanID uint64) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
-	return c.db.FetchChannelEdgesByID(
-		ctx, lnwire.GossipVersion1, chanID,
-	)
+	return c.db.FetchChannelEdgesByIDPreferHighest(ctx, chanID)
+}
+
+// GetVersionsBySCID returns the list of gossip versions for which a channel
+// with the given SCID exists in the database.
+func (c *ChannelGraph) GetVersionsBySCID(ctx context.Context,
+	chanID uint64) ([]lnwire.GossipVersion, error) {
+
+	return c.db.GetVersionsBySCID(ctx, chanID)
+}
+
+// GetVersionsByOutpoint returns the list of gossip versions for which a channel
+// with the given funding outpoint exists in the database.
+func (c *ChannelGraph) GetVersionsByOutpoint(ctx context.Context,
+	op *wire.OutPoint) ([]lnwire.GossipVersion, error) {
+
+	return c.db.GetVersionsByOutpoint(ctx, op)
 }
 
 // PutClosedScid stores a SCID for a closed channel in the database.
