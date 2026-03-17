@@ -120,11 +120,12 @@ type Store interface { //nolint:interfacebloat
 	DeleteNode(ctx context.Context, v lnwire.GossipVersion,
 		nodePub route.Vertex) error
 
-	// NodeUpdatesInHorizon returns all the known lightning node which have
-	// an update timestamp within the passed range. This method can be used
-	// by two nodes to quickly determine if they have the same set of up to
-	// date node announcements.
-	NodeUpdatesInHorizon(ctx context.Context, startTime, endTime time.Time,
+	// NodeUpdatesInHorizon returns all the known lightning nodes which have
+	// updates within the passed range for the given gossip version. This
+	// method can be used by two nodes to quickly determine if they have the
+	// same set of up to date node announcements.
+	NodeUpdatesInHorizon(ctx context.Context, v lnwire.GossipVersion,
+		r NodeUpdateRange,
 		opts ...IteratorOption) iter.Seq2[*models.Node, error]
 
 	// FetchNode attempts to look up a target node by its identity
@@ -256,10 +257,10 @@ type Store interface { //nolint:interfacebloat
 		uint64, error)
 
 	// ChanUpdatesInHorizon returns all the known channel edges which have
-	// at least one edge that has an update timestamp within the specified
-	// horizon.
-	ChanUpdatesInHorizon(ctx context.Context,
-		startTime, endTime time.Time,
+	// at least one edge update within the specified range for the given
+	// gossip version.
+	ChanUpdatesInHorizon(ctx context.Context, v lnwire.GossipVersion,
+		r ChanUpdateRange,
 		opts ...IteratorOption) iter.Seq2[ChannelEdge, error]
 
 	// FilterKnownChanIDs takes a set of channel IDs and return the subset

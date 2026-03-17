@@ -52,6 +52,7 @@ type SQLQueries interface {
 	GetNodesByIDs(ctx context.Context, ids []int64) ([]sqlc.GraphNode, error)
 	GetNodeIDByPubKey(ctx context.Context, arg sqlc.GetNodeIDByPubKeyParams) (int64, error)
 	GetNodesByLastUpdateRange(ctx context.Context, arg sqlc.GetNodesByLastUpdateRangeParams) ([]sqlc.GraphNode, error)
+	GetNodesByBlockHeightRange(ctx context.Context, arg sqlc.GetNodesByBlockHeightRangeParams) ([]sqlc.GraphNode, error)
 	ListNodesPaginated(ctx context.Context, arg sqlc.ListNodesPaginatedParams) ([]sqlc.GraphNode, error)
 	ListNodeIDsAndPubKeys(ctx context.Context, arg sqlc.ListNodeIDsAndPubKeysParams) ([]sqlc.ListNodeIDsAndPubKeysRow, error)
 	IsPublicV1Node(ctx context.Context, pubKey []byte) (bool, error)
@@ -107,6 +108,7 @@ type SQLQueries interface {
 	ListChannelsPaginated(ctx context.Context, arg sqlc.ListChannelsPaginatedParams) ([]sqlc.ListChannelsPaginatedRow, error)
 	ListChannelsPaginatedV2(ctx context.Context, arg sqlc.ListChannelsPaginatedV2Params) ([]sqlc.ListChannelsPaginatedV2Row, error)
 	GetChannelsByPolicyLastUpdateRange(ctx context.Context, arg sqlc.GetChannelsByPolicyLastUpdateRangeParams) ([]sqlc.GetChannelsByPolicyLastUpdateRangeRow, error)
+	GetChannelsByPolicyBlockRange(ctx context.Context, arg sqlc.GetChannelsByPolicyBlockRangeParams) ([]sqlc.GetChannelsByPolicyBlockRangeRow, error)
 	GetChannelByOutpointWithPolicies(ctx context.Context, arg sqlc.GetChannelByOutpointWithPoliciesParams) (sqlc.GetChannelByOutpointWithPoliciesRow, error)
 	GetPublicV1ChannelsBySCID(ctx context.Context, arg sqlc.GetPublicV1ChannelsBySCIDParams) ([]sqlc.GraphChannel, error)
 	GetPublicV2ChannelsBySCID(ctx context.Context, arg sqlc.GetPublicV2ChannelsBySCIDParams) ([]sqlc.GraphChannel, error)
@@ -606,14 +608,12 @@ func (s *SQLStore) SetSourceNode(ctx context.Context,
 	}, sqldb.NoOpReset)
 }
 
-// NodeUpdatesInHorizon returns all the known lightning node which have an
-// update timestamp within the passed range. This method can be used by two
-// nodes to quickly determine if they have the same set of up to date node
-// announcements.
+// NodeUpdatesInHorizon returns all the known lightning nodes which have
+// updates within the passed range for the given gossip version.
 //
 // NOTE: This is part of the Store interface.
 func (s *SQLStore) NodeUpdatesInHorizon(ctx context.Context,
-	startTime, endTime time.Time,
+	v lnwire.GossipVersion, r NodeUpdateRange,
 	opts ...IteratorOption) iter.Seq2[*models.Node, error] {
 
 	cfg := defaultIteratorConfig()
@@ -624,9 +624,15 @@ func (s *SQLStore) NodeUpdatesInHorizon(ctx context.Context,
 	return func(yield func(*models.Node, error) bool) {
 		var (
 			lastUpdateTime sql.NullInt64
+			lastBlock      sql.NullInt64
 			lastPubKey     = make([]byte, 33)
 			hasMore        = true
 		)
+
+		if err := r.validateForVersion(v); err != nil {
+			yield(nil, err)
+			return
+		}
 
 		// Each iteration, we'll read a batch amount of nodes, yield
 		// them, then decide is we have more or not.
@@ -635,34 +641,72 @@ func (s *SQLStore) NodeUpdatesInHorizon(ctx context.Context,
 
 			//nolint:ll
 			err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-				//nolint:ll
-				params := sqlc.GetNodesByLastUpdateRangeParams{
-					StartTime: sqldb.SQLInt64(
-						startTime.Unix(),
-					),
-					EndTime: sqldb.SQLInt64(
-						endTime.Unix(),
-					),
-					LastUpdate: lastUpdateTime,
-					LastPubKey: lastPubKey,
-					OnlyPublic: sql.NullBool{
-						Bool:  cfg.iterPublicNodes,
-						Valid: true,
-					},
-					MaxResults: sqldb.SQLInt32(
-						cfg.nodeUpdateIterBatchSize,
-					),
-				}
-				rows, err := db.GetNodesByLastUpdateRange(
-					ctx, params,
-				)
-				if err != nil {
-					return err
+				var rows []sqlc.GraphNode
+				switch v {
+				case gossipV1:
+					//nolint:ll
+					params := sqlc.GetNodesByLastUpdateRangeParams{
+						Version: int16(v),
+						StartTime: sqldb.SQLInt64(
+							r.StartTime.UnwrapOr(time.Time{}).Unix(),
+						),
+						EndTime: sqldb.SQLInt64(
+							r.EndTime.UnwrapOr(time.Time{}).Unix(),
+						),
+						LastUpdate: lastUpdateTime,
+						LastPubKey: lastPubKey,
+						OnlyPublic: sql.NullBool{
+							Bool:  cfg.iterPublicNodes,
+							Valid: true,
+						},
+						MaxResults: sqldb.SQLInt32(
+							cfg.nodeUpdateIterBatchSize,
+						),
+					}
+					var err error
+					rows, err = db.GetNodesByLastUpdateRange(
+						ctx, params,
+					)
+					if err != nil {
+						return err
+					}
+
+				case gossipV2:
+					//nolint:ll
+					params := sqlc.GetNodesByBlockHeightRangeParams{
+						Version: int16(v),
+						StartHeight: sqldb.SQLInt64(
+							int64(r.StartHeight.UnwrapOr(0)),
+						),
+						EndHeight: sqldb.SQLInt64(
+							int64(r.EndHeight.UnwrapOr(0)),
+						),
+						LastBlockHeight: lastBlock,
+						LastPubKey:      lastPubKey,
+						OnlyPublic: sql.NullBool{
+							Bool:  cfg.iterPublicNodes,
+							Valid: true,
+						},
+						MaxResults: sqldb.SQLInt32(
+							cfg.nodeUpdateIterBatchSize,
+						),
+					}
+					var err error
+					rows, err = db.GetNodesByBlockHeightRange(
+						ctx, params,
+					)
+					if err != nil {
+						return err
+					}
+
+				default:
+					return fmt.Errorf("unknown gossip "+
+						"version: %v", v)
 				}
 
 				hasMore = len(rows) == cfg.nodeUpdateIterBatchSize
 
-				err = forEachNodeInBatch(
+				err := forEachNodeInBatch(
 					ctx, s.cfg.QueryCfg, db, rows,
 					func(_ int64, node *models.Node) error {
 						batch = append(batch, node)
@@ -670,10 +714,19 @@ func (s *SQLStore) NodeUpdatesInHorizon(ctx context.Context,
 						// Update pagination cursors
 						// based on the last processed
 						// node.
-						lastUpdateTime = sql.NullInt64{
-							Int64: node.LastUpdate.
-								Unix(),
-							Valid: true,
+						switch v {
+						case gossipV1:
+							lastUpdateTime = sql.NullInt64{
+								Int64: node.LastUpdate.
+									Unix(),
+								Valid: true,
+							}
+						case gossipV2:
+							lastBlock = sql.NullInt64{
+								Int64: int64(node.
+									LastBlockHeight),
+								Valid: true,
+							}
 						}
 						lastPubKey = node.PubKeyBytes[:]
 
@@ -1092,6 +1145,26 @@ func extractMaxUpdateTime(
 	}
 }
 
+// extractMaxBlockHeight returns the maximum of the two policy block heights.
+// This is used for pagination cursor tracking in v2 gossip queries.
+func extractMaxBlockHeight(
+	row sqlc.GetChannelsByPolicyLastUpdateRangeRow) int64 {
+
+	switch {
+	case row.Policy1BlockHeight.Valid &&
+		row.Policy2BlockHeight.Valid:
+
+		return max(row.Policy1BlockHeight.Int64,
+			row.Policy2BlockHeight.Int64)
+	case row.Policy1BlockHeight.Valid:
+		return row.Policy1BlockHeight.Int64
+	case row.Policy2BlockHeight.Valid:
+		return row.Policy2BlockHeight.Int64
+	default:
+		return 0
+	}
+}
+
 // buildChannelFromRow constructs a ChannelEdge from a database row.
 // This includes building the nodes, channel info, and policies.
 func (s *SQLStore) buildChannelFromRow(ctx context.Context, db SQLQueries,
@@ -1173,8 +1246,12 @@ func (s *SQLStore) updateChanCacheBatch(v lnwire.GossipVersion,
 //
 // NOTE: This is part of the Store interface.
 func (s *SQLStore) ChanUpdatesInHorizon(ctx context.Context,
-	startTime, endTime time.Time,
+	v lnwire.GossipVersion, r ChanUpdateRange,
 	opts ...IteratorOption) iter.Seq2[ChannelEdge, error] {
+
+	if err := r.validateForVersion(v); err != nil {
+		return chanUpdateRangeErrIter(err)
+	}
 
 	// Apply options.
 	cfg := defaultIteratorConfig()
@@ -1184,13 +1261,14 @@ func (s *SQLStore) ChanUpdatesInHorizon(ctx context.Context,
 
 	return func(yield func(ChannelEdge, error) bool) {
 		var (
-			edgesSeen      = make(map[uint64]struct{})
-			edgesToCache   = make(map[uint64]ChannelEdge)
-			hits           int
-			total          int
-			lastUpdateTime sql.NullInt64
-			lastID         sql.NullInt64
-			hasMore        = true
+			edgesSeen       = make(map[uint64]struct{})
+			edgesToCache    = make(map[uint64]ChannelEdge)
+			hits            int
+			total           int
+			lastUpdateTime  sql.NullInt64
+			lastBlockHeight sql.NullInt64
+			lastID          sql.NullInt64
+			hasMore         = true
 		)
 
 		// Each iteration, we'll read a batch amount of channel updates
@@ -1206,30 +1284,69 @@ func (s *SQLStore) ChanUpdatesInHorizon(ctx context.Context,
 
 			err := s.db.ExecTx(ctx, sqldb.ReadTxOpt(),
 				func(db SQLQueries) error {
-					//nolint:ll
-					params := sqlc.GetChannelsByPolicyLastUpdateRangeParams{
-						Version: int16(lnwire.GossipVersion1),
-						StartTime: sqldb.SQLInt64(
-							startTime.Unix(),
-						),
-						EndTime: sqldb.SQLInt64(
-							endTime.Unix(),
-						),
-						LastUpdateTime: lastUpdateTime,
-						LastID:         lastID,
-						MaxResults: sql.NullInt32{
-							Int32: int32(
-								cfg.chanUpdateIterBatchSize,
+					var rows []sqlc.GetChannelsByPolicyLastUpdateRangeRow //nolint:ll
+
+					switch v {
+					case gossipV1:
+						//nolint:ll
+						params := sqlc.GetChannelsByPolicyLastUpdateRangeParams{
+							Version: int16(v),
+							StartTime: sqldb.SQLInt64(
+								r.StartTime.UnwrapOr(time.Time{}).Unix(),
 							),
-							Valid: true,
-						},
-					}
-					//nolint:ll
-					rows, err := db.GetChannelsByPolicyLastUpdateRange(
-						ctx, params,
-					)
-					if err != nil {
-						return err
+							EndTime: sqldb.SQLInt64(
+								r.EndTime.UnwrapOr(time.Time{}).Unix(),
+							),
+							LastUpdateTime: lastUpdateTime,
+							LastID:         lastID,
+							MaxResults: sql.NullInt32{
+								Int32: int32(
+									cfg.chanUpdateIterBatchSize,
+								),
+								Valid: true,
+							},
+						}
+						var err error
+						//nolint:ll
+						rows, err = db.GetChannelsByPolicyLastUpdateRange(
+							ctx, params,
+						)
+						if err != nil {
+							return err
+						}
+
+					case gossipV2:
+						//nolint:ll
+						params := sqlc.GetChannelsByPolicyBlockRangeParams{
+							Version: int16(v),
+							StartHeight: sqldb.SQLInt64(
+								int64(r.StartHeight.UnwrapOr(0)),
+							),
+							EndHeight: sqldb.SQLInt64(
+								int64(r.EndHeight.UnwrapOr(0)),
+							),
+							LastBlockHeight: lastBlockHeight,
+							LastID:          lastID,
+							MaxResults: sql.NullInt32{
+								Int32: int32(
+									cfg.chanUpdateIterBatchSize,
+								),
+								Valid: true,
+							},
+						}
+						var err error
+						blockRows, err := db.GetChannelsByPolicyBlockRange(
+							ctx, params,
+						)
+						if err != nil {
+							return err
+						}
+						rows = blockRows
+
+					default:
+						return fmt.Errorf("unknown "+
+							"gossip version: %v",
+							v)
 					}
 
 					//nolint:ll
@@ -1237,9 +1354,17 @@ func (s *SQLStore) ChanUpdatesInHorizon(ctx context.Context,
 
 					//nolint:ll
 					for _, row := range rows {
-						lastUpdateTime = sql.NullInt64{
-							Int64: extractMaxUpdateTime(row),
-							Valid: true,
+						switch v {
+						case gossipV1:
+							lastUpdateTime = sql.NullInt64{
+								Int64: extractMaxUpdateTime(row),
+								Valid: true,
+							}
+						case gossipV2:
+							lastBlockHeight = sql.NullInt64{
+								Int64: extractMaxBlockHeight(row),
+								Valid: true,
+							}
 						}
 						lastID = sql.NullInt64{
 							Int64: row.GraphChannel.ID,
@@ -1259,8 +1384,7 @@ func (s *SQLStore) ChanUpdatesInHorizon(ctx context.Context,
 						// Check cache (we already hold
 						// shared read lock).
 						channel, ok := s.chanCache.get(
-							lnwire.GossipVersion1,
-							chanIDInt,
+							v, chanIDInt,
 						)
 						if ok {
 							hits++
@@ -1315,9 +1439,7 @@ func (s *SQLStore) ChanUpdatesInHorizon(ctx context.Context,
 
 			// Update cache after successful batch yield, setting
 			// the cache lock only once for the entire batch.
-			s.updateChanCacheBatch(
-				lnwire.GossipVersion1, edgesToCache,
-			)
+			s.updateChanCacheBatch(v, edgesToCache)
 			edgesToCache = make(map[uint64]ChannelEdge)
 
 			// If the batch didn't yield anything, then we're done.
@@ -1327,12 +1449,12 @@ func (s *SQLStore) ChanUpdatesInHorizon(ctx context.Context,
 		}
 
 		if total > 0 {
-			log.Debugf("ChanUpdatesInHorizon hit percentage: "+
-				"%.2f (%d/%d)",
+			log.Debugf("ChanUpdatesInHorizon(v%d) hit "+
+				"percentage: %.2f (%d/%d)", v,
 				float64(hits)*100/float64(total), hits, total)
 		} else {
-			log.Debugf("ChanUpdatesInHorizon returned no edges "+
-				"in horizon (%s, %s)", startTime, endTime)
+			log.Debugf("ChanUpdatesInHorizon(v%d) returned "+
+				"no edges in horizon", v)
 		}
 	}
 }
