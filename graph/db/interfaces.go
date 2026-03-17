@@ -322,6 +322,35 @@ type Store interface { //nolint:interfacebloat
 		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy, error)
 
+	// FetchChannelEdgesByIDPreferHighest behaves like FetchChannelEdgesByID
+	// but is version-agnostic: if the channel exists under multiple gossip
+	// versions it returns the record with the highest version number.
+	FetchChannelEdgesByIDPreferHighest(ctx context.Context,
+		chanID uint64) (
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, error)
+
+	// FetchChannelEdgesByOutpointPreferHighest behaves like
+	// FetchChannelEdgesByOutpoint but is version-agnostic: if the channel
+	// exists under multiple gossip versions it returns the record with the
+	// highest version number.
+	FetchChannelEdgesByOutpointPreferHighest(ctx context.Context,
+		op *wire.OutPoint) (
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, error)
+
+	// GetVersionsBySCID returns the list of gossip versions for which a
+	// channel with the given SCID exists in the database, ordered
+	// ascending.
+	GetVersionsBySCID(ctx context.Context,
+		chanID uint64) ([]lnwire.GossipVersion, error)
+
+	// GetVersionsByOutpoint returns the list of gossip versions for which
+	// a channel with the given funding outpoint exists in the database,
+	// ordered ascending.
+	GetVersionsByOutpoint(ctx context.Context,
+		op *wire.OutPoint) ([]lnwire.GossipVersion, error)
+
 	// ChannelView returns the verifiable edge information for each active
 	// channel within the known channel graph for the given gossip version.
 	// The set of UTXO's (along with their scripts) returned are the ones
