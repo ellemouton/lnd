@@ -1789,10 +1789,10 @@ func TestGraphTraversal(t *testing.T) {
 	// Iterate through all the known channels within the graph DB, once
 	// again if the map is empty that indicates that all edges have
 	// properly been reached.
-	err = graph.ForEachChannel(ctx, lnwire.GossipVersion1,
+	err = graph.ForEachChannel(ctx,
 		func(ei *models.ChannelEdgeInfo,
 			_ *models.ChannelEdgePolicy,
-			_ *models.ChannelEdgePolicy) error {
+			_ *models.ChannelEdgePolicy, _ uint32) error {
 
 			delete(chanIndex, ei.ChannelID)
 			return nil
@@ -2138,10 +2138,10 @@ func assertPruneTip(t *testing.T, graph *ChannelGraph,
 func assertNumChans(t *testing.T, graph *ChannelGraph, n int) {
 	numChans := 0
 	err := graph.ForEachChannel(
-		t.Context(), lnwire.GossipVersion1,
+		t.Context(),
 		func(*models.ChannelEdgeInfo,
 			*models.ChannelEdgePolicy,
-			*models.ChannelEdgePolicy) error {
+			*models.ChannelEdgePolicy, uint32) error {
 
 			numChans++
 			return nil
@@ -2419,7 +2419,10 @@ func TestChanUpdatesInHorizon(t *testing.T) {
 	// If we issue an arbitrary query before any channel updates are
 	// inserted in the database, we should get zero results.
 	chanIter := graph.ChanUpdatesInHorizon(
-		ctx, time.Unix(999, 0), time.Unix(9999, 0),
+		ctx, lnwire.GossipVersion1, ChanUpdateRange{
+			StartTime: fn.Some(time.Unix(999, 0)),
+			EndTime:   fn.Some(time.Unix(9999, 0)),
+		},
 	)
 
 	chanUpdates, err := fn.CollectErr(chanIter)
@@ -2526,7 +2529,10 @@ func TestChanUpdatesInHorizon(t *testing.T) {
 	}
 	for _, queryCase := range queryCases {
 		respIter := graph.ChanUpdatesInHorizon(
-			ctx, queryCase.start, queryCase.end,
+			ctx, lnwire.GossipVersion1, ChanUpdateRange{
+				StartTime: fn.Some(queryCase.start),
+				EndTime:   fn.Some(queryCase.end),
+			},
 		)
 
 		resp, err := fn.CollectErr(respIter)
@@ -2563,7 +2569,10 @@ func TestNodeUpdatesInHorizon(t *testing.T) {
 	// If we issue an arbitrary query before we insert any nodes into the
 	// database, then we shouldn't get any results back.
 	nodeUpdatesIter := graph.NodeUpdatesInHorizon(
-		ctx, time.Unix(999, 0), time.Unix(9999, 0),
+		ctx, lnwire.GossipVersion1, NodeUpdateRange{
+			StartTime: fn.Some(time.Unix(999, 0)),
+			EndTime:   fn.Some(time.Unix(9999, 0)),
+		},
 	)
 	nodeUpdates, err := fn.CollectErr(nodeUpdatesIter)
 	require.NoError(t, err, "unable to query for node updates")
@@ -2638,7 +2647,10 @@ func TestNodeUpdatesInHorizon(t *testing.T) {
 	}
 	for _, queryCase := range queryCases {
 		iter := graph.NodeUpdatesInHorizon(
-			ctx, queryCase.start, queryCase.end,
+			ctx, lnwire.GossipVersion1, NodeUpdateRange{
+				StartTime: fn.Some(queryCase.start),
+				EndTime:   fn.Some(queryCase.end),
+			},
 		)
 
 		resp, err := fn.CollectErr(iter)
@@ -2766,7 +2778,11 @@ func testNodeUpdatesWithBatchSize(t *testing.T, ctx context.Context,
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			iter := testGraph.NodeUpdatesInHorizon(
-				ctx, tc.start, tc.end,
+				ctx, lnwire.GossipVersion1,
+				NodeUpdateRange{
+					StartTime: fn.Some(tc.start),
+					EndTime:   fn.Some(tc.end),
+				},
 				WithNodeUpdateIterBatchSize(
 					batchSize,
 				),
@@ -2839,7 +2855,13 @@ func TestNodeUpdatesInHorizonEarlyTermination(t *testing.T) {
 	for _, stopAt := range terminationPoints {
 		t.Run(fmt.Sprintf("StopAt%d", stopAt), func(t *testing.T) {
 			iter := graph.NodeUpdatesInHorizon(
-				ctx, startTime, startTime.Add(200*time.Hour),
+				ctx, lnwire.GossipVersion1,
+				NodeUpdateRange{
+					StartTime: fn.Some(startTime),
+					EndTime: fn.Some(
+						startTime.Add(200 * time.Hour),
+					),
+				},
 				WithNodeUpdateIterBatchSize(10),
 			)
 
@@ -2928,7 +2950,12 @@ func TestChanUpdatesInHorizonBoundaryConditions(t *testing.T) {
 			// Now we'll run the main query, and verify that we get
 			// back the expected number of channels.
 			iter := graph.ChanUpdatesInHorizon(
-				ctx, startTime, startTime.Add(26*time.Hour),
+				ctx, lnwire.GossipVersion1, ChanUpdateRange{
+					StartTime: fn.Some(startTime),
+					EndTime: fn.Some(
+						startTime.Add(26 * time.Hour),
+					),
+				},
 				WithChanUpdateIterBatchSize(batchSize),
 			)
 
@@ -2988,13 +3015,15 @@ func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 
 	// Call FilterKnownChanIDs with an isStillZombie call-back that would
 	// result in the current zombies still be considered as zombies.
-	_, err = graph.FilterKnownChanIDs(ctx, []ChannelUpdateInfo{
-		{ShortChannelID: scid1, Version: lnwire.GossipVersion1},
-		{ShortChannelID: scid2, Version: lnwire.GossipVersion1},
-		{ShortChannelID: scid3, Version: lnwire.GossipVersion1},
-	}, func(_ ChannelUpdateInfo) bool {
-		return true
-	})
+	_, err = graph.FilterKnownChanIDs(
+		ctx, lnwire.GossipVersion1, []ChannelUpdateInfo{
+			{ShortChannelID: scid1, Version: lnwire.GossipVersion1},
+			{ShortChannelID: scid2, Version: lnwire.GossipVersion1},
+			{ShortChannelID: scid3, Version: lnwire.GossipVersion1},
+		}, func(_ ChannelUpdateInfo) bool {
+			return true
+		},
+	)
 	require.NoError(t, err)
 
 	require.True(t, isZombie(scid1))
@@ -3004,17 +3033,19 @@ func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 	// Now call it again but this time with a isStillZombie call-back that
 	// would result in channel with SCID 2 no longer being considered a
 	// zombie.
-	_, err = graph.FilterKnownChanIDs(ctx, []ChannelUpdateInfo{
-		{ShortChannelID: scid1, Version: lnwire.GossipVersion1},
-		{
-			ShortChannelID: scid2,
-			Version:        lnwire.GossipVersion1,
-			Node1Freshness: lnwire.UnixTimestamp(1000),
+	_, err = graph.FilterKnownChanIDs(
+		ctx, lnwire.GossipVersion1, []ChannelUpdateInfo{
+			{ShortChannelID: scid1, Version: lnwire.GossipVersion1},
+			{
+				ShortChannelID: scid2,
+				Version:        lnwire.GossipVersion1,
+				Node1Freshness: lnwire.UnixTimestamp(1000),
+			},
+			{ShortChannelID: scid3, Version: lnwire.GossipVersion1},
+		}, func(info ChannelUpdateInfo) bool {
+			return info.Node1Freshness != lnwire.UnixTimestamp(1000)
 		},
-		{ShortChannelID: scid3, Version: lnwire.GossipVersion1},
-	}, func(info ChannelUpdateInfo) bool {
-		return info.Node1Freshness != lnwire.UnixTimestamp(1000)
-	})
+	)
 	require.NoError(t, err)
 
 	// Show that SCID 2 has been marked as live.
@@ -3050,7 +3081,7 @@ func TestFilterKnownChanIDs(t *testing.T) {
 		{ShortChannelID: scid3},
 	}
 	filteredIDs, err := graph.FilterKnownChanIDs(
-		ctx, preChanIDs, isZombieUpdate,
+		ctx, lnwire.GossipVersion1, preChanIDs, isZombieUpdate,
 	)
 	require.NoError(t, err, "unable to filter chan IDs")
 	require.EqualValues(t, []uint64{
@@ -3177,7 +3208,8 @@ func TestFilterKnownChanIDs(t *testing.T) {
 
 	for _, queryCase := range queryCases {
 		resp, err := graph.FilterKnownChanIDs(
-			ctx, queryCase.queryIDs, isZombieUpdate,
+			ctx, lnwire.GossipVersion1,
+			queryCase.queryIDs, isZombieUpdate,
 		)
 		require.NoError(t, err)
 
@@ -3357,7 +3389,8 @@ func TestStressTestChannelGraphAPI(t *testing.T) {
 				}
 
 				_, err := graph.FilterKnownChanIDs(
-					ctx, chanIDs,
+					ctx, lnwire.GossipVersion1,
+					chanIDs,
 					func(_ ChannelUpdateInfo) bool {
 						return rand.Intn(2) == 0
 					},
@@ -3406,8 +3439,13 @@ func TestStressTestChannelGraphAPI(t *testing.T) {
 			name: "ChanUpdateInHorizon",
 			fn: func() error {
 				iter := graph.ChanUpdatesInHorizon(
-					ctx, time.Now().Add(-time.Hour),
-					time.Now(),
+					ctx, lnwire.GossipVersion1,
+					ChanUpdateRange{
+						StartTime: fn.Some(
+							time.Now().Add(-time.Hour),
+						),
+						EndTime: fn.Some(time.Now()),
+					},
 				)
 				_, err := fn.CollectErr(iter)
 
@@ -4203,7 +4241,10 @@ func TestNodePruningUpdateIndexDeletion(t *testing.T) {
 	startTime := time.Unix(9, 0)
 	endTime := node1.LastUpdate.Add(time.Minute)
 	nodesInHorizonIter := graph.NodeUpdatesInHorizon(
-		ctx, startTime, endTime,
+		ctx, NodeUpdateRange{
+			StartTime: fn.Some(startTime),
+			EndTime:   fn.Some(endTime),
+		},
 	)
 
 	// We should only have a single node, and that node should exactly
@@ -4221,7 +4262,10 @@ func TestNodePruningUpdateIndexDeletion(t *testing.T) {
 	// Now that the node has been deleted, we'll again query the nodes in
 	// the horizon. This time we should have no nodes at all.
 	nodesInHorizonIter = graph.NodeUpdatesInHorizon(
-		ctx, startTime, endTime,
+		ctx, NodeUpdateRange{
+			StartTime: fn.Some(startTime),
+			EndTime:   fn.Some(endTime),
+		},
 	)
 	nodesInHorizon, err = fn.CollectErr(nodesInHorizonIter)
 	require.NoError(t, err, "unable to fetch nodes in horizon")
