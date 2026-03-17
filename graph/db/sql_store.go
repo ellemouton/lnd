@@ -2862,6 +2862,7 @@ func (s *SQLStore) forEachChanWithPoliciesInSCIDList(ctx context.Context,
 //
 // NOTE: part of the Store interface.
 func (s *SQLStore) FilterKnownChanIDs(ctx context.Context,
+	v lnwire.GossipVersion,
 	chansInfo []ChannelUpdateInfo) ([]uint64, []ChannelUpdateInfo, error) {
 
 	var (
