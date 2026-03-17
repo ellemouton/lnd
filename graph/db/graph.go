@@ -600,56 +600,6 @@ func (c *ChannelGraph) PruneGraphNodes(ctx context.Context) error {
 	return nil
 }
 
-// FilterKnownChanIDs takes a set of channel IDs and return the subset of chan
-// ID's that we don't know and are not known zombies of the passed set. In other
-// words, we perform a set difference of our set of chan ID's and the ones
-// passed in. This method can be used by callers to determine the set of
-// channels another peer knows of that we don't.
-func (c *ChannelGraph) FilterKnownChanIDs(ctx context.Context,
-	chansInfo []ChannelUpdateInfo,
-	isZombieChan func(ChannelUpdateInfo) bool) ([]uint64, error) {
-
-	unknown, knownZombies, err := c.db.FilterKnownChanIDs(ctx, chansInfo)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, info := range knownZombies {
-		// TODO(ziggie): Make sure that for the strict pruning case we
-		// compare the pubkeys and whether the right timestamp is not
-		// older than the `ChannelPruneExpiry`.
-		//
-		// NOTE: The timestamp data has no verification attached to it
-		// in the `ReplyChannelRange` msg so we are trusting this data
-		// at this point. However it is not critical because we are just
-		// removing the channel from the db when the timestamps are more
-		// recent. During the querying of the gossip msg verification
-		// happens as usual. However we should start punishing peers
-		// when they don't provide us honest data ?
-		if isZombieChan(info) {
-			continue
-		}
-
-		// If we have marked it as a zombie but the latest update
-		// info could bring it back from the dead, then we mark it
-		// alive, and we let it be added to the set of IDs to query our
-		// peer for.
-		err := c.db.MarkEdgeLive(
-			ctx, info.Version,
-			info.ShortChannelID.ToUint64(),
-		)
-		// Since there is a chance that the edge could have been marked
-		// as "live" between the FilterKnownChanIDs call and the
-		// MarkEdgeLive call, we ignore the error if the edge is already
-		// marked as live.
-		if err != nil && !errors.Is(err, ErrZombieEdgeNotFound) {
-			return nil, err
-		}
-	}
-
-	return unknown, nil
-}
-
 // MarkEdgeZombie attempts to mark a channel identified by its channel ID as a
 // zombie for the given gossip version. This method is used on an ad-hoc basis,
 // when channels need to be marked as zombies outside the normal pruning cycle.
@@ -951,6 +901,58 @@ func (c *VersionedGraph) NodeUpdatesInHorizon(ctx context.Context,
 	opts ...IteratorOption) iter.Seq2[*models.Node, error] {
 
 	return c.db.NodeUpdatesInHorizon(ctx, c.v, r, opts...)
+}
+
+// FilterKnownChanIDs takes a set of channel IDs and returns the subset of chan
+// ID's that we don't know and are not known zombies of the passed set. In
+// other words, we perform a set difference of our set of chan ID's and the ones
+// passed in. This method can be used by callers to determine the set of
+// channels another peer knows of that we don't.
+func (c *VersionedGraph) FilterKnownChanIDs(ctx context.Context,
+	chansInfo []ChannelUpdateInfo,
+	isZombieChan func(ChannelUpdateInfo) bool) ([]uint64, error) {
+
+	unknown, knownZombies, err := c.db.FilterKnownChanIDs(
+		ctx, c.v, chansInfo,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, info := range knownZombies {
+		// TODO(ziggie): Make sure that for the strict pruning case we
+		// compare the pubkeys and whether the right timestamp is not
+		// older than the `ChannelPruneExpiry`.
+		//
+		// NOTE: The timestamp data has no verification attached to it
+		// in the `ReplyChannelRange` msg so we are trusting this data
+		// at this point. However it is not critical because we are just
+		// removing the channel from the db when the timestamps are more
+		// recent. During the querying of the gossip msg verification
+		// happens as usual. However we should start punishing peers
+		// when they don't provide us honest data ?
+		if isZombieChan(info) {
+			continue
+		}
+
+		// If we have marked it as a zombie but the latest update
+		// info could bring it back from the dead, then we mark it
+		// alive, and we let it be added to the set of IDs to query
+		// our peer for.
+		err := c.db.MarkEdgeLive(
+			ctx, info.Version,
+			info.ShortChannelID.ToUint64(),
+		)
+		// Since there is a chance that the edge could have been
+		// marked as "live" between the FilterKnownChanIDs call and
+		// the MarkEdgeLive call, we ignore the error if the edge is
+		// already marked as live.
+		if err != nil && !errors.Is(err, ErrZombieEdgeNotFound) {
+			return nil, err
+		}
+	}
+
+	return unknown, nil
 }
 
 // ChanUpdatesInHorizon returns all known channel edges with updates in the
