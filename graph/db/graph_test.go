@@ -5619,3 +5619,67 @@ func TestV2HorizonQueries(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, channels)
 }
+
+// TestPreferHighestAndGetVersions tests the four new Store methods:
+// FetchChannelEdgesByIDPreferHighest, FetchChannelEdgesByOutpointPreferHighest,
+// GetVersionsBySCID, and GetVersionsByOutpoint.
+func TestPreferHighestAndGetVersions(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	graph := MakeTestGraph(t)
+	store := graph.db
+
+	// Create two nodes that will anchor our test channel.
+	node1 := createTestVertex(t, lnwire.GossipVersion1)
+	require.NoError(t, graph.AddNode(ctx, node1))
+
+	node2 := createTestVertex(t, lnwire.GossipVersion1)
+	require.NoError(t, graph.AddNode(ctx, node2))
+
+	// Create and add a v1 channel edge.
+	edgeInfo, scid := createEdge(
+		lnwire.GossipVersion1, 100, 1, 0, 1, node1, node2,
+	)
+	require.NoError(t, graph.AddChannelEdge(ctx, edgeInfo))
+
+	chanID := scid.ToUint64()
+	op := edgeInfo.ChannelPoint
+
+	// FetchChannelEdgesByIDPreferHighest should return the v1 channel.
+	info, _, _, err := store.FetchChannelEdgesByIDPreferHighest(
+		ctx, chanID,
+	)
+	require.NoError(t, err)
+	require.Equal(t, chanID, info.ChannelID)
+
+	// FetchChannelEdgesByOutpointPreferHighest should also return it.
+	info, _, _, err = store.FetchChannelEdgesByOutpointPreferHighest(
+		ctx, &op,
+	)
+	require.NoError(t, err)
+	require.Equal(t, chanID, info.ChannelID)
+
+	// Querying a non-existent channel should return an error.
+	_, _, _, err = store.FetchChannelEdgesByIDPreferHighest(ctx, 999999)
+	require.Error(t, err)
+
+	// GetVersionsBySCID should report v1.
+	versions, err := store.GetVersionsBySCID(ctx, chanID)
+	require.NoError(t, err)
+	require.Equal(t, []lnwire.GossipVersion{
+		lnwire.GossipVersion1,
+	}, versions)
+
+	// GetVersionsByOutpoint should also report v1.
+	versions, err = store.GetVersionsByOutpoint(ctx, &op)
+	require.NoError(t, err)
+	require.Equal(t, []lnwire.GossipVersion{
+		lnwire.GossipVersion1,
+	}, versions)
+
+	// GetVersions for a non-existent SCID should return empty.
+	versions, err = store.GetVersionsBySCID(ctx, 999999)
+	require.NoError(t, err)
+	require.Empty(t, versions)
+}

@@ -2475,6 +2475,114 @@ func (s *SQLStore) FetchChannelEdgesByOutpoint(ctx context.Context,
 	return edge, policy1, policy2, nil
 }
 
+// gossipVersionsDescending lists gossip versions from highest to lowest for
+// prefer-highest iteration.
+var gossipVersionsDescending = []lnwire.GossipVersion{gossipV2, gossipV1}
+
+// FetchChannelEdgesByIDPreferHighest tries each known gossip version from
+// highest to lowest and returns the first result found.
+//
+// NOTE: part of the Store interface.
+func (s *SQLStore) FetchChannelEdgesByIDPreferHighest(ctx context.Context,
+	chanID uint64) (
+	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy, error) {
+
+	for _, v := range gossipVersionsDescending {
+		info, p1, p2, err := s.FetchChannelEdgesByID(ctx, v, chanID)
+		if errors.Is(err, ErrEdgeNotFound) ||
+			errors.Is(err, ErrZombieEdge) {
+
+			continue
+		}
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		return info, p1, p2, nil
+	}
+
+	return nil, nil, nil, ErrEdgeNotFound
+}
+
+// FetchChannelEdgesByOutpointPreferHighest tries each known gossip version
+// from highest to lowest and returns the first result found.
+//
+// NOTE: part of the Store interface.
+func (s *SQLStore) FetchChannelEdgesByOutpointPreferHighest(
+	ctx context.Context, op *wire.OutPoint) (
+	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy, error) {
+
+	for _, v := range gossipVersionsDescending {
+		info, p1, p2, err := s.FetchChannelEdgesByOutpoint(
+			ctx, v, op,
+		)
+		if errors.Is(err, ErrEdgeNotFound) ||
+			errors.Is(err, ErrZombieEdge) {
+
+			continue
+		}
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		return info, p1, p2, nil
+	}
+
+	return nil, nil, nil, ErrEdgeNotFound
+}
+
+// GetVersionsBySCID returns the gossip versions for which a channel with the
+// given SCID exists in the database.
+//
+// NOTE: part of the Store interface.
+func (s *SQLStore) GetVersionsBySCID(ctx context.Context,
+	chanID uint64) ([]lnwire.GossipVersion, error) {
+
+	var versions []lnwire.GossipVersion
+	for _, v := range []lnwire.GossipVersion{gossipV1, gossipV2} {
+		_, _, _, err := s.FetchChannelEdgesByID(ctx, v, chanID)
+		if errors.Is(err, ErrEdgeNotFound) ||
+			errors.Is(err, ErrZombieEdge) {
+
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		versions = append(versions, v)
+	}
+
+	return versions, nil
+}
+
+// GetVersionsByOutpoint returns the gossip versions for which a channel with
+// the given funding outpoint exists in the database.
+//
+// NOTE: part of the Store interface.
+func (s *SQLStore) GetVersionsByOutpoint(ctx context.Context,
+	op *wire.OutPoint) ([]lnwire.GossipVersion, error) {
+
+	var versions []lnwire.GossipVersion
+	for _, v := range []lnwire.GossipVersion{gossipV1, gossipV2} {
+		_, _, _, err := s.FetchChannelEdgesByOutpoint(ctx, v, op)
+		if errors.Is(err, ErrEdgeNotFound) ||
+			errors.Is(err, ErrZombieEdge) {
+
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		versions = append(versions, v)
+	}
+
+	return versions, nil
+}
+
 // HasV1ChannelEdge returns true if the database knows of a channel edge
 // with the passed channel ID, and false otherwise. If an edge with that ID
 // is found within the graph, then two time stamps representing the last time
