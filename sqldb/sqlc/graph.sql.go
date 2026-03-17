@@ -4167,6 +4167,340 @@ func (q *Queries) ListNodesPaginated(ctx context.Context, arg ListNodesPaginated
 	return items, nil
 }
 
+const listPreferredChannelsWithPoliciesPaginated = `-- name: ListPreferredChannelsWithPoliciesPaginated :many
+WITH page_scids(cursor_scid) AS (
+    SELECT page.scid
+    FROM (
+        SELECT c2.scid AS scid
+        FROM graph_channels c2
+        WHERE c2.version = 2
+          AND c2.scid > $1
+        UNION
+        SELECT c1.scid AS scid
+        FROM graph_channels c1
+        WHERE c1.version = 1
+          AND c1.scid > $1
+    ) AS page
+    ORDER BY page.scid
+    LIMIT $2
+),
+selected_channels AS (
+    SELECT
+        s.cursor_scid AS selected_scid,
+        COALESCE(
+            (
+                SELECT c.id
+                FROM graph_channels c
+                WHERE c.scid = s.cursor_scid
+                  AND c.version = 2
+                  AND EXISTS (
+                      SELECT 1
+                      FROM graph_channel_policies p
+                      WHERE p.channel_id = c.id
+                        AND p.version = 2
+                  )
+            ),
+            (
+                SELECT c.id
+                FROM graph_channels c
+                WHERE c.scid = s.cursor_scid
+                  AND c.version = 1
+                  AND EXISTS (
+                      SELECT 1
+                      FROM graph_channel_policies p
+                      WHERE p.channel_id = c.id
+                        AND p.version = 1
+                  )
+            ),
+            (
+                SELECT c.id
+                FROM graph_channels c
+                WHERE c.scid = s.cursor_scid
+                  AND c.version = 2
+            ),
+            (
+                SELECT c.id
+                FROM graph_channels c
+                WHERE c.scid = s.cursor_scid
+                  AND c.version = 1
+            )
+        ) AS channel_db_id
+    FROM page_scids s
+)
+SELECT
+    c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature, c.funding_pk_script, c.merkle_root_hash,
+
+    -- Join node pubkeys
+    n1.pub_key AS node1_pubkey,
+    n2.pub_key AS node2_pubkey,
+
+    -- Node 1 policy
+    cp1.id AS policy_1_id,
+    cp1.node_id AS policy_1_node_id,
+    cp1.version AS policy_1_version,
+    cp1.timelock AS policy_1_timelock,
+    cp1.fee_ppm AS policy_1_fee_ppm,
+    cp1.base_fee_msat AS policy_1_base_fee_msat,
+    cp1.min_htlc_msat AS policy_1_min_htlc_msat,
+    cp1.max_htlc_msat AS policy_1_max_htlc_msat,
+    cp1.last_update AS policy_1_last_update,
+    cp1.disabled AS policy_1_disabled,
+    cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
+    cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
+    cp1.message_flags AS policy1_message_flags,
+    cp1.channel_flags AS policy1_channel_flags,
+    cp1.block_height AS policy1_block_height,
+    cp1.disable_flags AS policy1_disable_flags,
+    cp1.signature AS policy_1_signature,
+
+    -- Node 2 policy
+    cp2.id AS policy_2_id,
+    cp2.node_id AS policy_2_node_id,
+    cp2.version AS policy_2_version,
+    cp2.timelock AS policy_2_timelock,
+    cp2.fee_ppm AS policy_2_fee_ppm,
+    cp2.base_fee_msat AS policy_2_base_fee_msat,
+    cp2.min_htlc_msat AS policy_2_min_htlc_msat,
+    cp2.max_htlc_msat AS policy_2_max_htlc_msat,
+    cp2.last_update AS policy_2_last_update,
+    cp2.disabled AS policy_2_disabled,
+    cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
+    cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
+    cp2.message_flags AS policy2_message_flags,
+    cp2.channel_flags AS policy2_channel_flags,
+    cp2.signature AS policy_2_signature,
+    cp2.block_height AS policy_2_block_height,
+    cp2.disable_flags AS policy_2_disable_flags
+
+FROM selected_channels s
+JOIN graph_channels c ON c.id = s.channel_db_id
+JOIN graph_nodes n1 ON c.node_id_1 = n1.id
+JOIN graph_nodes n2 ON c.node_id_2 = n2.id
+LEFT JOIN graph_channel_policies cp1
+    ON cp1.channel_id = c.id AND cp1.node_id = c.node_id_1 AND cp1.version = c.version
+LEFT JOIN graph_channel_policies cp2
+    ON cp2.channel_id = c.id AND cp2.node_id = c.node_id_2 AND cp2.version = c.version
+ORDER BY s.selected_scid
+`
+
+type ListPreferredChannelsWithPoliciesPaginatedParams struct {
+	Scid  []byte
+	Limit int32
+}
+
+type ListPreferredChannelsWithPoliciesPaginatedRow struct {
+	GraphChannel                   GraphChannel
+	Node1Pubkey                    []byte
+	Node2Pubkey                    []byte
+	Policy1ID                      sql.NullInt64
+	Policy1NodeID                  sql.NullInt64
+	Policy1Version                 sql.NullInt16
+	Policy1Timelock                sql.NullInt32
+	Policy1FeePpm                  sql.NullInt64
+	Policy1BaseFeeMsat             sql.NullInt64
+	Policy1MinHtlcMsat             sql.NullInt64
+	Policy1MaxHtlcMsat             sql.NullInt64
+	Policy1LastUpdate              sql.NullInt64
+	Policy1Disabled                sql.NullBool
+	Policy1InboundBaseFeeMsat      sql.NullInt64
+	Policy1InboundFeeRateMilliMsat sql.NullInt64
+	Policy1MessageFlags            sql.NullInt16
+	Policy1ChannelFlags            sql.NullInt16
+	Policy1BlockHeight             sql.NullInt64
+	Policy1DisableFlags            sql.NullInt16
+	Policy1Signature               []byte
+	Policy2ID                      sql.NullInt64
+	Policy2NodeID                  sql.NullInt64
+	Policy2Version                 sql.NullInt16
+	Policy2Timelock                sql.NullInt32
+	Policy2FeePpm                  sql.NullInt64
+	Policy2BaseFeeMsat             sql.NullInt64
+	Policy2MinHtlcMsat             sql.NullInt64
+	Policy2MaxHtlcMsat             sql.NullInt64
+	Policy2LastUpdate              sql.NullInt64
+	Policy2Disabled                sql.NullBool
+	Policy2InboundBaseFeeMsat      sql.NullInt64
+	Policy2InboundFeeRateMilliMsat sql.NullInt64
+	Policy2MessageFlags            sql.NullInt16
+	Policy2ChannelFlags            sql.NullInt16
+	Policy2Signature               []byte
+	Policy2BlockHeight             sql.NullInt64
+	Policy2DisableFlags            sql.NullInt16
+}
+
+func (q *Queries) ListPreferredChannelsWithPoliciesPaginated(ctx context.Context, arg ListPreferredChannelsWithPoliciesPaginatedParams) ([]ListPreferredChannelsWithPoliciesPaginatedRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPreferredChannelsWithPoliciesPaginated, arg.Scid, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPreferredChannelsWithPoliciesPaginatedRow
+	for rows.Next() {
+		var i ListPreferredChannelsWithPoliciesPaginatedRow
+		if err := rows.Scan(
+			&i.GraphChannel.ID,
+			&i.GraphChannel.Version,
+			&i.GraphChannel.Scid,
+			&i.GraphChannel.NodeID1,
+			&i.GraphChannel.NodeID2,
+			&i.GraphChannel.Outpoint,
+			&i.GraphChannel.Capacity,
+			&i.GraphChannel.BitcoinKey1,
+			&i.GraphChannel.BitcoinKey2,
+			&i.GraphChannel.Node1Signature,
+			&i.GraphChannel.Node2Signature,
+			&i.GraphChannel.Bitcoin1Signature,
+			&i.GraphChannel.Bitcoin2Signature,
+			&i.GraphChannel.Signature,
+			&i.GraphChannel.FundingPkScript,
+			&i.GraphChannel.MerkleRootHash,
+			&i.Node1Pubkey,
+			&i.Node2Pubkey,
+			&i.Policy1ID,
+			&i.Policy1NodeID,
+			&i.Policy1Version,
+			&i.Policy1Timelock,
+			&i.Policy1FeePpm,
+			&i.Policy1BaseFeeMsat,
+			&i.Policy1MinHtlcMsat,
+			&i.Policy1MaxHtlcMsat,
+			&i.Policy1LastUpdate,
+			&i.Policy1Disabled,
+			&i.Policy1InboundBaseFeeMsat,
+			&i.Policy1InboundFeeRateMilliMsat,
+			&i.Policy1MessageFlags,
+			&i.Policy1ChannelFlags,
+			&i.Policy1BlockHeight,
+			&i.Policy1DisableFlags,
+			&i.Policy1Signature,
+			&i.Policy2ID,
+			&i.Policy2NodeID,
+			&i.Policy2Version,
+			&i.Policy2Timelock,
+			&i.Policy2FeePpm,
+			&i.Policy2BaseFeeMsat,
+			&i.Policy2MinHtlcMsat,
+			&i.Policy2MaxHtlcMsat,
+			&i.Policy2LastUpdate,
+			&i.Policy2Disabled,
+			&i.Policy2InboundBaseFeeMsat,
+			&i.Policy2InboundFeeRateMilliMsat,
+			&i.Policy2MessageFlags,
+			&i.Policy2ChannelFlags,
+			&i.Policy2Signature,
+			&i.Policy2BlockHeight,
+			&i.Policy2DisableFlags,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPreferredNodesPaginated = `-- name: ListPreferredNodesPaginated :many
+WITH page_pub_keys(cursor_pub_key) AS (
+    SELECT page.pub_key
+    FROM (
+        SELECT n2.pub_key AS pub_key
+        FROM graph_nodes n2
+        WHERE n2.version = 2
+          AND n2.pub_key > $1
+        UNION
+        SELECT n1.pub_key AS pub_key
+        FROM graph_nodes n1
+        WHERE n1.version = 1
+          AND n1.pub_key > $1
+    ) AS page
+    ORDER BY page.pub_key
+    LIMIT $2
+),
+selected_nodes AS (
+    SELECT
+        p.cursor_pub_key AS selected_pub_key,
+        COALESCE(
+            (
+                SELECT n.id
+                FROM graph_nodes n
+                WHERE n.pub_key = p.cursor_pub_key
+                  AND n.version = 2
+                  AND COALESCE(length(n.signature), 0) > 0
+            ),
+            (
+                SELECT n.id
+                FROM graph_nodes n
+                WHERE n.pub_key = p.cursor_pub_key
+                  AND n.version = 1
+                  AND COALESCE(length(n.signature), 0) > 0
+            ),
+            (
+                SELECT n.id
+                FROM graph_nodes n
+                WHERE n.pub_key = p.cursor_pub_key
+                  AND n.version = 2
+            ),
+            (
+                SELECT n.id
+                FROM graph_nodes n
+                WHERE n.pub_key = p.cursor_pub_key
+                  AND n.version = 1
+            )
+        ) AS node_id
+    FROM page_pub_keys p
+)
+SELECT n.id, n.version, n.pub_key, n.alias, n.last_update, n.color, n.signature, n.block_height
+FROM selected_nodes s
+JOIN graph_nodes n ON n.id = s.node_id
+ORDER BY s.selected_pub_key
+`
+
+type ListPreferredNodesPaginatedParams struct {
+	PubKey []byte
+	Limit  int32
+}
+
+type ListPreferredNodesPaginatedRow struct {
+	GraphNode GraphNode
+}
+
+func (q *Queries) ListPreferredNodesPaginated(ctx context.Context, arg ListPreferredNodesPaginatedParams) ([]ListPreferredNodesPaginatedRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPreferredNodesPaginated, arg.PubKey, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPreferredNodesPaginatedRow
+	for rows.Next() {
+		var i ListPreferredNodesPaginatedRow
+		if err := rows.Scan(
+			&i.GraphNode.ID,
+			&i.GraphNode.Version,
+			&i.GraphNode.PubKey,
+			&i.GraphNode.Alias,
+			&i.GraphNode.LastUpdate,
+			&i.GraphNode.Color,
+			&i.GraphNode.Signature,
+			&i.GraphNode.BlockHeight,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const nodeExists = `-- name: NodeExists :one
 SELECT EXISTS (
     SELECT 1
