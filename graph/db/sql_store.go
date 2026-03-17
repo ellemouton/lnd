@@ -2919,6 +2919,7 @@ func (s *SQLStore) forEachChanWithPoliciesInSCIDList(ctx context.Context,
 //
 // NOTE: part of the Store interface.
 func (s *SQLStore) FilterKnownChanIDs(ctx context.Context,
+	v lnwire.GossipVersion,
 	chansInfo []ChannelUpdateInfo) ([]uint64, []ChannelUpdateInfo, error) {
 
 	var (
@@ -2948,7 +2949,7 @@ func (s *SQLStore) FilterKnownChanIDs(ctx context.Context,
 			return nil
 		}
 
-		err := s.forEachChanInSCIDList(ctx, db, cb, chansInfo)
+		err := s.forEachChanInSCIDList(ctx, db, v, cb, chansInfo)
 		if err != nil {
 			return fmt.Errorf("unable to iterate through "+
 				"channels: %w", err)
@@ -2967,7 +2968,7 @@ func (s *SQLStore) FilterKnownChanIDs(ctx context.Context,
 			isZombie, err := db.IsZombieChannel(
 				ctx, sqlc.IsZombieChannelParams{
 					Scid:    channelIDToBytes(channelID),
-					Version: int16(lnwire.GossipVersion1),
+					Version: int16(v),
 				},
 			)
 			if err != nil {
@@ -3006,6 +3007,7 @@ func (s *SQLStore) FilterKnownChanIDs(ctx context.Context,
 // ChannelUpdateInfo slice. The callback function is called for each channel
 // that is found.
 func (s *SQLStore) forEachChanInSCIDList(ctx context.Context, db SQLQueries,
+	v lnwire.GossipVersion,
 	cb func(ctx context.Context, channel sqlc.GraphChannel) error,
 	chansInfo []ChannelUpdateInfo) error {
 
@@ -3014,7 +3016,7 @@ func (s *SQLStore) forEachChanInSCIDList(ctx context.Context, db SQLQueries,
 
 		return db.GetChannelsBySCIDs(
 			ctx, sqlc.GetChannelsBySCIDsParams{
-				Version: int16(lnwire.GossipVersion1),
+				Version: int16(v),
 				Scids:   scids,
 			},
 		)

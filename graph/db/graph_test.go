@@ -2981,7 +2981,9 @@ func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 
-	graph := MakeTestGraph(t)
+	graph := NewVersionedGraph(
+		MakeTestGraph(t), lnwire.GossipVersion1,
+	)
 
 	var (
 		scid1 = lnwire.ShortChannelID{BlockHeight: 1}
@@ -2989,9 +2991,8 @@ func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 		scid3 = lnwire.ShortChannelID{BlockHeight: 3}
 	)
 
-	v1Graph := NewVersionedGraph(graph, lnwire.GossipVersion1)
 	isZombie := func(scid lnwire.ShortChannelID) bool {
-		zombie, _, _, err := v1Graph.IsZombieEdge(ctx, scid.ToUint64())
+		zombie, _, _, err := graph.IsZombieEdge(ctx, scid.ToUint64())
 		require.NoError(t, err)
 
 		return zombie
@@ -3015,13 +3016,15 @@ func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 
 	// Call FilterKnownChanIDs with an isStillZombie call-back that would
 	// result in the current zombies still be considered as zombies.
-	_, err = graph.FilterKnownChanIDs(ctx, []ChannelUpdateInfo{
-		{ShortChannelID: scid1, Version: lnwire.GossipVersion1},
-		{ShortChannelID: scid2, Version: lnwire.GossipVersion1},
-		{ShortChannelID: scid3, Version: lnwire.GossipVersion1},
-	}, func(_ ChannelUpdateInfo) bool {
-		return true
-	})
+	_, err = graph.FilterKnownChanIDs(
+		ctx, []ChannelUpdateInfo{
+			{ShortChannelID: scid1, Version: lnwire.GossipVersion1},
+			{ShortChannelID: scid2, Version: lnwire.GossipVersion1},
+			{ShortChannelID: scid3, Version: lnwire.GossipVersion1},
+		}, func(_ ChannelUpdateInfo) bool {
+			return true
+		},
+	)
 	require.NoError(t, err)
 
 	require.True(t, isZombie(scid1))
@@ -3031,17 +3034,19 @@ func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 	// Now call it again but this time with a isStillZombie call-back that
 	// would result in channel with SCID 2 no longer being considered a
 	// zombie.
-	_, err = graph.FilterKnownChanIDs(ctx, []ChannelUpdateInfo{
-		{ShortChannelID: scid1, Version: lnwire.GossipVersion1},
-		{
-			ShortChannelID: scid2,
-			Version:        lnwire.GossipVersion1,
-			Node1Freshness: lnwire.UnixTimestamp(1000),
+	_, err = graph.FilterKnownChanIDs(
+		ctx, []ChannelUpdateInfo{
+			{ShortChannelID: scid1, Version: lnwire.GossipVersion1},
+			{
+				ShortChannelID: scid2,
+				Version:        lnwire.GossipVersion1,
+				Node1Freshness: lnwire.UnixTimestamp(1000),
+			},
+			{ShortChannelID: scid3, Version: lnwire.GossipVersion1},
+		}, func(info ChannelUpdateInfo) bool {
+			return info.Node1Freshness != lnwire.UnixTimestamp(1000)
 		},
-		{ShortChannelID: scid3, Version: lnwire.GossipVersion1},
-	}, func(info ChannelUpdateInfo) bool {
-		return info.Node1Freshness != lnwire.UnixTimestamp(1000)
-	})
+	)
 	require.NoError(t, err)
 
 	// Show that SCID 2 has been marked as live.
@@ -3057,7 +3062,9 @@ func TestFilterKnownChanIDs(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 
-	graph := MakeTestGraph(t)
+	graph := NewVersionedGraph(
+		MakeTestGraph(t), lnwire.GossipVersion1,
+	)
 
 	isZombieUpdate := func(_ ChannelUpdateInfo) bool {
 		return true
@@ -3117,8 +3124,7 @@ func TestFilterKnownChanIDs(t *testing.T) {
 		)
 		require.NoError(t, graph.AddChannelEdge(ctx, channel))
 		err := graph.DeleteChannelEdges(
-			ctx, lnwire.GossipVersion1, false, true,
-			channel.ChannelID,
+			ctx, false, true, channel.ChannelID,
 		)
 		require.NoError(t, err)
 
@@ -3383,7 +3389,10 @@ func TestStressTestChannelGraphAPI(t *testing.T) {
 					chanIDs = append(chanIDs, info)
 				}
 
-				_, err := graph.FilterKnownChanIDs(
+				vg := NewVersionedGraph(
+					graph, lnwire.GossipVersion1,
+				)
+				_, err := vg.FilterKnownChanIDs(
 					ctx, chanIDs,
 					func(_ ChannelUpdateInfo) bool {
 						return rand.Intn(2) == 0
