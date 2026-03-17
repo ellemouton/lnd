@@ -408,15 +408,18 @@ func (c *KVStore) AddrsForNode(ctx context.Context, v lnwire.GossipVersion,
 // NOTE: If an edge can't be found, or wasn't advertised, then a nil pointer
 // for that particular channel edge routing policy will be passed into the
 // callback.
-func (c *KVStore) ForEachChannel(_ context.Context, v lnwire.GossipVersion,
+func (c *KVStore) ForEachChannel(_ context.Context,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
-		*models.ChannelEdgePolicy) error, reset func()) error {
+		*models.ChannelEdgePolicy, uint32) error,
+	reset func()) error {
 
-	if v != lnwire.GossipVersion1 {
-		return ErrVersionNotSupportedForKVDB
-	}
+	// The KV store only stores v1 channels, so the versionsMask is
+	// always 1.
+	return forEachChannel(c.db, func(info *models.ChannelEdgeInfo,
+		p1, p2 *models.ChannelEdgePolicy) error {
 
-	return forEachChannel(c.db, cb, reset)
+		return cb(info, p1, p2, 1)
+	}, reset)
 }
 
 // forEachChannel iterates through all the channel edges stored within the
@@ -836,17 +839,14 @@ func (c *KVStore) DisabledChannelIDs(
 // early.
 //
 // NOTE: this is part of the Store interface.
-func (c *KVStore) ForEachNode(_ context.Context, v lnwire.GossipVersion,
-	cb func(*models.Node) error, reset func()) error {
+func (c *KVStore) ForEachNode(_ context.Context,
+	cb func(*models.Node, uint32) error, reset func()) error {
 
-	if v != lnwire.GossipVersion1 {
-		return ErrVersionNotSupportedForKVDB
-	}
-
+	// The KV store only stores v1 nodes, so the versionsMask is always 1.
 	return forEachNode(c.db, func(tx kvdb.RTx,
 		node *models.Node) error {
 
-		return cb(node)
+		return cb(node, 1)
 	}, reset)
 }
 
