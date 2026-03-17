@@ -52,14 +52,14 @@ type ChanUpdateRange struct {
 	// StartTime is the inclusive lower time bound (v1 gossip only).
 	StartTime fn.Option[time.Time]
 
-	// EndTime is the inclusive upper time bound (v1 gossip only).
+	// EndTime is the exclusive upper time bound (v1 gossip only).
 	EndTime fn.Option[time.Time]
 
 	// StartHeight is the inclusive lower block-height bound (v2 gossip
 	// only).
 	StartHeight fn.Option[uint32]
 
-	// EndHeight is the inclusive upper block-height bound (v2 gossip
+	// EndHeight is the exclusive upper block-height bound (v2 gossip
 	// only).
 	EndHeight fn.Option[uint32]
 }

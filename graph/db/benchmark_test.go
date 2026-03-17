@@ -662,7 +662,13 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 			name: "NodeUpdatesInHorizon",
 			fn: func(b testing.TB, store Store) {
 				iter := store.NodeUpdatesInHorizon(
-					ctx, time.Unix(0, 0), time.Now(),
+					ctx, lnwire.GossipVersion1,
+					NodeUpdateRange{
+						StartTime: fn.Some(
+							time.Unix(0, 0),
+						),
+						EndTime: fn.Some(time.Now()),
+					},
 				)
 				_, err := fn.CollectErr(iter)
 				require.NoError(b, err)
@@ -713,7 +719,13 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 			name: "ChanUpdatesInHorizon",
 			fn: func(b testing.TB, store Store) {
 				iter := store.ChanUpdatesInHorizon(
-					ctx, time.Unix(0, 0), time.Now(),
+					ctx, lnwire.GossipVersion1,
+					ChanUpdateRange{
+						StartTime: fn.Some(
+							time.Unix(0, 0),
+						),
+						EndTime: fn.Some(time.Now()),
+					},
 				)
 				_, err := fn.CollectErr(iter)
 				require.NoError(b, err)
