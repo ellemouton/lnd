@@ -1038,18 +1038,64 @@ func (s *SQLStore) ForEachSourceNodeChannel(ctx context.Context,
 // early.
 //
 // NOTE: part of the Store interface.
-func (s *SQLStore) ForEachNode(ctx context.Context, v lnwire.GossipVersion,
-	cb func(node *models.Node) error, reset func()) error {
+func (s *SQLStore) ForEachNode(ctx context.Context,
+	cb func(node *models.Node, versionsMask uint32) error,
+	reset func()) error {
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		return forEachNodePaginated(
-			ctx, s.cfg.QueryCfg, db,
-			v, func(_ context.Context, _ int64,
-				node *models.Node) error {
+		// Collect nodes across all versions, tracking which versions
+		// each node has and preferring the highest version's data.
+		type nodeEntry struct {
+			node         *models.Node
+			versionsMask uint32
+		}
+		nodesByPub := make(map[route.Vertex]*nodeEntry)
+		var order []route.Vertex
 
-				return cb(node)
-			},
-		)
+		for _, v := range []lnwire.GossipVersion{
+			gossipV1, gossipV2,
+		} {
+			err := forEachNodePaginated(
+				ctx, s.cfg.QueryCfg, db,
+				v, func(_ context.Context, _ int64,
+					node *models.Node) error {
+
+					pub := node.PubKeyBytes
+					entry, exists := nodesByPub[pub]
+					if !exists {
+						entry = &nodeEntry{}
+						nodesByPub[pub] = entry
+						order = append(order, pub)
+					}
+
+					// Set version bit.
+					entry.versionsMask |= 1 << uint(v)
+
+					// Prefer highest version with an
+					// announcement, fall back to shell
+					// nodes. A node has been announced
+					// if it carries a signature.
+					hasAnn := len(node.AuthSigBytes) > 0
+					if entry.node == nil || hasAnn {
+						entry.node = node
+					}
+
+					return nil
+				},
+			)
+			if err != nil {
+				return err
+			}
+		}
+
+		for _, pub := range order {
+			entry := nodesByPub[pub]
+			if err := cb(entry.node, entry.versionsMask); err != nil {
+				return err
+			}
+		}
+
+		return nil
 	}, reset)
 }
 
@@ -1767,16 +1813,67 @@ func (s *SQLStore) ForEachChannelCacheable(ctx context.Context,
 //
 // NOTE: part of the Store interface.
 func (s *SQLStore) ForEachChannel(ctx context.Context,
-	v lnwire.GossipVersion, cb func(*models.ChannelEdgeInfo,
-		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error,
+	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, uint32) error,
 	reset func()) error {
 
-	if !isKnownGossipVersion(v) {
-		return fmt.Errorf("unsupported gossip version: %d", v)
-	}
-
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
-		return forEachChannelWithPolicies(ctx, db, s.cfg, v, cb)
+		// Collect channels across all versions, tracking which
+		// versions each channel has and preferring the highest
+		// version's data.
+		type chanEntry struct {
+			info         *models.ChannelEdgeInfo
+			p1, p2       *models.ChannelEdgePolicy
+			versionsMask uint32
+		}
+		chansByID := make(map[uint64]*chanEntry)
+		var order []uint64
+
+		for _, v := range []lnwire.GossipVersion{
+			gossipV1, gossipV2,
+		} {
+			if !isKnownGossipVersion(v) {
+				continue
+			}
+
+			err := forEachChannelWithPolicies(
+				ctx, db, s.cfg, v,
+				func(info *models.ChannelEdgeInfo,
+					p1, p2 *models.ChannelEdgePolicy) error {
+
+					id := info.ChannelID
+					entry, exists := chansByID[id]
+					if !exists {
+						entry = &chanEntry{}
+						chansByID[id] = entry
+						order = append(order, id)
+					}
+
+					entry.versionsMask |= 1 << uint(v)
+
+					// Always prefer highest version.
+					entry.info = info
+					entry.p1 = p1
+					entry.p2 = p2
+
+					return nil
+				},
+			)
+			if err != nil {
+				return err
+			}
+		}
+
+		for _, id := range order {
+			entry := chansByID[id]
+			err := cb(entry.info, entry.p1, entry.p2,
+				entry.versionsMask)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
 	}, reset)
 }
 

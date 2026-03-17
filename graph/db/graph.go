@@ -650,13 +650,14 @@ func (c *ChannelGraph) HasV1Node(ctx context.Context,
 	return c.db.HasV1Node(ctx, nodePub)
 }
 
-// ForEachChannel iterates through all channel edges stored within the graph.
+// ForEachChannel iterates through all channel edges stored within the graph
+// across all gossip versions.
 func (c *ChannelGraph) ForEachChannel(ctx context.Context,
-	v lnwire.GossipVersion, cb func(*models.ChannelEdgeInfo,
-		*models.ChannelEdgePolicy, *models.ChannelEdgePolicy) error,
+	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, uint32) error,
 	reset func()) error {
 
-	return c.db.ForEachChannel(ctx, v, cb, reset)
+	return c.db.ForEachChannel(ctx, cb, reset)
 }
 
 // DisabledChannelIDs returns the channel ids of disabled channels.
@@ -844,11 +845,16 @@ func (c *VersionedGraph) ForEachNodeCached(ctx context.Context,
 	return c.ChannelGraph.ForEachNodeCached(ctx, c.v, withAddrs, cb, reset)
 }
 
-// ForEachNode iterates through all stored vertices/nodes in the graph.
+// ForEachNode iterates through all stored vertices/nodes in the graph,
+// discarding the versionsMask for backward compatibility.
 func (c *VersionedGraph) ForEachNode(ctx context.Context,
 	cb func(*models.Node) error, reset func()) error {
 
-	return c.db.ForEachNode(ctx, c.v, cb, reset)
+	return c.db.ForEachNode(ctx, func(node *models.Node,
+		_ uint32) error {
+
+		return cb(node)
+	}, reset)
 }
 
 // NumZombies returns the current number of zombie channels in the graph.
@@ -1032,12 +1038,19 @@ func (c *VersionedGraph) ForEachNodeChannel(ctx context.Context,
 	return c.db.ForEachNodeChannel(ctx, c.v, nodePub, cb, reset)
 }
 
-// ForEachChannel iterates through all channel edges stored within the graph.
+// ForEachChannel iterates through all channel edges stored within the graph,
+// discarding the versionsMask for backward compatibility.
 func (c *VersionedGraph) ForEachChannel(ctx context.Context,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy) error, reset func()) error {
 
-	return c.db.ForEachChannel(ctx, c.v, cb, reset)
+	return c.db.ForEachChannel(ctx,
+		func(info *models.ChannelEdgeInfo,
+			p1, p2 *models.ChannelEdgePolicy,
+			_ uint32) error {
+
+			return cb(info, p1, p2)
+		}, reset)
 }
 
 // ForEachNodeCacheable iterates through all stored vertices/nodes in the graph.
