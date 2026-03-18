@@ -1509,10 +1509,14 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		UpdateLabel: func(hash chainhash.Hash, label string) error {
 			return cc.Wallet.LabelTransaction(hash, label, true)
 		},
-		Notifier:     cc.ChainNotifier,
-		ChannelDB:    s.chanStateDB,
-		FeeEstimator: cc.FeeEstimator,
-		SignMessage:  cc.MsgSigner.SignMessage,
+		Notifier:           cc.ChainNotifier,
+		ChannelDB:          s.chanStateDB,
+		FeeEstimator:       cc.FeeEstimator,
+		SignMessage:        cc.MsgSigner.SignMessage,
+		SignMessageSchnorr: cc.KeyRing.SignMessageSchnorr,
+		MuSig2Signer:      cc.Wallet.Cfg.Signer,
+		BestBlockView:      s.cc.BestBlockTracker,
+		GraphSupportsV2:    cfg.DB.UseNativeSQL,
 		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement,
 			error) {
 
@@ -5184,6 +5188,28 @@ func (s *server) OpenChannel(
 	}
 	req.Peer = peer
 	s.mu.RUnlock()
+
+	// If the desired channel is for an advertised taproot channel, then
+	// the peer must support taproot gossip.
+	if req.ChannelType != nil {
+		rfv := lnwire.RawFeatureVector(*req.ChannelType)
+		fv := lnwire.NewFeatureVector(&rfv, lnwire.Features)
+
+		if fv.HasFeature(lnwire.SimpleTaprootChannelsOptionalStaging) &&
+			!req.Private {
+
+			if !peer.RemoteFeatures().HasFeature(
+				lnwire.TaprootGossipOptionalStaging,
+			) {
+
+				req.Err <- fmt.Errorf("peer %x does not "+
+					"support announced taproot channels",
+					pubKeyBytes)
+
+				return req.Updates, req.Err
+			}
+		}
+	}
 
 	// We'll wait until the peer is active before beginning the channel
 	// opening process.

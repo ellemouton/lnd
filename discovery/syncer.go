@@ -1622,12 +1622,11 @@ func (g *GossipSyncer) FilterGossipMsgs(ctx context.Context,
 		)
 	}
 
-	// We'll construct a helper function that we'll use below to
-	// determine if a given message passes the gossip msg filter. For
-	// v1 messages, we compare the unix timestamp against the filter
-	// range. For v2 messages that use block heights, we always pass
-	// them through since the GossipTimestampRange filter is unix-time
-	// based.
+	// We'll construct a helper function that we'll use below to determine
+	// if a given message passes the gossip msg filter. For v1 messages,
+	// we compare the unix timestamp against the filter range. For v2
+	// messages that use block heights, we always pass them through since
+	// the GossipTimestampRange filter is unix-time based.
 	startTime := time.Unix(int64(filter.FirstTimestamp), 0)
 	endTime := startTime.Add(
 		time.Duration(filter.TimestampRange) * time.Second,
@@ -1636,8 +1635,8 @@ func (g *GossipSyncer) FilterGossipMsgs(ctx context.Context,
 	passesFilter := func(ts lnwire.Timestamp) bool {
 		unixTS, ok := ts.(lnwire.UnixTimestamp)
 		if !ok {
-			// Non-unix timestamps (e.g. block height) always pass the
-			// filter.
+			// Non-unix timestamps (e.g. block height) always
+			// pass the filter.
 			return true
 		}
 
