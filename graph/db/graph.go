@@ -690,8 +690,8 @@ func (c *ChannelGraph) HasV1Node(ctx context.Context,
 	return c.db.HasV1Node(ctx, nodePub)
 }
 
-// ForEachChannel iterates through all channel edges stored within the graph
-// across all gossip versions.
+// ForEachNode iterates through all nodes in the graph across all gossip
+// versions, yielding each unique node exactly once.
 func (c *ChannelGraph) ForEachNode(ctx context.Context,
 	cb func(*models.Node, uint32) error, reset func()) error {
 
