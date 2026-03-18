@@ -251,9 +251,9 @@ func (r *mockGraphSource) ForAllOutgoingChannels(_ context.Context,
 		// If mock's AuthProof is nil, check real DB since the gossiper
 		// writes proofs directly there via AddEdgeProof.
 		if info.AuthProof == nil {
-				dbInfo, _, _, err := r.db.FetchChannelEdgesByID(
-					context.Background(), info.ChannelID,
-				)
+			dbInfo, _, _, err := r.db.FetchChannelEdgesByID(
+				context.Background(), info.ChannelID,
+			)
 			if err == nil && dbInfo != nil && dbInfo.AuthProof != nil {
 				info.AuthProof = dbInfo.AuthProof
 			}

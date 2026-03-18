@@ -1242,9 +1242,9 @@ func (p *Brontide) loadActiveChannels(chans []*channeldb.OpenChannel) (
 		// need to fetch its current link-layer forwarding policy from
 		// the database.
 		graph := p.cfg.ChannelGraph
-			info, p1, p2, err := graph.FetchChannelEdgesByOutpoint(
-				context.TODO(), &chanPoint,
-			)
+		info, p1, p2, err := graph.FetchChannelEdgesByOutpoint(
+			context.TODO(), &chanPoint,
+		)
 		if err != nil && !errors.Is(err, graphdb.ErrEdgeNotFound) {
 			return nil, err
 		}
@@ -2290,10 +2290,16 @@ out:
 					nextMsg.MsgType())
 			}
 
+		// TODO(elle): Gate v2 gossip messages on whether we and
+		// the peer have negotiated the gossip v2 feature bit.
 		case *lnwire.ChannelUpdate1,
 			*lnwire.ChannelAnnouncement1,
 			*lnwire.NodeAnnouncement1,
 			*lnwire.AnnounceSignatures1,
+			*lnwire.ChannelUpdate2,
+			*lnwire.ChannelAnnouncement2,
+			*lnwire.NodeAnnouncement2,
+			*lnwire.AnnounceSignatures2,
 			*lnwire.GossipTimestampRange,
 			*lnwire.QueryShortChanIDs,
 			*lnwire.QueryChannelRange,

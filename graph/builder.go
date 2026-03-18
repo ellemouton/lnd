@@ -1373,12 +1373,11 @@ func (b *Builder) updateEdge(ctx context.Context,
 				policy.ChannelID)
 		}
 
-			// For v2, updates are ordered by block height,
-			// not by wall clock timestamp.
-			_, edge1, edge2, err := b.GetChannelByID(
-				policy.Version,
-				lnwire.NewShortChanIDFromInt(policy.ChannelID),
-			)
+		// For v2, updates are ordered by block height,
+		// not by wall clock timestamp.
+		_, edge1, edge2, err := b.cfg.Graph.FetchChannelEdgesByID(
+			ctx, policy.ChannelID,
+		)
 		if err != nil &&
 			!errors.Is(err, graphdb.ErrEdgeNotFound) {
 
@@ -1457,74 +1456,6 @@ func (b *Builder) SyncedHeight() uint32 {
 	return b.bestHeight.Load()
 }
 
-// GetChannelByID return the channel by the channel id.
-//
-// NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) GetChannelByID(v lnwire.GossipVersion,
-	chanID lnwire.ShortChannelID) (
-	*models.ChannelEdgeInfo,
-	*models.ChannelEdgePolicy,
-	*models.ChannelEdgePolicy, error) {
-
-	switch v {
-	case lnwire.GossipVersion1:
-		return b.v1Graph.FetchChannelEdgesByID(
-			context.TODO(), chanID.ToUint64(),
-		)
-
-	case lnwire.GossipVersion2:
-		return b.v2Graph.FetchChannelEdgesByID(
-			context.TODO(), chanID.ToUint64(),
-		)
-
-	default:
-		return nil, nil, nil, fmt.Errorf("unknown gossip version: %v", v)
-	}
-}
-
-// FetchNode attempts to look up a target node by its identity public
-// key. graphdb.ErrGraphNodeNotFound is returned if the node doesn't exist
-// within the graph.
-//
-// NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) FetchNode(ctx context.Context,
-	node route.Vertex) (*models.Node, error) {
-
-	return b.v1Graph.FetchNode(ctx, node)
-}
-
-// ForAllOutgoingChannels is used to iterate over all outgoing channels owned by
-// the router.
-//
-// NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) ForAllOutgoingChannels(ctx context.Context,
-	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy) error,
-	reset func()) error {
-
-	return b.cfg.Graph.ForEachNodeChannel(
-		ctx, lnwire.GossipVersion1, b.cfg.SelfNode,
-		func(c *models.ChannelEdgeInfo, e *models.ChannelEdgePolicy,
-			_ *models.ChannelEdgePolicy) error {
-
-			if e == nil {
-				return fmt.Errorf("channel from self node " +
-					"has no policy")
-			}
-
-			return cb(c, e)
-		}, reset,
-	)
-}
-
-// AddProof updates the channel edge info with proof which is needed to
-// properly announce the edge to the rest of the network.
-//
-// NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) AddProof(chanID lnwire.ShortChannelID,
-	proof *models.ChannelAuthProof) error {
-
-	return b.cfg.Graph.AddEdgeProof(context.TODO(), chanID, proof)
-}
 // IsStaleNode returns true if the graph source has a node announcement for the
 // target node/version that is at least as fresh as the passed announcement.
 //
@@ -1544,52 +1475,6 @@ func (b *Builder) IsStaleNode(ctx context.Context, v lnwire.GossipVersion,
 	return false
 }
 
-// IsPublicNode determines whether the given vertex is seen as a public node in
-// the graph from the graph's source node's point of view.
-//
-// NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsPublicNode(v lnwire.GossipVersion,
-	node route.Vertex) (bool, error) {
-
-	switch v {
-	case lnwire.GossipVersion1:
-		return b.v1Graph.IsPublicNode(context.TODO(), node)
-
-	case lnwire.GossipVersion2:
-		return b.v2Graph.IsPublicNode(context.TODO(), node)
-
-	default:
-		return false, fmt.Errorf("unknown gossip version: %v", v)
-	}
-}
-
-// IsKnownEdge returns true if the graph source already knows of the passed
-// channel ID either as a live or zombie edge.
-//
-// NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsKnownEdge(v lnwire.GossipVersion,
-	chanID lnwire.ShortChannelID) bool {
-
-	exists, isZombie, _ := b.cfg.Graph.HasChannelEdge(
-		context.TODO(), v, chanID.ToUint64(),
-	)
-
-	return exists || isZombie
-}
-
-// IsZombieEdge returns true if the graph source has marked the given channel ID
-// as a zombie edge.
-//
-// NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) IsZombieEdge(v lnwire.GossipVersion,
-	chanID lnwire.ShortChannelID) (bool, error) {
-
-	_, isZombie, err := b.cfg.Graph.HasChannelEdge(
-		context.TODO(), v, chanID.ToUint64(),
-	)
-
-	return isZombie, err
-}
 // IsStaleEdgePolicy returns true if the graph source has a channel edge for
 // the passed policy that has a more recent announcement.
 //
@@ -1625,11 +1510,10 @@ func (b *Builder) IsStaleEdgePolicy(policy *models.ChannelEdgePolicy) bool {
 
 		return !edge2Timestamp.Before(policy.LastUpdate)
 
-		case lnwire.GossipVersion2:
-			_, p1, p2, err := b.GetChannelByID(
-				policy.Version,
-				lnwire.NewShortChanIDFromInt(policy.ChannelID),
-			)
+	case lnwire.GossipVersion2:
+		_, p1, p2, err := b.cfg.Graph.FetchChannelEdgesByID(
+			context.TODO(), policy.ChannelID,
+		)
 		if err != nil {
 			if errors.Is(err, graphdb.ErrEdgeNotFound) {
 				return false
