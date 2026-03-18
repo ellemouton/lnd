@@ -1107,16 +1107,20 @@ func createTestCtx(t *testing.T, startHeight uint32, isChanPeer bool) (
 			c := make(chan struct{})
 			return c
 		},
-		FetchSelfAnnouncement: func() lnwire.NodeAnnouncement {
-			return &lnwire.NodeAnnouncement1{
-				Timestamp: testTimestamp,
+		FetchSelfAnnouncements: func() []lnwire.NodeAnnouncement {
+			return []lnwire.NodeAnnouncement{
+				&lnwire.NodeAnnouncement1{
+					Timestamp: testTimestamp,
+				},
 			}
 		},
-		UpdateSelfAnnouncement: func() (lnwire.NodeAnnouncement,
+		UpdateSelfAnnouncements: func() ([]lnwire.NodeAnnouncement,
 			error) {
 
-			return &lnwire.NodeAnnouncement1{
-				Timestamp: testTimestamp,
+			return []lnwire.NodeAnnouncement{
+				&lnwire.NodeAnnouncement1{
+					Timestamp: testTimestamp,
+				},
 			}, nil
 		},
 		Graph:                 router,
@@ -1816,8 +1820,8 @@ func TestSignatureAnnouncementRetryAtStartup(t *testing.T) {
 		Broadcast:              tCtx.gossiper.cfg.Broadcast,
 		NotifyWhenOnline:       tCtx.gossiper.reliableSender.cfg.NotifyWhenOnline,
 		NotifyWhenOffline:      tCtx.gossiper.reliableSender.cfg.NotifyWhenOffline,
-		FetchSelfAnnouncement:  tCtx.gossiper.cfg.FetchSelfAnnouncement,
-		UpdateSelfAnnouncement: tCtx.gossiper.cfg.UpdateSelfAnnouncement,
+		FetchSelfAnnouncements:  tCtx.gossiper.cfg.FetchSelfAnnouncements,
+		UpdateSelfAnnouncements: tCtx.gossiper.cfg.UpdateSelfAnnouncements,
 		Graph:                  tCtx.gossiper.cfg.Graph,
 		GraphDB:                tCtx.gossiper.cfg.GraphDB,
 		TrickleDelay:           trickleDelay,

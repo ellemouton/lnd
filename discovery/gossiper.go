@@ -267,14 +267,16 @@ type Config struct {
 	// notification for when it reconnects.
 	NotifyWhenOffline func(peerPubKey [33]byte) <-chan struct{}
 
-	// FetchSelfAnnouncement retrieves our current node announcement, for
+	// FetchSelfAnnouncements retrieves our current node announcements, for
 	// use when determining whether we should update our peers about our
-	// presence in the network.
-	FetchSelfAnnouncement func() lnwire.NodeAnnouncement
+	// presence in the network. The v1 announcement is always first; v2 is
+	// appended if available.
+	FetchSelfAnnouncements func() []lnwire.NodeAnnouncement
 
-	// UpdateSelfAnnouncement produces a new announcement for our node with
-	// an updated timestamp which can be broadcast to our peers.
-	UpdateSelfAnnouncement func() (lnwire.NodeAnnouncement, error)
+	// UpdateSelfAnnouncements produces new announcements for our node with
+	// an updated timestamp which can be broadcast to our peers. The v1
+	// announcement is always first; v2 is appended if available.
+	UpdateSelfAnnouncements func() ([]lnwire.NodeAnnouncement, error)
 
 	// ProofMatureDelta the number of confirmations which is needed before
 	// exchange the channel announcement proofs.
@@ -1944,66 +1946,99 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
 	var selfVertex route.Vertex
 	copy(selfVertex[:], d.selfKey.SerializeCompressed())
 
-	err := d.v1Graph.ForEachNodeChannel(ctx, selfVertex, func(
-		info *models.ChannelEdgeInfo,
-		edge, _ *models.ChannelEdgePolicy) error {
+	// collectStaleEdges iterates a single versioned graph and appends
+	// stale channel edges to the provided slices, skipping channels
+	// already seen in a different version.
+	seenChans := make(map[uint64]struct{})
+	collectStaleEdges := func(g *graphdb.VersionedGraph) error {
+		return g.ForEachNodeChannel(ctx, selfVertex, func(
+			info *models.ChannelEdgeInfo,
+			edge, _ *models.ChannelEdgePolicy) error {
 
-		if edge == nil {
-			return fmt.Errorf("channel from self node has no policy")
-		}
+			if edge == nil {
+				return fmt.Errorf("channel from self node " +
+					"has no policy")
+			}
 
-		// If there's no auth proof attached to this edge, it means
-		// that it is a private channel not meant to be announced to
-		// the greater network, so avoid sending channel updates for
-		// this channel to not leak its
-		// existence.
-		if info.AuthProof == nil {
-			log.Debugf("Skipping retransmission of channel "+
-				"without AuthProof: %v", info.ChannelID)
+			// Skip channels already seen from a previous graph
+			// version.
+			if _, ok := seenChans[info.ChannelID]; ok {
+				return nil
+			}
+			seenChans[info.ChannelID] = struct{}{}
+
+			// If there's no auth proof attached to this edge, it
+			// means that it is a private channel not meant to be
+			// announced to the greater network, so avoid sending
+			// channel updates for this channel to not leak its
+			// existence.
+			if info.AuthProof == nil {
+				log.Debugf("Skipping retransmission of "+
+					"channel without AuthProof: %v",
+					info.ChannelID)
+				return nil
+			}
+
+			// We make a note that we have at least one public
+			// channel. We use this to determine whether we
+			// should send a node announcement below.
+			havePublicChannels = true
+
+			// If this edge has a ChannelUpdate that was created
+			// before the introduction of the MaxHTLC field, then
+			// we'll update this edge to propagate this
+			// information in the network.
+			if !edge.MessageFlags.HasMaxHtlc() {
+				edge.MessageFlags |= lnwire.ChanUpdateRequiredMaxHtlc
+				edge.MaxHTLC = lnwire.NewMSatFromSatoshis(
+					info.Capacity,
+				)
+
+				edgesToUpdate = append(
+					edgesToUpdate, updateTuple{
+						info: info,
+						edge: edge,
+					},
+				)
+				return nil
+			}
+
+			timeElapsed := now.Sub(edge.LastUpdate)
+
+			// If it's been longer than RebroadcastInterval since
+			// we've re-broadcasted the channel, add the channel
+			// to the set of edges we need to update.
+			if timeElapsed >= d.cfg.RebroadcastInterval {
+				edgesToUpdate = append(
+					edgesToUpdate, updateTuple{
+						info: info,
+						edge: edge,
+					},
+				)
+			}
+
 			return nil
-		}
+		}, func() {
+			havePublicChannels = false
+			edgesToUpdate = nil
+			seenChans = make(map[uint64]struct{})
+		})
+	}
 
-		// We make a note that we have at least one public channel. We
-		// use this to determine whether we should send a node
-		// announcement below.
-		havePublicChannels = true
-
-		// If this edge has a ChannelUpdate that was created before the
-		// introduction of the MaxHTLC field, then we'll update this
-		// edge to propagate this information in the network.
-		if !edge.MessageFlags.HasMaxHtlc() {
-			// We'll make sure we support the new max_htlc field if
-			// not already present.
-			edge.MessageFlags |= lnwire.ChanUpdateRequiredMaxHtlc
-			edge.MaxHTLC = lnwire.NewMSatFromSatoshis(info.Capacity)
-
-			edgesToUpdate = append(edgesToUpdate, updateTuple{
-				info: info,
-				edge: edge,
-			})
-			return nil
-		}
-
-		timeElapsed := now.Sub(edge.LastUpdate)
-
-		// If it's been longer than RebroadcastInterval since we've
-		// re-broadcasted the channel, add the channel to the set of
-		// edges we need to update.
-		if timeElapsed >= d.cfg.RebroadcastInterval {
-			edgesToUpdate = append(edgesToUpdate, updateTuple{
-				info: info,
-				edge: edge,
-			})
-		}
-
-		return nil
-	}, func() {
-		havePublicChannels = false
-		edgesToUpdate = nil
-	})
+	// Iterate v1 graph first, then v2.
+	err := collectStaleEdges(d.v1Graph)
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
 		return fmt.Errorf("unable to retrieve outgoing channels: %w",
 			err)
+	}
+
+	err = collectStaleEdges(d.v2Graph)
+	if err != nil &&
+		!errors.Is(err, graphdb.ErrGraphNoEdgesFound) &&
+		!errors.Is(err, graphdb.ErrVersionNotSupportedForKVDB) {
+
+		return fmt.Errorf("unable to retrieve v2 outgoing "+
+			"channels: %w", err)
 	}
 
 	var signedUpdates []lnwire.Message
@@ -2033,10 +2068,12 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
 	}
 
 	// We'll also check that our node announcement is not too old.
-	currentNodeAnn := d.cfg.FetchSelfAnnouncement()
+	currentAnns := d.cfg.FetchSelfAnnouncements()
 	var timestamp time.Time
-	if ts, ok := currentNodeAnn.UpdateTimestamp().(lnwire.UnixTimestamp); ok {
-		timestamp = time.Unix(int64(ts), 0)
+	if len(currentAnns) > 0 {
+		if ts, ok := currentAnns[0].UpdateTimestamp().(lnwire.UnixTimestamp); ok {
+			timestamp = time.Unix(int64(ts), 0)
+		}
 	}
 	timeElapsed := now.Sub(timestamp)
 
@@ -2044,20 +2081,24 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
 	// node announcement, refresh it and resend it.
 	nodeAnnStr := ""
 	if timeElapsed >= d.cfg.RebroadcastInterval {
-		newNodeAnn, err := d.cfg.UpdateSelfAnnouncement()
+		newNodeAnns, err := d.cfg.UpdateSelfAnnouncements()
 		if err != nil {
 			return fmt.Errorf("unable to get refreshed node "+
 				"announcement: %v", err)
 		}
 
-		signedUpdates = append(signedUpdates, newNodeAnn)
+		for _, ann := range newNodeAnns {
+			signedUpdates = append(signedUpdates, ann)
+		}
 		nodeAnnStr = " and our refreshed node announcement"
 
-		// Before broadcasting the refreshed node announcement, add it
-		// to our own graph.
-		if err := d.addNode(ctx, newNodeAnn); err != nil {
-			log.Errorf("Unable to add refreshed node announcement "+
-				"to graph: %v", err)
+		// Before broadcasting the refreshed node announcements, add
+		// them to our own graph.
+		for _, ann := range newNodeAnns {
+			if err := d.addNode(ctx, ann); err != nil {
+				log.Errorf("Unable to add refreshed node "+
+					"announcement to graph: %v", err)
+			}
 		}
 	}
 
@@ -3806,10 +3847,10 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 		})
 	}
 
-	nMsg.err <- nil
-
 	log.Debugf("Processed ChannelUpdate: peer=%v, short_chan_id=%v, %v",
 		nMsg.peer, upd.SCID().ToUint64(), upd.TimeDesc())
+
+	nMsg.err <- nil
 
 	return announcements, true
 }
@@ -4314,9 +4355,10 @@ func (d *AuthenticatedGossiper) validateFundingTransaction(_ context.Context,
 	var fundingPkScript []byte
 	switch ann := ann.(type) {
 	case *lnwire.ChannelAnnouncement1:
-		// TODO(elle): remove this v1 reconstruction
-		// once the funding manager emits native
-		// ChannelAnnouncement2 for taproot channels.
+		// TODO(elle): once the KV graph backend is removed,
+		// this can be replaced with edge.FundingPKScript()
+		// since taproot channels will only use
+		// ChannelAnnouncement2.
 		fundingPkScript, err = makeFundingScript(
 			ann.BitcoinKey1[:], ann.BitcoinKey2[:], ann.Features,
 			tapscriptRoot,

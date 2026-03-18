@@ -315,7 +315,7 @@ func (s *Server) UpdateNodeAnnouncement(ctx context.Context,
 
 	currentNodeAnn := s.cfg.GetNodeAnnouncement()
 
-	nodeAnnFeatures := currentNodeAnn.Features
+	nodeAnnFeatures := currentNodeAnn.NodeFeatures().RawFeatureVector
 	featureUpdates := len(req.FeatureUpdates) > 0
 	if featureUpdates {
 		var (
