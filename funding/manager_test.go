@@ -16,6 +16,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -125,6 +126,19 @@ var (
 		TxPosition:  0,
 	}
 )
+
+// mockBestBlockView is a simple mock that satisfies chainntnfs.BestBlockView.
+type mockBestBlockView struct {
+	height uint32
+}
+
+func (m *mockBestBlockView) BestHeight() (uint32, error) {
+	return m.height, nil
+}
+
+func (m *mockBestBlockView) BestBlockHeader() (*wire.BlockHeader, error) {
+	return &wire.BlockHeader{}, nil
+}
 
 type mockChanFunder struct {
 	fundingAmt btcutil.Amount
@@ -461,6 +475,17 @@ func createTestFundingManager(t *testing.T, privKey *btcec.PrivateKey,
 
 	chainedAcceptor := acpt.NewChainedAcceptor()
 
+	muSig2Signer := input.NewMusigSessionManager(
+		func(desc *keychain.KeyDescriptor) (*btcec.PrivateKey, error) {
+			// For the node identity key, return this node's own
+			// private key so that the nonce matches.
+			if desc.KeyLocator == testKeyLoc {
+				return privKey, nil
+			}
+			return keyRing.DerivePrivKey(*desc)
+		},
+	)
+
 	fundingCfg := Config{
 		IDKey:        privKey.PubKey(),
 		IDKeyLoc:     testKeyLoc,
@@ -473,6 +498,19 @@ func createTestFundingManager(t *testing.T, privKey *btcec.PrivateKey,
 
 			return testSig, nil
 		},
+		SignMessageSchnorr: func(loc keychain.KeyLocator, msg []byte,
+			doubleHash bool, taprootTweak []byte,
+			tag []byte) (*schnorr.Signature, error) {
+
+			return keyRing.SignMessageSchnorr(
+				loc, msg, doubleHash, taprootTweak, tag,
+			)
+		},
+		MuSig2Signer: muSig2Signer,
+		BestBlockView: &mockBestBlockView{
+			height: fundingBroadcastHeight,
+		},
+		GraphSupportsV2: true,
 		SendAnnouncement: func(msg lnwire.Message,
 			_ ...discovery.OptionalMsgField) chan error {
 
@@ -485,10 +523,10 @@ func createTestFundingManager(t *testing.T, privKey *btcec.PrivateKey,
 			}
 			return errChan
 		},
-		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement1,
+		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement,
 			error) {
 
-			return lnwire.NodeAnnouncement1{}, nil
+			return &lnwire.NodeAnnouncement1{}, nil
 		},
 		TempChanIDSeed: chanIDSeed,
 		FindChannel: func(node *btcec.PublicKey,
@@ -637,12 +675,16 @@ func recreateAliceFundingManager(t *testing.T, alice *testNode) {
 	chainedAcceptor := acpt.NewChainedAcceptor()
 
 	f, err := NewFundingManager(Config{
-		IDKey:        oldCfg.IDKey,
-		IDKeyLoc:     oldCfg.IDKeyLoc,
-		Wallet:       oldCfg.Wallet,
-		Notifier:     oldCfg.Notifier,
-		ChannelDB:    oldCfg.ChannelDB,
-		FeeEstimator: oldCfg.FeeEstimator,
+		IDKey:              oldCfg.IDKey,
+		IDKeyLoc:           oldCfg.IDKeyLoc,
+		Wallet:             oldCfg.Wallet,
+		Notifier:           oldCfg.Notifier,
+		ChannelDB:          oldCfg.ChannelDB,
+		FeeEstimator:       oldCfg.FeeEstimator,
+		SignMessageSchnorr: oldCfg.SignMessageSchnorr,
+		MuSig2Signer:       oldCfg.MuSig2Signer,
+		BestBlockView:      oldCfg.BestBlockView,
+		GraphSupportsV2:    oldCfg.GraphSupportsV2,
 		SignMessage: func(_ keychain.KeyLocator,
 			_ []byte, _ bool) (*ecdsa.Signature, error) {
 
@@ -660,10 +702,10 @@ func recreateAliceFundingManager(t *testing.T, alice *testNode) {
 			}
 			return errChan
 		},
-		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement1,
+		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement,
 			error) {
 
-			return lnwire.NodeAnnouncement1{}, nil
+			return &lnwire.NodeAnnouncement1{}, nil
 		},
 		NotifyWhenOnline: func(peer [33]byte,
 			connectedChan chan<- lnpeer.Peer) {
@@ -821,12 +863,6 @@ func fundChannel(t *testing.T, alice, bob *testNode, localFundingAmt,
 		ChannelType:     chanType,
 		Updates:         updateChan,
 		Err:             errChan,
-	}
-
-	// If this is a taproot channel, then we want to force it to be a
-	// private channel, as that's the only channel type supported for now.
-	if isTaprootChanType(chanType) {
-		initReq.Private = true
 	}
 
 	alice.fundingMgr.InitFundingWorkflow(initReq)
@@ -1255,51 +1291,56 @@ func assertChannelAnnouncements(t *testing.T, alice, bob *testNode,
 
 		gotChannelAnnouncement := false
 		gotChannelUpdate := false
+
+		// The channel update sent by the node should advertise the
+		// MinHTLC value required by the _other_ node.
+		other := (j + 1) % 2
+		otherCfg := nodes[other].fundingMgr.cfg
+
+		minHtlc := otherCfg.DefaultMinHtlcIn
+		maxHtlc := aliceCfg.RequiredRemoteMaxValue(capacity)
+		baseFee := aliceCfg.DefaultRoutingPolicy.BaseFee
+		feeRate := aliceCfg.DefaultRoutingPolicy.FeeRate
+
+		if len(customMinHtlc) > 0 {
+			minHtlc = customMinHtlc[j]
+		}
+		if len(customMaxHtlc) > 0 {
+			maxHtlc = customMaxHtlc[j]
+		}
+		if len(baseFees) > 0 {
+			baseFee = baseFees[j]
+		}
+		if len(feeRates) > 0 {
+			feeRate = feeRates[j]
+		}
+
 		for _, msg := range announcements {
 			switch m := msg.(type) {
 			case *lnwire.ChannelAnnouncement1:
 				gotChannelAnnouncement = true
+
+			case *lnwire.ChannelAnnouncement2:
+				gotChannelAnnouncement = true
+
 			case *lnwire.ChannelUpdate1:
-
-				// The channel update sent by the node should
-				// advertise the MinHTLC value required by the
-				// _other_ node.
-				other := (j + 1) % 2
-				otherCfg := nodes[other].fundingMgr.cfg
-
-				minHtlc := otherCfg.DefaultMinHtlcIn
-				maxHtlc := aliceCfg.RequiredRemoteMaxValue(
-					capacity,
-				)
-				baseFee := aliceCfg.DefaultRoutingPolicy.BaseFee
-				feeRate := aliceCfg.DefaultRoutingPolicy.FeeRate
-
 				require.EqualValues(t, 1, m.MessageFlags)
-
-				// We might expect a custom MinHTLC value.
-				if len(customMinHtlc) > 0 {
-					minHtlc = customMinHtlc[j]
-				}
 				require.Equal(t, minHtlc, m.HtlcMinimumMsat)
-
-				// We might expect a custom MaxHltc value.
-				if len(customMaxHtlc) > 0 {
-					maxHtlc = customMaxHtlc[j]
-				}
 				require.Equal(t, maxHtlc, m.HtlcMaximumMsat)
-
-				// We might expect a custom baseFee value.
-				if len(baseFees) > 0 {
-					baseFee = baseFees[j]
-				}
 				require.EqualValues(t, baseFee, m.BaseFee)
-
-				// We might expect a custom feeRate value.
-				if len(feeRates) > 0 {
-					feeRate = feeRates[j]
-				}
 				require.EqualValues(t, feeRate, m.FeeRate)
+				gotChannelUpdate = true
 
+			case *lnwire.ChannelUpdate2:
+				require.Equal(t, minHtlc, m.HTLCMinimumMsat.Val)
+				require.Equal(t, maxHtlc, m.HTLCMaximumMsat.Val)
+				require.EqualValues(
+					t, baseFee, m.FeeBaseMsat.Val,
+				)
+				require.EqualValues(
+					t, feeRate,
+					m.FeeProportionalMillionths.Val,
+				)
 				gotChannelUpdate = true
 			}
 		}
@@ -1380,6 +1421,38 @@ func assertNodeAnnSent(t *testing.T, alice, bob *testNode) {
 		)
 		require.NoError(t, err)
 		assertType[*lnwire.NodeAnnouncement1](t, *nodeAnn)
+	}
+}
+
+// drainChannelAnnouncements reads two messages (expected to be a
+// ChannelAnnouncement + ChannelUpdate pair) from each node's announceChan
+// without asserting their types. Used to consume re-announcements that occur
+// at 6-conf for non-zero-conf scid-alias channels.
+func drainChannelAnnouncements(t *testing.T, alice, bob *testNode) {
+	t.Helper()
+
+	for _, node := range []*testNode{alice, bob} {
+		for i := 0; i < 2; i++ {
+			_, err := lnutils.RecvOrTimeout(
+				node.announceChan, time.Second*5,
+			)
+			require.NoError(t, err, "timed out draining channel "+
+				"announcements")
+		}
+	}
+}
+
+// assertNodeAnnBroadcast asserts that each node broadcasts exactly one
+// NodeAnnouncement1 via SendAnnouncement (i.e. to the gossiper).
+func assertNodeAnnBroadcast(t *testing.T, alice, bob *testNode) {
+	t.Helper()
+
+	for j, node := range []*testNode{alice, bob} {
+		ann, err := lnutils.RecvOrTimeout(
+			node.announceChan, time.Second*5,
+		)
+		require.NoError(t, err, "node %d did not broadcast announcement", j)
+		assertType[*lnwire.NodeAnnouncement1](t, *ann)
 	}
 }
 
@@ -1598,6 +1671,7 @@ func testNormalWorkflow(t *testing.T, chanType *lnwire.ChannelType) {
 			lnwire.StaticRemoteKeyOptional,
 			lnwire.AnchorsZeroFeeHtlcTxOptional,
 			lnwire.SimpleTaprootChannelsOptionalStaging,
+			lnwire.TaprootGossipOptionalStaging,
 		}
 		alice.localFeatures = featureBits
 		alice.remoteFeatures = featureBits
@@ -1652,6 +1726,16 @@ func testNormalWorkflow(t *testing.T, chanType *lnwire.ChannelType) {
 	if isTaprootChanType(chanType) {
 		require.NotNil(t, channelReadyAlice.NextLocalNonce)
 		require.NotNil(t, channelReadyBob.NextLocalNonce)
+		// Also verify that announcement nonces are present for public
+		// taproot channels.
+		require.True(t, channelReadyAlice.AnnouncementNodeNonce.IsSome(),
+			"alice's channel_ready should have ann node nonce")
+		require.True(t, channelReadyAlice.AnnouncementBitcoinNonce.IsSome(),
+			"alice's channel_ready should have ann btc nonce")
+		require.True(t, channelReadyBob.AnnouncementNodeNonce.IsSome(),
+			"bob's channel_ready should have ann node nonce")
+		require.True(t, channelReadyBob.AnnouncementBitcoinNonce.IsSome(),
+			"bob's channel_ready should have ann btc nonce")
 	}
 
 	// Check that the state machine is updated accordingly
@@ -1685,18 +1769,22 @@ func testNormalWorkflow(t *testing.T, chanType *lnwire.ChannelType) {
 		Tx: fundingTx,
 	}
 
-	switch {
-	// For taproot channels, we expect them to only send a node
-	// announcement message at this point. These channels aren't advertised
-	// so we don't expect the other messages.
-	case isTaprootChanType(chanType):
-		assertNodeAnnSent(t, alice, bob)
-
-	// For regular channels, we'll make sure the fundingManagers exchange
-	// announcement signatures.
-	case chanType == nil:
-		fallthrough
-	default:
+	// For taproot channels, the scid-alias feature causes a
+	// re-announcement (ChannelAnnouncement2 + ChannelUpdate2) at 6-conf,
+	// followed by the MuSig2 partial-signature proof (AnnounceSignatures2)
+	// and a node announcement broadcast.
+	if isTaprootChanType(chanType) {
+		drainChannelAnnouncements(t, alice, bob)
+		for _, node := range []*testNode{alice, bob} {
+			ann, err := lnutils.RecvOrTimeout(
+				node.announceChan, time.Second*5,
+			)
+			require.NoError(t, err, "timed out waiting for "+
+				"AnnounceSignatures2")
+			assertType[*lnwire.AnnounceSignatures2](t, *ann)
+		}
+		assertNodeAnnBroadcast(t, alice, bob)
+	} else {
 		assertAnnouncementSignatures(t, alice, bob)
 	}
 
@@ -4621,6 +4709,7 @@ func testZeroConf(t *testing.T, chanType *lnwire.ChannelType) {
 		lnwire.StaticRemoteKeyOptional,
 		lnwire.AnchorsZeroFeeHtlcTxOptional,
 		lnwire.SimpleTaprootChannelsOptionalStaging,
+		lnwire.TaprootGossipOptionalStaging,
 	}
 	alice.localFeatures = featureBits
 	alice.remoteFeatures = featureBits
@@ -4741,12 +4830,9 @@ func testZeroConf(t *testing.T, chanType *lnwire.ChannelType) {
 		t.Fatalf("did not call ReportShortChanID in time")
 	}
 
-	// For taproot channels, we don't expect them to be announced atm.
-	if !isTaprootChanType(chanType) {
-		assertChannelAnnouncements(
-			t, alice, bob, fundingAmt, nil, nil, nil, nil,
-		)
-	}
+	assertChannelAnnouncements(
+		t, alice, bob, fundingAmt, nil, nil, nil, nil,
+	)
 
 	// Send along the 6-confirmation channel so that announcement sigs can
 	// be exchanged.
@@ -4757,18 +4843,21 @@ func testZeroConf(t *testing.T, chanType *lnwire.ChannelType) {
 		Tx: fundingTx,
 	}
 
-	switch {
-	// For taproot channels, we expect them to only send a node
-	// announcement message at this point. These channels aren't advertised
-	// so we don't expect the other messages.
-	case isTaprootChanType(chanType):
-		assertNodeAnnSent(t, alice, bob)
-
-	// For regular channels, we'll make sure the fundingManagers exchange
-	// announcement signatures.
-	case chanType == nil:
-		fallthrough
-	default:
+	// For taproot channels, the MuSig2 partial-signature proof
+	// (AnnounceSignatures2) is sent at 6-conf, followed by a node
+	// announcement broadcast. Zero-conf taproot channels skip the
+	// scid-alias re-announce at 6-conf, so only two messages are expected.
+	if isTaprootChanType(chanType) {
+		for _, node := range []*testNode{alice, bob} {
+			ann, err := lnutils.RecvOrTimeout(
+				node.announceChan, time.Second*5,
+			)
+			require.NoError(t, err, "timed out waiting for "+
+				"AnnounceSignatures2")
+			assertType[*lnwire.AnnounceSignatures2](t, *ann)
+		}
+		assertNodeAnnBroadcast(t, alice, bob)
+	} else {
 		assertAnnouncementSignatures(t, alice, bob)
 	}
 

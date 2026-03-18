@@ -1090,12 +1090,20 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		ChanSeries:            chanSeries,
 		NotifyWhenOnline:      s.NotifyWhenOnline,
 		NotifyWhenOffline:     s.NotifyWhenOffline,
-		FetchSelfAnnouncement: s.getNodeAnnouncement,
-		UpdateSelfAnnouncement: func() (lnwire.NodeAnnouncement1,
-			error) {
+			FetchSelfAnnouncement: func() lnwire.NodeAnnouncement {
+				ann := s.getNodeAnnouncement()
+				return &ann
+			},
+			UpdateSelfAnnouncement: func() (lnwire.NodeAnnouncement,
+				error) {
 
-			return s.genNodeAnnouncement(nil)
-		},
+				ann, err := s.genNodeAnnouncement(nil)
+				if err != nil {
+					return nil, err
+				}
+
+				return &ann, nil
+			},
 		ProofMatureDelta:        cfg.Gossip.AnnouncementConf,
 		TrickleDelay:            time.Millisecond * time.Duration(cfg.TrickleDelay),
 		RetransmitTicker:        ticker.New(time.Minute * 30),
@@ -1504,11 +1512,16 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		ChannelDB:    s.chanStateDB,
 		FeeEstimator: cc.FeeEstimator,
 		SignMessage:  cc.MsgSigner.SignMessage,
-		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement1,
-			error) {
+			CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement,
+				error) {
 
-			return s.genNodeAnnouncement(nil)
-		},
+				ann, err := s.genNodeAnnouncement(nil)
+				if err != nil {
+					return nil, err
+				}
+
+				return &ann, nil
+			},
 		SendAnnouncement:     s.authGossiper.ProcessLocalAnnouncement,
 		NotifyWhenOnline:     s.NotifyWhenOnline,
 		TempChanIDSeed:       chanIDSeed,

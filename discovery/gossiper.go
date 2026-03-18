@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -112,10 +113,12 @@ var (
 // can provide that serve useful when processing a specific network
 // announcement.
 type optionalMsgFields struct {
-	capacity      *btcutil.Amount
-	channelPoint  *wire.OutPoint
-	remoteAlias   *lnwire.ShortChannelID
-	tapscriptRoot fn.Option[chainhash.Hash]
+	capacity        *btcutil.Amount
+	channelPoint    *wire.OutPoint
+	remoteAlias     *lnwire.ShortChannelID
+	tapscriptRoot   fn.Option[chainhash.Hash]
+	fundingPkScript fn.Option[[]byte]
+	aggNonce        *btcec.PublicKey
 }
 
 // apply applies the optional fields within the functional options.
@@ -163,6 +166,23 @@ func TapscriptRoot(root fn.Option[chainhash.Hash]) OptionalMsgField {
 func RemoteAlias(alias *lnwire.ShortChannelID) OptionalMsgField {
 	return func(f *optionalMsgFields) {
 		f.remoteAlias = alias
+	}
+}
+
+// FundingPKScript is an optional field that lets the gossiper know the funding
+// output's pkscript. This is used for ChannelAnnouncement2 verification.
+func FundingPKScript(script []byte) OptionalMsgField {
+	return func(f *optionalMsgFields) {
+		f.fundingPkScript = fn.Some(script)
+	}
+}
+
+// AggregateNonce is an optional field that lets the gossiper know of the
+// aggregate nonce used in the construction of the channel announcement
+// signature.
+func AggregateNonce(nonce *btcec.PublicKey) OptionalMsgField {
+	return func(f *optionalMsgFields) {
+		f.aggNonce = nonce
 	}
 }
 
@@ -250,11 +270,11 @@ type Config struct {
 	// FetchSelfAnnouncement retrieves our current node announcement, for
 	// use when determining whether we should update our peers about our
 	// presence in the network.
-	FetchSelfAnnouncement func() lnwire.NodeAnnouncement1
+	FetchSelfAnnouncement func() lnwire.NodeAnnouncement
 
 	// UpdateSelfAnnouncement produces a new announcement for our node with
 	// an updated timestamp which can be broadcast to our peers.
-	UpdateSelfAnnouncement func() (lnwire.NodeAnnouncement1, error)
+	UpdateSelfAnnouncement func() (lnwire.NodeAnnouncement, error)
 
 	// ProofMatureDelta the number of confirmations which is needed before
 	// exchange the channel announcement proofs.
@@ -2012,9 +2032,12 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
 		return nil
 	}
 
-	// We'll also check that our NodeAnnouncement1 is not too old.
+	// We'll also check that our node announcement is not too old.
 	currentNodeAnn := d.cfg.FetchSelfAnnouncement()
-	timestamp := time.Unix(int64(currentNodeAnn.Timestamp), 0)
+	var timestamp time.Time
+	if ts, ok := currentNodeAnn.UpdateTimestamp().(lnwire.UnixTimestamp); ok {
+		timestamp = time.Unix(int64(ts), 0)
+	}
 	timeElapsed := now.Sub(timestamp)
 
 	// If it's been a full day since we've re-broadcasted the
@@ -2027,12 +2050,12 @@ func (d *AuthenticatedGossiper) retransmitStaleAnns(ctx context.Context,
 				"announcement: %v", err)
 		}
 
-		signedUpdates = append(signedUpdates, &newNodeAnn)
+		signedUpdates = append(signedUpdates, newNodeAnn)
 		nodeAnnStr = " and our refreshed node announcement"
 
 		// Before broadcasting the refreshed node announcement, add it
 		// to our own graph.
-		if err := d.addNode(ctx, &newNodeAnn); err != nil {
+		if err := d.addNode(ctx, newNodeAnn); err != nil {
 			log.Errorf("Unable to add refreshed node announcement "+
 				"to graph: %v", err)
 		}
@@ -2458,9 +2481,10 @@ func (d *AuthenticatedGossiper) processZombieUpdate(_ context.Context,
 // announcement fields and returns an error if they are invalid to prevent
 // forwarding invalid node announcements to our peers.
 func (d *AuthenticatedGossiper) fetchNodeAnn(ctx context.Context,
-	pubKey [33]byte) (*lnwire.NodeAnnouncement1, error) {
+	version lnwire.GossipVersion,
+	pubKey [33]byte) (lnwire.NodeAnnouncement, error) {
 
-	node, err := d.v1Graph.FetchNode(ctx, pubKey)
+	node, err := d.vGraph(version).FetchNode(ctx, pubKey)
 	if err != nil {
 		return nil, err
 	}
@@ -3790,6 +3814,93 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 	return announcements, true
 }
 
+// waitingProofFromMsg constructs the appropriate WaitingProof for the given
+// announce-signatures message. For v2 (taproot) announcements the aggregate
+// nonce is extracted from the message's optional fields and stored alongside
+// the partial signature so that the two halves can be combined later.
+func waitingProofFromMsg(nMsg *networkMsg,
+	ann lnwire.AnnounceSignatures) (*channeldb.WaitingProof, error) {
+
+	switch a := ann.(type) {
+	case *lnwire.AnnounceSignatures2:
+		var aggNonce *btcec.PublicKey
+		if nMsg.optionalMsgFields != nil {
+			aggNonce = nMsg.optionalMsgFields.aggNonce
+		}
+
+		return channeldb.NewV2WaitingProof(
+			nMsg.isRemote, a, aggNonce,
+		), nil
+
+	default:
+		return channeldb.NewWaitingProof(nMsg.isRemote, ann)
+	}
+}
+
+// assembleChannelProof combines two opposing announce-signature halves into a
+// single ChannelAuthProof. For v1 channels the existing helper is used. For
+// v2 (taproot) channels the two MuSig2 partial signatures are combined with
+// musig2.CombineSigs using the stored aggregate nonce.
+func assembleChannelProof(nMsg *networkMsg, ann lnwire.AnnounceSignatures,
+	oppProof *channeldb.WaitingProof,
+	isFirstNode bool) (*models.ChannelAuthProof, error) {
+
+	switch a := ann.(type) {
+	case *lnwire.AnnounceSignatures1:
+		oppV1, ok := oppProof.WaitingProofInner.(*channeldb.V1WaitingProof)
+		if !ok {
+			return nil, fmt.Errorf("expected *V1WaitingProof "+
+				"for opposite proof, got: %T",
+				oppProof.WaitingProofInner)
+		}
+
+		return models.ChannelAuthProofFromAnnounceSignatures(
+			a, &oppV1.AnnounceSignatures1, isFirstNode,
+		)
+
+	case *lnwire.AnnounceSignatures2:
+		opp, ok := oppProof.WaitingProofInner.(*channeldb.V2WaitingProof)
+		if !ok {
+			return nil, fmt.Errorf("expected *V2WaitingProof for "+
+				"opposite proof, got: %T",
+				oppProof.WaitingProofInner)
+		}
+
+		// The aggregate nonce is supplied by the local side. It may be
+		// stored on the opposite proof (if the local half arrived first)
+		// or on the current message's optional fields (if local arrives
+		// second).
+		var aggNonce *btcec.PublicKey
+		switch {
+		case opp.CombinedNonce != nil:
+			aggNonce = opp.CombinedNonce
+		case nMsg.optionalMsgFields != nil &&
+			nMsg.optionalMsgFields.aggNonce != nil:
+			aggNonce = nMsg.optionalMsgFields.aggNonce
+		default:
+			return nil, fmt.Errorf("no aggregate nonce available " +
+				"for v2 proof assembly")
+		}
+
+		ps1 := musig2.NewPartialSignature(
+			&a.PartialSignature.Val.Sig, aggNonce,
+		)
+		ps2 := musig2.NewPartialSignature(
+			&opp.PartialSignature.Val.Sig, aggNonce,
+		)
+
+		combined := musig2.CombineSigs(
+			aggNonce, []*musig2.PartialSignature{&ps1, &ps2},
+		)
+
+		return models.NewV2ChannelAuthProof(combined.Serialize()), nil
+
+	default:
+		return nil, fmt.Errorf("unsupported announce signatures "+
+			"type: %T", ann)
+	}
+}
+
 // handleAnnSig processes a new announcement signatures message.
 //
 //nolint:funlen
@@ -3844,12 +3955,14 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 			return nil, false
 		}
 
-			proof, err := channeldb.NewWaitingProof(nMsg.isRemote, ann)
-			if err != nil {
-				nMsg.err <- err
-				return nil, false
-			}
-			err = d.cfg.WaitingProofStore.Add(proof)
+		proof, err := waitingProofFromMsg(nMsg, ann)
+		if err != nil {
+			log.Error(err)
+			nMsg.err <- err
+			return nil, false
+		}
+
+		err = d.cfg.WaitingProofStore.Add(proof)
 		if err != nil {
 			err := fmt.Errorf("unable to store the proof for "+
 				"short_chan_id=%v: %v", shortChanID, err)
@@ -3951,11 +4064,13 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	// announcement. If we didn't receive the opposite half of the proof,
 	// then we should store this one and wait for the opposite to be
 	// received.
-	proof, err := channeldb.NewWaitingProof(nMsg.isRemote, ann)
+	proof, err := waitingProofFromMsg(nMsg, ann)
 	if err != nil {
+		log.Error(err)
 		nMsg.err <- err
 		return nil, false
 	}
+
 	oppProof, err := d.cfg.WaitingProofStore.Get(proof.OppositeKey())
 	if err != nil && err != channeldb.ErrWaitingProofNotFound {
 		err := fmt.Errorf("unable to get the opposite proof for "+
@@ -3966,7 +4081,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	}
 
 	if err == channeldb.ErrWaitingProofNotFound {
-		err = d.cfg.WaitingProofStore.Add(proof)
+		err := d.cfg.WaitingProofStore.Add(proof)
 		if err != nil {
 			err := fmt.Errorf("unable to store the proof for "+
 				"short_chan_id=%v: %v", shortChanID, err)
@@ -3981,42 +4096,9 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 		return nil, false
 	}
 
-	// We now have both halves of the channel announcement proof. Derive
-	// the combined auth proof from both announce signatures.
-	var oppAnn lnwire.AnnounceSignatures
-	switch p := oppProof.WaitingProofInner.(type) {
-	case *channeldb.V1WaitingProof:
-		oppAnn = &p.AnnounceSignatures1
-	case *channeldb.V2WaitingProof:
-		oppAnn = &p.AnnounceSignatures2
-	default:
-		nMsg.err <- fmt.Errorf("unknown waiting proof type: %T",
-			oppProof.WaitingProofInner)
-		return nil, false
-	}
-
-	dbProof, err := models.ChannelAuthProofFromAnnounceSignatures(
-		ann, oppAnn, isFirstNode,
-	)
-	if errors.Is(err, models.ErrV2AnnSigProofAssemblyPending) {
-		log.Infof("Received both v2 announce signature halves for "+
-			"short_chan_id=%v; full proof assembly not yet "+
-			"implemented", shortChanID)
-
-		// Remove the opposite half so we don't retry indefinitely
-		// while v2 proof assembly is pending implementation.
-		err = d.cfg.WaitingProofStore.Remove(proof.OppositeKey())
-		if err != nil && err != channeldb.ErrWaitingProofNotFound {
-			err := fmt.Errorf("unable to remove opposite proof for "+
-				"short_chan_id=%v: %v", shortChanID, err)
-			log.Error(err)
-			nMsg.err <- err
-			return nil, false
-		}
-
-		nMsg.err <- nil
-		return nil, false
-	}
+	// We now have both halves of the channel announcement proof. Assemble
+	// the combined auth proof.
+	dbProof, err := assembleChannelProof(nMsg, ann, oppProof, isFirstNode)
 	if err != nil {
 		nMsg.err <- err
 		return nil, false
@@ -4107,7 +4189,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	// This isn't necessary for channel updates and announcement
 	// signatures since we send those directly to our channel
 	// counterparty through the gossiper's reliable sender.
-	node1Ann, err := d.fetchNodeAnn(ctx, chanInfo.NodeKey1Bytes)
+	node1Ann, err := d.fetchNodeAnn(ctx, chanInfo.Version, chanInfo.NodeKey1Bytes)
 	if err != nil {
 		log.Debugf("Unable to fetch node announcement for %x: %v",
 			chanInfo.NodeKey1Bytes, err)
@@ -4121,7 +4203,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 		}
 	}
 
-	node2Ann, err := d.fetchNodeAnn(ctx, chanInfo.NodeKey2Bytes)
+	node2Ann, err := d.fetchNodeAnn(ctx, chanInfo.Version, chanInfo.NodeKey2Bytes)
 	if err != nil {
 		log.Debugf("Unable to fetch node announcement for %x: %v",
 			chanInfo.NodeKey2Bytes, err)
