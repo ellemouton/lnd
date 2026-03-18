@@ -307,6 +307,66 @@ func TestValidationBarrierParentJobsClear(t *testing.T) {
 	}
 }
 
+// TestValidationBarrierVersionIsolation checks that v1 and v2 gossip messages
+// for the same SCID/node key do not share dependency slots, so a v2
+// ChannelAnnouncement does not become a parent for a v1 ChannelUpdate and
+// vice-versa.
+func TestValidationBarrierVersionIsolation(t *testing.T) {
+	t.Parallel()
+
+	const timeout = time.Second
+
+	quit := make(chan struct{})
+	barrier := NewValidationBarrier(10, quit)
+
+	sharedScid := lnwire.NewShortChanIDFromInt(42)
+	sharedNodeID := nodeIDFromInt(1)
+
+	// Register a v1 ChannelAnnouncement as a parent job.
+	ann1 := &lnwire.ChannelAnnouncement1{
+		ShortChannelID: sharedScid,
+		NodeID1:        sharedNodeID,
+		NodeID2:        nodeIDFromInt(2),
+	}
+	parentID, err := barrier.InitJobDependencies(ann1)
+	require.NoError(t, err)
+
+	// A v1 ChannelUpdate for the same SCID should depend on ann1.
+	upd1 := &lnwire.ChannelUpdate1{ShortChannelID: sharedScid}
+	childID1, err := barrier.InitJobDependencies(upd1)
+	require.NoError(t, err)
+
+	// A v1 NodeAnnouncement for the same node should also depend on ann1.
+	node1 := &lnwire.NodeAnnouncement1{NodeID: sharedNodeID}
+	childID2, err := barrier.InitJobDependencies(node1)
+	require.NoError(t, err)
+
+	// Verify that the v1 child jobs are actually blocked on ann1.
+	result := make(chan error, 2)
+	go func() { result <- barrier.WaitForParents(childID1, upd1) }()
+	go func() { result <- barrier.WaitForParents(childID2, node1) }()
+
+	select {
+	case <-result:
+		t.Fatal("v1 child job should be blocked on v1 parent")
+	case <-time.After(20 * time.Millisecond):
+		// Expected: still waiting.
+	}
+
+	// Signal the v1 parent done. Both v1 children should now unblock.
+	require.NoError(t, barrier.SignalDependents(ann1, parentID))
+	barrier.CompleteJob()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-result:
+			require.NoError(t, err)
+		case <-time.After(timeout):
+			t.Fatal("timeout waiting for v1 child to unblock")
+		}
+	}
+}
+
 // nodeIDFromInt creates a node ID by writing a uint64 to the first 8 bytes.
 func nodeIDFromInt(i uint64) [33]byte {
 	var nodeID [33]byte

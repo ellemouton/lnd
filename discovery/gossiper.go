@@ -948,13 +948,15 @@ func (d *AuthenticatedGossiper) ProcessRemoteAnnouncement(ctx context.Context,
 	// To avoid inserting edges in the graph for our own channels that we
 	// have already closed, we ignore such channel announcements coming
 	// from the remote.
-	case *lnwire.ChannelAnnouncement1:
+	case lnwire.ChannelAnnouncement:
 		ownKey := d.selfKey.SerializeCompressed()
-		ownErr := fmt.Errorf("ignoring remote ChannelAnnouncement1 " +
+		ownErr := fmt.Errorf("ignoring remote ChannelAnnouncement " +
 			"for own channel")
+		node1 := m.Node1KeyBytes()
+		node2 := m.Node2KeyBytes()
 
-		if bytes.Equal(m.NodeID1[:], ownKey) ||
-			bytes.Equal(m.NodeID2[:], ownKey) {
+		if bytes.Equal(node1[:], ownKey) ||
+			bytes.Equal(node2[:], ownKey) {
 
 			log.Warn(ownErr)
 			errChan <- ownErr
@@ -1018,18 +1020,35 @@ func (d *AuthenticatedGossiper) ProcessLocalAnnouncement(msg lnwire.Message,
 	return nMsg.err
 }
 
-// channelUpdateID is a unique identifier for ChannelUpdate messages, as
-// channel updates can be identified by the (ShortChannelID, ChannelFlags)
-// tuple.
+// channelUpdateID is a unique identifier for ChannelUpdate messages.
 type channelUpdateID struct {
 	// channelID represents the set of data which is needed to
 	// retrieve all necessary data to validate the channel existence.
 	channelID lnwire.ShortChannelID
 
-	// Flags least-significant bit must be set to 0 if the creating node
-	// corresponds to the first node in the previously sent channel
-	// announcement and 1 otherwise.
-	flags lnwire.ChanUpdateChanFlags
+	// version is the gossip version this update belongs to.
+	version lnwire.GossipVersion
+
+	// isNode1 indicates whether this update was produced by node_1.
+	isNode1 bool
+}
+
+// nodeAnnouncementID is a unique identifier for NodeAnnouncement messages.
+type nodeAnnouncementID struct {
+	// nodeID is the public key of the node.
+	nodeID route.Vertex
+
+	// version is the gossip version this update belongs to.
+	version lnwire.GossipVersion
+}
+
+// newNodeAnnouncementID constructs the de-duplication key for a node
+// announcement.
+func newNodeAnnouncementID(msg lnwire.NodeAnnouncement) nodeAnnouncementID {
+	return nodeAnnouncementID{
+		nodeID:  route.Vertex(msg.NodePub()),
+		version: msg.GossipVersion(),
+	}
 }
 
 // msgWithSenders is a wrapper struct around a message, and the set of peers
@@ -1073,8 +1092,8 @@ type deDupedAnnouncements struct {
 	// channelUpdates are identified by the channel update id field.
 	channelUpdates map[channelUpdateID]msgWithSenders
 
-	// nodeAnnouncements are identified by the Vertex field.
-	nodeAnnouncements map[route.Vertex]msgWithSenders
+	// nodeAnnouncements are identified by the node pubkey and version.
+	nodeAnnouncements map[nodeAnnouncementID]msgWithSenders
 
 	sync.Mutex
 }
@@ -1096,7 +1115,7 @@ func (d *deDupedAnnouncements) reset() {
 	// appropriate key points to the corresponding lnwire.Message.
 	d.channelAnnouncements = make(map[lnwire.ShortChannelID]msgWithSenders)
 	d.channelUpdates = make(map[channelUpdateID]msgWithSenders)
-	d.nodeAnnouncements = make(map[route.Vertex]msgWithSenders)
+	d.nodeAnnouncements = make(map[nodeAnnouncementID]msgWithSenders)
 }
 
 // addMsg adds a new message to the current batch. If the message is already
@@ -1114,8 +1133,8 @@ func (d *deDupedAnnouncements) addMsg(message networkMsg) {
 	switch msg := message.msg.(type) {
 
 	// Channel announcements are identified by the short channel id field.
-	case *lnwire.ChannelAnnouncement1:
-		deDupKey := msg.ShortChannelID
+	case lnwire.ChannelAnnouncement:
+		deDupKey := msg.SCID()
 		sender := route.NewVertex(message.source)
 
 		mws, ok := d.channelAnnouncements[deDupKey]
@@ -1137,101 +1156,138 @@ func (d *deDupedAnnouncements) addMsg(message networkMsg) {
 		d.channelAnnouncements[deDupKey] = mws
 
 	// Channel updates are identified by the (short channel id,
-	// channelflags) tuple.
-	case *lnwire.ChannelUpdate1:
+	// direction) tuple for each gossip version.
+	case lnwire.ChannelUpdate:
 		sender := route.NewVertex(message.source)
 		deDupKey := channelUpdateID{
-			msg.ShortChannelID,
-			msg.ChannelFlags,
+			channelID: msg.SCID(),
+			version:   msg.GossipVersion(),
+			isNode1:   msg.IsNode1(),
 		}
 
-		oldTimestamp := uint32(0)
 		mws, ok := d.channelUpdates[deDupKey]
 		if ok {
-			// If we already have seen this message, record its
-			// timestamp.
-			update, ok := mws.msg.(*lnwire.ChannelUpdate1)
+			// If we already have seen this message,
+			// compare their ages.
+			oldUpdate, ok := mws.msg.(lnwire.ChannelUpdate)
 			if !ok {
-				log.Errorf("Expected *lnwire.ChannelUpdate1, "+
+				log.Errorf("Expected ChannelUpdate, "+
 					"got: %T", mws.msg)
 
 				return
 			}
 
-			oldTimestamp = update.Timestamp
+			cmp, err := msg.CmpAge(oldUpdate)
+			if err != nil {
+				log.Errorf("Unable to compare "+
+					"chan update ages: "+
+					"new=%T old=%T err=%v",
+					msg, oldUpdate, err)
+
+				return
+			}
+
+			// If we already had a newer message,
+			// ignore this one.
+			if cmp == lnwire.LessThan {
+				log.Debugf("Ignored outdated "+
+					"network message: "+
+					"peer=%v, msg=%s",
+					message.peer,
+					msg.MsgType())
+
+				return
+			}
+
+			// If this is newer, replace the existing
+			// message and reset the sender set.
+			if cmp == lnwire.GreaterThan {
+				mws = msgWithSenders{
+					msg:     msg,
+					isLocal: !message.isRemote,
+					senders: make(
+						map[route.Vertex]struct{},
+					),
+				}
+				mws.senders[sender] = struct{}{}
+				d.channelUpdates[deDupKey] = mws
+
+				return
+			}
 		}
 
-		// If we already had this message with a strictly newer
-		// timestamp, then we'll just discard the message we got.
-		if oldTimestamp > msg.Timestamp {
-			log.Debugf("Ignored outdated network message: "+
-				"peer=%v, msg=%s", message.peer, msg.MsgType())
-			return
-		}
-
-		// If the message we just got is newer than what we previously
-		// have seen, or this is the first time we see it, then we'll
-		// add it to our map of announcements.
-		if oldTimestamp < msg.Timestamp {
+		// If this is the first sighting or same-age
+		// duplicate, keep it and merge senders.
+		if !ok {
 			mws = msgWithSenders{
 				msg:     msg,
 				isLocal: !message.isRemote,
 				senders: make(map[route.Vertex]struct{}),
 			}
-
-			// We'll mark the sender of the message in the
-			// senders map.
-			mws.senders[sender] = struct{}{}
-
-			d.channelUpdates[deDupKey] = mws
-
-			return
 		}
 
-		// Lastly, if we had seen this exact message from before, with
-		// the same timestamp, we'll add the sender to the map of
-		// senders, such that we can skip sending this message back in
-		// the next batch.
 		mws.msg = msg
 		mws.senders[sender] = struct{}{}
 		d.channelUpdates[deDupKey] = mws
 
 	// Node announcements are identified by the Vertex field.  Use the
 	// NodeID to create the corresponding Vertex.
-	case *lnwire.NodeAnnouncement1:
+	case lnwire.NodeAnnouncement:
 		sender := route.NewVertex(message.source)
-		deDupKey := route.Vertex(msg.NodeID)
+		deDupKey := newNodeAnnouncementID(msg)
 
-		// We do the same for node announcements as we did for channel
-		// updates, as they also carry a timestamp.
-		oldTimestamp := uint32(0)
 		mws, ok := d.nodeAnnouncements[deDupKey]
 		if ok {
-			ann, _ := mws.msg.(*lnwire.NodeAnnouncement1)
-			oldTimestamp = ann.Timestamp
+			oldAnn, ok := mws.msg.(lnwire.NodeAnnouncement)
+			if !ok {
+				log.Errorf("Expected NodeAnnouncement"+
+					", got: %T", mws.msg)
+				return
+			}
+
+			cmp, err := msg.CmpAge(oldAnn)
+			if err != nil {
+				log.Errorf("Unable to compare "+
+					"node ann ages: "+
+					"new=%T old=%T err=%v",
+					msg, oldAnn, err)
+
+				return
+			}
+
+			// Ignore old messages.
+			if cmp == lnwire.LessThan {
+				return
+			}
+
+			// Replace if newer.
+			if cmp == lnwire.GreaterThan {
+				mws = msgWithSenders{
+					msg:     msg,
+					isLocal: !message.isRemote,
+					senders: make(
+						map[route.Vertex]struct{},
+					),
+				}
+
+				mws.senders[sender] = struct{}{}
+
+				d.nodeAnnouncements[deDupKey] = mws
+
+				return
+			}
 		}
 
-		// Discard the message if it's old.
-		if oldTimestamp > msg.Timestamp {
-			return
-		}
-
-		// Replace if it's newer.
-		if oldTimestamp < msg.Timestamp {
+		// Add to senders map if it's the same as we
+		// had, or create a new entry for first sighting.
+		if !ok {
 			mws = msgWithSenders{
 				msg:     msg,
 				isLocal: !message.isRemote,
 				senders: make(map[route.Vertex]struct{}),
 			}
-
-			mws.senders[sender] = struct{}{}
-
-			d.nodeAnnouncements[deDupKey] = mws
-
-			return
 		}
 
-		// Add to senders map if it's the same as we had.
 		mws.msg = msg
 		mws.senders[sender] = struct{}{}
 		d.nodeAnnouncements[deDupKey] = mws
@@ -1800,11 +1856,11 @@ func (d *AuthenticatedGossiper) isRecentlyRejectedMsg(msg lnwire.Message,
 
 	var scid uint64
 	switch m := gMsg.(type) {
-	case *lnwire.ChannelUpdate1:
-		scid = m.ShortChannelID.ToUint64()
+	case lnwire.ChannelUpdate:
+		scid = m.SCID().ToUint64()
 
-	case *lnwire.ChannelAnnouncement1:
-		scid = m.ShortChannelID.ToUint64()
+	case lnwire.ChannelAnnouncement:
+		scid = m.SCID().ToUint64()
 
 	default:
 		return false
@@ -2075,7 +2131,7 @@ func (d *AuthenticatedGossiper) processRejectedEdge(_ context.Context,
 	// First, we'll fetch the state of the channel as we know if from the
 	// database.
 	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(
-		chanAnnMsg.ShortChannelID,
+		lnwire.GossipVersion1, chanAnnMsg.ShortChannelID,
 	)
 	if err != nil {
 		return nil, err
@@ -2180,16 +2236,19 @@ func (d *AuthenticatedGossiper) fetchPKScript(chanID lnwire.ShortChannelID) (
 // addNode processes the given node announcement, and adds it to our channel
 // graph.
 func (d *AuthenticatedGossiper) addNode(ctx context.Context,
-	msg *lnwire.NodeAnnouncement1, op ...batch.SchedulerOption) error {
+	msg lnwire.NodeAnnouncement, op ...batch.SchedulerOption) error {
 
 	if err := netann.ValidateNodeAnn(msg); err != nil {
 		return fmt.Errorf("unable to validate node announcement: %w",
 			err)
 	}
 
-	return d.cfg.Graph.AddNode(
-		ctx, models.NodeFromWireAnnouncement(msg), op...,
-	)
+	dbNode, err := models.NodeFromWireAnnouncement(msg)
+	if err != nil {
+		return err
+	}
+
+	return d.cfg.Graph.AddNode(ctx, dbNode, op...)
 }
 
 // isPremature decides whether a given network message has a block height+delta
@@ -2271,7 +2330,7 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(ctx context.Context,
 	// A new node announcement has arrived which either presents new
 	// information about a node in one of the channels we know about, or a
 	// updating previously advertised information.
-	case *lnwire.NodeAnnouncement1:
+	case lnwire.NodeAnnouncement:
 		return d.handleNodeAnnouncement(ctx, nMsg, msg, schedulerOp)
 
 	// A new channel announcement has arrived, this indicates the
@@ -2284,8 +2343,15 @@ func (d *AuthenticatedGossiper) processNetworkAnnouncement(ctx context.Context,
 	// A new authenticated channel edge update has arrived. This indicates
 	// that the directional information for an already known channel has
 	// been updated.
-	case *lnwire.ChannelUpdate1:
-		return d.handleChanUpdate(ctx, nMsg, msg, schedulerOp)
+	case lnwire.ChannelUpdate:
+		chanUpdate, ok := msg.(*lnwire.ChannelUpdate1)
+		if !ok {
+			err := fmt.Errorf("unsupported channel update: %T", msg)
+			nMsg.err <- err
+			return nil, false
+		}
+
+		return d.handleChanUpdate(ctx, nMsg, chanUpdate, schedulerOp)
 
 	// A new signature announcement has been received. This indicates
 	// willingness of nodes involved in the funding of a channel to
@@ -2339,7 +2405,7 @@ func (d *AuthenticatedGossiper) processZombieUpdate(_ context.Context,
 	// With the signature valid, we'll proceed to mark the
 	// edge as live and wait for the channel announcement to
 	// come through again.
-	err = d.cfg.Graph.MarkEdgeLive(lnwire.GossipVersion1, scid)
+	err = d.cfg.Graph.MarkEdgeLive(msg.GossipVersion(), scid)
 	switch {
 	case errors.Is(err, graphdb.ErrZombieEdgeNotFound):
 		log.Errorf("edge with chan_id=%v was not found in the "+
@@ -2389,6 +2455,7 @@ func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
 	switch msg := msg.(type) {
 	case *lnwire.AnnounceSignatures1:
 		chanInfo, _, _, err := d.cfg.Graph.GetChannelByID(
+			msg.GossipVersion(),
 			msg.ShortChannelID,
 		)
 
@@ -2409,8 +2476,15 @@ func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
 		// can safely delete the local proof from the database.
 		return chanInfo.AuthProof != nil
 
-	case *lnwire.ChannelUpdate1:
-		_, p1, p2, err := d.cfg.Graph.GetChannelByID(msg.ShortChannelID)
+	case lnwire.ChannelUpdate:
+		msg1, ok := msg.(*lnwire.ChannelUpdate1)
+		if !ok {
+			return false
+		}
+
+		_, p1, p2, err := d.cfg.Graph.GetChannelByID(
+			msg1.GossipVersion(), msg1.ShortChannelID,
+		)
 
 		// If the channel cannot be found, it is most likely a leftover
 		// message for a channel that was closed, so we can consider it
@@ -2420,7 +2494,7 @@ func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
 		}
 		if err != nil {
 			log.Debugf("Unable to retrieve channel=%v from graph: "+
-				"%v", msg.ShortChannelID, err)
+				"%v", msg1.ShortChannelID, err)
 			return false
 		}
 
@@ -2428,7 +2502,7 @@ func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
 		// currently have stored within our graph to check if this
 		// message is stale by comparing its timestamp.
 		var p *models.ChannelEdgePolicy
-		if msg.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
+		if msg1.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
 			p = p1
 		} else {
 			p = p2
@@ -2440,7 +2514,7 @@ func (d *AuthenticatedGossiper) isMsgStale(_ context.Context,
 			return false
 		}
 
-		timestamp := time.Unix(int64(msg.Timestamp), 0)
+		timestamp := time.Unix(int64(msg1.Timestamp), 0)
 		return p.LastUpdate.After(timestamp)
 
 	default:
@@ -2565,22 +2639,23 @@ func (d *AuthenticatedGossiper) latestHeight() uint32 {
 
 // handleNodeAnnouncement processes a new node announcement.
 func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
-	nMsg *networkMsg, nodeAnn *lnwire.NodeAnnouncement1,
+	nMsg *networkMsg, nodeAnn lnwire.NodeAnnouncement,
 	ops []batch.SchedulerOption) ([]networkMsg, bool) {
 
-	timestamp := time.Unix(int64(nodeAnn.Timestamp), 0)
+	nodePub := nodeAnn.NodePub()
 
-	log.Debugf("Processing NodeAnnouncement1: peer=%v, timestamp=%v, "+
-		"node=%x, source=%x", nMsg.peer, timestamp, nodeAnn.NodeID,
-		nMsg.source.SerializeCompressed())
+	log.Debugf("Processing NodeAnnouncement: peer=%v, "+
+		"%v, node=%x, source=%x", nMsg.peer,
+		nodeAnn.TimestampDesc(), nodePub,
+		nMsg.source.SerializeCompressed(),
+	)
 
 	// Although not explicitly required by BOLT 7 for node announcements
-	// (unlike channel updates), we still enforce non-zero timestamps as a
-	// sanity check. A timestamp of zero is likely indicative of a bug or
-	// uninitialized message.
-	if nodeAnn.Timestamp == 0 {
+	// (unlike channel updates), we still enforce a non-zero update ordering
+	// field as a sanity check.
+	if nodeAnn.HasZeroUpdateTime() {
 		err := fmt.Errorf("rejecting node announcement with zero "+
-			"timestamp for node %x", nodeAnn.NodeID)
+			"update time for node %x", nodePub)
 
 		log.Warnf("Rejecting node announcement from peer=%v: %v",
 			nMsg.peer, err)
@@ -2590,17 +2665,21 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
 		return nil, false
 	}
 
-	// We'll quickly ask the router if it already has a newer update for
-	// this node so we can skip validating signatures if not required.
-	if d.cfg.Graph.IsStaleNode(ctx, nodeAnn.NodeID, timestamp) {
-		log.Debugf("Skipped processing stale node: %x", nodeAnn.NodeID)
+	// We'll quickly ask the router if it already has a newer
+	// update for this node so we can skip validating signatures
+	// if not required.
+	if d.cfg.Graph.IsStaleNode(
+		ctx, nodeAnn.GossipVersion(), nodePub,
+		nodeAnn.UpdateTimestamp(),
+	) {
+
+		log.Debugf("Skipped processing stale node: %x", nodePub)
 		nMsg.err <- nil
 		return nil, true
 	}
 
 	if err := d.addNode(ctx, nodeAnn, ops...); err != nil {
-		log.Debugf("Adding node: %x got error: %v", nodeAnn.NodeID,
-			err)
+		log.Debugf("Adding node: %x got error: %v", nodePub, err)
 
 		if !graph.IsError(
 			err,
@@ -2618,10 +2697,12 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
 	// In order to ensure we don't leak unadvertised nodes, we'll make a
 	// quick check to ensure this node intends to publicly advertise itself
 	// to the network.
-	isPublic, err := d.cfg.Graph.IsPublicNode(nodeAnn.NodeID)
+	isPublic, err := d.cfg.Graph.IsPublicNode(
+		nodeAnn.GossipVersion(), nodePub,
+	)
 	if err != nil {
 		log.Errorf("Unable to determine if node %x is advertised: %v",
-			nodeAnn.NodeID, err)
+			nodePub, err)
 		nMsg.err <- err
 		return nil, false
 	}
@@ -2639,15 +2720,17 @@ func (d *AuthenticatedGossiper) handleNodeAnnouncement(ctx context.Context,
 		})
 	} else {
 		log.Tracef("Skipping broadcasting node announcement for %x "+
-			"due to being unadvertised", nodeAnn.NodeID)
+			"due to being unadvertised", nodePub)
 	}
 
 	nMsg.err <- nil
 	// TODO(roasbeef): get rid of the above
 
-	log.Debugf("Processed NodeAnnouncement1: peer=%v, timestamp=%v, "+
-		"node=%x, source=%x", nMsg.peer, timestamp, nodeAnn.NodeID,
-		nMsg.source.SerializeCompressed())
+	log.Debugf("Processed NodeAnnouncement: peer=%v, "+
+		"%v, node=%x, source=%x", nMsg.peer,
+		nodeAnn.TimestampDesc(), nodePub,
+		nMsg.source.SerializeCompressed(),
+	)
 
 	return announcements, true
 }
@@ -2716,7 +2799,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 
 	// At this point, we'll now ask the router if this is a zombie/known
 	// edge. If so we can skip all the processing below.
-	if d.cfg.Graph.IsKnownEdge(scid) {
+	if d.cfg.Graph.IsKnownEdge(ann.GossipVersion(), scid) {
 		nMsg.err <- nil
 		return nil, true
 	}
@@ -3057,7 +3140,7 @@ func (d *AuthenticatedGossiper) handleChanAnnouncement(ctx context.Context,
 			// Reprocess the message, making sure we return an
 			// error to the original caller in case the gossiper
 			// shuts down.
-			case *lnwire.ChannelUpdate1:
+			case lnwire.ChannelUpdate:
 				log.Debugf("Reprocessing ChannelUpdate for "+
 					"shortChanID=%v", scid.ToUint64())
 
@@ -3193,10 +3276,15 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 	d.channelMtx.Lock(graphScid.ToUint64())
 	defer d.channelMtx.Unlock(graphScid.ToUint64())
 
-	if d.cfg.Graph.IsStaleEdgePolicy(
-		graphScid, timestamp, upd.ChannelFlags,
-	) {
+	stalePolicy, err := models.ChanEdgePolicyFromWire(
+		graphScid.ToUint64(), upd,
+	)
+	if err != nil {
+		nMsg.err <- err
+		return nil, false
+	}
 
+	if d.cfg.Graph.IsStaleEdgePolicy(stalePolicy) {
 		log.Debugf("Ignored stale edge policy for short_chan_id(%v): "+
 			"peer=%v, msg=%s, is_remote=%v", shortChanID,
 			nMsg.peer, nMsg.msg.MsgType(), nMsg.isRemote,
@@ -3238,7 +3326,9 @@ func (d *AuthenticatedGossiper) handleChanUpdate(ctx context.Context,
 	// Get the node pub key as far since we don't have it in the channel
 	// update announcement message. We'll need this to properly verify the
 	// message's signature.
-	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(graphScid)
+	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(
+		upd.GossipVersion(), graphScid,
+	)
 	switch {
 	// No error, break.
 	case err == nil:
@@ -3582,6 +3672,7 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	defer d.channelMtx.Unlock(ann.ShortChannelID.ToUint64())
 
 	chanInfo, e1, e2, err := d.cfg.Graph.GetChannelByID(
+		ann.GossipVersion(),
 		ann.ShortChannelID,
 	)
 	if err != nil {
@@ -3950,7 +4041,9 @@ func (d *AuthenticatedGossiper) validateFundingTransaction(_ context.Context,
 			// we'll mark the edge itself as a zombie so we don't
 			// continue to request it. We use the "zero key" for
 			// both node pubkeys so this edge can't be resurrected.
-			zErr := d.cfg.Graph.MarkZombieEdge(scid.ToUint64())
+			zErr := d.cfg.Graph.MarkZombieEdge(
+				ann.GossipVersion(), scid.ToUint64(),
+			)
 			if zErr != nil {
 				return wire.OutPoint{}, 0, nil, zErr
 			}
@@ -3988,7 +4081,9 @@ func (d *AuthenticatedGossiper) validateFundingTransaction(_ context.Context,
 	if err != nil {
 		// Mark the edge as a zombie so we won't try to re-validate it
 		// on start up.
-		zErr := d.cfg.Graph.MarkZombieEdge(scid.ToUint64())
+		zErr := d.cfg.Graph.MarkZombieEdge(
+			ann.GossipVersion(), scid.ToUint64(),
+		)
 		if zErr != nil {
 			return wire.OutPoint{}, 0, nil, zErr
 		}
@@ -4005,7 +4100,9 @@ func (d *AuthenticatedGossiper) validateFundingTransaction(_ context.Context,
 	)
 	if err != nil {
 		if errors.Is(err, btcwallet.ErrOutputSpent) {
-			zErr := d.cfg.Graph.MarkZombieEdge(scid.ToUint64())
+			zErr := d.cfg.Graph.MarkZombieEdge(
+				ann.GossipVersion(), scid.ToUint64(),
+			)
 			if zErr != nil {
 				return wire.OutPoint{}, 0, nil, zErr
 			}
