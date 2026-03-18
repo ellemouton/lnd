@@ -7,10 +7,14 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/netann"
+	"github.com/lightningnetwork/lnd/tlv"
+	"github.com/stretchr/testify/require"
 )
 
 type mockSigner struct {
@@ -27,7 +31,20 @@ func (m *mockSigner) SignMessage(_ keychain.KeyLocator,
 	return nil, nil
 }
 
+func (m *mockSigner) SignMessageCompact(_ keychain.KeyLocator,
+	_ []byte, _ bool) ([]byte, error) {
+
+	return nil, m.err
+}
+
+func (m *mockSigner) SignMessageSchnorr(_ keychain.KeyLocator,
+	_ []byte, _ bool, _, _ []byte) (*schnorr.Signature, error) {
+
+	return nil, m.err
+}
+
 var _ lnwallet.MessageSigner = (*mockSigner)(nil)
+var _ keychain.MessageSignerRing = (*mockSigner)(nil)
 
 var (
 	privKey, _    = btcec.NewPrivateKey()
@@ -43,7 +60,7 @@ type updateDisableTest struct {
 	startEnabled bool
 	disable      bool
 	startTime    time.Time
-	signer       lnwallet.MessageSigner
+	signer       keychain.MessageSignerRing
 	expErr       error
 }
 
@@ -131,7 +148,7 @@ func TestUpdateDisableFlag(t *testing.T) {
 			err := netann.SignChannelUpdate(
 				tc.signer, testKeyLoc, newUpdate,
 				netann.ChanUpdSetDisable(tc.disable),
-				netann.ChanUpdSetTimestamp,
+				netann.ChanUpdSetTimestamp(0),
 			)
 
 			var fail bool
@@ -190,4 +207,73 @@ func TestUpdateDisableFlag(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSignChannelUpdateV2 verifies that SignChannelUpdate correctly produces a
+// Schnorr signature for a ChannelUpdate2 and that the signature validates.
+func TestSignChannelUpdateV2(t *testing.T) {
+	t.Parallel()
+
+	signer := netann.NewNodeSigner(privKeySigner)
+
+	update := &lnwire.ChannelUpdate2{
+		ChainHash: tlv.NewPrimitiveRecord[tlv.TlvType0](
+			*chaincfg.MainNetParams.GenesisHash,
+		),
+		ShortChannelID: tlv.NewRecordT[tlv.TlvType2](
+			lnwire.ShortChannelID{BlockHeight: 100},
+		),
+		BlockHeight: tlv.NewPrimitiveRecord[tlv.TlvType4](uint32(50)),
+		CLTVExpiryDelta: tlv.NewPrimitiveRecord[tlv.TlvType10](
+			uint16(144),
+		),
+		ExtraSignedFields: make(lnwire.ExtraSignedFields),
+	}
+
+	err := netann.SignChannelUpdate(
+		signer, testKeyLoc, update,
+		netann.ChanUpdSetDisable(true),
+		netann.ChanUpdSetTimestamp(200),
+	)
+	require.NoError(t, err)
+
+	// The disabled flag should be set.
+	require.True(t, update.IsDisabled())
+
+	// The block height should have been updated (monotonically
+	// increasing from 50, so should be 200 since that's higher).
+	require.Equal(t, uint32(200), update.BlockHeight.Val)
+
+	// Verify the Schnorr signature validates against our public key.
+	err = netann.VerifyChannelUpdateSignature(update, pubKey)
+	require.NoError(t, err)
+}
+
+// TestChanUpdSetTimestampV2 verifies that ChanUpdSetTimestamp correctly sets
+// the block height on a v2 channel update with monotonic increase behavior.
+func TestChanUpdSetTimestampV2(t *testing.T) {
+	t.Parallel()
+
+	signer := netann.NewNodeSigner(privKeySigner)
+
+	update := &lnwire.ChannelUpdate2{
+		BlockHeight: tlv.NewPrimitiveRecord[tlv.TlvType4](uint32(500)),
+		ExtraSignedFields: make(lnwire.ExtraSignedFields),
+	}
+
+	// Setting a height lower than current should bump to current+1.
+	err := netann.SignChannelUpdate(
+		signer, testKeyLoc, update,
+		netann.ChanUpdSetTimestamp(100),
+	)
+	require.NoError(t, err)
+	require.Equal(t, uint32(501), update.BlockHeight.Val)
+
+	// Setting a height higher than current should use the new height.
+	err = netann.SignChannelUpdate(
+		signer, testKeyLoc, update,
+		netann.ChanUpdSetTimestamp(1000),
+	)
+	require.NoError(t, err)
+	require.Equal(t, uint32(1000), update.BlockHeight.Val)
 }

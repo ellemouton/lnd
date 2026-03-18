@@ -1777,7 +1777,7 @@ func (r *rpcServer) SignMessage(_ context.Context,
 	}
 
 	in.Msg = append(signedMsgPrefix, in.Msg...)
-	sigBytes, err := r.server.nodeSigner.SignMessageCompact(
+	sigBytes, err := r.server.nodeSigner.SignMessageCompactNoKeyLoc(
 		in.Msg, !in.SingleHash,
 	)
 	if err != nil {
@@ -6987,8 +6987,7 @@ func marshalDBEdge(edgeInfo *models.ChannelEdgeInfo,
 
 	// Make sure the policies match the node they belong to. c1 should point
 	// to the policy for NodeKey1, and c2 for NodeKey2.
-	if c1 != nil && c1.ChannelFlags&lnwire.ChanUpdateDirection == 1 ||
-		c2 != nil && c2.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
+	if c1 != nil && !c1.IsNode1() || c2 != nil && c2.IsNode1() {
 
 		c2, c1 = c1, c2
 	}
@@ -7051,7 +7050,7 @@ func marshalPolicyExtraOpaqueData(data []byte) map[uint64][]byte {
 func marshalDBRoutingPolicy(
 	policy *models.ChannelEdgePolicy) *lnrpc.RoutingPolicy {
 
-	disabled := policy.ChannelFlags&lnwire.ChanUpdateDisabled != 0
+	disabled := policy.IsDisabled()
 
 	customRecords := marshalPolicyExtraOpaqueData(policy.ExtraOpaqueData)
 	inboundFee := policy.InboundFee.UnwrapOr(lnwire.Fee{})

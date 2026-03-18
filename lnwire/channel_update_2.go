@@ -303,6 +303,27 @@ func (c *ChannelUpdate2) ForwardingPolicy() *ForwardingPolicy {
 	}
 }
 
+// HasZeroUpdateTime returns true if the update-ordering field is zero.
+//
+// NOTE: this is part of the ChannelUpdate interface.
+func (c *ChannelUpdate2) HasZeroUpdateTime() bool {
+	return c.UpdateTimestamp().IsZero()
+}
+
+// UpdateTimestamp returns the update-ordering field.
+//
+// NOTE: this is part of the ChannelUpdate interface.
+func (c *ChannelUpdate2) UpdateTimestamp() Timestamp {
+	return BlockHeightTimestamp(c.BlockHeight.Val)
+}
+
+// TimeDesc returns a human-readable description of the update-ordering field.
+//
+// NOTE: this is part of the ChannelUpdate interface.
+func (c *ChannelUpdate2) TimeDesc() string {
+	return fmt.Sprintf("block_height=%d", c.BlockHeight.Val)
+}
+
 // CmpAge can be used to determine if the update is older or newer than the
 // passed update. It returns 1 if this update is newer, -1 if it is older, and
 // 0 if they are the same age.
@@ -336,6 +357,16 @@ func (c *ChannelUpdate2) SetDisabledFlag(disabled bool) {
 		c.DisabledFlags.Val &^= ChanUpdateDisableIncoming
 		c.DisabledFlags.Val &^= ChanUpdateDisableOutgoing
 	}
+}
+
+// SetSig sets the signature on the update from raw Schnorr signature bytes.
+//
+// NOTE: this is part of the ChannelUpdate interface.
+func (c *ChannelUpdate2) SetSig(b []byte) error {
+	var err error
+	c.Signature.Val, err = NewSigFromSchnorrRawSignature(b)
+
+	return err
 }
 
 // SetSCID can be used to overwrite the SCID of the update.

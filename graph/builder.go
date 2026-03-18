@@ -35,6 +35,12 @@ const (
 	// block-height-based expiry for v2 gossip channels.
 	avgBitcoinBlockTime = 10 * time.Minute
 
+	// DefaultChannelPruneExpiryBlocks is the block-height equivalent of
+	// DefaultChannelPruneExpiry using a 10-minute block cadence.
+	DefaultChannelPruneExpiryBlocks = uint32(
+		DefaultChannelPruneExpiry / (10 * time.Minute),
+	)
+
 	// DefaultFirstTimePruneDelay is the time we'll wait after startup
 	// before attempting to prune the graph for zombie channels. We don't
 	// do it immediately after startup to allow lnd to start up without
@@ -1058,11 +1064,11 @@ func (b *Builder) MarkZombieEdge(v lnwire.GossipVersion, chanID uint64) error {
 
 // ApplyChannelUpdate validates a channel update and if valid, applies it to the
 // database. It returns a bool indicating whether the updates were successful.
-func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
+func (b *Builder) ApplyChannelUpdate(msg lnwire.ChannelUpdate) bool {
 	ctx := context.TODO()
 
-	ch, _, _, err := b.GetChannelByID(
-		lnwire.GossipVersion1, msg.ShortChannelID,
+	ch, _, _, err := b.v1Graph.FetchChannelEdgesByID(
+		ctx, msg.SCID().ToUint64(),
 	)
 	if err != nil {
 		log.Errorf("Unable to retrieve channel by id: %v", err)
@@ -1071,18 +1077,16 @@ func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 
 	var pubKey *btcec.PublicKey
 
-	switch msg.ChannelFlags & lnwire.ChanUpdateDirection {
-	case 0:
+	if msg.IsNode1() {
 		pubKey, _ = ch.NodeKey1()
-
-	case 1:
+	} else {
 		pubKey, _ = ch.NodeKey2()
 	}
 
 	// Exit early if the pubkey cannot be decided.
 	if pubKey == nil {
-		log.Errorf("Unable to decide pubkey with ChannelFlags=%v",
-			msg.ChannelFlags)
+		log.Errorf("Unable to decide pubkey for channel update: %v",
+			msg.SCID())
 		return false
 	}
 
@@ -1093,7 +1097,7 @@ func (b *Builder) ApplyChannelUpdate(msg *lnwire.ChannelUpdate1) bool {
 	}
 
 	update, err := models.ChanEdgePolicyFromWire(
-		msg.ShortChannelID.ToUint64(), msg,
+		msg.SCID().ToUint64(), msg,
 	)
 	if err != nil {
 		log.Errorf("Unable to parse channel update: %v", err)
@@ -1332,8 +1336,7 @@ func (b *Builder) updateEdge(ctx context.Context,
 		// the direction of the edge they control. Therefore, we first
 		// check if we already have the most up-to-date information for
 		// that edge.
-		switch policy.ChannelFlags & lnwire.ChanUpdateDirection {
-		case 0:
+		if policy.IsNode1() {
 			if !edge1Timestamp.Before(policy.LastUpdate) {
 				return NewErrf(ErrOutdated, "Ignoring "+
 					"outdated update (flags=%v|%v) "+
@@ -1342,8 +1345,7 @@ func (b *Builder) updateEdge(ctx context.Context,
 					policy.ChannelFlags,
 					policy.ChannelID)
 			}
-
-		case 1:
+		} else {
 			if !edge2Timestamp.Before(policy.LastUpdate) {
 				return NewErrf(ErrOutdated, "Ignoring "+
 					"outdated update (flags=%v|%v) "+
@@ -1523,7 +1525,6 @@ func (b *Builder) AddProof(chanID lnwire.ShortChannelID,
 
 	return b.cfg.Graph.AddEdgeProof(context.TODO(), chanID, proof)
 }
-
 // IsStaleNode returns true if the graph source has a node announcement for the
 // target node/version that is at least as fresh as the passed announcement.
 //
@@ -1589,7 +1590,6 @@ func (b *Builder) IsZombieEdge(v lnwire.GossipVersion,
 
 	return isZombie, err
 }
-
 // IsStaleEdgePolicy returns true if the graph source has a channel edge for
 // the passed policy that has a more recent announcement.
 //
@@ -1651,16 +1651,4 @@ func (b *Builder) IsStaleEdgePolicy(policy *models.ChannelEdgePolicy) bool {
 	}
 
 	return false
-}
-
-// MarkEdgeLive clears an edge from our zombie index for the given gossip
-// version, deeming it as live.
-//
-// NOTE: This method is part of the ChannelGraphSource interface.
-func (b *Builder) MarkEdgeLive(v lnwire.GossipVersion,
-	chanID lnwire.ShortChannelID) error {
-
-	return b.cfg.Graph.MarkEdgeLive(
-		context.TODO(), v, chanID.ToUint64(),
-	)
 }

@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -864,6 +863,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		ApplyChannelUpdate:       s.applyChannelUpdate,
 		DB:                       s.chanStateDB,
 		Graph:                    dbs.GraphDB,
+		BestBlockView:            s.cc.BestBlockTracker,
 	}
 
 	chanStatusMgr, err := netann.NewChanStatusManager(chanStatusMgrCfg)
@@ -1082,6 +1082,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 
 	s.authGossiper = discovery.New(discovery.Config{
 		Graph:                 s.graphBuilder,
+		GraphDB:               s.graphDB,
 		ChainIO:               s.cc.ChainIO,
 		Notifier:              s.cc.ChainNotifier,
 		ChainParams:           s.cfg.ActiveNetParams.Params,
@@ -1915,18 +1916,11 @@ func (s *server) registerBlockConsumers() {
 	s.blockbeatDispatcher.RegisterQueue(consumers)
 }
 
-// signAliasUpdate takes a ChannelUpdate and returns the signature. This is
+// signAliasUpdate re-signs an aliased gossip channel update in-place. This is
 // used for option_scid_alias channels where the ChannelUpdate to be sent back
 // may differ from what is on disk.
-func (s *server) signAliasUpdate(u *lnwire.ChannelUpdate1) (*ecdsa.Signature,
-	error) {
-
-	data, err := u.DataToSign()
-	if err != nil {
-		return nil, err
-	}
-
-	return s.cc.MsgSigner.SignMessage(s.identityKeyLoc, data, true)
+func (s *server) signAliasUpdate(u lnwire.ChannelUpdate) error {
+	return netann.SignChannelUpdate(s.cc.KeyRing, s.identityKeyLoc, u)
 }
 
 // createLivenessMonitor creates a set of health checks using our configured
@@ -5288,13 +5282,13 @@ func (s *server) fetchNodeAdvertisedAddrs(ctx context.Context,
 // fetchLastChanUpdate returns a function which is able to retrieve our latest
 // channel update for a target channel.
 func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
-	*lnwire.ChannelUpdate1, error) {
+	lnwire.ChannelUpdate, error) {
 
-	ourPubKey := s.identityECDH.PubKey().SerializeCompressed()
-	return func(cid lnwire.ShortChannelID) (*lnwire.ChannelUpdate1, error) {
-		info, edge1, edge2, err := s.graphBuilder.GetChannelByID(
-			lnwire.GossipVersion1, cid,
-		)
+		ourPubKey := s.identityECDH.PubKey().SerializeCompressed()
+		return func(cid lnwire.ShortChannelID) (lnwire.ChannelUpdate, error) {
+			info, edge1, edge2, err := s.graphDB.FetchChannelEdgesByID(
+				context.TODO(), cid.ToUint64(),
+			)
 		if err != nil {
 			return nil, err
 		}
@@ -5308,7 +5302,7 @@ func (s *server) fetchLastChanUpdate() func(lnwire.ShortChannelID) (
 // applyChannelUpdate applies the channel update to the different sub-systems of
 // the server. The useAlias boolean denotes whether or not to send an alias in
 // place of the real SCID.
-func (s *server) applyChannelUpdate(update *lnwire.ChannelUpdate1,
+func (s *server) applyChannelUpdate(update lnwire.ChannelUpdate,
 	op *wire.OutPoint, useAlias bool) error {
 
 	var (
