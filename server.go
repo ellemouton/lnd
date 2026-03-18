@@ -1090,20 +1090,12 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		ChanSeries:            chanSeries,
 		NotifyWhenOnline:      s.NotifyWhenOnline,
 		NotifyWhenOffline:     s.NotifyWhenOffline,
-			FetchSelfAnnouncement: func() lnwire.NodeAnnouncement {
-				ann := s.getNodeAnnouncement()
-				return &ann
-			},
-			UpdateSelfAnnouncement: func() (lnwire.NodeAnnouncement,
-				error) {
+		FetchSelfAnnouncement: s.getNodeAnnouncement,
+		UpdateSelfAnnouncement: func() (lnwire.NodeAnnouncement,
+			error) {
 
-				ann, err := s.genNodeAnnouncement(nil)
-				if err != nil {
-					return nil, err
-				}
-
-				return &ann, nil
-			},
+			return s.genNodeAnnouncement(nil)
+		},
 		ProofMatureDelta:        cfg.Gossip.AnnouncementConf,
 		TrickleDelay:            time.Millisecond * time.Duration(cfg.TrickleDelay),
 		RetransmitTicker:        ticker.New(time.Minute * 30),
@@ -1511,17 +1503,12 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		Notifier:     cc.ChainNotifier,
 		ChannelDB:    s.chanStateDB,
 		FeeEstimator: cc.FeeEstimator,
-		SignMessage:  cc.MsgSigner.SignMessage,
-			CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement,
-				error) {
+		SignMessage: cc.MsgSigner.SignMessage,
+		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement,
+			error) {
 
-				ann, err := s.genNodeAnnouncement(nil)
-				if err != nil {
-					return nil, err
-				}
-
-				return &ann, nil
-			},
+			return s.genNodeAnnouncement(nil)
+		},
 		SendAnnouncement:     s.authGossiper.ProcessLocalAnnouncement,
 		NotifyWhenOnline:     s.NotifyWhenOnline,
 		TempChanIDSeed:       chanIDSeed,
@@ -1825,12 +1812,12 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 			},
 			AdvertisedIPs: advertisedIPs,
 			AnnounceNewIPs: netann.IPAnnouncer(
-				func(modifier ...netann.NodeAnnModifier) (
-					lnwire.NodeAnnouncement1, error) {
-
-					return s.genNodeAnnouncement(
+				func(modifier ...netann.NodeAnnModifier) error {
+					_, err := s.genNodeAnnouncement(
 						nil, modifier...,
 					)
+
+					return err
 				}),
 		})
 	}
@@ -2943,7 +2930,7 @@ out:
 			// the previous IP is no longer valid.
 			currentNodeAnn := s.getNodeAnnouncement()
 
-			for _, addr := range currentNodeAnn.Addresses {
+			for _, addr := range currentNodeAnn.NodeAddrs() {
 				host, _, err := net.SplitHostPort(addr.String())
 				if err != nil {
 					srvrLog.Debugf("Unable to determine "+
@@ -2972,7 +2959,7 @@ out:
 				continue
 			}
 
-			err = s.BroadcastMessage(nil, &newNodeAnn)
+			err = s.BroadcastMessage(nil, newNodeAnn)
 			if err != nil {
 				srvrLog.Debugf("Unable to broadcast new node "+
 					"announcement to peers: %v", err)
@@ -3357,9 +3344,18 @@ func (s *server) createNewHiddenService(ctx context.Context) error {
 	// Now that the onion service has been created, we'll add the onion
 	// address it can be reached at to our list of advertised addresses.
 	newNodeAnn, err := s.genNodeAnnouncement(
-		nil, func(currentAnn *lnwire.NodeAnnouncement1) {
-			currentAnn.Addresses = append(currentAnn.Addresses, addr)
-		},
+		nil, netann.NodeAnnModifierFunc(
+			func(ann lnwire.NodeAnnouncement) error {
+				v1, ok := ann.(*lnwire.NodeAnnouncement1)
+				if !ok {
+					return fmt.Errorf("unsupported node ann type: %T",
+						ann)
+				}
+
+				v1.Addresses = append(v1.Addresses, addr)
+				return nil
+			},
+		),
 	)
 	if err != nil {
 		return fmt.Errorf("unable to generate new node "+
@@ -3368,14 +3364,20 @@ func (s *server) createNewHiddenService(ctx context.Context) error {
 
 	// Finally, we'll update the on-disk version of our announcement so it
 	// will eventually propagate to nodes in the network.
+	ann1, ok := newNodeAnn.(*lnwire.NodeAnnouncement1)
+	if !ok {
+		return fmt.Errorf("unexpected node announcement type: %T",
+			newNodeAnn)
+	}
+
 	selfNode := models.NewV1Node(
 		route.NewVertex(s.identityECDH.PubKey()), &models.NodeV1Fields{
-			Addresses:    newNodeAnn.Addresses,
-			Features:     newNodeAnn.Features,
-			AuthSigBytes: newNodeAnn.Signature.ToSignatureBytes(),
-			Color:        newNodeAnn.RGBColor,
-			Alias:        newNodeAnn.Alias.String(),
-			LastUpdate:   time.Unix(int64(newNodeAnn.Timestamp), 0),
+			Addresses:    ann1.Addresses,
+			Features:     ann1.Features,
+			AuthSigBytes: ann1.Signature.ToSignatureBytes(),
+			Color:        ann1.RGBColor,
+			Alias:        ann1.Alias.String(),
+			LastUpdate:   time.Unix(int64(ann1.Timestamp), 0),
 		},
 	)
 
@@ -3407,18 +3409,19 @@ func (s *server) findChannel(node *btcec.PublicKey, chanID lnwire.ChannelID) (
 }
 
 // getNodeAnnouncement fetches the current, fully signed node announcement.
-func (s *server) getNodeAnnouncement() lnwire.NodeAnnouncement1 {
+func (s *server) getNodeAnnouncement() lnwire.NodeAnnouncement {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return *s.currentNodeAnn
+	ann := *s.currentNodeAnn
+	return &ann
 }
 
 // genNodeAnnouncement generates and returns the current fully signed node
 // announcement. The time stamp of the announcement will be updated in order
 // to ensure it propagates through the network.
 func (s *server) genNodeAnnouncement(features *lnwire.RawFeatureVector,
-	modifiers ...netann.NodeAnnModifier) (lnwire.NodeAnnouncement1, error) {
+	modifiers ...netann.NodeAnnModifier) (lnwire.NodeAnnouncement, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -3436,7 +3439,7 @@ func (s *server) genNodeAnnouncement(features *lnwire.RawFeatureVector,
 		}
 		err := s.featureMgr.UpdateFeatureSets(proposedFeatures)
 		if err != nil {
-			return lnwire.NodeAnnouncement1{}, err
+			return nil, err
 		}
 
 		// If we could successfully update our feature manager, add
@@ -3449,37 +3452,46 @@ func (s *server) genNodeAnnouncement(features *lnwire.RawFeatureVector,
 
 	// Always update the timestamp when refreshing to ensure the update
 	// propagates.
-	modifiers = append(modifiers, netann.NodeAnnSetTimestamp)
+	modifiers = append(modifiers, netann.NodeAnnSetTimestamp(time.Now()))
+	modifiers = append(modifiers, netann.NodeAnnModifierFunc(
+		func(ann lnwire.NodeAnnouncement) error {
+			v1, ok := ann.(*lnwire.NodeAnnouncement1)
+			if !ok {
+				return fmt.Errorf("unexpected node announcement type: %T",
+					ann)
+			}
 
-	// Apply the requested changes to the node announcement.
-	for _, modifier := range modifiers {
-		modifier(&newNodeAnn)
-	}
+			// The modifiers may have added duplicate addresses, so we
+			// need to de-duplicate them here before signing.
+			uniqueAddrs := map[string]struct{}{}
+			dedupedAddrs := make([]net.Addr, 0, len(v1.Addresses))
+			for _, addr := range v1.Addresses {
+				if _, ok := uniqueAddrs[addr.String()]; ok {
+					continue
+				}
 
-	// The modifiers may have added duplicate addresses, so we need to
-	// de-duplicate them here.
-	uniqueAddrs := map[string]struct{}{}
-	dedupedAddrs := make([]net.Addr, 0)
-	for _, addr := range newNodeAnn.Addresses {
-		if _, ok := uniqueAddrs[addr.String()]; !ok {
-			uniqueAddrs[addr.String()] = struct{}{}
-			dedupedAddrs = append(dedupedAddrs, addr)
-		}
-	}
-	newNodeAnn.Addresses = dedupedAddrs
+				uniqueAddrs[addr.String()] = struct{}{}
+				dedupedAddrs = append(dedupedAddrs, addr)
+			}
+			v1.Addresses = dedupedAddrs
+
+			return nil
+		},
+	))
 
 	// Sign a new update after applying all of the passed modifiers.
 	err := netann.SignNodeAnnouncement(
-		s.nodeSigner, s.identityKeyLoc, &newNodeAnn,
+		s.nodeSigner, s.identityKeyLoc, &newNodeAnn, modifiers...,
 	)
 	if err != nil {
-		return lnwire.NodeAnnouncement1{}, err
+		return nil, err
 	}
 
 	// If signing succeeds, update the current announcement.
 	*s.currentNodeAnn = newNodeAnn
 
-	return *s.currentNodeAnn, nil
+	ann := newNodeAnn
+	return &ann, nil
 }
 
 // updateAndBroadcastSelfNode generates a new node announcement
@@ -3504,12 +3516,18 @@ func (s *server) updateAndBroadcastSelfNode(ctx context.Context,
 		return fmt.Errorf("unable to get current source node: %w", err)
 	}
 
-	selfNode.LastUpdate = time.Unix(int64(newNodeAnn.Timestamp), 0)
-	selfNode.Addresses = newNodeAnn.Addresses
-	selfNode.Alias = fn.Some(newNodeAnn.Alias.String())
+	ann1, ok := newNodeAnn.(*lnwire.NodeAnnouncement1)
+	if !ok {
+		return fmt.Errorf("unexpected node announcement type: %T",
+			newNodeAnn)
+	}
+
+	selfNode.LastUpdate = time.Unix(int64(ann1.Timestamp), 0)
+	selfNode.Addresses = ann1.Addresses
+	selfNode.Alias = fn.Some(ann1.Alias.String())
 	selfNode.Features = s.featureMgr.Get(feature.SetNodeAnn)
-	selfNode.Color = fn.Some(newNodeAnn.RGBColor)
-	selfNode.AuthSigBytes = newNodeAnn.Signature.ToSignatureBytes()
+	selfNode.Color = fn.Some(ann1.RGBColor)
+	selfNode.AuthSigBytes = ann1.Signature.ToSignatureBytes()
 
 	copy(selfNode.PubKeyBytes[:], s.identityECDH.PubKey().SerializeCompressed())
 
@@ -3518,7 +3536,7 @@ func (s *server) updateAndBroadcastSelfNode(ctx context.Context,
 	}
 
 	// Finally, propagate it to the nodes in the network.
-	err = s.BroadcastMessage(nil, &newNodeAnn)
+	err = s.BroadcastMessage(nil, newNodeAnn)
 	if err != nil {
 		rpcsLog.Debugf("Unable to broadcast new node "+
 			"announcement to peers: %v", err)
@@ -4465,7 +4483,7 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 		TowerClient:             towerClient,
 		DisconnectPeer:          s.DisconnectPeer,
 		GenNodeAnnouncement: func(...netann.NodeAnnModifier) (
-			lnwire.NodeAnnouncement1, error) {
+			lnwire.NodeAnnouncement, error) {
 
 			return s.genNodeAnnouncement(nil)
 		},
@@ -5790,7 +5808,13 @@ func (s *server) setSelfNode(ctx context.Context, nodePub route.Vertex,
 	}
 
 	selfNode.AuthSigBytes = authSig.Serialize()
-	nodeAnn.Signature, err = lnwire.NewSigFromECDSARawSignature(
+	nodeAnn1, ok := nodeAnn.(*lnwire.NodeAnnouncement1)
+	if !ok {
+		return fmt.Errorf("expected v1 node announcement for self node, "+
+			"got %T", nodeAnn)
+	}
+
+	nodeAnn1.Signature, err = lnwire.NewSigFromECDSARawSignature(
 		selfNode.AuthSigBytes,
 	)
 	if err != nil {
@@ -5803,7 +5827,7 @@ func (s *server) setSelfNode(ctx context.Context, nodePub route.Vertex,
 		return fmt.Errorf("can't set self node: %w", err)
 	}
 
-	s.currentNodeAnn = nodeAnn
+	s.currentNodeAnn = nodeAnn1
 
 	return nil
 }

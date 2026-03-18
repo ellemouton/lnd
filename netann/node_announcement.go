@@ -10,144 +10,84 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/davecgh/go-spew/spew"
+	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/keychain"
-	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/tlv"
 )
 
 const (
-	// nodeAnn2MsgName is a string representing the name of the
-	// NodeAnnouncement2 message. This string will be used during the
-	// construction of the tagged hash message to be signed when producing
-	// the signature for the NodeAnnouncement2 message.
 	nodeAnn2MsgName = "node_announcement_2"
 
-	// nodeAnn2SigFieldName is the name of the signature field of the
-	// NodeAnnouncement2 message. This string will be used during the
-	// construction of the tagged hash message to be signed when producing
-	// the signature for the NodeAnnouncement2 message.
-	nodeAnn2SigFieldName = "signature"
+	nodeAnn2SigField = "signature"
 )
 
-// NodeAnnModifier is a closure that makes in-place modifications to an
-// lnwire.NodeAnnouncement1.
-type NodeAnnModifier func(*lnwire.NodeAnnouncement1)
+func applyNodeOptions(ann lnwire.NodeAnnouncement,
+	options ...NodeAnnModifier) error {
 
-// NodeAnnSetAlias is a functional option that sets the alias of the
-// given node announcement.
-func NodeAnnSetAlias(alias lnwire.NodeAlias) func(*lnwire.NodeAnnouncement1) {
-	return func(nodeAnn *lnwire.NodeAnnouncement1) {
-		nodeAnn.Alias = alias
-	}
-}
-
-// NodeAnnSetAddrs is a functional option that allows updating the addresses of
-// the given node announcement.
-func NodeAnnSetAddrs(addrs []net.Addr) func(*lnwire.NodeAnnouncement1) {
-	return func(nodeAnn *lnwire.NodeAnnouncement1) {
-		nodeAnn.Addresses = addrs
-	}
-}
-
-// NodeAnnSetColor is a functional option that sets the color of the
-// given node announcement.
-func NodeAnnSetColor(newColor color.RGBA) func(*lnwire.NodeAnnouncement1) {
-	return func(nodeAnn *lnwire.NodeAnnouncement1) {
-		nodeAnn.RGBColor = newColor
-	}
-}
-
-// NodeAnnSetFeatures is a functional option that allows updating the features of
-// the given node announcement.
-func NodeAnnSetFeatures(
-	features *lnwire.RawFeatureVector) func(*lnwire.NodeAnnouncement1) {
-
-	return func(nodeAnn *lnwire.NodeAnnouncement1) {
-		nodeAnn.Features = features
-	}
-}
-
-// NodeAnnSetTimestamp is a functional option that sets the timestamp of the
-// announcement to the current time, or increments it if the timestamp is
-// already in the future.
-func NodeAnnSetTimestamp(nodeAnn *lnwire.NodeAnnouncement1) {
-	newTimestamp := uint32(time.Now().Unix())
-	if newTimestamp <= nodeAnn.Timestamp {
-		// Increment the prior value to  ensure the timestamp
-		// monotonically increases, otherwise the announcement won't
-		// propagate.
-		newTimestamp = nodeAnn.Timestamp + 1
-	}
-	nodeAnn.Timestamp = newTimestamp
-}
-
-// SignNodeAnnouncement signs the lnwire.NodeAnnouncement1 provided, which
-// should be the most recent, valid update, otherwise the timestamp may not
-// monotonically increase from the prior.
-func SignNodeAnnouncement(signer lnwallet.MessageSigner,
-	keyLoc keychain.KeyLocator, nodeAnn *lnwire.NodeAnnouncement1) error {
-
-	// Create the DER-encoded ECDSA signature over the message digest.
-	sig, err := SignAnnouncement(signer, keyLoc, nodeAnn)
-	if err != nil {
-		return err
+	var opts nodeAnnOptions
+	for _, o := range options {
+		o(&opts)
 	}
 
-	// Parse the DER-encoded signature into a fixed-size 64-byte array.
-	nodeAnn.Signature, err = lnwire.NewSigFromSignature(sig)
-	return err
-}
-
-// ValidateNodeAnn validates a node announcement according to its version-
-// specific rules.
-func ValidateNodeAnn(a lnwire.NodeAnnouncement) error {
-	switch a := a.(type) {
+	switch a := ann.(type) {
 	case *lnwire.NodeAnnouncement1:
-		err := ValidateNodeAnnFields(a)
-		if err != nil {
-			return fmt.Errorf(
-				"invalid node announcement fields: %w",
-				err,
-			)
+		opts.Alias.WhenSome(func(alias lnwire.NodeAlias) {
+			a.Alias = alias
+		})
+		opts.color.WhenSome(func(rgba color.RGBA) {
+			a.RGBColor = rgba
+		})
+		opts.features.WhenSome(func(f lnwire.RawFeatureVector) {
+			a.Features = &f
+		})
+		if len(opts.addrs) > 0 {
+			a.Addresses = opts.addrs
 		}
-
-		return ValidateNodeAnnSignature(a)
+		opts.timestamp.WhenSome(func(t time.Time) {
+			newTimestamp := uint32(t.Unix())
+			if newTimestamp <= a.Timestamp {
+				// Increment the prior value to  ensure the timestamp
+				// monotonically increases, otherwise the announcement won't
+				// propagate.
+				newTimestamp = a.Timestamp + 1
+			}
+			a.Timestamp = newTimestamp
+		})
 
 	case *lnwire.NodeAnnouncement2:
-		err := validateNodeAnn2Fields(a)
-		if err != nil {
-			return fmt.Errorf(
-				"invalid node announcement fields: %w",
-				err,
-			)
-		}
-
-		return ValidateNodeAnn2Signature(a)
+		opts.Alias.WhenSome(func(alias lnwire.NodeAlias) {
+			aliasRecord := tlv.ZeroRecordT[tlv.TlvType3, lnwire.NodeAlias2]()
+			aliasRecord.Val = lnwire.NodeAlias2(alias.String())
+			a.Alias = tlv.SomeRecordT(aliasRecord)
+		})
+		opts.color.WhenSome(func(rgba color.RGBA) {
+			colorRecord := tlv.ZeroRecordT[tlv.TlvType1, lnwire.Color]()
+			colorRecord.Val = lnwire.Color(rgba)
+			a.Color = tlv.SomeRecordT(colorRecord)
+		})
+		opts.features.WhenSome(func(f lnwire.RawFeatureVector) {
+			a.Features.Val = f
+		})
+		opts.blockHeight.WhenSome(func(u uint32) {
+			newBlockHeight := u
+			if newBlockHeight <= a.BlockHeight.Val {
+				// Increment the prior value to  ensure the timestamp
+				// monotonically increases, otherwise the announcement won't
+				// propagate.
+				newBlockHeight = a.BlockHeight.Val + 1
+			}
+			a.BlockHeight.Val = newBlockHeight
+		})
 
 	default:
-		return fmt.Errorf("unhandled implementation of "+
-			"lnwire.NodeAnnouncement: %T", a)
+		return fmt.Errorf("unknown node announcement version: %v",
+			ann.MsgType())
 	}
-}
 
-// ValidateNodeAnnFields validates the fields of a node announcement.
-func ValidateNodeAnnFields(a *lnwire.NodeAnnouncement1) error {
-	// Check that it only has at most one DNS address.
-	hasDNSAddr := false
-	for _, addr := range a.Addresses {
-		dnsAddr, ok := addr.(*lnwire.DNSAddress)
-		if !ok {
-			continue
-		}
-		if hasDNSAddr {
-			return errors.New("node announcement contains " +
-				"multiple DNS addresses. Only one is allowed")
-		}
-
-		hasDNSAddr = true
-
-		err := lnwire.ValidateDNSAddr(dnsAddr.Hostname, dnsAddr.Port)
-		if err != nil {
+	if opts.annModifier != nil {
+		if err := opts.annModifier(ann); err != nil {
 			return err
 		}
 	}
@@ -155,62 +95,192 @@ func ValidateNodeAnnFields(a *lnwire.NodeAnnouncement1) error {
 	return nil
 }
 
-// validateNodeAnn2Fields validates the fields of a v2 node announcement.
-func validateNodeAnn2Fields(a *lnwire.NodeAnnouncement2) error {
-	var validationErr error
-	a.DNSHostName.ValOpt().WhenSome(func(dns lnwire.DNSAddress) {
-		validationErr = lnwire.ValidateDNSAddr(
-			dns.Hostname, dns.Port,
-		)
-	})
-
-	return validationErr
+type nodeAnnOptions struct {
+	Alias       fn.Option[lnwire.NodeAlias]
+	color       fn.Option[color.RGBA]
+	addrs       []net.Addr
+	features    fn.Option[lnwire.RawFeatureVector]
+	timestamp   fn.Option[time.Time]
+	blockHeight fn.Option[uint32]
+	annModifier func(lnwire.NodeAnnouncement) error
 }
 
-// ValidateNodeAnn2Signature validates the node announcement by ensuring that
-// the attached signature is a valid signature of the node announcement under
-// the announced node public key.
-func ValidateNodeAnn2Signature(a *lnwire.NodeAnnouncement2) error {
-	digest, err := NodeAnn2DigestToSign(a)
-	if err != nil {
-		return fmt.Errorf("unable to reconstruct message data: %w", err)
-	}
+// NodeAnnModifier is a closure that makes in-place modifications to an
+// lnwire.NodeAnnouncement1.
+type NodeAnnModifier func(*nodeAnnOptions)
 
-	nodeSig, err := a.Signature.Val.ToSignature()
+func NodeAnnModifierFunc(f func(lnwire.NodeAnnouncement) error) NodeAnnModifier {
+	return func(opts *nodeAnnOptions) {
+		opts.annModifier = f
+	}
+}
+
+// NodeAnnSetAlias is a functional option that sets the alias of the
+// given node announcement.
+func NodeAnnSetAlias(alias lnwire.NodeAlias) NodeAnnModifier {
+	return func(opts *nodeAnnOptions) {
+		opts.Alias = fn.Some(alias)
+	}
+}
+
+// NodeAnnSetAddrs is a functional option that allows updating the addresses of
+// the given node announcement.
+func NodeAnnSetAddrs(addrs []net.Addr) NodeAnnModifier {
+	return func(opts *nodeAnnOptions) {
+		opts.addrs = addrs
+	}
+}
+
+// NodeAnnSetColor is a functional option that sets the color of the
+// given node announcement.
+func NodeAnnSetColor(newColor color.RGBA) NodeAnnModifier {
+	return func(opts *nodeAnnOptions) {
+		opts.color = fn.Some(newColor)
+	}
+}
+
+// NodeAnnSetFeatures is a functional option that allows updating the features of
+// the given node announcement.
+func NodeAnnSetFeatures(features *lnwire.RawFeatureVector) NodeAnnModifier {
+	return func(opts *nodeAnnOptions) {
+		opts.features = fn.Some(*features)
+	}
+}
+
+// NodeAnnSetTimestamp is a functional option that sets the timestamp of the
+// announcement to the current time, or increments it if the timestamp is
+// already in the future.
+func NodeAnnSetTimestamp(t time.Time) NodeAnnModifier {
+	return func(opts *nodeAnnOptions) {
+		opts.timestamp = fn.Some(t)
+	}
+}
+
+func NodeAnnSetBlockHeight(h uint32) NodeAnnModifier {
+	return func(opts *nodeAnnOptions) {
+		opts.blockHeight = fn.Some(h)
+	}
+}
+
+// SignNodeAnnouncement signs the lnwire.NodeAnnouncement1 provided, which
+// should be the most recent, valid update, otherwise the timestamp may not
+// monotonically increase from the prior.
+func SignNodeAnnouncement(signer keychain.MessageSignerRing,
+	keyLoc keychain.KeyLocator, nodeAnn lnwire.NodeAnnouncement,
+	options ...NodeAnnModifier) error {
+
+	err := applyNodeOptions(nodeAnn, options...)
 	if err != nil {
 		return err
 	}
 
-	nodeKey, err := btcec.ParsePubKey(a.NodeID.Val[:])
-	if err != nil {
-		return err
-	}
+	switch ann := nodeAnn.(type) {
+	case *lnwire.NodeAnnouncement1:
+		// Create the DER-encoded ECDSA signature over the message digest.
+		sig, err := SignAnnouncement(signer, keyLoc, nodeAnn)
+		if err != nil {
+			return err
+		}
 
-	if !nodeSig.Verify(digest, nodeKey) {
-		return fmt.Errorf("signature on NodeAnnouncement2(%x) is "+
-			"invalid", nodeKey.SerializeCompressed())
+		// Parse the DER-encoded signature into a fixed-size 64-byte array.
+		ann.Signature, err = lnwire.NewSigFromSignature(sig)
+		if err != nil {
+			return err
+		}
+
+	case *lnwire.NodeAnnouncement2:
+		data, err := lnwire.SerialiseFieldsToSign(ann)
+		if err != nil {
+			return err
+		}
+
+		sig, err := signer.SignMessageSchnorr(
+			keyLoc, data, false, nil, NodeAnn2DigestTag(),
+		)
+		if err != nil {
+			return err
+		}
+
+		ann.Signature.Val, err = lnwire.NewSigFromSignature(sig)
+		if err != nil {
+			return err
+		}
+
+	default:
+		return fmt.Errorf("unknown node announcement version: %v",
+			nodeAnn.MsgType())
+
 	}
 
 	return nil
 }
 
-// NodeAnn2DigestToSign computes the digest of the node announcement message to
-// be signed.
-func NodeAnn2DigestToSign(a *lnwire.NodeAnnouncement2) ([]byte, error) {
-	data, err := lnwire.SerialiseFieldsToSign(a)
+// ValidateNodeAnn validates the fields and signature of a node announcement.
+func ValidateNodeAnn(a lnwire.NodeAnnouncement) error {
+	err := ValidateNodeAnnFields(a)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("invalid node announcement fields: %w", err)
 	}
 
-	hash := MsgHash(nodeAnn2MsgName, nodeAnn2SigFieldName, data)
+	return ValidateNodeAnnSignature(a)
+}
 
-	return hash[:], nil
+// ValidateNodeAnnFields validates the fields of a node announcement.
+func ValidateNodeAnnFields(ann lnwire.NodeAnnouncement) error {
+
+	switch a := ann.(type) {
+	case *lnwire.NodeAnnouncement1:
+		// Check that it only has at most one DNS address.
+		hasDNSAddr := false
+		for _, addr := range a.Addresses {
+			dnsAddr, ok := addr.(*lnwire.DNSAddress)
+			if !ok {
+				continue
+			}
+			if hasDNSAddr {
+				return errors.New("node announcement contains " +
+					"multiple DNS addresses. Only one is allowed")
+			}
+
+			hasDNSAddr = true
+
+			err := lnwire.ValidateDNSAddr(dnsAddr.Hostname, dnsAddr.Port)
+			if err != nil {
+				return err
+			}
+		}
+
+	case *lnwire.NodeAnnouncement2:
+		var dnsErr error
+		a.DNSHostName.ValOpt().WhenSome(func(d lnwire.DNSAddress) {
+			dnsErr = lnwire.ValidateDNSAddr(d.Hostname, d.Port)
+		})
+		if dnsErr != nil {
+			return dnsErr
+		}
+	}
+
+	return nil
 }
 
 // ValidateNodeAnnSignature validates the node announcement by ensuring that the
 // attached signature is needed a signature of the node announcement under the
 // specified node public key.
-func ValidateNodeAnnSignature(a *lnwire.NodeAnnouncement1) error {
+func ValidateNodeAnnSignature(a lnwire.NodeAnnouncement) error {
+	switch ann := a.(type) {
+	case *lnwire.NodeAnnouncement1:
+		return validateNodeAnn1Sig(ann)
+
+	case *lnwire.NodeAnnouncement2:
+		return validateNodeAnn2Sig(ann)
+
+	default:
+		return fmt.Errorf("unknown node announcement version: %v",
+			a.MsgType())
+	}
+}
+
+func validateNodeAnn1Sig(a *lnwire.NodeAnnouncement1) error {
 	// Reconstruct the data of announcement which should be covered by the
 	// signature so we can verify the signature shortly below
 	data, err := a.DataToSign()
@@ -242,4 +312,43 @@ func ValidateNodeAnnSignature(a *lnwire.NodeAnnouncement1) error {
 	}
 
 	return nil
+}
+
+func validateNodeAnn2Sig(a *lnwire.NodeAnnouncement2) error {
+	digest, err := nodeAnn2DigestToSign(a)
+	if err != nil {
+		return fmt.Errorf("unable to reconstruct message data: %w", err)
+	}
+
+	nodeSig, err := a.Signature.Val.ToSignature()
+	if err != nil {
+		return err
+	}
+
+	pubKey, err := btcec.ParsePubKey(a.NodeID.Val[:])
+	if err != nil {
+		return err
+	}
+
+	if !nodeSig.Verify(digest, pubKey) {
+		return fmt.Errorf("invalid signature for node ann %v",
+			spew.Sdump(a))
+	}
+
+	return nil
+}
+
+func NodeAnn2DigestTag() []byte {
+	return MsgTag(nodeAnn2MsgName, nodeAnn2SigField)
+}
+
+func nodeAnn2DigestToSign(c *lnwire.NodeAnnouncement2) ([]byte, error) {
+	data, err := lnwire.SerialiseFieldsToSign(c)
+	if err != nil {
+		return nil, err
+	}
+
+	hash := MsgHash(nodeAnn2MsgName, nodeAnn2SigField, data)
+
+	return hash[:], nil
 }

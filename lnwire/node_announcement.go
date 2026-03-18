@@ -100,6 +100,36 @@ type NodeAnnouncement1 struct {
 	ExtraOpaqueData ExtraOpaqueData
 }
 
+// NodeAddrs returns the addresses advertised by the node.
+//
+// NOTE: part of the NodeAnnouncement interface.
+func (a *NodeAnnouncement1) NodeAddrs() []net.Addr {
+	return a.Addresses
+}
+
+// SetAddrs sets the addresses advertised by the node.
+//
+// NOTE: part of the NodeAnnouncement interface.
+func (a *NodeAnnouncement1) SetAddrs(addrs []net.Addr) error {
+	a.Addresses = addrs
+
+	return nil
+}
+
+// NodeAlias returns the human-readable alias of the node.
+//
+// NOTE: part of the NodeAnnouncement interface.
+func (a *NodeAnnouncement1) NodeAlias() string {
+	return a.Alias.String()
+}
+
+// NodeColor returns the RGB colour of the node.
+//
+// NOTE: part of the NodeAnnouncement interface.
+func (a *NodeAnnouncement1) NodeColor() color.RGBA {
+	return a.RGBColor
+}
+
 // A compile time check to ensure NodeAnnouncement1 implements the
 // lnwire.Message interface.
 var _ Message = (*NodeAnnouncement1)(nil)

@@ -49,13 +49,13 @@ func TestCreateChanAnnouncement(t *testing.T) {
 		expChanAnn.BitcoinSig2.ToSignatureBytes(),
 	)
 	chanInfo := &models.ChannelEdgeInfo{
-		Version:      lnwire.GossipVersion1,
-		ChainHash:    expChanAnn.ChainHash,
-		ChannelID:    expChanAnn.ShortChannelID.ToUint64(),
-		ChannelPoint: wire.OutPoint{Index: 1},
-		Capacity:     btcutil.SatoshiPerBitcoin,
-		NodeKey1Bytes: key,
-		NodeKey2Bytes: key,
+		Version:          lnwire.GossipVersion1,
+		ChainHash:        expChanAnn.ChainHash,
+		ChannelID:        expChanAnn.ShortChannelID.ToUint64(),
+		ChannelPoint:     wire.OutPoint{Index: 1},
+		Capacity:         btcutil.SatoshiPerBitcoin,
+		NodeKey1Bytes:    key,
+		NodeKey2Bytes:    key,
 		BitcoinKey1Bytes: fn.Some(route.Vertex(key)),
 		BitcoinKey2Bytes: fn.Some(route.Vertex(key)),
 		Features: lnwire.NewFeatureVector(
@@ -90,7 +90,7 @@ func TestCreateChanAnnouncementV2(t *testing.T) {
 		ChainHash: tlv.NewPrimitiveRecord[tlv.TlvType0](
 			chainhash.Hash{0x1},
 		),
-		Features: tlv.NewRecordT[tlv.TlvType2](*features),
+		Features:       tlv.NewRecordT[tlv.TlvType2](*features),
 		ShortChannelID: tlv.NewRecordT[tlv.TlvType4](chanID),
 		Capacity: tlv.NewPrimitiveRecord[tlv.TlvType6](
 			uint64(btcutil.SatoshiPerBitcoin),
@@ -113,11 +113,11 @@ func TestCreateChanAnnouncementV2(t *testing.T) {
 
 	chanProof := models.NewV2ChannelAuthProof(schnorrSigBytes[:])
 	chanInfo := &models.ChannelEdgeInfo{
-		Version:      lnwire.GossipVersion2,
-		ChainHash:    chainhash.Hash{0x1},
-		ChannelID:    chanID.ToUint64(),
-		ChannelPoint: chanPoint,
-		Capacity:     btcutil.SatoshiPerBitcoin,
+		Version:          lnwire.GossipVersion2,
+		ChainHash:        chainhash.Hash{0x1},
+		ChannelID:        chanID.ToUint64(),
+		ChannelPoint:     chanPoint,
+		Capacity:         btcutil.SatoshiPerBitcoin,
 		NodeKey1Bytes:    key,
 		NodeKey2Bytes:    key,
 		BitcoinKey1Bytes: fn.Some(route.Vertex(key)),
