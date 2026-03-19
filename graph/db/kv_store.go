@@ -2393,10 +2393,6 @@ func (c *KVStore) ChanUpdatesInHorizon(_ context.Context,
 	if v != lnwire.GossipVersion1 {
 		return chanUpdateRangeErrIter(ErrVersionNotSupportedForKVDB)
 	}
-	if err := r.validateForVersion(v); err != nil {
-		return chanUpdateRangeErrIter(err)
-	}
-
 	cfg := defaultIteratorConfig()
 	for _, opt := range opts {
 		opt(cfg)
@@ -2717,6 +2713,10 @@ func (c *KVStore) FilterKnownChanIDs(_ context.Context,
 		newChanIDs   []uint64
 		knownZombies []ChannelUpdateInfo
 	)
+
+	if v != lnwire.GossipVersion1 {
+		return nil, nil, ErrVersionNotSupportedForKVDB
+	}
 
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
@@ -4680,8 +4680,7 @@ func (c *nodeTraverserSession) ForEachNodeDirectedChannel(
 //
 // NOTE: Part of the NodeTraverser interface.
 func (c *nodeTraverserSession) FetchNodeFeatures(_ context.Context,
-	nodePub route.Vertex) (
-	*lnwire.FeatureVector, error) {
+	nodePub route.Vertex) (*lnwire.FeatureVector, error) {
 
 	return c.db.fetchNodeFeatures(c.tx, nodePub)
 }

@@ -230,12 +230,37 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(ctx context.Context,
 		return c.graphCache.ForEachChannel(node, cb)
 	}
 
-	// TODO(elle): once the no-cache path needs to support
-	// pathfinding across gossip versions, this should iterate
-	// across all versions rather than defaulting to v1.
-	return c.db.ForEachNodeDirectedChannel(
-		ctx, gossipV1, node, cb, reset,
-	)
+	// Iterate across all gossip versions (highest first) so that
+	// channels announced via v2 are preferred over v1.
+	seen := make(map[uint64]struct{})
+	for _, v := range []lnwire.GossipVersion{gossipV2, gossipV1} {
+		err := c.db.ForEachNodeDirectedChannel(
+			ctx, v, node,
+			func(channel *DirectedChannel) error {
+				if _, ok := seen[channel.ChannelID]; ok {
+					return nil
+				}
+				seen[channel.ChannelID] = struct{}{}
+
+				return cb(channel)
+			},
+			// Use a no-op reset for individual version
+			// queries. The ExecTx reset callback fires on
+			// every attempt (including the first), so
+			// passing the caller's reset here would clear
+			// results accumulated from earlier versions.
+			func() {
+				seen = make(map[uint64]struct{})
+			},
+		)
+		if err != nil &&
+			!errors.Is(err, ErrVersionNotSupportedForKVDB) {
+
+			return err
+		}
+	}
+
+	return nil
 }
 
 // FetchNodeFeatures returns the features of the given node. If no features are
@@ -251,7 +276,22 @@ func (c *ChannelGraph) FetchNodeFeatures(ctx context.Context,
 		return c.graphCache.GetFeatures(node), nil
 	}
 
-	return c.db.FetchNodeFeatures(ctx, lnwire.GossipVersion1, node)
+	// Try v2 first, fall back to v1 if the v2 features are empty.
+	for _, v := range []lnwire.GossipVersion{gossipV2, gossipV1} {
+		features, err := c.db.FetchNodeFeatures(ctx, v, node)
+		if errors.Is(err, ErrVersionNotSupportedForKVDB) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		if !features.IsEmpty() {
+			return features, nil
+		}
+	}
+
+	return lnwire.EmptyFeatureVector(), nil
 }
 
 // GraphSession will provide the call-back with access to a NodeTraverser
@@ -551,7 +591,7 @@ func (c *ChannelGraph) FilterKnownChanIDs(ctx context.Context,
 		// alive, and we let it be added to the set of IDs to query our
 		// peer for.
 		err := c.db.MarkEdgeLive(
-			ctx, info.Version,
+			ctx, v,
 			info.ShortChannelID.ToUint64(),
 		)
 		// Since there is a chance that the edge could have been marked
@@ -652,6 +692,14 @@ func (c *ChannelGraph) HasV1Node(ctx context.Context,
 
 // ForEachChannel iterates through all channel edges stored within the graph
 // across all gossip versions.
+func (c *ChannelGraph) ForEachNode(ctx context.Context,
+	cb func(*models.Node, uint32) error, reset func()) error {
+
+	return c.db.ForEachNode(ctx, cb, reset)
+}
+
+// ForEachChannel iterates through all channel edges stored within the graph
+// across all gossip versions.
 func (c *ChannelGraph) ForEachChannel(ctx context.Context,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy, uint32) error,
@@ -735,26 +783,39 @@ func (c *ChannelGraph) FetchChanInfos(ctx context.Context,
 }
 
 // FetchChannelEdgesByOutpoint attempts to lookup directed edges by funding
-// outpoint.
+// outpoint, returning the highest available gossip version.
 func (c *ChannelGraph) FetchChannelEdgesByOutpoint(ctx context.Context,
 	op *wire.OutPoint) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
-	return c.db.FetchChannelEdgesByOutpoint(
-		ctx, lnwire.GossipVersion1, op,
-	)
+	return c.db.FetchChannelEdgesByOutpointPreferHighest(ctx, op)
 }
 
-// FetchChannelEdgesByID attempts to lookup directed edges by channel ID.
+// FetchChannelEdgesByID attempts to lookup directed edges by channel ID,
+// returning the highest available gossip version.
 func (c *ChannelGraph) FetchChannelEdgesByID(ctx context.Context,
 	chanID uint64) (
 	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 	*models.ChannelEdgePolicy, error) {
 
-	return c.db.FetchChannelEdgesByID(
-		ctx, lnwire.GossipVersion1, chanID,
-	)
+	return c.db.FetchChannelEdgesByIDPreferHighest(ctx, chanID)
+}
+
+// GetVersionsBySCID returns the list of gossip versions for which a channel
+// with the given SCID exists in the database.
+func (c *ChannelGraph) GetVersionsBySCID(ctx context.Context,
+	chanID uint64) ([]lnwire.GossipVersion, error) {
+
+	return c.db.GetVersionsBySCID(ctx, chanID)
+}
+
+// GetVersionsByOutpoint returns the list of gossip versions for which a channel
+// with the given funding outpoint exists in the database.
+func (c *ChannelGraph) GetVersionsByOutpoint(ctx context.Context,
+	op *wire.OutPoint) ([]lnwire.GossipVersion, error) {
+
+	return c.db.GetVersionsByOutpoint(ctx, op)
 }
 
 // PutClosedScid stores a SCID for a closed channel in the database.
@@ -802,6 +863,11 @@ func NewVersionedGraph(c *ChannelGraph,
 	}
 }
 
+// Version returns the gossip version for this graph.
+func (c *VersionedGraph) Version() lnwire.GossipVersion {
+	return c.v
+}
+
 // FetchNodeFeatures returns the features of the given node. If no features are
 // known for the node, an empty feature vector is returned. If the graphCache is
 // available, it will be used instead of the database.
@@ -819,8 +885,12 @@ func (c *VersionedGraph) FetchNodeFeatures(ctx context.Context,
 
 // ForEachNodeDirectedChannel iterates through all channels of a given node,
 // executing the passed callback on the directed edge representing the channel
-// and its incoming policy. If the graphCache is available, it will be used
-// instead of the database.
+// and its incoming policy. If the callback returns an error, then the iteration
+// is halted with the error propagated back up to the caller. If the graphCache
+// is available, then it will be used to retrieve the node's channels instead
+// of the database.
+//
+// Unknown policies are passed into the callback as nil values.
 //
 // NOTE: This is part of the graphdb.NodeTraverser interface.
 func (c *VersionedGraph) ForEachNodeDirectedChannel(ctx context.Context,
@@ -947,6 +1017,24 @@ func (c *VersionedGraph) IsZombieEdge(ctx context.Context,
 	chanID uint64) (bool, [33]byte, [33]byte, error) {
 
 	return c.db.IsZombieEdge(ctx, c.v, chanID)
+}
+
+// MarkEdgeZombie attempts to mark a channel identified by its channel ID as a
+// zombie for this version.
+func (c *VersionedGraph) MarkEdgeZombie(ctx context.Context, chanID uint64,
+	pubKey1, pubKey2 [33]byte) error {
+
+	return c.ChannelGraph.MarkEdgeZombie(
+		ctx, c.v, chanID, pubKey1, pubKey2,
+	)
+}
+
+// MarkEdgeLive clears an edge from our zombie index for this version, deeming
+// it as live.
+func (c *VersionedGraph) MarkEdgeLive(ctx context.Context,
+	chanID uint64) error {
+
+	return c.ChannelGraph.MarkEdgeLive(ctx, c.v, chanID)
 }
 
 // AddrsForNode returns all known addresses for the target node public key.

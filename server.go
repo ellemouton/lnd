@@ -1420,9 +1420,9 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 	deleteAliasEdge := func(scid lnwire.ShortChannelID) (
 		*models.ChannelEdgePolicy, error) {
 
-		info, e1, e2, err := s.graphDB.FetchChannelEdgesByID(
-			context.TODO(), scid.ToUint64(),
-		)
+			info, e1, e2, err := s.graphDB.FetchChannelEdgesByID(
+				context.TODO(), scid.ToUint64(),
+			)
 		if errors.Is(err, graphdb.ErrEdgeNotFound) {
 			// This is unlikely but there is a slim chance of this
 			// being hit if lnd was killed via SIGKILL and the

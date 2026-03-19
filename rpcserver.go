@@ -3214,7 +3214,9 @@ func abandonChanFromGraph(chanGraph *graphdb.VersionedGraph,
 
 	// If the channel ID is still in the graph, then that means the channel
 	// is still open, so we'll now move to purge it from the graph.
-	return chanGraph.DeleteChannelEdges(context.TODO(), false, true, chanID)
+	return chanGraph.DeleteChannelEdges(
+		context.TODO(), false, true, chanID,
+	)
 }
 
 // abandonChan removes a channel from the database, graph and contract court.
@@ -6894,49 +6896,51 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 		}
 	}
 
-	// Obtain the pointer to the V1 channel graph. This will provide a
-	// consistent view of the graph due to bolt db's transactional model.
-	//
-	// TODO(elle): switch to a cross-version graph view when available.
-	graph := r.server.v1Graph
-
 	// First iterate through all the known nodes (connected or unconnected
 	// within the graph), collating their current state into the RPC
-	// response.
-	err := graph.ForEachNode(ctx, func(node *models.Node) error {
-		lnNode := marshalNode(node)
+	// response. We use the cross-version graph view so that nodes
+	// advertised on any gossip version are included.
+	err := r.server.graphDB.ForEachNode(ctx,
+		func(node *models.Node, _ uint32) error {
+			lnNode := marshalNode(node)
 
-		resp.Nodes = append(resp.Nodes, lnNode)
+			resp.Nodes = append(resp.Nodes, lnNode)
 
-		return nil
-	}, func() {
-		resp.Nodes = nil
-	})
+			return nil
+		}, func() {
+			resp.Nodes = nil
+		})
 	if err != nil {
 		return nil, err
 	}
 
 	// Next, for each active channel we know of within the graph, create a
 	// similar response which details both the edge information as well as
-	// the routing policies of th nodes connecting the two edges.
-	err = graph.ForEachChannel(ctx, func(edgeInfo *models.ChannelEdgeInfo,
-		c1, c2 *models.ChannelEdgePolicy) error {
+	// the routing policies of the nodes connecting the two edges. We use
+	// the cross-version graph view so channels from any gossip version are
+	// included.
+	err = r.server.graphDB.ForEachChannel(ctx,
+		func(edgeInfo *models.ChannelEdgeInfo,
+			c1, c2 *models.ChannelEdgePolicy, _ uint32) error {
 
-		// Do not include unannounced channels unless specifically
-		// requested. Unannounced channels include both private channels as
-		// well as public channels whose authentication proof were not
-		// confirmed yet, hence were not announced.
-		if !includeUnannounced && edgeInfo.AuthProof == nil {
+			// Do not include unannounced channels unless
+			// specifically requested. Unannounced channels include
+			// both private channels as well as public channels whose
+			// authentication proof were not confirmed yet, hence were
+			// not announced.
+			if !includeUnannounced && edgeInfo.AuthProof == nil {
+				return nil
+			}
+
+			edge := marshalDBEdge(
+				edgeInfo, c1, c2, req.IncludeAuthProof,
+			)
+			resp.Edges = append(resp.Edges, edge)
+
 			return nil
-		}
-
-		edge := marshalDBEdge(edgeInfo, c1, c2, req.IncludeAuthProof)
-		resp.Edges = append(resp.Edges, edge)
-
-		return nil
-	}, func() {
-		resp.Edges = nil
-	})
+		}, func() {
+			resp.Edges = nil
+		})
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
 		return nil, err
 	}
@@ -7141,21 +7145,21 @@ func (r *rpcServer) GetChanInfo(ctx context.Context,
 		err          error
 	)
 
-	switch {
-	case in.ChanId != 0:
-		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByID(
-			ctx, in.ChanId,
-		)
+		switch {
+		case in.ChanId != 0:
+			edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByID(
+				ctx, in.ChanId,
+			)
 
 	case in.ChanPoint != "":
 		var chanPoint *wire.OutPoint
 		chanPoint, err = wire.NewOutPointFromString(in.ChanPoint)
 		if err != nil {
 			return nil, err
-		}
-		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByOutpoint(
-			ctx, chanPoint,
-		)
+			}
+			edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByOutpoint(
+				ctx, chanPoint,
+			)
 
 	default:
 		return nil, fmt.Errorf("specify either chan_id or chan_point")

@@ -1242,9 +1242,9 @@ func (p *Brontide) loadActiveChannels(chans []*channeldb.OpenChannel) (
 		// need to fetch its current link-layer forwarding policy from
 		// the database.
 		graph := p.cfg.ChannelGraph
-		info, p1, p2, err := graph.FetchChannelEdgesByOutpoint(
-			context.TODO(), &chanPoint,
-		)
+			info, p1, p2, err := graph.FetchChannelEdgesByOutpoint(
+				context.TODO(), &chanPoint,
+			)
 		if err != nil && !errors.Is(err, graphdb.ErrEdgeNotFound) {
 			return nil, err
 		}
