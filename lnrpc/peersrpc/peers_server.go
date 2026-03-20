@@ -315,7 +315,7 @@ func (s *Server) UpdateNodeAnnouncement(ctx context.Context,
 
 	currentNodeAnn := s.cfg.GetNodeAnnouncement()
 
-	nodeAnnFeatures := currentNodeAnn.Features
+	nodeAnnFeatures := currentNodeAnn.NodeFeatures().RawFeatureVector
 	featureUpdates := len(req.FeatureUpdates) > 0
 	if featureUpdates {
 		var (
@@ -338,7 +338,7 @@ func (s *Server) UpdateNodeAnnouncement(ctx context.Context,
 			return nil, fmt.Errorf("unable to parse color: %w", err)
 		}
 
-		if color != currentNodeAnn.RGBColor {
+		if color != currentNodeAnn.NodeColor() {
 			resp.Ops = append(resp.Ops, &lnrpc.Op{
 				Entity: "color",
 				Actions: []string{
@@ -357,7 +357,7 @@ func (s *Server) UpdateNodeAnnouncement(ctx context.Context,
 		if err != nil {
 			return nil, fmt.Errorf("invalid alias value: %w", err)
 		}
-		if alias != currentNodeAnn.Alias {
+		if alias.String() != currentNodeAnn.NodeAlias() {
 			resp.Ops = append(resp.Ops, &lnrpc.Op{
 				Entity: "alias",
 				Actions: []string{
@@ -373,7 +373,7 @@ func (s *Server) UpdateNodeAnnouncement(ctx context.Context,
 
 	if len(req.AddressUpdates) > 0 {
 		newAddrs, ops, err := s.updateAddresses(
-			currentNodeAnn.Addresses,
+			currentNodeAnn.NodeAddrs(),
 			req.AddressUpdates,
 		)
 		if err != nil {

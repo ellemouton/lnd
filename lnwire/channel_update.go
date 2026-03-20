@@ -363,6 +363,27 @@ func (a *ChannelUpdate1) ForwardingPolicy() *ForwardingPolicy {
 	}
 }
 
+// HasZeroUpdateTime returns true if the update-ordering field is zero.
+//
+// NOTE: this is part of the ChannelUpdate interface.
+func (a *ChannelUpdate1) HasZeroUpdateTime() bool {
+	return a.UpdateTimestamp().IsZero()
+}
+
+// UpdateTimestamp returns the update-ordering field.
+//
+// NOTE: this is part of the ChannelUpdate interface.
+func (a *ChannelUpdate1) UpdateTimestamp() Timestamp {
+	return UnixTimestamp(a.Timestamp)
+}
+
+// TimeDesc returns a human-readable description of the update-ordering field.
+//
+// NOTE: this is part of the ChannelUpdate interface.
+func (a *ChannelUpdate1) TimeDesc() string {
+	return fmt.Sprintf("timestamp=%d", a.Timestamp)
+}
+
 // GossipVersion returns the gossip version that this message is part of.
 //
 // NOTE: this is part of the GossipMessage interface.
@@ -401,6 +422,16 @@ func (a *ChannelUpdate1) SetDisabledFlag(disabled bool) {
 	} else {
 		a.ChannelFlags &= ^ChanUpdateDisabled
 	}
+}
+
+// SetSig sets the signature on the update from raw ECDSA signature bytes.
+//
+// NOTE: this is part of the ChannelUpdate interface.
+func (a *ChannelUpdate1) SetSig(b []byte) error {
+	var err error
+	a.Signature, err = NewSigFromECDSARawSignature(b)
+
+	return err
 }
 
 // SetSCID can be used to overwrite the SCID of the update.

@@ -115,4 +115,8 @@ var defaultSetDesc = setDesc{
 		SetInit:    {}, // I
 		SetNodeAnn: {}, // N
 	},
+	lnwire.TaprootGossipOptionalStaging: {
+		SetInit:    {}, // I
+		SetNodeAnn: {}, // N
+	},
 }

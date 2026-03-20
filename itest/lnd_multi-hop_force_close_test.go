@@ -250,7 +250,6 @@ func testLocalClaimOutgoingHTLCSimpleTaproot(ht *lntest.HarnessTest) {
 	openChannelParams := lntest.OpenChannelParams{
 		Amt:            chanAmt,
 		CommitmentType: c,
-		Private:        true,
 	}
 
 	cfg := node.CfgSimpleTaproot
@@ -587,7 +586,6 @@ func testMultiHopReceiverPreimageClaimSimpleTaproot(ht *lntest.HarnessTest) {
 	openChannelParams := lntest.OpenChannelParams{
 		Amt:            chanAmt,
 		CommitmentType: c,
-		Private:        true,
 	}
 
 	cfg := node.CfgSimpleTaproot
@@ -941,7 +939,6 @@ func testLocalForceCloseBeforeTimeoutSimpleTaproot(ht *lntest.HarnessTest) {
 	params := lntest.OpenChannelParams{
 		Amt:            chanAmt,
 		CommitmentType: c,
-		Private:        true,
 	}
 
 	cfg := node.CfgSimpleTaproot
@@ -1307,7 +1304,6 @@ func testRemoteForceCloseBeforeTimeoutSimpleTaproot(ht *lntest.HarnessTest) {
 	params := lntest.OpenChannelParams{
 		Amt:            chanAmt,
 		CommitmentType: c,
-		Private:        true,
 	}
 
 	cfg := node.CfgSimpleTaproot
@@ -1605,7 +1601,6 @@ func testLocalClaimIncomingHTLCSimpleTaproot(ht *lntest.HarnessTest) {
 	params := lntest.OpenChannelParams{
 		Amt:            chanAmt,
 		CommitmentType: c,
-		Private:        true,
 	}
 
 	cfg := node.CfgSimpleTaproot
@@ -2233,7 +2228,6 @@ func testLocalPreimageClaimSimpleTaproot(ht *lntest.HarnessTest) {
 	params := lntest.OpenChannelParams{
 		Amt:            chanAmt,
 		CommitmentType: c,
-		Private:        true,
 	}
 
 	cfg := node.CfgSimpleTaproot
@@ -2805,7 +2799,6 @@ func testHtlcAggregaitonSimpleTaproot(ht *lntest.HarnessTest) {
 	params := lntest.OpenChannelParams{
 		Amt:            chanAmt,
 		CommitmentType: c,
-		Private:        true,
 	}
 
 	cfg := node.CfgSimpleTaproot

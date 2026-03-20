@@ -95,12 +95,14 @@ type Store interface { //nolint:interfacebloat
 			chans map[uint64]*DirectedChannel) error,
 		reset func()) error
 
-	// ForEachNode iterates through all the stored vertices/nodes in the
-	// graph, executing the passed callback with each node encountered. If
-	// the callback returns an error, then the transaction is aborted and
-	// the iteration stops early.
-	ForEachNode(ctx context.Context, v lnwire.GossipVersion,
-		cb func(*models.Node) error, reset func()) error
+	// ForEachNode iterates through all nodes in the graph across all
+	// gossip versions, yielding each unique node exactly once. The
+	// callback receives the best available Node (highest advertised
+	// version preferred, falling back to shell nodes) and a versionsMask
+	// where bit 0 indicates a v1 entry exists and bit 1 indicates a v2
+	// entry exists.
+	ForEachNode(ctx context.Context,
+		cb func(*models.Node, uint32) error, reset func()) error
 
 	// ForEachNodeCacheable iterates through all the stored vertices/nodes
 	// in the graph, executing the passed callback with each node
@@ -120,11 +122,12 @@ type Store interface { //nolint:interfacebloat
 	DeleteNode(ctx context.Context, v lnwire.GossipVersion,
 		nodePub route.Vertex) error
 
-	// NodeUpdatesInHorizon returns all the known lightning node which have
-	// an update timestamp within the passed range. This method can be used
-	// by two nodes to quickly determine if they have the same set of up to
-	// date node announcements.
-	NodeUpdatesInHorizon(ctx context.Context, startTime, endTime time.Time,
+	// NodeUpdatesInHorizon returns all the known lightning nodes which have
+	// updates within the passed range for the given gossip version. This
+	// method can be used by two nodes to quickly determine if they have the
+	// same set of up to date node announcements.
+	NodeUpdatesInHorizon(ctx context.Context, v lnwire.GossipVersion,
+		r NodeUpdateRange,
 		opts ...IteratorOption) iter.Seq2[*models.Node, error]
 
 	// FetchNode attempts to look up a target node by its identity
@@ -160,21 +163,17 @@ type Store interface { //nolint:interfacebloat
 	GraphSession(ctx context.Context,
 		cb func(graph NodeTraverser) error, reset func()) error
 
-	// ForEachChannel iterates through all the channel edges stored within
-	// the graph and invokes the passed callback for each edge. The callback
-	// takes two edges as since this is a directed graph, both the in/out
-	// edges are visited. If the callback returns an error, then the
-	// transaction is aborted and the iteration stops early.
-	//
-	// NOTE: If an edge can't be found, or wasn't advertised, then a nil
-	// pointer for that particular channel edge routing policy will be
-	// passed into the callback.
-	//
-	// TODO(elle): add a cross-version iteration API and make this iterate
-	// over all versions.
-	ForEachChannel(ctx context.Context, v lnwire.GossipVersion,
+	// ForEachChannel iterates through all channel edges stored within the
+	// graph across all gossip versions, yielding each unique channel
+	// exactly once. The callback receives the edge info, both directional
+	// policies, and a versionsMask where bit 0 indicates a v1 entry exists
+	// and bit 1 indicates a v2 entry exists. When both versions are
+	// present, v2 is preferred. Nil pointers are passed for policies that
+	// haven't been advertised.
+	ForEachChannel(ctx context.Context,
 		cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
-			*models.ChannelEdgePolicy) error, reset func()) error
+			*models.ChannelEdgePolicy, uint32) error,
+		reset func()) error
 
 	// ForEachChannelCacheable iterates through all the channel edges stored
 	// within the graph and invokes the passed callback for each edge. The
@@ -256,10 +255,10 @@ type Store interface { //nolint:interfacebloat
 		uint64, error)
 
 	// ChanUpdatesInHorizon returns all the known channel edges which have
-	// at least one edge that has an update timestamp within the specified
-	// horizon.
-	ChanUpdatesInHorizon(ctx context.Context,
-		startTime, endTime time.Time,
+	// at least one edge update within the specified range for the given
+	// gossip version.
+	ChanUpdatesInHorizon(ctx context.Context, v lnwire.GossipVersion,
+		r ChanUpdateRange,
 		opts ...IteratorOption) iter.Seq2[ChannelEdge, error]
 
 	// FilterKnownChanIDs takes a set of channel IDs and return the subset
@@ -269,9 +268,9 @@ type Store interface { //nolint:interfacebloat
 	// callers to determine the set of channels another peer knows of that
 	// we don't. The ChannelUpdateInfos for the known zombies is also
 	// returned.
-	FilterKnownChanIDs(ctx context.Context,
-		chansInfo []ChannelUpdateInfo) ([]uint64, []ChannelUpdateInfo,
-		error)
+	FilterKnownChanIDs(ctx context.Context, v lnwire.GossipVersion,
+		chansInfo []ChannelUpdateInfo) ([]uint64,
+		[]ChannelUpdateInfo, error)
 
 	// FilterChannelRange returns the channel ID's of all known channels
 	// which were mined in a block height within the passed range for the
@@ -320,6 +319,35 @@ type Store interface { //nolint:interfacebloat
 		chanID uint64) (
 		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
 		*models.ChannelEdgePolicy, error)
+
+	// FetchChannelEdgesByIDPreferHighest behaves like FetchChannelEdgesByID
+	// but is version-agnostic: if the channel exists under multiple gossip
+	// versions it returns the record with the highest version number.
+	FetchChannelEdgesByIDPreferHighest(ctx context.Context,
+		chanID uint64) (
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, error)
+
+	// FetchChannelEdgesByOutpointPreferHighest behaves like
+	// FetchChannelEdgesByOutpoint but is version-agnostic: if the channel
+	// exists under multiple gossip versions it returns the record with the
+	// highest version number.
+	FetchChannelEdgesByOutpointPreferHighest(ctx context.Context,
+		op *wire.OutPoint) (
+		*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+		*models.ChannelEdgePolicy, error)
+
+	// GetVersionsBySCID returns the list of gossip versions for which a
+	// channel with the given SCID exists in the database, ordered
+	// ascending.
+	GetVersionsBySCID(ctx context.Context,
+		chanID uint64) ([]lnwire.GossipVersion, error)
+
+	// GetVersionsByOutpoint returns the list of gossip versions for which
+	// a channel with the given funding outpoint exists in the database,
+	// ordered ascending.
+	GetVersionsByOutpoint(ctx context.Context,
+		op *wire.OutPoint) ([]lnwire.GossipVersion, error)
 
 	// ChannelView returns the verifiable edge information for each active
 	// channel within the known channel graph for the given gossip version.

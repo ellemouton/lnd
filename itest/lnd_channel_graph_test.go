@@ -383,22 +383,24 @@ func testNodeAnnouncement(ht *lntest.HarnessTest) {
 			"wid.onion:1234",
 	}
 
-	var lndArgs []string
+	var daveArgs []string
 	for _, addr := range advertisedAddrs {
-		lndArgs = append(lndArgs, "--externalip="+addr)
+		daveArgs = append(daveArgs, "--externalip="+addr)
 	}
 
-	dave := ht.NewNode("Dave", lndArgs)
+	dave := ht.NewNode("Dave", daveArgs)
 
 	// We must let Dave have an open channel before he can send a node
-	// announcement, so we open a channel with Bob,
+	// announcement, so we open a channel with Bob.
 	ht.ConnectNodes(bob, dave)
 
 	// We'll then go ahead and open a channel between Bob and Dave. This
-	// ensures that Alice receives the node announcement from Bob as part of
-	// the announcement broadcast.
+	// ensures that Alice receives the node announcement from Dave as part
+	// of the announcement broadcast.
 	ht.OpenChannel(
-		bob, dave, lntest.OpenChannelParams{Amt: 1000000},
+		bob, dave, lntest.OpenChannelParams{
+			Amt: 1000000,
+		},
 	)
 
 	assertAddrs := func(addrsFound []string, targetAddrs ...string) {
@@ -413,9 +415,9 @@ func testNodeAnnouncement(ht *lntest.HarnessTest) {
 				"announcement", addr)
 		}
 	}
-	// We'll then wait for Alice to receive Dave's node announcement
-	// including the expected advertised addresses from Bob since they
-	// should already be connected.
+
+	// Wait for Alice to receive Dave's node announcement, including the
+	// expected advertised addresses.
 	allUpdates := ht.AssertNumNodeAnns(alice, dave.PubKeyStr, 1)
 	nodeUpdate := allUpdates[len(allUpdates)-1]
 	assertAddrs(nodeUpdate.Addresses, advertisedAddrs...)

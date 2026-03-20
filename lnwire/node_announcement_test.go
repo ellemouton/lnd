@@ -1,6 +1,10 @@
 package lnwire
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 // TestNodeAliasValidation tests that the NewNodeAlias method will only accept
 // valid node announcements.
@@ -39,4 +43,18 @@ func TestNodeAliasValidation(t *testing.T) {
 			t.Fatalf("#%v: invalid alias was missed", i)
 		}
 	}
+}
+
+// TestNodeAnnouncement1UpdateTimestamp tests HasZeroUpdateTime and
+// UpdateTimestamp on NodeAnnouncement1.
+func TestNodeAnnouncement1UpdateTimestamp(t *testing.T) {
+	t.Parallel()
+
+	zero := &NodeAnnouncement1{Timestamp: 0}
+	require.True(t, zero.HasZeroUpdateTime())
+	require.Equal(t, UnixTimestamp(0), zero.UpdateTimestamp())
+
+	nonZero := &NodeAnnouncement1{Timestamp: 12345}
+	require.False(t, nonZero.HasZeroUpdateTime())
+	require.Equal(t, UnixTimestamp(12345), nonZero.UpdateTimestamp())
 }

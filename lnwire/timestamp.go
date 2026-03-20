@@ -41,7 +41,7 @@ func (u UnixTimestamp) Cmp(other Timestamp) (CompareResult, error) {
 
 // BlockHeightTimestamp is a block-height based update timestamp, used by v2
 // gossip channels and nodes.
-type BlockHeightTimestamp uint32
+type BlockHeightTimestamp uint64
 
 // IsZero returns true if the timestamp has no value.
 func (b BlockHeightTimestamp) IsZero() bool {
