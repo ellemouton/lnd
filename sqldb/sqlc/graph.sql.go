@@ -1757,12 +1757,12 @@ WHERE c.version = $1
                THEN COALESCE(cp1.last_update, 0)
            ELSE COALESCE(cp2.last_update, 0)
        END > COALESCE($4, -1))
-       OR
+       OR 
        (CASE
            WHEN COALESCE(cp1.last_update, 0) >= COALESCE(cp2.last_update, 0)
                THEN COALESCE(cp1.last_update, 0)
            ELSE COALESCE(cp2.last_update, 0)
-       END = COALESCE($4, -1)
+       END = COALESCE($4, -1) 
        AND c.id > COALESCE($5, -1))
   )
 ORDER BY
