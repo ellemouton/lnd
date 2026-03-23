@@ -63,6 +63,14 @@ type ChannelGraph struct {
 	cancel fn.Option[context.CancelFunc]
 }
 
+// preferHighestNodeDirectedChanneler is implemented by stores that can stream
+// cross-version node-directed channel traversals directly.
+type preferHighestNodeDirectedChanneler interface {
+	ForEachNodeDirectedChannelPreferHighest(ctx context.Context,
+		node route.Vertex, cb func(channel *DirectedChannel) error,
+		reset func()) error
+}
+
 // NewChannelGraph creates a new ChannelGraph instance with the given backend.
 func NewChannelGraph(v1Store Store,
 	options ...ChanGraphOption) (*ChannelGraph, error) {
@@ -238,8 +246,9 @@ func (c *ChannelGraph) populateCache(ctx context.Context) error {
 	for _, v := range []lnwire.GossipVersion{
 		gossipV1, gossipV2,
 	} {
-		// TODO(elle): If we have both v1 and v2 entries for the same
-		// node/channel, prefer v2 when merging.
+		// We iterate v1 first, then v2. Since AddNodeFeatures and
+		// AddChannel overwrite on key collision, v2 data naturally
+		// takes precedence when both versions exist.
 		err := c.db.ForEachNodeCacheable(ctx, v,
 			func(node route.Vertex,
 				features *lnwire.FeatureVector) error {
@@ -299,12 +308,59 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(ctx context.Context,
 		return c.cache.graphCache.ForEachChannel(node, cb)
 	}
 
-	// TODO(elle): once the no-cache path needs to support
-	// pathfinding across gossip versions, this should iterate
-	// across all versions rather than defaulting to v1.
-	return c.db.ForEachNodeDirectedChannel(
-		ctx, gossipV1, node, cb, reset,
-	)
+	if db, ok := c.db.(preferHighestNodeDirectedChanneler); ok {
+		return db.ForEachNodeDirectedChannelPreferHighest(
+			ctx, node, cb, reset,
+		)
+	}
+
+	// Iterate across all gossip versions (highest first) so that
+	// channels announced via v2 are preferred over v1. We buffer
+	// results and deliver them at the end so that ExecTx retries
+	// within a single version don't corrupt the caller's state or
+	// lose channels from already-committed versions.
+	seen := make(map[uint64]struct{})
+	var allChannels []*DirectedChannel
+
+	for _, v := range []lnwire.GossipVersion{gossipV2, gossipV1} {
+		prevLen := len(allChannels)
+		err := c.db.ForEachNodeDirectedChannel(
+			ctx, v, node,
+			func(channel *DirectedChannel) error {
+				if _, ok := seen[channel.ChannelID]; ok {
+					return nil
+				}
+				seen[channel.ChannelID] = struct{}{}
+
+				allChannels = append(allChannels, channel)
+
+				return nil
+			},
+			func() {
+				// On ExecTx retry, undo this version's
+				// additions while keeping channels from
+				// earlier (already committed) versions.
+				for _, ch := range allChannels[prevLen:] {
+					delete(seen, ch.ChannelID)
+				}
+				allChannels = allChannels[:prevLen]
+			},
+		)
+		if err != nil &&
+			!errors.Is(err, ErrVersionNotSupportedForKVDB) {
+
+			return err
+		}
+	}
+
+	// Deliver the collected channels to the caller.
+	for _, ch := range allChannels {
+		if err := cb(ch); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // FetchNodeFeatures returns the features of the given node. If no features are
@@ -320,7 +376,22 @@ func (c *ChannelGraph) FetchNodeFeatures(ctx context.Context,
 		return c.cache.graphCache.GetFeatures(node), nil
 	}
 
-	return c.db.FetchNodeFeatures(ctx, lnwire.GossipVersion1, node)
+	// Try v2 first, fall back to v1 if the v2 features are empty.
+	for _, v := range []lnwire.GossipVersion{gossipV2, gossipV1} {
+		features, err := c.db.FetchNodeFeatures(ctx, v, node)
+		if errors.Is(err, ErrVersionNotSupportedForKVDB) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		if !features.IsEmpty() {
+			return features, nil
+		}
+	}
+
+	return lnwire.EmptyFeatureVector(), nil
 }
 
 // GraphSession will provide the call-back with access to a NodeTraverser
