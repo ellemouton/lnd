@@ -4174,8 +4174,9 @@ func (c *KVStore) FetchChannelEdgesByID(_ context.Context,
 	return edgeInfo, policy1, policy2, nil
 }
 
-// FetchChannelEdgesByIDPreferHighest looks up the channel by ID. The KV store
-// only supports gossip v1, so this simply delegates to the versioned fetch.
+// FetchChannelEdgesByIDPreferHighest looks up the channel by SCID. The KV
+// store only supports gossip v1, so this simply delegates to the versioned
+// fetch.
 //
 // NOTE: part of the Store interface.
 func (c *KVStore) FetchChannelEdgesByIDPreferHighest(ctx context.Context,

@@ -3000,13 +3000,11 @@ func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 
 	// Mark channel 1 and 2 as zombies.
 	err := graph.MarkEdgeZombie(
-		ctx, lnwire.GossipVersion1, scid1.ToUint64(),
-		[33]byte{}, [33]byte{},
+		ctx, scid1.ToUint64(), [33]byte{}, [33]byte{},
 	)
 	require.NoError(t, err)
 	err = graph.MarkEdgeZombie(
-		ctx, lnwire.GossipVersion1, scid2.ToUint64(),
-		[33]byte{}, [33]byte{},
+		ctx, scid2.ToUint64(), [33]byte{}, [33]byte{},
 	)
 	require.NoError(t, err)
 
