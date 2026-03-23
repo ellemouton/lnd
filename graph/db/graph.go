@@ -641,6 +641,14 @@ func (c *ChannelGraph) HasV1Node(ctx context.Context,
 	return c.db.HasV1Node(ctx, nodePub)
 }
 
+// ForEachNode iterates through all nodes in the graph across all gossip
+// versions, yielding each unique node exactly once.
+func (c *ChannelGraph) ForEachNode(ctx context.Context,
+	cb func(*models.Node) error, reset func()) error {
+
+	return c.db.ForEachNode(ctx, cb, reset)
+}
+
 // ForEachChannel iterates through all channel edges stored within the graph
 // across all gossip versions.
 func (c *ChannelGraph) ForEachChannel(ctx context.Context,
@@ -907,7 +915,7 @@ func (c *VersionedGraph) FilterKnownChanIDs(ctx context.Context,
 		// alive, and we let it be added to the set of IDs to query
 		// our peer for.
 		err := c.db.MarkEdgeLive(
-			ctx, info.Version,
+			ctx, c.v,
 			info.ShortChannelID.ToUint64(),
 		)
 		// Since there is a chance that the edge could have been
