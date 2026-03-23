@@ -52,6 +52,7 @@ type SQLQueries interface {
 	GetNodesByIDs(ctx context.Context, ids []int64) ([]sqlc.GraphNode, error)
 	GetNodeIDByPubKey(ctx context.Context, arg sqlc.GetNodeIDByPubKeyParams) (int64, error)
 	GetNodesByLastUpdateRange(ctx context.Context, arg sqlc.GetNodesByLastUpdateRangeParams) ([]sqlc.GraphNode, error)
+	GetNodesByBlockHeightRange(ctx context.Context, arg sqlc.GetNodesByBlockHeightRangeParams) ([]sqlc.GraphNode, error)
 	ListNodesPaginated(ctx context.Context, arg sqlc.ListNodesPaginatedParams) ([]sqlc.GraphNode, error)
 	ListNodeIDsAndPubKeys(ctx context.Context, arg sqlc.ListNodeIDsAndPubKeysParams) ([]sqlc.ListNodeIDsAndPubKeysRow, error)
 	IsPublicV1Node(ctx context.Context, pubKey []byte) (bool, error)
@@ -107,6 +108,7 @@ type SQLQueries interface {
 	ListChannelsPaginated(ctx context.Context, arg sqlc.ListChannelsPaginatedParams) ([]sqlc.ListChannelsPaginatedRow, error)
 	ListChannelsPaginatedV2(ctx context.Context, arg sqlc.ListChannelsPaginatedV2Params) ([]sqlc.ListChannelsPaginatedV2Row, error)
 	GetChannelsByPolicyLastUpdateRange(ctx context.Context, arg sqlc.GetChannelsByPolicyLastUpdateRangeParams) ([]sqlc.GetChannelsByPolicyLastUpdateRangeRow, error)
+	GetChannelsByPolicyBlockRange(ctx context.Context, arg sqlc.GetChannelsByPolicyBlockRangeParams) ([]sqlc.GetChannelsByPolicyBlockRangeRow, error)
 	GetChannelByOutpointWithPolicies(ctx context.Context, arg sqlc.GetChannelByOutpointWithPoliciesParams) (sqlc.GetChannelByOutpointWithPoliciesRow, error)
 	GetPublicV1ChannelsBySCID(ctx context.Context, arg sqlc.GetPublicV1ChannelsBySCIDParams) ([]sqlc.GraphChannel, error)
 	GetPublicV2ChannelsBySCID(ctx context.Context, arg sqlc.GetPublicV2ChannelsBySCIDParams) ([]sqlc.GraphChannel, error)
@@ -626,6 +628,7 @@ func (s *SQLStore) NodeUpdatesInHorizon(ctx context.Context,
 	return func(yield func(*models.Node, error) bool) {
 		var (
 			lastUpdateTime sql.NullInt64
+			lastBlock      sql.NullInt64
 			lastPubKey     = make([]byte, 33)
 			hasMore        = true
 		)
@@ -661,6 +664,30 @@ func (s *SQLStore) NodeUpdatesInHorizon(ctx context.Context,
 			)
 		}
 
+		queryV2 := func(db SQLQueries) ([]sqlc.GraphNode, error) {
+			//nolint:ll
+			return db.GetNodesByBlockHeightRange(
+				ctx, sqlc.GetNodesByBlockHeightRangeParams{
+					Version: int16(v),
+					StartHeight: sqldb.SQLInt64(
+						int64(r.StartHeight.UnwrapOr(0)), //nolint:ll
+					),
+					EndHeight: sqldb.SQLInt64(
+						int64(r.EndHeight.UnwrapOr(0)), //nolint:ll
+					),
+					LastBlockHeight: lastBlock,
+					LastPubKey:      lastPubKey,
+					OnlyPublic: sql.NullBool{
+						Bool:  cfg.iterPublicNodes,
+						Valid: true,
+					},
+					MaxResults: sqldb.SQLInt32(
+						cfg.nodeUpdateIterBatchSize,
+					),
+				},
+			)
+		}
+
 		// queryNodes fetches the next batch of nodes in the
 		// horizon range, dispatching to the version-appropriate
 		// query.
@@ -670,13 +697,7 @@ func (s *SQLStore) NodeUpdatesInHorizon(ctx context.Context,
 				return queryV1(db)
 
 			case gossipV2:
-				// TODO(elle): v2 block-height range
-				// queries will be added once the SQL
-				// definitions land.
-				return nil, fmt.Errorf("v2 node updates "+
-					"in horizon not yet "+
-					"implemented for SQL: %w",
-					ErrVersionNotSupportedForKVDB)
+				return queryV2(db)
 
 			default:
 				return nil, fmt.Errorf("unknown gossip "+
@@ -691,9 +712,15 @@ func (s *SQLStore) NodeUpdatesInHorizon(ctx context.Context,
 
 			*batch = append(*batch, node)
 
-			if v == gossipV1 {
+			switch v {
+			case gossipV1:
 				lastUpdateTime = sql.NullInt64{
 					Int64: node.LastUpdate.Unix(),
+					Valid: true,
+				}
+			case gossipV2:
+				lastBlock = sql.NullInt64{
+					Int64: int64(node.LastBlockHeight),
 					Valid: true,
 				}
 			}
@@ -1136,6 +1163,26 @@ func extractMaxUpdateTime(
 	}
 }
 
+// extractMaxBlockHeight returns the maximum of the two policy block heights.
+// This is used for pagination cursor tracking in v2 gossip queries.
+func extractMaxBlockHeight(
+	row sqlc.GetChannelsByPolicyLastUpdateRangeRow) int64 {
+
+	switch {
+	case row.Policy1BlockHeight.Valid &&
+		row.Policy2BlockHeight.Valid:
+
+		return max(row.Policy1BlockHeight.Int64,
+			row.Policy2BlockHeight.Int64)
+	case row.Policy1BlockHeight.Valid:
+		return row.Policy1BlockHeight.Int64
+	case row.Policy2BlockHeight.Valid:
+		return row.Policy2BlockHeight.Int64
+	default:
+		return 0
+	}
+}
+
 // buildChannelFromRow constructs a ChannelEdge from a database row.
 // This includes building the nodes, channel info, and policies.
 func (s *SQLStore) buildChannelFromRow(ctx context.Context, db SQLQueries,
@@ -1234,13 +1281,14 @@ func (s *SQLStore) ChanUpdatesInHorizon(ctx context.Context,
 
 	return func(yield func(ChannelEdge, error) bool) {
 		var (
-			edgesSeen      = make(map[uint64]struct{})
-			edgesToCache   = make(map[uint64]ChannelEdge)
-			hits           int
-			total          int
-			lastUpdateTime sql.NullInt64
-			lastID         sql.NullInt64
-			hasMore        = true
+			edgesSeen       = make(map[uint64]struct{})
+			edgesToCache    = make(map[uint64]ChannelEdge)
+			hits            int
+			total           int
+			lastUpdateTime  sql.NullInt64
+			lastBlockHeight sql.NullInt64
+			lastID          sql.NullInt64
+			hasMore         = true
 		)
 
 		queryV1 := func(db SQLQueries) (
@@ -1249,7 +1297,6 @@ func (s *SQLStore) ChanUpdatesInHorizon(ctx context.Context,
 			return db.GetChannelsByPolicyLastUpdateRange(
 				ctx,
 				sqlc.GetChannelsByPolicyLastUpdateRangeParams{
-					Version: int16(v),
 					StartTime: sqldb.SQLInt64(
 						r.StartTime.UnwrapOr(
 							time.Time{},
@@ -1270,6 +1317,46 @@ func (s *SQLStore) ChanUpdatesInHorizon(ctx context.Context,
 			)
 		}
 
+		queryV2 := func(db SQLQueries) (
+			[]sqlc.GetChannelsByPolicyLastUpdateRangeRow, error) {
+
+			blockRows, err := db.GetChannelsByPolicyBlockRange(
+				ctx,
+				sqlc.GetChannelsByPolicyBlockRangeParams{
+					Version: int16(v),
+					StartHeight: sqldb.SQLInt64(
+						int64(r.StartHeight.UnwrapOr(0)), //nolint:ll
+					),
+					EndHeight: sqldb.SQLInt64(
+						int64(r.EndHeight.UnwrapOr(0)), //nolint:ll
+					),
+					LastBlockHeight: lastBlockHeight,
+					LastID:          lastID,
+					MaxResults: sql.NullInt32{
+						Int32: int32(batchSize),
+						Valid: true,
+					},
+				},
+			)
+			if err != nil {
+				return nil, err
+			}
+
+			rows := make(
+				[]sqlc.GetChannelsByPolicyLastUpdateRangeRow,
+				0, len(blockRows),
+			)
+			for _, br := range blockRows {
+				//nolint:ll
+				rows = append(
+					rows,
+					sqlc.GetChannelsByPolicyLastUpdateRangeRow(br),
+				)
+			}
+
+			return rows, nil
+		}
+
 		// queryChannels fetches the next batch of channels whose
 		// policies fall within the horizon range.
 		queryChannels := func(db SQLQueries) (
@@ -1280,13 +1367,7 @@ func (s *SQLStore) ChanUpdatesInHorizon(ctx context.Context,
 				return queryV1(db)
 
 			case gossipV2:
-				// TODO(elle): v2 block-height range
-				// queries will be added once the SQL
-				// definitions land.
-				return nil, fmt.Errorf("v2 chan updates "+
-					"in horizon not yet supported "+
-					"for SQL: %w",
-					ErrVersionNotSupportedForKVDB)
+				return queryV2(db)
 
 			default:
 				return nil, fmt.Errorf("unknown gossip "+
@@ -1301,9 +1382,15 @@ func (s *SQLStore) ChanUpdatesInHorizon(ctx context.Context,
 			row sqlc.GetChannelsByPolicyLastUpdateRangeRow,
 			batch *[]ChannelEdge) error {
 
-			if v == gossipV1 {
+			switch v {
+			case gossipV1:
 				lastUpdateTime = sql.NullInt64{
 					Int64: extractMaxUpdateTime(row),
+					Valid: true,
+				}
+			case gossipV2:
+				lastBlockHeight = sql.NullInt64{
+					Int64: extractMaxBlockHeight(row),
 					Valid: true,
 				}
 			}
