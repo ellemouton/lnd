@@ -171,8 +171,9 @@ func (c *ChannelGraph) populateCache(ctx context.Context) error {
 	for _, v := range []lnwire.GossipVersion{
 		gossipV1, gossipV2,
 	} {
-		// TODO(elle): If we have both v1 and v2 entries for the same
-		// node/channel, prefer v2 when merging.
+		// We iterate v1 first, then v2. Since AddNodeFeatures and
+		// AddChannel overwrite on key collision, v2 data naturally
+		// takes precedence when both versions exist.
 		err := c.db.ForEachNodeCacheable(ctx, v,
 			func(node route.Vertex,
 				features *lnwire.FeatureVector) error {
@@ -230,12 +231,37 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(ctx context.Context,
 		return c.graphCache.ForEachChannel(node, cb)
 	}
 
-	// TODO(elle): once the no-cache path needs to support
-	// pathfinding across gossip versions, this should iterate
-	// across all versions rather than defaulting to v1.
-	return c.db.ForEachNodeDirectedChannel(
-		ctx, gossipV1, node, cb, reset,
-	)
+	// Iterate across all gossip versions (highest first) so that
+	// channels announced via v2 are preferred over v1. Each
+	// version runs in its own Store transaction. We use a
+	// per-version reset that clears the dedup map rather than
+	// passing the caller's reset, because ExecTx fires reset on
+	// every attempt (including the first) which would clear
+	// results accumulated from earlier versions.
+	seen := make(map[uint64]struct{})
+	for _, v := range []lnwire.GossipVersion{gossipV2, gossipV1} {
+		err := c.db.ForEachNodeDirectedChannel(
+			ctx, v, node,
+			func(channel *DirectedChannel) error {
+				if _, ok := seen[channel.ChannelID]; ok {
+					return nil
+				}
+				seen[channel.ChannelID] = struct{}{}
+
+				return cb(channel)
+			},
+			func() {
+				seen = make(map[uint64]struct{})
+			},
+		)
+		if err != nil &&
+			!errors.Is(err, ErrVersionNotSupportedForKVDB) {
+
+			return err
+		}
+	}
+
+	return nil
 }
 
 // FetchNodeFeatures returns the features of the given node. If no features are
@@ -251,7 +277,22 @@ func (c *ChannelGraph) FetchNodeFeatures(ctx context.Context,
 		return c.graphCache.GetFeatures(node), nil
 	}
 
-	return c.db.FetchNodeFeatures(ctx, lnwire.GossipVersion1, node)
+	// Try v2 first, fall back to v1 if the v2 features are empty.
+	for _, v := range []lnwire.GossipVersion{gossipV2, gossipV1} {
+		features, err := c.db.FetchNodeFeatures(ctx, v, node)
+		if errors.Is(err, ErrVersionNotSupportedForKVDB) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		if !features.IsEmpty() {
+			return features, nil
+		}
+	}
+
+	return lnwire.EmptyFeatureVector(), nil
 }
 
 // GraphSession will provide the call-back with access to a NodeTraverser
