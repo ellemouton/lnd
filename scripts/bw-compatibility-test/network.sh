@@ -171,7 +171,11 @@ function open_channel() {
   echo "🔗 Opened channel between $node1 and $node2"
 }
 
-# Function to check if a node's graph has the expected number of channels
+# wait_graph_sync waits until the node's graph contains the expected number of
+# channels AND every channel has both direction policies populated. Seeing a
+# channel in the graph (via getnetworkinfo) does not guarantee that both
+# channel_update messages have arrived. Without both policies the pathfinder
+# cannot build a complete route, leading to NO_ROUTE failures.
 wait_graph_sync() {
   if [[ $# -ne 2 ]]; then
        echo "❌ Error: graph_synced requires exactly 2 arguments (node and num_chans)"
@@ -185,14 +189,23 @@ wait_graph_sync() {
   while :; do
     num_channels=$($node getnetworkinfo | jq -r '.num_channels')
 
-    # Ensure num_channels is a valid number before proceeding
-    if [[ "$num_channels" =~ ^[0-9]+$ ]]; then
-      echo -ne "⌛ $node sees $num_channels channels...\r"
+    # Ensure num_channels is a valid number before proceeding.
+    if [[ "$num_channels" =~ ^[0-9]+$ ]] && \
+       [[ "$num_channels" -eq num_chans ]]; then
 
-      if [[ "$num_channels" -eq num_chans ]]; then
-        echo "👀 $node sees all the channels!"
-        break  # Exit loop when num_channels reaches num_chans
+      # Also verify that every edge has both policies. An edge
+      # without both node1_policy and node2_policy means a
+      # channel_update is still in flight.
+      missing=$($node describegraph | jq '[.edges[] | select(.node1_policy == null or .node2_policy == null)] | length')
+
+      if [[ "$missing" -eq 0 ]]; then
+        echo "👀 $node sees all $num_chans channels with full policies!"
+        break
       fi
+
+      echo -ne "⌛ $node sees $num_channels channels ($missing missing policies)...\r"
+    else
+      echo -ne "⌛ $node sees ${num_channels:-0}/$num_chans channels...\r"
     fi
 
     sleep 1
