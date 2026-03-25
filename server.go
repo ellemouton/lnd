@@ -1136,6 +1136,27 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		StrictZombiePruning: strictPruning,
 		IsAlias:             aliasmgr.IsAlias,
 		GraphSource:         s.graphSource,
+		OnRemoteChannelUpdate: func(
+			msg *lnwire.ChannelUpdate1) {
+
+			if s.remoteGraphClient == nil {
+				return
+			}
+
+			ctx, cancel := context.WithTimeout(
+				context.Background(), 5*time.Second,
+			)
+			defer cancel()
+
+			err := s.remoteGraphClient.InjectGossipMessage(
+				ctx, msg,
+			)
+			if err != nil {
+				srvrLog.Warnf("Failed to propagate "+
+					"channel update to remote "+
+					"graph source: %v", err)
+			}
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("can't create graph builder: %w", err)

@@ -707,6 +707,30 @@ func (c *RPCClient) AddrsForNode(ctx context.Context,
 	return true, addrs, nil
 }
 
+// InjectGossipMessage sends a raw gossip message to the remote graph source
+// for validation and processing. This is used to push channel updates
+// discovered through payment failures back to the graph source so that other
+// lightweight nodes using the same source can benefit.
+func (c *RPCClient) InjectGossipMessage(ctx context.Context,
+	msg lnwire.Message) error {
+
+	ctx, cancel := c.rpcCtx(ctx)
+	defer cancel()
+
+	var buf bytes.Buffer
+	if _, err := lnwire.WriteMessage(&buf, msg, 0); err != nil {
+		return fmt.Errorf("unable to serialize gossip message: %w", err)
+	}
+
+	_, err := c.conn.InjectGossipMessage(ctx,
+		&lnrpc.InjectGossipMessageRequest{
+			Msg: buf.Bytes(),
+		},
+	)
+
+	return err
+}
+
 // connectRPC establishes a gRPC connection to the remote LND node.
 func connectRPC(ctx context.Context, hostPort, tlsCertPath, macaroonPath string,
 	timeout time.Duration) (*grpc.ClientConn, error) {

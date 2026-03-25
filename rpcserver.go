@@ -588,6 +588,10 @@ func MainRPCServerPermissions() map[string][]bakery.Op {
 			Entity: "offchain",
 			Action: "read",
 		}},
+		"/lnrpc.Lightning/InjectGossipMessage": {{
+			Entity: "info",
+			Action: "write",
+		}},
 		"/lnrpc.Lightning/ListAliases": {{
 			Entity: "offchain",
 			Action: "read",
@@ -4789,6 +4793,55 @@ func (r *rpcServer) LookupHtlcResolution(
 		Settled:  info.Settled,
 		Offchain: info.Offchain,
 	}, nil
+}
+
+// InjectGossipMessage accepts a raw Lightning gossip message (wire format) and
+// feeds it into this node's gossiper for validation and processing. This
+// allows lightweight nodes using this node as a remote graph source to push
+// back channel updates they discover through payment failures.
+func (r *rpcServer) InjectGossipMessage(ctx context.Context,
+	in *lnrpc.InjectGossipMessageRequest) (
+	*lnrpc.InjectGossipMessageResponse, error) {
+
+	if len(in.Msg) == 0 {
+		return nil, status.Error(codes.InvalidArgument,
+			"gossip message bytes required")
+	}
+
+	// Deserialize the wire message.
+	msg, err := lnwire.ReadMessage(bytes.NewReader(in.Msg), 0)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"unable to decode gossip message: %v", err)
+	}
+
+	// Only ChannelUpdate messages are currently supported.
+	switch msg.(type) {
+	case *lnwire.ChannelUpdate1:
+	default:
+		return nil, status.Errorf(codes.InvalidArgument,
+			"unsupported gossip message type: %T", msg)
+	}
+
+	// Feed the message to the gossiper as if it came from a remote peer.
+	// We use ProcessLocalAnnouncement which does not require a peer
+	// reference. The gossiper will validate the message (checking the
+	// signature, timestamp, etc.) and if valid, apply it to the graph
+	// and broadcast it to peers.
+	errChan := r.server.authGossiper.ProcessLocalAnnouncement(msg)
+
+	select {
+	case err := <-errChan:
+		if err != nil {
+			return nil, status.Errorf(codes.Internal,
+				"gossiper rejected message: %v", err)
+		}
+
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	return &lnrpc.InjectGossipMessageResponse{}, nil
 }
 
 // ListChannels returns a description of all the open channels that this node

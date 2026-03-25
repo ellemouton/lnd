@@ -398,13 +398,10 @@ func testRemoteGraphPolicyUpdate(ht *lntest.HarnessTest) {
 // propagated back to the graph source (Greg) so that other lightweight nodes
 // (Yara) that also use Greg benefit from it.
 //
-// This test first asserts the current limitation: after Zane learns about an
-// updated policy via a payment failure, Greg still has the stale policy, so
-// Yara also encounters the same stale policy on its first payment attempt.
-//
-// TODO: Once policy propagation back to the graph source is implemented,
-// update this test to assert that Greg and Yara see the new policy after
-// Zane's payment, and Yara's payment succeeds without hitting stale fees.
+// The test verifies that after Zane's payment failure triggers a policy
+// update, Zane pushes the update back to Greg via InjectGossipMessage.
+// Greg validates and applies it, so Yara (who also uses Greg) sees the
+// updated policy and can pay without hitting stale fees.
 func testRemoteGraphPolicyPropagation(ht *lntest.HarnessTest) {
 	var (
 		ctx          = context.Background()
@@ -583,17 +580,35 @@ func testRemoteGraphPolicyPropagation(ht *lntest.HarnessTest) {
 	invoice2 := alice.RPC.AddInvoice(&lnrpc.Invoice{Value: 100})
 	ht.CompletePaymentRequests(zane, []string{invoice2.PaymentRequest})
 
-	// Greg should still have the old fee rate — Zane only updated its
-	// own local cache; the update was not propagated back to Greg.
-	require.Equal(ht.T, oldBobFeeRate, getBobFeeRate(greg),
-		"greg should still see old fee rate after zane's payment")
+	// Greg should now have the updated fee rate — Zane's payment failure
+	// triggered an InjectGossipMessage call back to Greg, who validated
+	// and applied the update.
+	err = wait.NoError(func() error {
+		rate := getBobFeeRate(greg)
+		if rate != newFeeRate {
+			return fmt.Errorf("greg sees fee rate %d, want %d",
+				rate, newFeeRate)
+		}
 
-	// Yara now tries to pay Alice. Because Greg still has stale policy
-	// data, Yara also hits FeeInsufficient on the first attempt and has
-	// to do the same retry dance. The payment still succeeds, but each
-	// remote graph user independently discovers the updated policy
-	// through their own payment failures — this is the problem we want
-	// to fix.
+		return nil
+	}, wait.DefaultTimeout)
+	require.NoError(ht.T, err)
+
+	// Since Greg now has the updated fee, Yara should also see it
+	// (via her remote graph subscription or next RPC query). This means
+	// Yara's payment should succeed without needing to discover the
+	// updated policy through her own payment failure.
+	err = wait.NoError(func() error {
+		rate := getBobFeeRate(yara)
+		if rate != newFeeRate {
+			return fmt.Errorf("yara sees fee rate %d, want %d",
+				rate, newFeeRate)
+		}
+
+		return nil
+	}, wait.DefaultTimeout)
+	require.NoError(ht.T, err)
+
 	invoice3 := alice.RPC.AddInvoice(&lnrpc.Invoice{Value: 100})
 	ht.CompletePaymentRequests(yara, []string{invoice3.PaymentRequest})
 

@@ -115,6 +115,13 @@ type Config struct {
 	// updates for such channels are applied directly to the graph cache
 	// without a DB write.
 	GraphSource graphdb.GraphSource
+
+	// OnRemoteChannelUpdate is an optional callback invoked when a channel
+	// update is applied from the GraphSource (i.e. for a channel that only
+	// exists in the remote graph). This allows the update to be propagated
+	// back to the remote graph source so it can validate, apply, and
+	// re-broadcast it to its peers.
+	OnRemoteChannelUpdate func(msg *lnwire.ChannelUpdate1)
 }
 
 // Builder builds and maintains a view of the Lightning Network graph.
@@ -1129,6 +1136,13 @@ func (b *Builder) applyChannelUpdateFromSource(ctx context.Context,
 
 	log.Debugf("Applied channel update from graph source for "+
 		"chan_id=%v directly to graph cache", chanID)
+
+	// If a callback is registered, propagate the update back to the
+	// remote graph source so it can validate, apply, and re-broadcast
+	// it to its peers.
+	if b.cfg.OnRemoteChannelUpdate != nil {
+		b.cfg.OnRemoteChannelUpdate(msg)
+	}
 
 	return true
 }
