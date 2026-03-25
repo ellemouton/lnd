@@ -392,3 +392,212 @@ func testRemoteGraphPolicyUpdate(ht *lntest.HarnessTest) {
 	// Clean up.
 	ht.CloseChannel(zane, chanPointZane)
 }
+
+// testRemoteGraphPolicyPropagation tests that when a lightweight node (Zane)
+// receives an updated channel policy from a payment failure, that update is
+// propagated back to the graph source (Greg) so that other lightweight nodes
+// (Yara) that also use Greg benefit from it.
+//
+// This test first asserts the current limitation: after Zane learns about an
+// updated policy via a payment failure, Greg still has the stale policy, so
+// Yara also encounters the same stale policy on its first payment attempt.
+//
+// TODO: Once policy propagation back to the graph source is implemented,
+// update this test to assert that Greg and Yara see the new policy after
+// Zane's payment, and Yara's payment succeeds without hitting stale fees.
+func testRemoteGraphPolicyPropagation(ht *lntest.HarnessTest) {
+	var (
+		ctx          = context.Background()
+		descGraphReq = &lnrpc.ChannelGraphRequest{
+			IncludeUnannounced: true,
+		}
+	)
+
+	// Set up a public network: Alice <- Bob <- Carol.
+	_, nodes := ht.CreateSimpleNetwork(
+		[][]string{nil, nil, nil}, lntest.OpenChannelParams{
+			Amt: btcutil.Amount(100000),
+		},
+	)
+	carol, bob, alice := nodes[0], nodes[1], nodes[2]
+
+	// Create graph provider node, Greg. Connect it to Bob so it syncs the
+	// public graph.
+	greg := ht.NewNode("Greg", nil)
+	ht.EnsureConnected(greg, bob)
+
+	// Wait until Greg has synced the public graph (2 public channels).
+	err := wait.NoError(func() error {
+		resp := greg.RPC.DescribeGraph(descGraphReq)
+		if len(resp.Edges) != 2 {
+			return fmt.Errorf("greg has %d edges, want 2",
+				len(resp.Edges))
+		}
+
+		return nil
+	}, wait.DefaultTimeout)
+	require.NoError(ht.T, err)
+
+	// Restart Greg with --gossip.no-sync so he won't learn about any
+	// future policy updates via gossip from his peers. This simulates
+	// the scenario where Greg has a snapshot of the graph but doesn't
+	// receive real-time gossip updates for some channels.
+	ht.RestartNodeWithExtraArgs(greg, []string{
+		"--gossip.no-sync",
+	})
+
+	// remoteGraphArgs returns the arguments for a node that uses Greg
+	// as its remote graph source.
+	remoteGraphArgs := func() []string {
+		return []string{
+			"--gossip.no-sync",
+			"--remotegraph.enable",
+			"--caches.rpc-graph-cache-duration=0",
+			fmt.Sprintf(
+				"--remotegraph.rpchost=localhost:%d",
+				greg.Cfg.RPCPort,
+			),
+			fmt.Sprintf(
+				"--remotegraph.tlscertpath=%s",
+				greg.Cfg.TLSCertPath,
+			),
+			fmt.Sprintf(
+				"--remotegraph.macaroonpath=%s",
+				greg.Cfg.AdminMacPath,
+			),
+		}
+	}
+
+	// Create Zane and Yara, both using Greg as their remote graph source.
+	zane := ht.NewNode("Zane", remoteGraphArgs())
+	yara := ht.NewNode("Yara", remoteGraphArgs())
+
+	// Fund both, connect to Carol, and open private channels.
+	ht.FundCoins(btcutil.SatoshiPerBitcoin, zane)
+	ht.FundCoins(btcutil.SatoshiPerBitcoin, yara)
+	ht.EnsureConnected(zane, carol)
+	ht.EnsureConnected(yara, carol)
+
+	chanPointZane := ht.OpenChannel(
+		zane, carol, lntest.OpenChannelParams{
+			Private: true,
+			Amt:     btcutil.Amount(100000),
+		},
+	)
+	chanPointYara := ht.OpenChannel(
+		yara, carol, lntest.OpenChannelParams{
+			Private: true,
+			Amt:     btcutil.Amount(100000),
+		},
+	)
+
+	// Wait until both Zane and Yara see the full graph
+	// (2 public + 1 private = 3 edges each).
+	for _, n := range []*node.HarnessNode{zane, yara} {
+		nodeName := n.Cfg.Name
+		err = wait.NoError(func() error {
+			resp := n.RPC.DescribeGraph(descGraphReq)
+			if len(resp.Edges) != 3 {
+				return fmt.Errorf("%s has %d edges, want 3",
+					nodeName, len(resp.Edges))
+			}
+
+			return nil
+		}, wait.DefaultTimeout)
+		require.NoError(ht.T, err)
+	}
+
+	// Verify Zane can route a payment to Alice through the remote graph.
+	invoice := alice.RPC.AddInvoice(&lnrpc.Invoice{Value: 100})
+	ht.CompletePaymentRequests(zane, []string{invoice.PaymentRequest})
+
+	// Record the Bob->Alice channel ID.
+	bobGraph := bob.RPC.DescribeGraph(descGraphReq)
+	var bobAliceChanID uint64
+	for _, edge := range bobGraph.Edges {
+		isBA := edge.Node1Pub == bob.PubKeyStr &&
+			edge.Node2Pub == alice.PubKeyStr
+		isAB := edge.Node1Pub == alice.PubKeyStr &&
+			edge.Node2Pub == bob.PubKeyStr
+
+		if isBA || isAB {
+			bobAliceChanID = edge.ChannelId
+
+			break
+		}
+	}
+	require.NotZero(ht.T, bobAliceChanID,
+		"bob-alice channel not found")
+
+	// getBobFeeRate queries a node's view of Bob's fee rate on the
+	// Bob<->Alice channel.
+	getBobFeeRate := func(n *node.HarnessNode) int64 {
+		info, err := n.RPC.LN.GetChanInfo(
+			ctx,
+			&lnrpc.ChanInfoRequest{ChanId: bobAliceChanID},
+		)
+		require.NoError(ht.T, err)
+
+		if info.Node1Pub == bob.PubKeyStr {
+			return info.Node1Policy.FeeRateMilliMsat
+		}
+
+		return info.Node2Policy.FeeRateMilliMsat
+	}
+
+	oldBobFeeRate := getBobFeeRate(greg)
+
+	// Bob dramatically increases his fee on the Bob->Alice channel.
+	newFeeRate := oldBobFeeRate + 500_000
+	bob.RPC.UpdateChannelPolicy(&lnrpc.PolicyUpdateRequest{
+		Scope: &lnrpc.PolicyUpdateRequest_Global{
+			Global: true,
+		},
+		BaseFeeMsat:   1000,
+		FeeRate:       float64(newFeeRate) / 1_000_000,
+		TimeLockDelta: 80,
+	})
+
+	// Wait for Alice to learn about the new fee (she's connected to Bob
+	// directly via gossip).
+	err = wait.NoError(func() error {
+		rate := getBobFeeRate(alice)
+		if rate != newFeeRate {
+			return fmt.Errorf("alice sees fee rate %d, "+
+				"want %d", rate, newFeeRate)
+		}
+
+		return nil
+	}, wait.DefaultTimeout)
+	require.NoError(ht.T, err)
+
+	// Greg should still have the old fee rate since --gossip.no-sync
+	// prevents him from learning about the update.
+	require.Equal(ht.T, oldBobFeeRate, getBobFeeRate(greg),
+		"greg should still see old fee rate")
+
+	// Zane pays Alice. The first attempt will use the stale fee policy
+	// from Greg, causing Bob to reject with FeeInsufficient. The router
+	// applies the updated ChannelUpdate from the failure and retries
+	// successfully.
+	invoice2 := alice.RPC.AddInvoice(&lnrpc.Invoice{Value: 100})
+	ht.CompletePaymentRequests(zane, []string{invoice2.PaymentRequest})
+
+	// Greg should still have the old fee rate — Zane only updated its
+	// own local cache; the update was not propagated back to Greg.
+	require.Equal(ht.T, oldBobFeeRate, getBobFeeRate(greg),
+		"greg should still see old fee rate after zane's payment")
+
+	// Yara now tries to pay Alice. Because Greg still has stale policy
+	// data, Yara also hits FeeInsufficient on the first attempt and has
+	// to do the same retry dance. The payment still succeeds, but each
+	// remote graph user independently discovers the updated policy
+	// through their own payment failures — this is the problem we want
+	// to fix.
+	invoice3 := alice.RPC.AddInvoice(&lnrpc.Invoice{Value: 100})
+	ht.CompletePaymentRequests(yara, []string{invoice3.PaymentRequest})
+
+	// Clean up.
+	ht.CloseChannel(zane, chanPointZane)
+	ht.CloseChannel(yara, chanPointYara)
+}
