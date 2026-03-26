@@ -1215,14 +1215,16 @@ func (d *DefaultDatabaseBuilder) BuildDatabase(
 					continue
 
 				case taprootV2Migration:
-					taprootMig := func(
-						tx *sqlc.Queries,
-					) error {
-						return graphdb.MigratePrivateTaprootToV2( //nolint:ll
-							ctx, tx,
-						)
+					if !d.cfg.Dev.GetSkipTaprootV2Migration() { //nolint:ll
+						taprootMig := func(
+							tx *sqlc.Queries,
+						) error {
+							return graphdb.MigratePrivateTaprootToV2( //nolint:ll
+								ctx, tx,
+							)
+						}
+						migrations[i].MigrationFn = taprootMig //nolint:ll
 					}
-					migrations[i].MigrationFn = taprootMig
 
 					continue
 
