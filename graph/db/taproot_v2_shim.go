@@ -1,11 +1,17 @@
 package graphdb
 
 import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 	"time"
 
+	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/sqldb"
 	"github.com/lightningnetwork/lnd/sqldb/sqlc"
 )
 
@@ -269,4 +275,183 @@ func v2PrivateTaprootFallbackVersion(
 	}
 
 	return fn.None[lnwire.GossipVersion]()
+}
+
+// fetchV2TaprootFallbackBySCID attempts to find a V2 private taproot channel
+// by SCID when a V1 lookup has failed. If found, it projects the result back
+// to V1 and populates the output pointers. Returns ErrEdgeNotFound if no V2
+// fallback exists.
+//
+// TODO(elle): remove when gossiper/builder are fully V2-aware.
+func fetchV2TaprootFallbackBySCID(ctx context.Context, cfg *SQLStoreConfig,
+	db SQLQueries, chanIDB []byte,
+	edge **models.ChannelEdgeInfo,
+	pol1, pol2 **models.ChannelEdgePolicy) error {
+
+	row, err := db.GetChannelBySCIDWithPolicies(
+		ctx, sqlc.GetChannelBySCIDWithPoliciesParams{
+			Scid:    chanIDB,
+			Version: int16(gossipV2),
+		},
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrEdgeNotFound
+	} else if err != nil {
+		return fmt.Errorf("unable to fetch v2 fallback channel: %w",
+			err)
+	}
+
+	// Only project private taproot V2 channels.
+	if !isPrivateTaprootV2(row.GraphChannel) {
+		return ErrEdgeNotFound
+	}
+
+	node1, node2, err := buildNodeVertices(
+		row.GraphNode.PubKey, row.GraphNode_2.PubKey,
+	)
+	if err != nil {
+		return err
+	}
+
+	v2Edge, err := getAndBuildEdgeInfo(
+		ctx, cfg, db, row.GraphChannel, node1, node2,
+	)
+	if err != nil {
+		return fmt.Errorf("unable to build v2 fallback channel "+
+			"info: %w", err)
+	}
+
+	dbPol1, dbPol2, err := extractChannelPolicies(row)
+	if err != nil {
+		return fmt.Errorf("unable to extract v2 fallback "+
+			"policies: %w", err)
+	}
+
+	v2Pol1, v2Pol2, err := getAndBuildChanPolicies(
+		ctx, cfg.QueryCfg, db, dbPol1, dbPol2, v2Edge.ChannelID,
+		node1, node2,
+	)
+	if err != nil {
+		return fmt.Errorf("unable to build v2 fallback "+
+			"policies: %w", err)
+	}
+
+	// Project back to V1.
+	*edge, *pol1, *pol2 = projectV2EdgeInfoToV1(v2Edge, v2Pol1, v2Pol2)
+
+	return nil
+}
+
+// fetchV2TaprootFallbackByOutpoint attempts to find a V2 private taproot
+// channel by outpoint when a V1 lookup has failed. If found, it projects the
+// result back to V1 and populates the output pointers. Returns ErrEdgeNotFound
+// if no V2 fallback exists.
+//
+// TODO(elle): remove when gossiper/builder are fully V2-aware.
+func fetchV2TaprootFallbackByOutpoint(ctx context.Context, cfg *SQLStoreConfig,
+	db SQLQueries, outpoint string,
+	edge **models.ChannelEdgeInfo,
+	pol1, pol2 **models.ChannelEdgePolicy) error {
+
+	row, err := db.GetChannelByOutpointWithPolicies(
+		ctx, sqlc.GetChannelByOutpointWithPoliciesParams{
+			Outpoint: outpoint,
+			Version:  int16(gossipV2),
+		},
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrEdgeNotFound
+	} else if err != nil {
+		return fmt.Errorf("unable to fetch v2 fallback channel: %w",
+			err)
+	}
+
+	// Only project private taproot V2 channels.
+	if !isPrivateTaprootV2(row.GraphChannel) {
+		return ErrEdgeNotFound
+	}
+
+	node1, node2, err := buildNodeVertices(
+		row.Node1Pubkey, row.Node2Pubkey,
+	)
+	if err != nil {
+		return err
+	}
+
+	v2Edge, err := getAndBuildEdgeInfo(
+		ctx, cfg, db, row.GraphChannel, node1, node2,
+	)
+	if err != nil {
+		return fmt.Errorf("unable to build v2 fallback channel "+
+			"info: %w", err)
+	}
+
+	dbPol1, dbPol2, err := extractChannelPolicies(row)
+	if err != nil {
+		return fmt.Errorf("unable to extract v2 fallback "+
+			"policies: %w", err)
+	}
+
+	v2Pol1, v2Pol2, err := getAndBuildChanPolicies(
+		ctx, cfg.QueryCfg, db, dbPol1, dbPol2, v2Edge.ChannelID,
+		node1, node2,
+	)
+	if err != nil {
+		return fmt.Errorf("unable to build v2 fallback "+
+			"policies: %w", err)
+	}
+
+	// Project back to V1.
+	*edge, *pol1, *pol2 = projectV2EdgeInfoToV1(v2Edge, v2Pol1, v2Pol2)
+
+	return nil
+}
+
+// appendV2TaprootEdgePoints iterates V2 channels and appends EdgePoints for
+// any private taproot channels to the given slice. This is used by ChannelView
+// in the V1 path to include migrated private taproot channels in the startup
+// chain filter.
+//
+// TODO(elle): remove when gossiper/builder are fully V2-aware.
+func appendV2TaprootEdgePoints(ctx context.Context,
+	queryCfg *sqldb.QueryConfig, db SQLQueries,
+	edgePoints *[]EdgePoint) error {
+
+	handleChannel := func(_ context.Context,
+		channel sqlc.ListChannelsPaginatedV2Row) error {
+
+		op, err := wire.NewOutPointFromString(channel.Outpoint)
+		if err != nil {
+			return err
+		}
+
+		*edgePoints = append(*edgePoints, EdgePoint{
+			FundingPkScript: channel.FundingPkScript,
+			OutPoint:        *op,
+		})
+
+		return nil
+	}
+
+	queryFunc := func(ctx context.Context, lastID int64,
+		limit int32) ([]sqlc.ListChannelsPaginatedV2Row, error) {
+
+		return db.ListChannelsPaginatedV2(
+			ctx, sqlc.ListChannelsPaginatedV2Params{
+				ID:    lastID,
+				Limit: limit,
+			},
+		)
+	}
+
+	extractCursor := func(
+		row sqlc.ListChannelsPaginatedV2Row) int64 {
+
+		return row.ID
+	}
+
+	return sqldb.ExecutePaginatedQuery(
+		ctx, queryCfg, int64(-1), queryFunc,
+		extractCursor, handleChannel,
+	)
 }
