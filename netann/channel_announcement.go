@@ -12,6 +12,7 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/lightningnetwork/lnd/graph/db/models"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/tlv"
 )
 
@@ -34,16 +35,110 @@ const (
 // function is used to transform out database structs into the corresponding wire
 // structs for announcing new channels to other peers, or simply syncing up a
 // peer's initial routing table upon connect.
-func CreateChanAnnouncement(chanInfo *models.ChannelEdgeInfo,
-	e1, e2 *models.ChannelEdgePolicy) (*lnwire.ChannelAnnouncement1,
-	*lnwire.ChannelUpdate1, *lnwire.ChannelUpdate1, error) {
+func CreateChanAnnouncement(chanProof *models.ChannelAuthProof,
+	chanInfo *models.ChannelEdgeInfo,
+	e1, e2 *models.ChannelEdgePolicy) (lnwire.ChannelAnnouncement,
+	lnwire.ChannelUpdate, lnwire.ChannelUpdate, error) {
 
 	// First, using the parameters of the channel, along with the channel
-	// authentication proof, we'll create re-create the original
+	// authentication chanProof, we'll create re-create the original
 	// authenticated channel announcement.
-	chanAnn, err := chanInfo.ToChannelAnnouncement()
-	if err != nil {
-		return nil, nil, nil, err
+	chanID := lnwire.NewShortChanIDFromInt(chanInfo.ChannelID)
+
+	var (
+		chanAnn lnwire.ChannelAnnouncement
+		err     error
+	)
+
+	switch chanInfo.Version {
+	case lnwire.GossipVersion1:
+		chanAnn1 := &lnwire.ChannelAnnouncement1{
+			ShortChannelID:  chanID,
+			NodeID1:         chanInfo.NodeKey1Bytes,
+			NodeID2:         chanInfo.NodeKey2Bytes,
+			ChainHash:       chanInfo.ChainHash,
+			Features:        chanInfo.Features.RawFeatureVector,
+			ExtraOpaqueData: chanInfo.ExtraOpaqueData,
+		}
+		chanInfo.BitcoinKey1Bytes.WhenSome(func(vertex route.Vertex) {
+			chanAnn1.BitcoinKey1 = vertex
+		})
+		chanInfo.BitcoinKey2Bytes.WhenSome(func(vertex route.Vertex) {
+			chanAnn1.BitcoinKey2 = vertex
+		})
+
+		chanAnn1.BitcoinSig1, err = lnwire.NewSigFromECDSARawSignature(
+			chanProof.BitcoinSig1(),
+		)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		chanAnn1.BitcoinSig2, err = lnwire.NewSigFromECDSARawSignature(
+			chanProof.BitcoinSig2(),
+		)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		chanAnn1.NodeSig1, err = lnwire.NewSigFromECDSARawSignature(
+			chanProof.NodeSig1(),
+		)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		chanAnn1.NodeSig2, err = lnwire.NewSigFromECDSARawSignature(
+			chanProof.NodeSig2(),
+		)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		chanAnn = chanAnn1
+
+	case lnwire.GossipVersion2:
+		chanAnn2 := &lnwire.ChannelAnnouncement2{
+			ChainHash: tlv.NewPrimitiveRecord[tlv.TlvType0](chanInfo.ChainHash),
+			Features: tlv.NewRecordT[tlv.TlvType2](
+				*chanInfo.Features.RawFeatureVector,
+			),
+			Capacity: tlv.NewPrimitiveRecord[tlv.TlvType6](
+				uint64(chanInfo.Capacity),
+			),
+			ShortChannelID: tlv.NewRecordT[tlv.TlvType4](chanID),
+			NodeID1:        tlv.NewPrimitiveRecord[tlv.TlvType8, [33]byte](chanInfo.NodeKey1Bytes),
+			NodeID2:        tlv.NewPrimitiveRecord[tlv.TlvType10, [33]byte](chanInfo.NodeKey2Bytes),
+			Outpoint: tlv.NewRecordT[tlv.TlvType18](
+				lnwire.OutPoint(chanInfo.ChannelPoint),
+			),
+			ExtraSignedFields: chanInfo.ExtraSignedFields,
+		}
+		chanInfo.BitcoinKey1Bytes.WhenSome(func(vertex route.Vertex) {
+			chanAnn2.BitcoinKey1 = tlv.SomeRecordT(
+				tlv.NewPrimitiveRecord[tlv.TlvType12, [33]byte](
+					vertex,
+				),
+			)
+		})
+		chanInfo.BitcoinKey2Bytes.WhenSome(func(vertex route.Vertex) {
+			chanAnn2.BitcoinKey2 = tlv.SomeRecordT(
+				tlv.NewPrimitiveRecord[tlv.TlvType14, [33]byte](
+					vertex,
+				),
+			)
+		})
+		chanInfo.MerkleRootHash.WhenSome(func(hash chainhash.Hash) {
+			chanAnn2.MerkleRootHash = tlv.SomeRecordT(
+				tlv.NewPrimitiveRecord[tlv.TlvType16, [32]byte](hash),
+			)
+		})
+
+		chanAnn2.Signature.Val, err = lnwire.NewSigFromSchnorrRawSignature(
+			chanProof.Sig(),
+		)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		chanAnn = chanAnn2
 	}
 
 	// We'll unconditionally queue the channel's existence chanProof as it
@@ -53,7 +148,7 @@ func CreateChanAnnouncement(chanInfo *models.ChannelEdgeInfo,
 	// Since it's up to a node's policy as to whether they advertise the
 	// edge in a direction, we don't create an advertisement if the edge is
 	// nil.
-	var edge1Ann, edge2Ann *lnwire.ChannelUpdate1
+	var edge1Ann, edge2Ann lnwire.ChannelUpdate
 	if e1 != nil {
 		edge1Ann, err = ChannelUpdateFromEdge(chanInfo, e1)
 		if err != nil {

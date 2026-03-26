@@ -1777,7 +1777,7 @@ func (r *rpcServer) SignMessage(_ context.Context,
 	}
 
 	in.Msg = append(signedMsgPrefix, in.Msg...)
-	sigBytes, err := r.server.nodeSigner.SignMessageCompact(
+	sigBytes, err := r.server.nodeSigner.SignMessageCompactNoKeyLoc(
 		in.Msg, !in.SingleHash,
 	)
 	if err != nil {
@@ -2373,13 +2373,6 @@ func (r *rpcServer) parseOpenChannelReq(in *lnrpc.OpenChannelRequest,
 		*channelType = lnwire.ChannelType(*fv)
 
 	case lnrpc.CommitmentType_SIMPLE_TAPROOT:
-		// If the taproot channel type is being set, then the channel
-		// MUST be private (unadvertised) for now.
-		if !in.Private {
-			return nil, fmt.Errorf("taproot channels must be " +
-				"private")
-		}
-
 		channelType = new(lnwire.ChannelType)
 		fv := lnwire.NewRawFeatureVector(
 			lnwire.SimpleTaprootChannelsRequiredStaging,
@@ -3214,7 +3207,9 @@ func abandonChanFromGraph(chanGraph *graphdb.VersionedGraph,
 
 	// If the channel ID is still in the graph, then that means the channel
 	// is still open, so we'll now move to purge it from the graph.
-	return chanGraph.DeleteChannelEdges(context.TODO(), false, true, chanID)
+	return chanGraph.DeleteChannelEdges(
+		context.TODO(), false, true, chanID,
+	)
 }
 
 // abandonChan removes a channel from the database, graph and contract court.
@@ -3404,9 +3399,9 @@ func (r *rpcServer) GetInfo(_ context.Context,
 	// to set the URIs.
 	nodeAnn := r.server.getNodeAnnouncement()
 
-	addrs := nodeAnn.Addresses
-	uris := make([]string, len(addrs))
-	for i, addr := range addrs {
+	nodeAddrs := nodeAnn.NodeAddrs()
+	uris := make([]string, len(nodeAddrs))
+	for i, addr := range nodeAddrs {
 		uris[i] = fmt.Sprintf("%s@%s", encodedIDPub, addr.String())
 	}
 
@@ -3429,7 +3424,7 @@ func (r *rpcServer) GetInfo(_ context.Context,
 	// TODO(roasbeef): add synced height n stuff
 
 	isTestNet := chainreg.IsTestnet(&r.cfg.ActiveNetParams)
-	nodeColor := graphdb.EncodeHexColor(nodeAnn.RGBColor)
+	nodeColor := graphdb.EncodeHexColor(nodeAnn.NodeColor())
 	version := build.Version() + " commit=" + build.Commit
 
 	return &lnrpc.GetInfoResponse{
@@ -3444,7 +3439,7 @@ func (r *rpcServer) GetInfo(_ context.Context,
 		Testnet:                   isTestNet,
 		Chains:                    activeChains,
 		Uris:                      uris,
-		Alias:                     nodeAnn.Alias.String(),
+		Alias:                     nodeAnn.NodeAlias(),
 		Color:                     nodeColor,
 		BestHeaderTimestamp:       syncInfo.timestamp,
 		Version:                   version,
@@ -6894,49 +6889,51 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 		}
 	}
 
-	// Obtain the pointer to the V1 channel graph. This will provide a
-	// consistent view of the graph due to bolt db's transactional model.
-	//
-	// TODO(elle): switch to a cross-version graph view when available.
-	graph := r.server.v1Graph
-
 	// First iterate through all the known nodes (connected or unconnected
 	// within the graph), collating their current state into the RPC
-	// response.
-	err := graph.ForEachNode(ctx, func(node *models.Node) error {
-		lnNode := marshalNode(node)
+	// response. We use the cross-version graph view so that nodes
+	// advertised on any gossip version are included.
+	err := r.server.graphDB.ForEachNode(ctx,
+		func(node *models.Node, _ uint32) error {
+			lnNode := marshalNode(node)
 
-		resp.Nodes = append(resp.Nodes, lnNode)
+			resp.Nodes = append(resp.Nodes, lnNode)
 
-		return nil
-	}, func() {
-		resp.Nodes = nil
-	})
+			return nil
+		}, func() {
+			resp.Nodes = nil
+		})
 	if err != nil {
 		return nil, err
 	}
 
 	// Next, for each active channel we know of within the graph, create a
 	// similar response which details both the edge information as well as
-	// the routing policies of th nodes connecting the two edges.
-	err = graph.ForEachChannel(ctx, func(edgeInfo *models.ChannelEdgeInfo,
-		c1, c2 *models.ChannelEdgePolicy) error {
+	// the routing policies of the nodes connecting the two edges. We use
+	// the cross-version graph view so channels from any gossip version are
+	// included.
+	err = r.server.graphDB.ForEachChannel(ctx,
+		func(edgeInfo *models.ChannelEdgeInfo,
+			c1, c2 *models.ChannelEdgePolicy, _ uint32) error {
 
-		// Do not include unannounced channels unless specifically
-		// requested. Unannounced channels include both private channels as
-		// well as public channels whose authentication proof were not
-		// confirmed yet, hence were not announced.
-		if !includeUnannounced && edgeInfo.AuthProof == nil {
+			// Do not include unannounced channels unless
+			// specifically requested. Unannounced channels include
+			// both private channels as well as public channels whose
+			// authentication proof were not confirmed yet, hence were
+			// not announced.
+			if !includeUnannounced && edgeInfo.AuthProof == nil {
+				return nil
+			}
+
+			edge := marshalDBEdge(
+				edgeInfo, c1, c2, req.IncludeAuthProof,
+			)
+			resp.Edges = append(resp.Edges, edge)
+
 			return nil
-		}
-
-		edge := marshalDBEdge(edgeInfo, c1, c2, req.IncludeAuthProof)
-		resp.Edges = append(resp.Edges, edge)
-
-		return nil
-	}, func() {
-		resp.Edges = nil
-	})
+		}, func() {
+			resp.Edges = nil
+		})
 	if err != nil && !errors.Is(err, graphdb.ErrGraphNoEdgesFound) {
 		return nil, err
 	}
@@ -6983,8 +6980,7 @@ func marshalDBEdge(edgeInfo *models.ChannelEdgeInfo,
 
 	// Make sure the policies match the node they belong to. c1 should point
 	// to the policy for NodeKey1, and c2 for NodeKey2.
-	if c1 != nil && c1.ChannelFlags&lnwire.ChanUpdateDirection == 1 ||
-		c2 != nil && c2.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
+	if c1 != nil && !c1.IsNode1() || c2 != nil && c2.IsNode1() {
 
 		c2, c1 = c1, c2
 	}
@@ -7047,7 +7043,7 @@ func marshalPolicyExtraOpaqueData(data []byte) map[uint64][]byte {
 func marshalDBRoutingPolicy(
 	policy *models.ChannelEdgePolicy) *lnrpc.RoutingPolicy {
 
-	disabled := policy.ChannelFlags&lnwire.ChanUpdateDisabled != 0
+	disabled := policy.IsDisabled()
 
 	customRecords := marshalPolicyExtraOpaqueData(policy.ExtraOpaqueData)
 	inboundFee := policy.InboundFee.UnwrapOr(lnwire.Fee{})
@@ -7136,35 +7132,91 @@ func (r *rpcServer) GetChanInfo(ctx context.Context,
 	graph := r.server.graphDB
 
 	var (
-		edgeInfo     *models.ChannelEdgeInfo
-		edge1, edge2 *models.ChannelEdgePolicy
-		err          error
+		edgeInfo        *models.ChannelEdgeInfo
+		edge1, edge2    *models.ChannelEdgePolicy
+		versionsPresent []lnwire.GossipVersion
+		err             error
 	)
 
-	switch {
-	case in.ChanId != 0:
-		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByID(
-			ctx, in.ChanId,
-		)
-
-	case in.ChanPoint != "":
-		var chanPoint *wire.OutPoint
+	// If the caller specified a particular gossip version, create a
+	// version-specific view of the graph. Otherwise we use the
+	// version-agnostic ChannelGraph methods which prefer the highest
+	// available version.
+	var chanPoint *wire.OutPoint
+	if in.ChanPoint != "" {
 		chanPoint, err = wire.NewOutPointFromString(in.ChanPoint)
 		if err != nil {
 			return nil, err
 		}
-		edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByOutpoint(
-			ctx, chanPoint,
-		)
-
-	default:
-		return nil, fmt.Errorf("specify either chan_id or chan_point")
 	}
+
+	if in.Version != 0 {
+		// Version-specific lookup: use a VersionedGraph so we fetch
+		// exactly the requested gossip version.
+		v := lnwire.GossipVersion(in.Version)
+		vGraph := graphdb.NewVersionedGraph(graph, v)
+
+		switch {
+		case in.ChanId != 0:
+			edgeInfo, edge1, edge2, err =
+				vGraph.FetchChannelEdgesByID(ctx, in.ChanId)
+
+		case chanPoint != nil:
+			edgeInfo, edge1, edge2, err =
+				vGraph.FetchChannelEdgesByOutpoint(ctx, chanPoint)
+
+		default:
+			return nil, fmt.Errorf("specify either chan_id or " +
+				"chan_point")
+		}
+	} else {
+		// Default: prefer the highest available version.
+		switch {
+		case in.ChanId != 0:
+			edgeInfo, edge1, edge2, err = graph.FetchChannelEdgesByID(
+				ctx, in.ChanId,
+			)
+
+		case chanPoint != nil:
+			edgeInfo, edge1, edge2, err =
+				graph.FetchChannelEdgesByOutpoint(
+					ctx, chanPoint,
+				)
+
+		default:
+			return nil, fmt.Errorf("specify either chan_id or " +
+				"chan_point")
+		}
+	}
+
 	switch {
 	case errors.Is(err, graphdb.ErrEdgeNotFound):
 		return nil, status.Error(codes.NotFound, err.Error())
 	case err != nil:
 		return nil, err
+	}
+
+	// Fetch the set of gossip versions that have a record of this channel
+	// so we can populate the versions_present bitmask.
+	switch {
+	case in.ChanId != 0:
+		versionsPresent, err = graph.GetVersionsBySCID(ctx, in.ChanId)
+
+	case chanPoint != nil:
+		versionsPresent, err = graph.GetVersionsByOutpoint(
+			ctx, chanPoint,
+		)
+	}
+	if err != nil {
+		rpcsLog.Warnf("GetChanInfo: could not fetch versions for "+
+			"channel: %v", err)
+	}
+
+	// Build the versions_present bitmask: bit 0 = v1 present,
+	// bit 1 = v2 present.
+	var versionsMask uint32
+	for _, v := range versionsPresent {
+		versionsMask |= 1 << uint(v-1)
 	}
 
 	// Convert the database's edge format into the network/RPC edge format
@@ -7173,6 +7225,7 @@ func (r *rpcServer) GetChanInfo(ctx context.Context,
 	channelEdge := marshalDBEdge(
 		edgeInfo, edge1, edge2, in.IncludeAuthProof,
 	)
+	channelEdge.VersionsPresent = versionsMask
 
 	return channelEdge, nil
 }

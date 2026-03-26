@@ -52,11 +52,11 @@ var onionFailures = []FailureMessage{
 	NewInvalidOnionKey(testOnionHash[:]),
 	NewTemporaryChannelFailure(makeTestChannelUpdate()),
 	NewTemporaryChannelFailure(nil),
-	NewAmountBelowMinimum(testAmount, *makeTestChannelUpdate()),
-	NewFeeInsufficient(testAmount, *makeTestChannelUpdate()),
-	NewIncorrectCltvExpiry(testCtlvExpiry, *makeTestChannelUpdate()),
-	NewExpiryTooSoon(*makeTestChannelUpdate()),
-	NewChannelDisabled(testFlags, *makeTestChannelUpdate()),
+	NewAmountBelowMinimum(testAmount, makeTestChannelUpdate()),
+	NewFeeInsufficient(testAmount, makeTestChannelUpdate()),
+	NewIncorrectCltvExpiry(testCtlvExpiry, makeTestChannelUpdate()),
+	NewExpiryTooSoon(makeTestChannelUpdate()),
+	NewChannelDisabled(testFlags, makeTestChannelUpdate()),
 	NewFinalIncorrectCltvExpiry(testCtlvExpiry),
 	NewFinalIncorrectHtlcAmount(testAmount),
 	NewInvalidOnionPayload(testType, testOffset),
@@ -131,7 +131,7 @@ func testEncodeDecodeTlv(t *testing.T, testFailure FailureMessage) {
 func TestChannelUpdateCompatibilityParsing(t *testing.T) {
 	t.Parallel()
 
-	testChannelUpdate := *makeTestChannelUpdate()
+	testChannelUpdate := makeTestChannelUpdate()
 
 	// We'll start by taking out test channel update, and encoding it into
 	// a set of raw bytes.
@@ -143,9 +143,8 @@ func TestChannelUpdateCompatibilityParsing(t *testing.T) {
 	// Now that we have the set of bytes encoded, we'll ensure that we're
 	// able to decode it using our compatibility method, as it's a regular
 	// encoded channel update message.
-	var newChanUpdate ChannelUpdate1
-	err := parseChannelUpdateCompatibilityMode(
-		&b, uint16(b.Len()), &newChanUpdate, 0,
+	newChanUpdate, err := parseChannelUpdateCompatibilityMode(
+		&b, uint16(b.Len()), 0,
 	)
 	require.NoError(t, err, "unable to parse channel update")
 
@@ -168,9 +167,8 @@ func TestChannelUpdateCompatibilityParsing(t *testing.T) {
 
 	// We should be able to properly parse the encoded channel update
 	// message even with the extra two bytes.
-	var newChanUpdate2 ChannelUpdate1
-	err = parseChannelUpdateCompatibilityMode(
-		&b, uint16(b.Len()), &newChanUpdate2, 0,
+	newChanUpdate2, err := parseChannelUpdateCompatibilityMode(
+		&b, uint16(b.Len()), 0,
 	)
 	require.NoError(t, err, "unable to parse channel update")
 
@@ -188,8 +186,8 @@ func TestWriteOnionErrorChanUpdate(t *testing.T) {
 	// First, we'll write out the raw channel update so we can obtain the
 	// raw serialized length.
 	var b bytes.Buffer
-	update := *makeTestChannelUpdate()
-	trueUpdateLength, err := WriteMessage(&b, &update, 0)
+	update := makeTestChannelUpdate()
+	trueUpdateLength, err := WriteMessage(&b, update, 0)
 	if err != nil {
 		t.Fatalf("unable to write update: %v", err)
 	}
@@ -197,7 +195,7 @@ func TestWriteOnionErrorChanUpdate(t *testing.T) {
 	// Next, we'll use the function to encode the update as we would in a
 	// onion error message.
 	var errorBuf bytes.Buffer
-	err = writeOnionErrorChanUpdate(&errorBuf, &update, 0)
+	err = writeOnionErrorChanUpdate(&errorBuf, update, 0)
 	require.NoError(t, err, "unable to encode onion error")
 
 	// Finally, read the length encoded and ensure that it matches the raw

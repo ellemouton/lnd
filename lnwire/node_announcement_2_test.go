@@ -117,3 +117,19 @@ func TestNodeAnn2EncodeDecode(t *testing.T) {
 	// bytes.
 	require.Equal(t, rawBytes, b.Bytes())
 }
+
+// TestNodeAnnouncement2UpdateTimestamp tests HasZeroUpdateTime and
+// UpdateTimestamp on NodeAnnouncement2.
+func TestNodeAnnouncement2UpdateTimestamp(t *testing.T) {
+	t.Parallel()
+
+	zero := &NodeAnnouncement2{}
+	zero.BlockHeight = tlv.NewPrimitiveRecord[tlv.TlvType2](uint32(0))
+	require.True(t, zero.HasZeroUpdateTime())
+	require.Equal(t, BlockHeightTimestamp(0), zero.UpdateTimestamp())
+
+	nz := &NodeAnnouncement2{}
+	nz.BlockHeight = tlv.NewPrimitiveRecord[tlv.TlvType2](uint32(800000))
+	require.False(t, nz.HasZeroUpdateTime())
+	require.Equal(t, BlockHeightTimestamp(800000), nz.UpdateTimestamp())
+}

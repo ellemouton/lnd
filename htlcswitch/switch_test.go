@@ -3927,7 +3927,7 @@ func TestSwitchHoldForward(t *testing.T) {
 	// Simulate an error during the composition of the failure message.
 	currentCallback := c.s.cfg.FetchLastChannelUpdate
 	c.s.cfg.FetchLastChannelUpdate = func(
-		lnwire.ShortChannelID) (*lnwire.ChannelUpdate1, error) {
+		lnwire.ShortChannelID) (lnwire.ChannelUpdate, error) {
 
 		return nil, errors.New("cannot fetch update")
 	}
@@ -5010,7 +5010,7 @@ func testSwitchForwardFailAlias(t *testing.T, zeroConf bool) {
 		msg := failPacket.linkFailure.msg
 		failMsg, ok := msg.(*lnwire.FailTemporaryChannelFailure)
 		require.True(t, ok)
-		require.Equal(t, aliceAlias, failMsg.Update.ShortChannelID)
+		require.Equal(t, aliceAlias, failMsg.Update.SCID())
 	case <-s2.quit:
 		t.Fatal("switch shutting down, failed to forward packet")
 	}
@@ -5191,7 +5191,7 @@ func testSwitchAliasFailAdd(t *testing.T, zeroConf, private, useAlias bool) {
 		msg := failPacket.linkFailure.msg
 		failMsg, ok := msg.(*lnwire.FailTemporaryChannelFailure)
 		require.True(t, ok)
-		require.Equal(t, outgoingChanID, failMsg.Update.ShortChannelID)
+		require.Equal(t, outgoingChanID, failMsg.Update.SCID())
 	case <-s.quit:
 		t.Fatal("switch shutting down, failed to receive fail packet")
 	}
@@ -5391,7 +5391,7 @@ func testSwitchHandlePacketForward(t *testing.T, zeroConf, private,
 		msg := failPacket.linkFailure.msg
 		failMsg, ok := msg.(*lnwire.FailAmountBelowMinimum)
 		require.True(t, ok)
-		require.Equal(t, outgoingChanID, failMsg.Update.ShortChannelID)
+		require.Equal(t, outgoingChanID, failMsg.Update.SCID())
 	case <-s.quit:
 		t.Fatal("switch shutting down, failed to receive failure")
 	}
@@ -5544,7 +5544,7 @@ func testSwitchAliasInterceptFail(t *testing.T, zeroConf bool) {
 		failureMsg, ok := failure.(*lnwire.FailTemporaryChannelFailure)
 		require.True(t, ok)
 
-		failScid := failureMsg.Update.ShortChannelID
+		failScid := failureMsg.Update.SCID()
 		isAlias := failScid == aliceAlias || failScid == aliceAlias2
 		require.True(t, isAlias)
 

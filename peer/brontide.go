@@ -340,7 +340,7 @@ type Config struct {
 	// GenNodeAnnouncement is used to send our node announcement to the remote
 	// on startup.
 	GenNodeAnnouncement func(...netann.NodeAnnModifier) (
-		lnwire.NodeAnnouncement1, error)
+		lnwire.NodeAnnouncement, error)
 
 	// PrunePersistentPeerConnection is used to remove all internal state
 	// related to this peer in the server.
@@ -348,7 +348,7 @@ type Config struct {
 
 	// FetchLastChanUpdate fetches our latest channel update for a target
 	// channel.
-	FetchLastChanUpdate func(lnwire.ShortChannelID) (*lnwire.ChannelUpdate1,
+	FetchLastChanUpdate func(lnwire.ShortChannelID) (lnwire.ChannelUpdate,
 		error)
 
 	// FundingManager is an implementation of the funding.Controller interface.
@@ -1560,7 +1560,7 @@ func (p *Brontide) maybeSendNodeAnn(channels []*channeldb.OpenChannel) {
 		return
 	}
 
-	if err := p.SendMessageLazy(false, &ourNodeAnn); err != nil {
+	if err := p.SendMessageLazy(false, ourNodeAnn); err != nil {
 		p.log.Debugf("Unable to resend node announcement: %v", err)
 	}
 }
@@ -2290,6 +2290,7 @@ out:
 					nextMsg.MsgType())
 			}
 
+		// v1 gossip messages are always accepted.
 		case *lnwire.ChannelUpdate1,
 			*lnwire.ChannelAnnouncement1,
 			*lnwire.NodeAnnouncement1,
@@ -2314,6 +2315,30 @@ out:
 					ref.Tell(ctx, req)
 				},
 			)
+
+		// v2 gossip messages are only accepted if both we and
+		// the peer have negotiated the taproot gossip feature
+		// bit.
+		case *lnwire.ChannelUpdate2,
+			*lnwire.ChannelAnnouncement2,
+			*lnwire.NodeAnnouncement2,
+			*lnwire.AnnounceSignatures2:
+
+			hasTaprootGossip := p.RemoteFeatures().HasFeature(
+				lnwire.TaprootGossipOptionalStaging,
+			) && p.LocalFeatures().HasFeature(
+				lnwire.TaprootGossipOptionalStaging,
+			)
+			if !hasTaprootGossip {
+				p.log.Debugf("Dropping v2 gossip "+
+					"msg=%s from peer without "+
+					"taproot gossip feature",
+					nextMsg.MsgType())
+
+				break
+			}
+
+			discStream.AddMsg(msg)
 
 		case *lnwire.Custom:
 			err := p.handleCustomMessage(msg)

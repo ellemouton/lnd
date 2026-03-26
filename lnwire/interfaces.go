@@ -2,6 +2,8 @@ package lnwire
 
 import (
 	"fmt"
+	"image/color"
+	"net"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 )
@@ -111,6 +113,19 @@ type ChannelUpdate interface {
 	// update.
 	ForwardingPolicy() *ForwardingPolicy
 
+	// HasZeroUpdateTime returns true if the update-ordering field of the
+	// message is zero. For v1 this is the timestamp, for v2 this is the
+	// block height.
+	HasZeroUpdateTime() bool
+
+	// UpdateTimestamp returns the update-ordering field of the message. For
+	// v1 this is a UnixTimestamp, for v2 this is a BlockHeightTimestamp.
+	UpdateTimestamp() Timestamp
+
+	// TimeDesc returns a human-readable description of the update-ordering
+	// field.
+	TimeDesc() string
+
 	// CmpAge can be used to determine if the update is older or newer than
 	// the passed update. It returns LessThan if this update is older than
 	// the passed update, GreaterThan if it is newer and EqualTo if they are
@@ -119,6 +134,9 @@ type ChannelUpdate interface {
 
 	// SetDisabledFlag can be used to adjust the disabled flag of an update.
 	SetDisabledFlag(bool)
+
+	// SetSig sets the signature on the update from raw signature bytes.
+	SetSig(b []byte) error
 
 	// SetSCID can be used to overwrite the SCID of the update.
 	SetSCID(scid ShortChannelID)
@@ -136,9 +154,37 @@ type NodeAnnouncement interface {
 	// NodeFeatures returns the set of features supported by the node.
 	NodeFeatures() *FeatureVector
 
+	// NodeAddrs returns the addresses advertised by the node.
+	NodeAddrs() []net.Addr
+
+	// SetAddrs sets the addresses advertised by the node.
+	SetAddrs(addrs []net.Addr) error
+
+	// NodeAlias returns the human-readable alias of the node.
+	NodeAlias() string
+
+	// NodeColor returns the RGB colour of the node.
+	NodeColor() color.RGBA
+
 	// TimestampDesc returns a human-readable description of the
 	// timestamp of the announcement.
 	TimestampDesc() string
+
+	// HasZeroUpdateTime returns true if the update-ordering field of the
+	// announcement is zero. For v1 this is the timestamp, for v2 this is
+	// the block height.
+	HasZeroUpdateTime() bool
+
+	// UpdateTimestamp returns the update-ordering field of the
+	// announcement. For v1 this is a UnixTimestamp, for v2 this is a
+	// BlockHeightTimestamp.
+	UpdateTimestamp() Timestamp
+
+	// CmpAge can be used to determine if the announcement is older or
+	// newer than the passed announcement. It returns LessThan if this
+	// announcement is older than the passed announcement, GreaterThan if it
+	// is newer and EqualTo if they are the same age.
+	CmpAge(announcement NodeAnnouncement) (CompareResult, error)
 
 	Message
 	GossipMessage
