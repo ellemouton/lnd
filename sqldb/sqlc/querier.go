@@ -213,6 +213,8 @@ type Querier interface {
 	ListChannelsWithPoliciesPaginated(ctx context.Context, arg ListChannelsWithPoliciesPaginatedParams) ([]ListChannelsWithPoliciesPaginatedRow, error)
 	ListNodeIDsAndPubKeys(ctx context.Context, arg ListNodeIDsAndPubKeysParams) ([]ListNodeIDsAndPubKeysRow, error)
 	ListNodesPaginated(ctx context.Context, arg ListNodesPaginatedParams) ([]GraphNode, error)
+	ListPreferredChannelsWithPoliciesPaginated(ctx context.Context, arg ListPreferredChannelsWithPoliciesPaginatedParams) ([]ListPreferredChannelsWithPoliciesPaginatedRow, error)
+	ListPreferredNodesPaginated(ctx context.Context, arg ListPreferredNodesPaginatedParams) ([]ListPreferredNodesPaginatedRow, error)
 	NextInvoiceSettleIndex(ctx context.Context) (int64, error)
 	NodeExists(ctx context.Context, arg NodeExistsParams) (bool, error)
 	OnAMPSubInvoiceCanceled(ctx context.Context, arg OnAMPSubInvoiceCanceledParams) error
