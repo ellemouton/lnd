@@ -1247,7 +1247,6 @@ func (s *SQLStore) ChanUpdatesInHorizon(ctx context.Context,
 			return db.GetChannelsByPolicyLastUpdateRange(
 				ctx,
 				sqlc.GetChannelsByPolicyLastUpdateRangeParams{
-					Version: int16(v),
 					StartTime: sqldb.SQLInt64(
 						r.StartTime.UnwrapOr(
 							time.Time{},
