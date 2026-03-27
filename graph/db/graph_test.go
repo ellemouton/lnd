@@ -6101,3 +6101,124 @@ func TestUpdateRangeValidateForVersion(t *testing.T) {
 		})
 	}
 }
+
+// TestV2HorizonQueries tests that NodeUpdatesInHorizon and
+// ChanUpdatesInHorizon work with v2 gossip (block-height ranges). This test
+// only runs on SQL backends since KV does not support v2.
+func TestV2HorizonQueries(t *testing.T) {
+	t.Parallel()
+
+	if !isSQLDB {
+		t.Skip("v2 horizon queries only supported on SQL backends")
+	}
+
+	ctx := t.Context()
+	graph := MakeTestGraph(t)
+
+	// Create two v2 nodes with specific block heights.
+	node1 := createTestVertex(t, lnwire.GossipVersion2)
+	node1.LastBlockHeight = 100
+	require.NoError(t, graph.AddNode(ctx, node1))
+
+	node2 := createTestVertex(t, lnwire.GossipVersion2)
+	node2.LastBlockHeight = 200
+	require.NoError(t, graph.AddNode(ctx, node2))
+
+	// Create a third node outside the query range.
+	node3 := createTestVertex(t, lnwire.GossipVersion2)
+	node3.LastBlockHeight = 500
+	require.NoError(t, graph.AddNode(ctx, node3))
+
+	// --- NodeUpdatesInHorizon v2 ---
+
+	// Query for nodes in block range [50, 250].
+	nodeIter := graph.NodeUpdatesInHorizon(
+		ctx, lnwire.GossipVersion2, NodeUpdateRange{
+			StartHeight: fn.Some(uint32(50)),
+			EndHeight:   fn.Some(uint32(250)),
+		},
+	)
+	nodes, err := fn.CollectErr(nodeIter)
+	require.NoError(t, err)
+	require.Len(t, nodes, 2)
+
+	// Query for nodes in block range [150, 600] should return node2 and
+	// node3.
+	nodeIter = graph.NodeUpdatesInHorizon(
+		ctx, lnwire.GossipVersion2, NodeUpdateRange{
+			StartHeight: fn.Some(uint32(150)),
+			EndHeight:   fn.Some(uint32(600)),
+		},
+	)
+	nodes, err = fn.CollectErr(nodeIter)
+	require.NoError(t, err)
+	require.Len(t, nodes, 2)
+
+	// Query for nodes in block range [300, 400] should return nothing.
+	nodeIter = graph.NodeUpdatesInHorizon(
+		ctx, lnwire.GossipVersion2, NodeUpdateRange{
+			StartHeight: fn.Some(uint32(300)),
+			EndHeight:   fn.Some(uint32(400)),
+		},
+	)
+	nodes, err = fn.CollectErr(nodeIter)
+	require.NoError(t, err)
+	require.Empty(t, nodes)
+
+	// --- ChanUpdatesInHorizon v2 ---
+
+	// Create a v2 channel between node1 and node2.
+	edgeInfo, _ := createEdge(
+		lnwire.GossipVersion2, 100, 1, 0, 10, node1, node2,
+	)
+	require.NoError(t, graph.AddChannelEdge(ctx, edgeInfo))
+
+	// Add v2 policies with specific block heights.
+	edge1 := &models.ChannelEdgePolicy{
+		Version:                   lnwire.GossipVersion2,
+		ChannelID:                 edgeInfo.ChannelID,
+		LastBlockHeight:           150,
+		TimeLockDelta:             14,
+		MinHTLC:                   1000,
+		MaxHTLC:                   1000000,
+		FeeBaseMSat:               1000,
+		FeeProportionalMillionths: 200,
+	}
+	edge2 := &models.ChannelEdgePolicy{
+		Version:                   lnwire.GossipVersion2,
+		SecondPeer:                true,
+		ChannelID:                 edgeInfo.ChannelID,
+		LastBlockHeight:           160,
+		TimeLockDelta:             14,
+		MinHTLC:                   1000,
+		MaxHTLC:                   1000000,
+		FeeBaseMSat:               1000,
+		FeeProportionalMillionths: 200,
+	}
+	require.NoError(t, graph.UpdateEdgePolicy(ctx, edge1))
+	require.NoError(t, graph.UpdateEdgePolicy(ctx, edge2))
+
+	// Query for channel updates in block range [100, 200].
+	chanIter := graph.ChanUpdatesInHorizon(
+		ctx, lnwire.GossipVersion2, ChanUpdateRange{
+			StartHeight: fn.Some(uint32(100)),
+			EndHeight:   fn.Some(uint32(200)),
+		},
+	)
+	channels, err := fn.CollectErr(chanIter)
+	require.NoError(t, err)
+	require.Len(t, channels, 1)
+	require.Equal(t, edgeInfo.ChannelID, channels[0].Info.ChannelID)
+
+	// Query for channel updates in block range [200, 300] should return
+	// nothing since policies are at heights 150 and 160.
+	chanIter = graph.ChanUpdatesInHorizon(
+		ctx, lnwire.GossipVersion2, ChanUpdateRange{
+			StartHeight: fn.Some(uint32(200)),
+			EndHeight:   fn.Some(uint32(300)),
+		},
+	)
+	channels, err = fn.CollectErr(chanIter)
+	require.NoError(t, err)
+	require.Empty(t, channels)
+}
