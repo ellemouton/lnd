@@ -291,6 +291,13 @@
   waiting proof records to the new key/value format
   ([#10633](https://github.com/lightningnetwork/lnd/pull/10633)).
 
+* Add [version-aware graph horizon
+  queries](https://github.com/lightningnetwork/lnd/pull/XXXXX) so
+  `NodeUpdatesInHorizon` and `ChanUpdatesInHorizon` can serve both gossip v1
+  time ranges and gossip v2 block-height ranges. The native SQL graph backend
+  now includes dedicated v2 horizon queries and supporting indexes for node and
+  channel update scans.
+
 * Payment Store SQL implementation and migration project:
   * Introduce an [abstract payment 
     store](https://github.com/lightningnetwork/lnd/pull/10153) interface and
