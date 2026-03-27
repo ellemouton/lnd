@@ -1174,6 +1174,13 @@ func (q *Queries) GetChannelsByOutpoints(ctx context.Context, outpoints []string
 }
 
 const getChannelsByPolicyBlockRange = `-- name: GetChannelsByPolicyBlockRange :many
+WITH candidate_channels AS (
+    SELECT DISTINCT channel_id
+    FROM graph_channel_policies
+    WHERE version = $1
+      AND block_height >= $2
+      AND block_height < $3
+)
 SELECT
     c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature, c.funding_pk_script, c.merkle_root_hash,
     n1.id, n1.version, n1.pub_key, n1.alias, n1.last_update, n1.color, n1.signature, n1.block_height,
@@ -1217,7 +1224,8 @@ SELECT
     cp2.block_height AS policy2_block_height,
     cp2.disable_flags AS policy2_disable_flags
 
-FROM graph_channels c
+FROM candidate_channels cc
+    JOIN graph_channels c ON c.id = cc.channel_id
     JOIN graph_nodes n1 ON c.node_id_1 = n1.id
     JOIN graph_nodes n2 ON c.node_id_2 = n2.id
     LEFT JOIN graph_channel_policies cp1
@@ -1403,6 +1411,13 @@ func (q *Queries) GetChannelsByPolicyBlockRange(ctx context.Context, arg GetChan
 }
 
 const getChannelsByPolicyLastUpdateRange = `-- name: GetChannelsByPolicyLastUpdateRange :many
+WITH candidate_channels AS (
+    SELECT DISTINCT channel_id
+    FROM graph_channel_policies
+    WHERE version = 1
+      AND last_update >= $1
+      AND last_update < $2
+)
 SELECT
     c.id, c.version, c.scid, c.node_id_1, c.node_id_2, c.outpoint, c.capacity, c.bitcoin_key_1, c.bitcoin_key_2, c.node_1_signature, c.node_2_signature, c.bitcoin_1_signature, c.bitcoin_2_signature, c.signature, c.funding_pk_script, c.merkle_root_hash,
     n1.id, n1.version, n1.pub_key, n1.alias, n1.last_update, n1.color, n1.signature, n1.block_height,
@@ -1446,7 +1461,8 @@ SELECT
     cp2.block_height AS policy2_block_height,
     cp2.disable_flags AS policy2_disable_flags
 
-FROM graph_channels c
+FROM candidate_channels cc
+    JOIN graph_channels c ON c.id = cc.channel_id
     JOIN graph_nodes n1 ON c.node_id_1 = n1.id
     JOIN graph_nodes n2 ON c.node_id_2 = n2.id
     LEFT JOIN graph_channel_policies cp1

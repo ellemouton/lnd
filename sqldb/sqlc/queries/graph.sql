@@ -534,6 +534,13 @@ FROM graph_channels c
 WHERE c.id IN (sqlc.slice('ids')/*SLICE:ids*/);
 
 -- name: GetChannelsByPolicyLastUpdateRange :many
+WITH candidate_channels AS (
+    SELECT DISTINCT channel_id
+    FROM graph_channel_policies
+    WHERE version = 1
+      AND last_update >= @start_time
+      AND last_update < @end_time
+)
 SELECT
     sqlc.embed(c),
     sqlc.embed(n1),
@@ -577,7 +584,8 @@ SELECT
     cp2.block_height AS policy2_block_height,
     cp2.disable_flags AS policy2_disable_flags
 
-FROM graph_channels c
+FROM candidate_channels cc
+    JOIN graph_channels c ON c.id = cc.channel_id
     JOIN graph_nodes n1 ON c.node_id_1 = n1.id
     JOIN graph_nodes n2 ON c.node_id_2 = n2.id
     LEFT JOIN graph_channel_policies cp1
@@ -616,6 +624,13 @@ ORDER BY
 LIMIT COALESCE(sqlc.narg('max_results'), 999999999);
 
 -- name: GetChannelsByPolicyBlockRange :many
+WITH candidate_channels AS (
+    SELECT DISTINCT channel_id
+    FROM graph_channel_policies
+    WHERE version = @version
+      AND block_height >= @start_height
+      AND block_height < @end_height
+)
 SELECT
     sqlc.embed(c),
     sqlc.embed(n1),
@@ -659,7 +674,8 @@ SELECT
     cp2.block_height AS policy2_block_height,
     cp2.disable_flags AS policy2_disable_flags
 
-FROM graph_channels c
+FROM candidate_channels cc
+    JOIN graph_channels c ON c.id = cc.channel_id
     JOIN graph_nodes n1 ON c.node_id_1 = n1.id
     JOIN graph_nodes n2 ON c.node_id_2 = n2.id
     LEFT JOIN graph_channel_policies cp1
