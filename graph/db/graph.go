@@ -39,6 +39,14 @@ type ChannelGraph struct {
 	wg   sync.WaitGroup
 }
 
+// preferHighestNodeDirectedChanneler is implemented by stores that can stream
+// cross-version node-directed channel traversals directly.
+type preferHighestNodeDirectedChanneler interface {
+	ForEachNodeDirectedChannelPreferHighest(ctx context.Context,
+		node route.Vertex, cb func(channel *DirectedChannel) error,
+		reset func()) error
+}
+
 // NewChannelGraph creates a new ChannelGraph instance with the given backend.
 func NewChannelGraph(v1Store Store,
 	options ...ChanGraphOption) (*ChannelGraph, error) {
@@ -229,6 +237,12 @@ func (c *ChannelGraph) ForEachNodeDirectedChannel(ctx context.Context,
 
 	if c.graphCache != nil {
 		return c.graphCache.ForEachChannel(node, cb)
+	}
+
+	if db, ok := c.db.(preferHighestNodeDirectedChanneler); ok {
+		return db.ForEachNodeDirectedChannelPreferHighest(
+			ctx, node, cb, reset,
+		)
 	}
 
 	// Iterate across all gossip versions (highest first) so that

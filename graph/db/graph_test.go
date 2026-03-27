@@ -5972,3 +5972,97 @@ func TestPreferHighestForEachChannel(t *testing.T) {
 	require.Nil(t, gotShellPref.p1)
 	require.Nil(t, gotShellPref.p2)
 }
+
+// TestPreferHighestNodeDirectedChannelTraversal verifies that the no-cache
+// ChannelGraph.ForEachNodeDirectedChannel path streams one directed channel per
+// SCID while preferring the v2 advertisement when both versions exist.
+func TestPreferHighestNodeDirectedChannelTraversal(t *testing.T) {
+	t.Parallel()
+
+	if !isSQLDB {
+		t.Skip("prefer-highest requires SQL backend")
+	}
+
+	ctx := t.Context()
+	graph := MakeTestGraph(t, WithUseGraphCache(false))
+
+	localPriv, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	peerBothPriv, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	peerV1OnlyPriv, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	localV1 := createNode(t, lnwire.GossipVersion1, localPriv)
+	localV2 := createNode(t, lnwire.GossipVersion2, localPriv)
+	peerBothV1 := createNode(t, lnwire.GossipVersion1, peerBothPriv)
+	peerBothV2 := createNode(t, lnwire.GossipVersion2, peerBothPriv)
+	peerV1Only := createNode(t, lnwire.GossipVersion1, peerV1OnlyPriv)
+
+	require.NoError(t, graph.AddNode(ctx, localV1))
+	require.NoError(t, graph.AddNode(ctx, localV2))
+	require.NoError(t, graph.AddNode(ctx, peerBothV1))
+	require.NoError(t, graph.AddNode(ctx, peerBothV2))
+	require.NoError(t, graph.AddNode(ctx, peerV1Only))
+
+	dupV1, _ := createEdge(
+		lnwire.GossipVersion1, 400, 0, 0, 10, localV1, peerBothV1,
+	)
+	dupV2, _ := createEdge(
+		lnwire.GossipVersion2, 400, 0, 0, 10, localV2, peerBothV2,
+	)
+	v1Only, _ := createEdge(
+		lnwire.GossipVersion1, 401, 0, 0, 11, localV1, peerV1Only,
+	)
+
+	require.NoError(t, graph.AddChannelEdge(ctx, dupV1))
+	require.NoError(t, graph.AddChannelEdge(ctx, dupV2))
+	require.NoError(t, graph.AddChannelEdge(ctx, v1Only))
+
+	addPolicies := func(edgeInfo *models.ChannelEdgeInfo,
+		version lnwire.GossipVersion,
+		fee lnwire.MilliSatoshi) {
+
+		policy1 := newEdgePolicy(version, edgeInfo.ChannelID, 1000, true)
+		policy1.ToNode = edgeInfo.NodeKey2Bytes
+		policy1.SigBytes = testSig.Serialize()
+		policy1.FeeBaseMSat = fee
+
+		policy2 := newEdgePolicy(version, edgeInfo.ChannelID, 1001, false)
+		policy2.ToNode = edgeInfo.NodeKey1Bytes
+		policy2.SigBytes = testSig.Serialize()
+		policy2.FeeBaseMSat = fee
+
+		require.NoError(t, graph.UpdateEdgePolicy(ctx, policy1))
+		require.NoError(t, graph.UpdateEdgePolicy(ctx, policy2))
+	}
+
+	addPolicies(dupV1, lnwire.GossipVersion1, 1111)
+	addPolicies(dupV2, lnwire.GossipVersion2, 2222)
+	addPolicies(v1Only, lnwire.GossipVersion1, 3333)
+
+	channelsByID := make(map[uint64]*DirectedChannel)
+	err = graph.ForEachNodeDirectedChannel(
+		ctx, localV1.PubKeyBytes,
+		func(channel *DirectedChannel) error {
+			channelsByID[channel.ChannelID] = channel.DeepCopy()
+			return nil
+		}, func() {
+			clear(channelsByID)
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, channelsByID, 2)
+
+	gotDup := channelsByID[dupV1.ChannelID]
+	require.NotNil(t, gotDup)
+	require.NotNil(t, gotDup.InPolicy)
+	require.Equal(t, lnwire.MilliSatoshi(2222), gotDup.InPolicy.FeeBaseMSat)
+
+	gotV1Only := channelsByID[v1Only.ChannelID]
+	require.NotNil(t, gotV1Only)
+	require.NotNil(t, gotV1Only.InPolicy)
+	require.Equal(
+		t, lnwire.MilliSatoshi(3333), gotV1Only.InPolicy.FeeBaseMSat,
+	)
+}
