@@ -1,3 +1,7 @@
+DROP INDEX IF EXISTS graph_channel_policy_version_last_update_channel_id_idx;
+DROP INDEX IF EXISTS graph_channel_policy_version_block_height_channel_id_idx;
+DROP INDEX IF EXISTS graph_nodes_version_block_height_pub_key_idx;
+
 -- Remove the block_height column from graph_nodes
 ALTER TABLE graph_nodes DROP COLUMN block_height;
 
