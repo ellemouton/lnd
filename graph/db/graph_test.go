@@ -1804,7 +1804,7 @@ func TestGraphTraversal(t *testing.T) {
 	// Iterate through all the known channels within the graph DB, once
 	// again if the map is empty that indicates that all edges have
 	// properly been reached.
-	err = graph.ForEachChannel(ctx, lnwire.GossipVersion1,
+	err = graph.ForEachChannel(ctx,
 		func(ei *models.ChannelEdgeInfo,
 			_ *models.ChannelEdgePolicy,
 			_ *models.ChannelEdgePolicy) error {
@@ -2159,7 +2159,7 @@ func assertPruneTip(t *testing.T, graph *ChannelGraph,
 func assertNumChans(t *testing.T, graph *ChannelGraph, n int) {
 	numChans := 0
 	err := graph.ForEachChannel(
-		t.Context(), lnwire.GossipVersion1,
+		t.Context(),
 		func(*models.ChannelEdgeInfo,
 			*models.ChannelEdgePolicy,
 			*models.ChannelEdgePolicy) error {
@@ -2440,7 +2440,10 @@ func TestChanUpdatesInHorizon(t *testing.T) {
 	// If we issue an arbitrary query before any channel updates are
 	// inserted in the database, we should get zero results.
 	chanIter := graph.ChanUpdatesInHorizon(
-		ctx, time.Unix(999, 0), time.Unix(9999, 0),
+		ctx, lnwire.GossipVersion1, ChanUpdateRange{
+			StartTime: fn.Some(time.Unix(999, 0)),
+			EndTime:   fn.Some(time.Unix(9999, 0)),
+		},
 	)
 
 	chanUpdates, err := fn.CollectErr(chanIter)
@@ -2547,7 +2550,10 @@ func TestChanUpdatesInHorizon(t *testing.T) {
 	}
 	for _, queryCase := range queryCases {
 		respIter := graph.ChanUpdatesInHorizon(
-			ctx, queryCase.start, queryCase.end,
+			ctx, lnwire.GossipVersion1, ChanUpdateRange{
+				StartTime: fn.Some(queryCase.start),
+				EndTime:   fn.Some(queryCase.end),
+			},
 		)
 
 		resp, err := fn.CollectErr(respIter)
@@ -2584,7 +2590,10 @@ func TestNodeUpdatesInHorizon(t *testing.T) {
 	// If we issue an arbitrary query before we insert any nodes into the
 	// database, then we shouldn't get any results back.
 	nodeUpdatesIter := graph.NodeUpdatesInHorizon(
-		ctx, time.Unix(999, 0), time.Unix(9999, 0),
+		ctx, lnwire.GossipVersion1, NodeUpdateRange{
+			StartTime: fn.Some(time.Unix(999, 0)),
+			EndTime:   fn.Some(time.Unix(9999, 0)),
+		},
 	)
 	nodeUpdates, err := fn.CollectErr(nodeUpdatesIter)
 	require.NoError(t, err, "unable to query for node updates")
@@ -2659,7 +2668,10 @@ func TestNodeUpdatesInHorizon(t *testing.T) {
 	}
 	for _, queryCase := range queryCases {
 		iter := graph.NodeUpdatesInHorizon(
-			ctx, queryCase.start, queryCase.end,
+			ctx, lnwire.GossipVersion1, NodeUpdateRange{
+				StartTime: fn.Some(queryCase.start),
+				EndTime:   fn.Some(queryCase.end),
+			},
 		)
 
 		resp, err := fn.CollectErr(iter)
@@ -2787,7 +2799,11 @@ func testNodeUpdatesWithBatchSize(t *testing.T, ctx context.Context,
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			iter := testGraph.NodeUpdatesInHorizon(
-				ctx, tc.start, tc.end,
+				ctx, lnwire.GossipVersion1,
+				NodeUpdateRange{
+					StartTime: fn.Some(tc.start),
+					EndTime:   fn.Some(tc.end),
+				},
 				WithNodeUpdateIterBatchSize(
 					batchSize,
 				),
@@ -2860,7 +2876,13 @@ func TestNodeUpdatesInHorizonEarlyTermination(t *testing.T) {
 	for _, stopAt := range terminationPoints {
 		t.Run(fmt.Sprintf("StopAt%d", stopAt), func(t *testing.T) {
 			iter := graph.NodeUpdatesInHorizon(
-				ctx, startTime, startTime.Add(200*time.Hour),
+				ctx, lnwire.GossipVersion1,
+				NodeUpdateRange{
+					StartTime: fn.Some(startTime),
+					EndTime: fn.Some(
+						startTime.Add(200 * time.Hour),
+					),
+				},
 				WithNodeUpdateIterBatchSize(10),
 			)
 
@@ -2949,7 +2971,12 @@ func TestChanUpdatesInHorizonBoundaryConditions(t *testing.T) {
 			// Now we'll run the main query, and verify that we get
 			// back the expected number of channels.
 			iter := graph.ChanUpdatesInHorizon(
-				ctx, startTime, startTime.Add(26*time.Hour),
+				ctx, lnwire.GossipVersion1, ChanUpdateRange{
+					StartTime: fn.Some(startTime),
+					EndTime: fn.Some(
+						startTime.Add(26 * time.Hour),
+					),
+				},
 				WithChanUpdateIterBatchSize(batchSize),
 			)
 
@@ -2975,7 +3002,9 @@ func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 
-	graph := MakeTestGraph(t)
+	graph := NewVersionedGraph(
+		MakeTestGraph(t), lnwire.GossipVersion1,
+	)
 
 	var (
 		scid1 = lnwire.ShortChannelID{BlockHeight: 1}
@@ -2983,9 +3012,8 @@ func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 		scid3 = lnwire.ShortChannelID{BlockHeight: 3}
 	)
 
-	v1Graph := NewVersionedGraph(graph, lnwire.GossipVersion1)
 	isZombie := func(scid lnwire.ShortChannelID) bool {
-		zombie, _, _, err := v1Graph.IsZombieEdge(ctx, scid.ToUint64())
+		zombie, _, _, err := graph.IsZombieEdge(ctx, scid.ToUint64())
 		require.NoError(t, err)
 
 		return zombie
@@ -3009,13 +3037,15 @@ func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 
 	// Call FilterKnownChanIDs with an isStillZombie call-back that would
 	// result in the current zombies still be considered as zombies.
-	_, err = graph.FilterKnownChanIDs(ctx, []ChannelUpdateInfo{
-		{ShortChannelID: scid1, Version: lnwire.GossipVersion1},
-		{ShortChannelID: scid2, Version: lnwire.GossipVersion1},
-		{ShortChannelID: scid3, Version: lnwire.GossipVersion1},
-	}, func(_ ChannelUpdateInfo) bool {
-		return true
-	})
+	_, err = graph.FilterKnownChanIDs(
+		ctx, []ChannelUpdateInfo{
+			{ShortChannelID: scid1, Version: lnwire.GossipVersion1},
+			{ShortChannelID: scid2, Version: lnwire.GossipVersion1},
+			{ShortChannelID: scid3, Version: lnwire.GossipVersion1},
+		}, func(_ ChannelUpdateInfo) bool {
+			return true
+		},
+	)
 	require.NoError(t, err)
 
 	require.True(t, isZombie(scid1))
@@ -3025,17 +3055,19 @@ func TestFilterKnownChanIDsZombieRevival(t *testing.T) {
 	// Now call it again but this time with a isStillZombie call-back that
 	// would result in channel with SCID 2 no longer being considered a
 	// zombie.
-	_, err = graph.FilterKnownChanIDs(ctx, []ChannelUpdateInfo{
-		{ShortChannelID: scid1, Version: lnwire.GossipVersion1},
-		{
-			ShortChannelID: scid2,
-			Version:        lnwire.GossipVersion1,
-			Node1Freshness: lnwire.UnixTimestamp(1000),
+	_, err = graph.FilterKnownChanIDs(
+		ctx, []ChannelUpdateInfo{
+			{ShortChannelID: scid1, Version: lnwire.GossipVersion1},
+			{
+				ShortChannelID: scid2,
+				Version:        lnwire.GossipVersion1,
+				Node1Freshness: lnwire.UnixTimestamp(1000),
+			},
+			{ShortChannelID: scid3, Version: lnwire.GossipVersion1},
+		}, func(info ChannelUpdateInfo) bool {
+			return info.Node1Freshness != lnwire.UnixTimestamp(1000)
 		},
-		{ShortChannelID: scid3, Version: lnwire.GossipVersion1},
-	}, func(info ChannelUpdateInfo) bool {
-		return info.Node1Freshness != lnwire.UnixTimestamp(1000)
-	})
+	)
 	require.NoError(t, err)
 
 	// Show that SCID 2 has been marked as live.
@@ -3051,7 +3083,9 @@ func TestFilterKnownChanIDs(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 
-	graph := MakeTestGraph(t)
+	graph := NewVersionedGraph(
+		MakeTestGraph(t), lnwire.GossipVersion1,
+	)
 
 	isZombieUpdate := func(_ ChannelUpdateInfo) bool {
 		return true
@@ -3111,8 +3145,7 @@ func TestFilterKnownChanIDs(t *testing.T) {
 		)
 		require.NoError(t, graph.AddChannelEdge(ctx, channel))
 		err := graph.DeleteChannelEdges(
-			ctx, lnwire.GossipVersion1, false, true,
-			channel.ChannelID,
+			ctx, false, true, channel.ChannelID,
 		)
 		require.NoError(t, err)
 
@@ -3377,7 +3410,10 @@ func TestStressTestChannelGraphAPI(t *testing.T) {
 					chanIDs = append(chanIDs, info)
 				}
 
-				_, err := graph.FilterKnownChanIDs(
+				vg := NewVersionedGraph(
+					graph, lnwire.GossipVersion1,
+				)
+				_, err := vg.FilterKnownChanIDs(
 					ctx, chanIDs,
 					func(_ ChannelUpdateInfo) bool {
 						return rand.Intn(2) == 0
@@ -3427,8 +3463,17 @@ func TestStressTestChannelGraphAPI(t *testing.T) {
 			name: "ChanUpdateInHorizon",
 			fn: func() error {
 				iter := graph.ChanUpdatesInHorizon(
-					ctx, time.Now().Add(-time.Hour),
-					time.Now(),
+					ctx, lnwire.GossipVersion1,
+					ChanUpdateRange{
+						StartTime: fn.Some(
+							time.Now().Add(
+								-time.Hour,
+							),
+						),
+						EndTime: fn.Some(
+							time.Now(),
+						),
+					},
 				)
 				_, err := fn.CollectErr(iter)
 
@@ -4288,7 +4333,10 @@ func TestNodePruningUpdateIndexDeletion(t *testing.T) {
 	startTime := time.Unix(9, 0)
 	endTime := node1.LastUpdate.Add(time.Minute)
 	nodesInHorizonIter := graph.NodeUpdatesInHorizon(
-		ctx, startTime, endTime,
+		ctx, NodeUpdateRange{
+			StartTime: fn.Some(startTime),
+			EndTime:   fn.Some(endTime),
+		},
 	)
 
 	// We should only have a single node, and that node should exactly
@@ -4306,7 +4354,10 @@ func TestNodePruningUpdateIndexDeletion(t *testing.T) {
 	// Now that the node has been deleted, we'll again query the nodes in
 	// the horizon. This time we should have no nodes at all.
 	nodesInHorizonIter = graph.NodeUpdatesInHorizon(
-		ctx, startTime, endTime,
+		ctx, NodeUpdateRange{
+			StartTime: fn.Some(startTime),
+			EndTime:   fn.Some(endTime),
+		},
 	)
 	nodesInHorizon, err = fn.CollectErr(nodesInHorizonIter)
 	require.NoError(t, err, "unable to fetch nodes in horizon")
@@ -5854,4 +5905,880 @@ func TestLightningNodePersistence(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, nodeAnnBytes, b.Bytes())
+}
+
+// TestUpdateRangeValidateForVersion verifies that ChanUpdateRange and
+// NodeUpdateRange reject invalid field combinations for each gossip version.
+func TestUpdateRangeValidateForVersion(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+
+	tests := []struct {
+		name    string
+		fn      func() error
+		wantErr string
+	}{
+		{
+			name: "v1 chan range with time - ok",
+			fn: func() error {
+				r := ChanUpdateRange{
+					StartTime: fn.Some(now),
+					EndTime:   fn.Some(now),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion1,
+				)
+			},
+		},
+		{
+			name: "v1 chan range with height - rejected",
+			fn: func() error {
+				r := ChanUpdateRange{
+					StartHeight: fn.Some(uint32(1)),
+					EndHeight:   fn.Some(uint32(100)),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion1,
+				)
+			},
+			wantErr: "v1 chan update range must use time",
+		},
+		{
+			name: "v2 chan range with height - ok",
+			fn: func() error {
+				r := ChanUpdateRange{
+					StartHeight: fn.Some(uint32(1)),
+					EndHeight:   fn.Some(uint32(100)),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion2,
+				)
+			},
+		},
+		{
+			name: "v2 chan range with time - rejected",
+			fn: func() error {
+				r := ChanUpdateRange{
+					StartTime: fn.Some(now),
+					EndTime:   fn.Some(now),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion2,
+				)
+			},
+			wantErr: "v2 chan update range must use blocks",
+		},
+		{
+			name: "mixed chan range - rejected",
+			fn: func() error {
+				r := ChanUpdateRange{
+					StartTime:   fn.Some(now),
+					StartHeight: fn.Some(uint32(1)),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion1,
+				)
+			},
+			wantErr: "both time and block",
+		},
+		{
+			name: "v1 node range with time - ok",
+			fn: func() error {
+				r := NodeUpdateRange{
+					StartTime: fn.Some(now),
+					EndTime:   fn.Some(now),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion1,
+				)
+			},
+		},
+		{
+			name: "v2 node range with height - ok",
+			fn: func() error {
+				r := NodeUpdateRange{
+					StartHeight: fn.Some(uint32(1)),
+					EndHeight:   fn.Some(uint32(100)),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion2,
+				)
+			},
+		},
+		{
+			name: "v2 node range with time - rejected",
+			fn: func() error {
+				r := NodeUpdateRange{
+					StartTime: fn.Some(now),
+					EndTime:   fn.Some(now),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion2,
+				)
+			},
+			wantErr: "v2 node update range must use height",
+		},
+		{
+			name: "v1 chan range missing bounds - rejected",
+			fn: func() error {
+				r := ChanUpdateRange{
+					StartTime: fn.Some(now),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion1,
+				)
+			},
+			wantErr: "missing time bounds",
+		},
+		{
+			name: "v1 chan range inverted - rejected",
+			fn: func() error {
+				r := ChanUpdateRange{
+					StartTime: fn.Some(now.Add(time.Hour)),
+					EndTime:   fn.Some(now),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion1,
+				)
+			},
+			wantErr: "start time after end time",
+		},
+		{
+			name: "v2 chan range inverted - rejected",
+			fn: func() error {
+				r := ChanUpdateRange{
+					StartHeight: fn.Some(uint32(100)),
+					EndHeight:   fn.Some(uint32(50)),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion2,
+				)
+			},
+			wantErr: "start height after end height",
+		},
+		{
+			name: "v1 node range inverted - rejected",
+			fn: func() error {
+				r := NodeUpdateRange{
+					StartTime: fn.Some(now.Add(time.Hour)),
+					EndTime:   fn.Some(now),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion1,
+				)
+			},
+			wantErr: "start time after end time",
+		},
+		{
+			name: "v2 node range inverted - rejected",
+			fn: func() error {
+				r := NodeUpdateRange{
+					StartHeight: fn.Some(uint32(100)),
+					EndHeight:   fn.Some(uint32(50)),
+				}
+
+				return r.validateForVersion(
+					lnwire.GossipVersion2,
+				)
+			},
+			wantErr: "start height after end height",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.fn()
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err,
+					tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestV2HorizonQueries tests that NodeUpdatesInHorizon and
+// ChanUpdatesInHorizon work with v2 gossip (block-height ranges). This test
+// only runs on SQL backends since KV does not support v2.
+func TestV2HorizonQueries(t *testing.T) {
+	t.Parallel()
+
+	if !isSQLDB {
+		t.Skip("v2 horizon queries only supported on SQL backends")
+	}
+
+	ctx := t.Context()
+	graph := MakeTestGraph(t)
+
+	// Create two v2 nodes with specific block heights.
+	node1 := createTestVertex(t, lnwire.GossipVersion2)
+	node1.LastBlockHeight = 100
+	require.NoError(t, graph.AddNode(ctx, node1))
+
+	node2 := createTestVertex(t, lnwire.GossipVersion2)
+	node2.LastBlockHeight = 200
+	require.NoError(t, graph.AddNode(ctx, node2))
+
+	// Create a third node outside the query range.
+	node3 := createTestVertex(t, lnwire.GossipVersion2)
+	node3.LastBlockHeight = 500
+	require.NoError(t, graph.AddNode(ctx, node3))
+
+	// --- NodeUpdatesInHorizon v2 ---
+
+	// Query for nodes in block range [50, 250].
+	nodeIter := graph.NodeUpdatesInHorizon(
+		ctx, lnwire.GossipVersion2, NodeUpdateRange{
+			StartHeight: fn.Some(uint32(50)),
+			EndHeight:   fn.Some(uint32(250)),
+		},
+	)
+	nodes, err := fn.CollectErr(nodeIter)
+	require.NoError(t, err)
+	require.Len(t, nodes, 2)
+
+	// Query for nodes in block range [150, 600] should return node2 and
+	// node3.
+	nodeIter = graph.NodeUpdatesInHorizon(
+		ctx, lnwire.GossipVersion2, NodeUpdateRange{
+			StartHeight: fn.Some(uint32(150)),
+			EndHeight:   fn.Some(uint32(600)),
+		},
+	)
+	nodes, err = fn.CollectErr(nodeIter)
+	require.NoError(t, err)
+	require.Len(t, nodes, 2)
+
+	// Query for nodes in block range [300, 400] should return nothing.
+	nodeIter = graph.NodeUpdatesInHorizon(
+		ctx, lnwire.GossipVersion2, NodeUpdateRange{
+			StartHeight: fn.Some(uint32(300)),
+			EndHeight:   fn.Some(uint32(400)),
+		},
+	)
+	nodes, err = fn.CollectErr(nodeIter)
+	require.NoError(t, err)
+	require.Empty(t, nodes)
+
+	// --- ChanUpdatesInHorizon v2 ---
+
+	// Create a v2 channel between node1 and node2.
+	edgeInfo, _ := createEdge(
+		lnwire.GossipVersion2, 100, 1, 0, 10, node1, node2,
+	)
+	require.NoError(t, graph.AddChannelEdge(ctx, edgeInfo))
+
+	// Add v2 policies with specific block heights.
+	edge1 := &models.ChannelEdgePolicy{
+		Version:                   lnwire.GossipVersion2,
+		ChannelID:                 edgeInfo.ChannelID,
+		LastBlockHeight:           150,
+		TimeLockDelta:             14,
+		MinHTLC:                   1000,
+		MaxHTLC:                   1000000,
+		FeeBaseMSat:               1000,
+		FeeProportionalMillionths: 200,
+	}
+	edge2 := &models.ChannelEdgePolicy{
+		Version:                   lnwire.GossipVersion2,
+		SecondPeer:                true,
+		ChannelID:                 edgeInfo.ChannelID,
+		LastBlockHeight:           160,
+		TimeLockDelta:             14,
+		MinHTLC:                   1000,
+		MaxHTLC:                   1000000,
+		FeeBaseMSat:               1000,
+		FeeProportionalMillionths: 200,
+	}
+	require.NoError(t, graph.UpdateEdgePolicy(ctx, edge1))
+	require.NoError(t, graph.UpdateEdgePolicy(ctx, edge2))
+
+	// Query for channel updates in block range [100, 200].
+	chanIter := graph.ChanUpdatesInHorizon(
+		ctx, lnwire.GossipVersion2, ChanUpdateRange{
+			StartHeight: fn.Some(uint32(100)),
+			EndHeight:   fn.Some(uint32(200)),
+		},
+	)
+	channels, err := fn.CollectErr(chanIter)
+	require.NoError(t, err)
+	require.Len(t, channels, 1)
+	require.Equal(t, edgeInfo.ChannelID, channels[0].Info.ChannelID)
+
+	// Query for channel updates in block range [200, 300] should return
+	// nothing since policies are at heights 150 and 160.
+	chanIter = graph.ChanUpdatesInHorizon(
+		ctx, lnwire.GossipVersion2, ChanUpdateRange{
+			StartHeight: fn.Some(uint32(200)),
+			EndHeight:   fn.Some(uint32(300)),
+		},
+	)
+	channels, err = fn.CollectErr(chanIter)
+	require.NoError(t, err)
+	require.Empty(t, channels)
+}
+
+// TestPreferHighestAndGetVersions tests the four new Store methods:
+// FetchChannelEdgesByIDPreferHighest, FetchChannelEdgesByOutpointPreferHighest,
+// GetVersionsBySCID, and GetVersionsByOutpoint.
+func TestPreferHighestAndGetVersions(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	graph := MakeTestGraph(t)
+	store := graph.db
+
+	node1Priv, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	node2Priv, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	node1V1 := createNode(t, lnwire.GossipVersion1, node1Priv)
+	node2V1 := createNode(t, lnwire.GossipVersion1, node2Priv)
+
+	require.NoError(t, graph.AddNode(ctx, node1V1))
+	require.NoError(t, graph.AddNode(ctx, node2V1))
+
+	// Create and add a v1 channel edge.
+	edgeInfo, scid := createEdge(
+		lnwire.GossipVersion1, 100, 1, 0, 1, node1V1, node2V1,
+	)
+	require.NoError(t, graph.AddChannelEdge(ctx, edgeInfo))
+
+	chanID := scid.ToUint64()
+	op := edgeInfo.ChannelPoint
+
+	// FetchChannelEdgesByIDPreferHighest should return the v1 channel.
+	info, _, _, err := store.FetchChannelEdgesByIDPreferHighest(
+		ctx, chanID,
+	)
+	require.NoError(t, err)
+	require.Equal(t, chanID, info.ChannelID)
+
+	// FetchChannelEdgesByOutpointPreferHighest should also return it.
+	info, _, _, err = store.FetchChannelEdgesByOutpointPreferHighest(
+		ctx, &op,
+	)
+	require.NoError(t, err)
+	require.Equal(t, chanID, info.ChannelID)
+
+	// Querying a non-existent channel should return an error.
+	_, _, _, err = store.FetchChannelEdgesByIDPreferHighest(ctx, 999999)
+	require.Error(t, err)
+
+	// GetVersionsBySCID should report v1.
+	versions, err := store.GetVersionsBySCID(ctx, chanID)
+	require.NoError(t, err)
+	require.Equal(t, []lnwire.GossipVersion{
+		lnwire.GossipVersion1,
+	}, versions)
+
+	// GetVersionsByOutpoint should also report v1.
+	versions, err = store.GetVersionsByOutpoint(ctx, &op)
+	require.NoError(t, err)
+	require.Equal(t, []lnwire.GossipVersion{
+		lnwire.GossipVersion1,
+	}, versions)
+
+	// GetVersions for a non-existent SCID should return empty.
+	versions, err = store.GetVersionsBySCID(ctx, 999999)
+	require.NoError(t, err)
+	require.Empty(t, versions)
+
+	if !isSQLDB {
+		return
+	}
+
+	node1V2 := createNode(t, lnwire.GossipVersion2, node1Priv)
+	node2V2 := createNode(t, lnwire.GossipVersion2, node2Priv)
+	require.NoError(t, graph.AddNode(ctx, node1V2))
+	require.NoError(t, graph.AddNode(ctx, node2V2))
+
+	// Add a duplicate v1/v2 channel and verify prefer-highest chooses
+	// the v2 edge while GetVersions reports both versions.
+	dupV1, dupSCID := createEdge(
+		lnwire.GossipVersion1, 101, 1, 0, 2, node1V1, node2V1,
+	)
+	dupV2, _ := createEdge(
+		lnwire.GossipVersion2, 101, 1, 0, 2, node1V2, node2V2,
+	)
+	require.NoError(t, graph.AddChannelEdge(ctx, dupV1))
+	require.NoError(t, graph.AddChannelEdge(ctx, dupV2))
+
+	dupChanID := dupSCID.ToUint64()
+	dupOutpoint := dupV1.ChannelPoint
+
+	info, _, _, err = store.FetchChannelEdgesByIDPreferHighest(
+		ctx, dupChanID,
+	)
+	require.NoError(t, err)
+	require.Equal(t, dupChanID, info.ChannelID)
+	require.Equal(t, lnwire.GossipVersion2, info.Version)
+
+	info, _, _, err = store.FetchChannelEdgesByOutpointPreferHighest(
+		ctx, &dupOutpoint,
+	)
+	require.NoError(t, err)
+	require.Equal(t, dupChanID, info.ChannelID)
+	require.Equal(t, lnwire.GossipVersion2, info.Version)
+	versions, err = store.GetVersionsBySCID(ctx, dupChanID)
+	require.NoError(t, err)
+	require.Equal(t, []lnwire.GossipVersion{
+		lnwire.GossipVersion1,
+		lnwire.GossipVersion2,
+	}, versions)
+
+	versions, err = store.GetVersionsByOutpoint(ctx, &dupOutpoint)
+	require.NoError(t, err)
+	require.Equal(t, []lnwire.GossipVersion{
+		lnwire.GossipVersion1,
+		lnwire.GossipVersion2,
+	}, versions)
+	// Add another duplicate v1/v2 channel where only the v1 version has a
+	// policy. Prefer-highest should return the lower version with usable
+	// policy data instead of the higher version shell.
+	policyPrefV1, policyPrefSCID := createEdge(
+		lnwire.GossipVersion1, 102, 1, 0, 3, node1V1, node2V1,
+	)
+	policyPrefV2, _ := createEdge(
+		lnwire.GossipVersion2, 102, 1, 0, 3, node1V2, node2V2,
+	)
+	require.NoError(t, graph.AddChannelEdge(ctx, policyPrefV1))
+	require.NoError(t, graph.AddChannelEdge(ctx, policyPrefV2))
+
+	policyOnlyV1 := newEdgePolicy(
+		lnwire.GossipVersion1, policyPrefV1.ChannelID, 1000, true,
+	)
+	policyOnlyV1.ToNode = node2V1.PubKeyBytes
+	policyOnlyV1.SigBytes = testSig.Serialize()
+	require.NoError(t, graph.UpdateEdgePolicy(ctx, policyOnlyV1))
+
+	policyPrefChanID := policyPrefSCID.ToUint64()
+	policyPrefOutpoint := policyPrefV1.ChannelPoint
+
+	info, p1, p2, err := store.FetchChannelEdgesByIDPreferHighest(
+		ctx, policyPrefChanID,
+	)
+	require.NoError(t, err)
+	require.Equal(t, policyPrefChanID, info.ChannelID)
+	require.Equal(t, lnwire.GossipVersion1, info.Version)
+	require.NotNil(t, p1)
+	require.Nil(t, p2)
+
+	info, p1, p2, err = store.FetchChannelEdgesByOutpointPreferHighest(
+		ctx, &policyPrefOutpoint,
+	)
+	require.NoError(t, err)
+	require.Equal(t, policyPrefChanID, info.ChannelID)
+	require.Equal(t, lnwire.GossipVersion1, info.Version)
+	require.NotNil(t, p1)
+	require.Nil(t, p2)
+}
+// TestPreferHighestNodeTraversal verifies that ChannelGraph's
+// ForEachNodeDirectedChannel and FetchNodeFeatures correctly prefer v2 over v1
+// when the graph cache is disabled (exercising the no-cache code paths).
+func TestPreferHighestNodeTraversal(t *testing.T) {
+	t.Parallel()
+
+	if !isSQLDB {
+		t.Skip("prefer-highest requires SQL backend")
+	}
+
+	ctx := t.Context()
+
+	// Disable the cache so we exercise the no-cache code paths in
+	// ChannelGraph.ForEachNodeDirectedChannel and FetchNodeFeatures.
+	graph := MakeTestGraph(t, WithUseGraphCache(false))
+
+	// --- FetchNodeFeatures ---
+
+	// Create a v1-only node and verify its features are returned.
+	privV1, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	nodeV1 := createNode(t, lnwire.GossipVersion1, privV1)
+	require.NoError(t, graph.AddNode(ctx, nodeV1))
+
+	features, err := graph.FetchNodeFeatures(ctx, nodeV1.PubKeyBytes)
+	require.NoError(t, err)
+	require.False(t, features.IsEmpty(),
+		"v1-only node should have features")
+
+	// Create a v2-only node and verify its features are returned
+	// (exercises the v2 fallback).
+	privV2, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	nodeV2 := createNode(t, lnwire.GossipVersion2, privV2)
+	require.NoError(t, graph.AddNode(ctx, nodeV2))
+
+	features, err = graph.FetchNodeFeatures(ctx, nodeV2.PubKeyBytes)
+	require.NoError(t, err)
+	require.False(t, features.IsEmpty(),
+		"v2-only node should have features")
+
+	// Create a node with both v1 and v2 announcements.
+	privBoth, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	nodeBothV1 := createNode(t, lnwire.GossipVersion1, privBoth)
+	v1Features := lnwire.NewFeatureVector(
+		lnwire.NewRawFeatureVector(lnwire.GossipQueriesRequired),
+		lnwire.Features,
+	)
+	nodeBothV1.Features = v1Features
+	require.NoError(t, graph.AddNode(ctx, nodeBothV1))
+
+	nodeBothV2 := createNode(t, lnwire.GossipVersion2, privBoth)
+	v2Features := lnwire.NewFeatureVector(
+		lnwire.NewRawFeatureVector(lnwire.TLVOnionPayloadRequired),
+		lnwire.Features,
+	)
+	nodeBothV2.Features = v2Features
+	require.NoError(t, graph.AddNode(ctx, nodeBothV2))
+
+	features, err = graph.FetchNodeFeatures(
+		ctx, nodeBothV1.PubKeyBytes,
+	)
+	require.NoError(t, err)
+	require.Equal(t, v2Features, features)
+	require.NotEqual(t, v1Features, features)
+
+	// --- ForEachNodeDirectedChannel ---
+
+	// Add a v1 channel between nodeV1 and nodeBothV1.
+	edge, _ := createEdge(
+		lnwire.GossipVersion1, 100, 0, 0, 0,
+		nodeV1, nodeBothV1,
+	)
+	require.NoError(t, graph.AddChannelEdge(ctx, edge))
+
+	pol := newEdgePolicy(
+		lnwire.GossipVersion1, edge.ChannelID, 1000, true,
+	)
+	pol.ToNode = nodeBothV1.PubKeyBytes
+	pol.SigBytes = testSig.Serialize()
+	require.NoError(t, graph.UpdateEdgePolicy(ctx, pol))
+
+	// ForEachNodeDirectedChannel should find the channel.
+	var foundChannels int
+	err = graph.ForEachNodeDirectedChannel(
+		ctx, nodeV1.PubKeyBytes,
+		func(_ *DirectedChannel) error {
+			foundChannels++
+			return nil
+		}, func() {
+			foundChannels = 0
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, 1, foundChannels,
+		"expected 1 channel for v1 node")
+}
+// TestPreferHighestForEachNode verifies that SQLStore.ForEachNode returns one
+// node per pubkey, preferring the highest announced version and otherwise
+// falling back to the highest-version shell node.
+// TestPreferHighestForEachNode verifies that SQLStore.ForEachNode returns one
+// node per pubkey, preferring the highest announced version and otherwise
+// falling back to the highest-version shell node.
+func TestPreferHighestForEachNode(t *testing.T) {
+	t.Parallel()
+
+	if !isSQLDB {
+		t.Skip("prefer-highest requires SQL backend")
+	}
+
+	ctx := t.Context()
+	graph := MakeTestGraph(t)
+	store := graph.db
+
+	v1Only := createTestVertex(t, lnwire.GossipVersion1)
+	v1Only.Alias = fn.Some("v1-only")
+	require.NoError(t, graph.AddNode(ctx, v1Only))
+
+	bothPriv, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	bothV1 := createNode(t, lnwire.GossipVersion1, bothPriv)
+	bothV1.Alias = fn.Some("both-v1")
+	require.NoError(t, graph.AddNode(ctx, bothV1))
+
+	bothV2 := createNode(t, lnwire.GossipVersion2, bothPriv)
+	bothV2.Alias = fn.Some("both-v2")
+	require.NoError(t, graph.AddNode(ctx, bothV2))
+
+	shellPriv, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	shellPub, err := route.NewVertexFromBytes(
+		shellPriv.PubKey().SerializeCompressed(),
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, graph.AddNode(
+		ctx, models.NewShellNode(lnwire.GossipVersion1, shellPub),
+	))
+	require.NoError(t, graph.AddNode(
+		ctx, models.NewShellNode(lnwire.GossipVersion2, shellPub),
+	))
+
+	nodesByPub := make(map[route.Vertex]*models.Node)
+	err = store.ForEachNode(ctx, func(node *models.Node) error {
+		nodesByPub[node.PubKeyBytes] = node
+		return nil
+	}, func() {
+		clear(nodesByPub)
+	})
+	require.NoError(t, err)
+	require.Len(t, nodesByPub, 3)
+
+	gotV1Only := nodesByPub[v1Only.PubKeyBytes]
+	require.NotNil(t, gotV1Only)
+	require.Equal(t, lnwire.GossipVersion1, gotV1Only.Version)
+	require.Equal(t, "v1-only", gotV1Only.Alias.UnwrapOr(""))
+	require.True(t, gotV1Only.HaveAnnouncement())
+
+	gotBoth := nodesByPub[bothV1.PubKeyBytes]
+	require.NotNil(t, gotBoth)
+	require.Equal(t, lnwire.GossipVersion2, gotBoth.Version)
+	require.Equal(t, "both-v2", gotBoth.Alias.UnwrapOr(""))
+	require.True(t, gotBoth.HaveAnnouncement())
+
+	gotShell := nodesByPub[shellPub]
+	require.NotNil(t, gotShell)
+	require.Equal(t, lnwire.GossipVersion2, gotShell.Version)
+	require.False(t, gotShell.HaveAnnouncement())
+}
+
+// TestPreferHighestForEachChannel verifies that SQLStore.ForEachChannel returns
+// one channel per SCID, preferring a higher-version channel when both versions
+// have policies, preserving lower-version policy data when the higher version
+// has none, and otherwise falling back to the highest-version no-policy
+// channel.
+func TestPreferHighestForEachChannel(t *testing.T) {
+	t.Parallel()
+
+	if !isSQLDB {
+		t.Skip("prefer-highest requires SQL backend")
+	}
+
+	ctx := t.Context()
+	graph := MakeTestGraph(t)
+	store := graph.db
+
+	node1Priv, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	node2Priv, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	node1V1 := createNode(t, lnwire.GossipVersion1, node1Priv)
+	node1V2 := createNode(t, lnwire.GossipVersion2, node1Priv)
+	node2V1 := createNode(t, lnwire.GossipVersion1, node2Priv)
+	node2V2 := createNode(t, lnwire.GossipVersion2, node2Priv)
+
+	require.NoError(t, graph.AddNode(ctx, node1V1))
+	require.NoError(t, graph.AddNode(ctx, node1V2))
+	require.NoError(t, graph.AddNode(ctx, node2V1))
+	require.NoError(t, graph.AddNode(ctx, node2V2))
+
+	v1Only, _ := createEdge(
+		lnwire.GossipVersion1, 200, 0, 0, 1, node1V1, node2V1,
+	)
+	require.NoError(t, graph.AddChannelEdge(ctx, v1Only))
+
+	policyPrefV1, _ := createEdge(
+		lnwire.GossipVersion1, 201, 0, 0, 2, node1V1, node2V1,
+	)
+	policyPrefV2, _ := createEdge(
+		lnwire.GossipVersion2, 201, 0, 0, 2, node1V2, node2V2,
+	)
+	require.NoError(t, graph.AddChannelEdge(ctx, policyPrefV1))
+	require.NoError(t, graph.AddChannelEdge(ctx, policyPrefV2))
+
+	policyOnlyV1 := newEdgePolicy(
+		lnwire.GossipVersion1, policyPrefV1.ChannelID, 1000, true,
+	)
+	policyOnlyV1.ToNode = node2V1.PubKeyBytes
+	policyOnlyV1.SigBytes = testSig.Serialize()
+	require.NoError(t, graph.UpdateEdgePolicy(ctx, policyOnlyV1))
+
+	versionPrefV1, _ := createEdge(
+		lnwire.GossipVersion1, 202, 0, 0, 3, node1V1, node2V1,
+	)
+	versionPrefV2, _ := createEdge(
+		lnwire.GossipVersion2, 202, 0, 0, 3, node1V2, node2V2,
+	)
+	require.NoError(t, graph.AddChannelEdge(ctx, versionPrefV1))
+	require.NoError(t, graph.AddChannelEdge(ctx, versionPrefV2))
+
+	versionPolicyV1 := newEdgePolicy(
+		lnwire.GossipVersion1, versionPrefV1.ChannelID, 1001, true,
+	)
+	versionPolicyV1.ToNode = node2V1.PubKeyBytes
+	versionPolicyV1.SigBytes = testSig.Serialize()
+	require.NoError(t, graph.UpdateEdgePolicy(ctx, versionPolicyV1))
+
+	versionPolicyV2 := newEdgePolicy(
+		lnwire.GossipVersion2, versionPrefV2.ChannelID, 1002, true,
+	)
+	versionPolicyV2.ToNode = node2V2.PubKeyBytes
+	versionPolicyV2.SigBytes = testSig.Serialize()
+	require.NoError(t, graph.UpdateEdgePolicy(ctx, versionPolicyV2))
+
+	shellPrefV1, _ := createEdge(
+		lnwire.GossipVersion1, 203, 0, 0, 4, node1V1, node2V1,
+	)
+	shellPrefV2, _ := createEdge(
+		lnwire.GossipVersion2, 203, 0, 0, 4, node1V2, node2V2,
+	)
+	require.NoError(t, graph.AddChannelEdge(ctx, shellPrefV1))
+	require.NoError(t, graph.AddChannelEdge(ctx, shellPrefV2))
+
+	type channelResult struct {
+		info *models.ChannelEdgeInfo
+		p1   *models.ChannelEdgePolicy
+		p2   *models.ChannelEdgePolicy
+	}
+	channelsByID := make(map[uint64]channelResult)
+	err = store.ForEachChannel(ctx, func(info *models.ChannelEdgeInfo,
+		p1, p2 *models.ChannelEdgePolicy) error {
+
+		channelsByID[info.ChannelID] = channelResult{
+			info: info,
+			p1:   p1,
+			p2:   p2,
+		}
+		return nil
+	}, func() {
+		clear(channelsByID)
+	})
+	require.NoError(t, err)
+	require.Len(t, channelsByID, 4)
+
+	gotV1Only := channelsByID[v1Only.ChannelID]
+	require.Equal(t, lnwire.GossipVersion1, gotV1Only.info.Version)
+	require.Nil(t, gotV1Only.p1)
+	require.Nil(t, gotV1Only.p2)
+
+	gotPolicyPref := channelsByID[policyPrefV1.ChannelID]
+	require.Equal(t, lnwire.GossipVersion1, gotPolicyPref.info.Version)
+	require.NotNil(t, gotPolicyPref.p1)
+	require.Nil(t, gotPolicyPref.p2)
+
+	gotVersionPref := channelsByID[versionPrefV1.ChannelID]
+	require.Equal(t, lnwire.GossipVersion2, gotVersionPref.info.Version)
+	require.NotNil(t, gotVersionPref.p1)
+
+	gotShellPref := channelsByID[shellPrefV1.ChannelID]
+	require.Equal(t, lnwire.GossipVersion2, gotShellPref.info.Version)
+	require.Nil(t, gotShellPref.p1)
+	require.Nil(t, gotShellPref.p2)
+}
+
+// TestPreferHighestNodeDirectedChannelTraversal verifies that the no-cache
+// ChannelGraph.ForEachNodeDirectedChannel path streams one directed channel per
+// SCID while preferring the v2 advertisement when both versions exist.
+func TestPreferHighestNodeDirectedChannelTraversal(t *testing.T) {
+	t.Parallel()
+
+	if !isSQLDB {
+		t.Skip("prefer-highest requires SQL backend")
+	}
+
+	ctx := t.Context()
+	graph := MakeTestGraph(t, WithUseGraphCache(false))
+
+	localPriv, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	peerBothPriv, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	peerV1OnlyPriv, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	localV1 := createNode(t, lnwire.GossipVersion1, localPriv)
+	localV2 := createNode(t, lnwire.GossipVersion2, localPriv)
+	peerBothV1 := createNode(t, lnwire.GossipVersion1, peerBothPriv)
+	peerBothV2 := createNode(t, lnwire.GossipVersion2, peerBothPriv)
+	peerV1Only := createNode(t, lnwire.GossipVersion1, peerV1OnlyPriv)
+
+	require.NoError(t, graph.AddNode(ctx, localV1))
+	require.NoError(t, graph.AddNode(ctx, localV2))
+	require.NoError(t, graph.AddNode(ctx, peerBothV1))
+	require.NoError(t, graph.AddNode(ctx, peerBothV2))
+	require.NoError(t, graph.AddNode(ctx, peerV1Only))
+
+	dupV1, _ := createEdge(
+		lnwire.GossipVersion1, 400, 0, 0, 10, localV1, peerBothV1,
+	)
+	dupV2, _ := createEdge(
+		lnwire.GossipVersion2, 400, 0, 0, 10, localV2, peerBothV2,
+	)
+	v1Only, _ := createEdge(
+		lnwire.GossipVersion1, 401, 0, 0, 11, localV1, peerV1Only,
+	)
+
+	require.NoError(t, graph.AddChannelEdge(ctx, dupV1))
+	require.NoError(t, graph.AddChannelEdge(ctx, dupV2))
+	require.NoError(t, graph.AddChannelEdge(ctx, v1Only))
+
+	addPolicies := func(edgeInfo *models.ChannelEdgeInfo,
+		version lnwire.GossipVersion,
+		fee lnwire.MilliSatoshi) {
+
+		policy1 := newEdgePolicy(version, edgeInfo.ChannelID, 1000, true)
+		policy1.ToNode = edgeInfo.NodeKey2Bytes
+		policy1.SigBytes = testSig.Serialize()
+		policy1.FeeBaseMSat = fee
+
+		policy2 := newEdgePolicy(version, edgeInfo.ChannelID, 1001, false)
+		policy2.ToNode = edgeInfo.NodeKey1Bytes
+		policy2.SigBytes = testSig.Serialize()
+		policy2.FeeBaseMSat = fee
+
+		require.NoError(t, graph.UpdateEdgePolicy(ctx, policy1))
+		require.NoError(t, graph.UpdateEdgePolicy(ctx, policy2))
+	}
+
+	addPolicies(dupV1, lnwire.GossipVersion1, 1111)
+	addPolicies(dupV2, lnwire.GossipVersion2, 2222)
+	addPolicies(v1Only, lnwire.GossipVersion1, 3333)
+
+	channelsByID := make(map[uint64]*DirectedChannel)
+	err = graph.ForEachNodeDirectedChannel(
+		ctx, localV1.PubKeyBytes,
+		func(channel *DirectedChannel) error {
+			channelsByID[channel.ChannelID] = channel.DeepCopy()
+			return nil
+		}, func() {
+			clear(channelsByID)
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, channelsByID, 2)
+
+	gotDup := channelsByID[dupV1.ChannelID]
+	require.NotNil(t, gotDup)
+	require.NotNil(t, gotDup.InPolicy)
+	require.Equal(t, lnwire.MilliSatoshi(2222), gotDup.InPolicy.FeeBaseMSat)
+
+	gotV1Only := channelsByID[v1Only.ChannelID]
+	require.NotNil(t, gotV1Only)
+	require.NotNil(t, gotV1Only.InPolicy)
+	require.Equal(
+		t, lnwire.MilliSatoshi(3333), gotV1Only.InPolicy.FeeBaseMSat,
+	)
 }

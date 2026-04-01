@@ -80,6 +80,61 @@ WHERE version = $1 AND id > $2
 ORDER BY id
 LIMIT $3;
 
+-- name: ListPreferredNodesPaginated :many
+WITH page_pub_keys(cursor_pub_key) AS (
+    SELECT page.pub_key
+    FROM (
+        SELECT n2.pub_key AS pub_key
+        FROM graph_nodes n2
+        WHERE n2.version = 2
+          AND n2.pub_key > $1
+        UNION
+        SELECT n1.pub_key AS pub_key
+        FROM graph_nodes n1
+        WHERE n1.version = 1
+          AND n1.pub_key > $1
+    ) AS page
+    ORDER BY page.pub_key
+    LIMIT $2
+),
+selected_nodes AS (
+    SELECT
+        p.cursor_pub_key AS selected_pub_key,
+        COALESCE(
+            (
+                SELECT n.id
+                FROM graph_nodes n
+                WHERE n.pub_key = p.cursor_pub_key
+                  AND n.version = 2
+                  AND COALESCE(length(n.signature), 0) > 0
+            ),
+            (
+                SELECT n.id
+                FROM graph_nodes n
+                WHERE n.pub_key = p.cursor_pub_key
+                  AND n.version = 1
+                  AND COALESCE(length(n.signature), 0) > 0
+            ),
+            (
+                SELECT n.id
+                FROM graph_nodes n
+                WHERE n.pub_key = p.cursor_pub_key
+                  AND n.version = 2
+            ),
+            (
+                SELECT n.id
+                FROM graph_nodes n
+                WHERE n.pub_key = p.cursor_pub_key
+                  AND n.version = 1
+            )
+        ) AS node_id
+    FROM page_pub_keys p
+)
+SELECT sqlc.embed(n)
+FROM selected_nodes s
+JOIN graph_nodes n ON n.id = s.node_id
+ORDER BY s.selected_pub_key;
+
 -- name: ListNodeIDsAndPubKeys :many
 SELECT id, pub_key
 FROM graph_nodes
@@ -227,7 +282,8 @@ ORDER BY node_id, type, position;
 -- name: GetNodesByLastUpdateRange :many
 SELECT *
 FROM graph_nodes
-WHERE last_update >= @start_time
+WHERE graph_nodes.version = 1
+  AND last_update >= @start_time
   AND last_update <= @end_time
   -- Pagination: We use (last_update, pub_key) as a compound cursor.
   -- This ensures stable ordering and allows us to resume from where we left off.
@@ -256,6 +312,41 @@ WHERE last_update >= @start_time
     )
   )
 ORDER BY last_update ASC, pub_key ASC
+LIMIT COALESCE(sqlc.narg('max_results'), 999999999);
+
+-- name: GetNodesByBlockHeightRange :many
+SELECT *
+FROM graph_nodes
+WHERE graph_nodes.version = @version
+  AND block_height >= @start_height
+  AND block_height <= @end_height
+  -- Pagination: We use (block_height, pub_key) as a compound cursor.
+  -- This ensures stable ordering and allows us to resume from where we left off.
+  -- We use COALESCE with -1 as sentinel since heights are always positive.
+  AND (
+    -- Include rows with block_height greater than cursor (or all rows if cursor is -1).
+    block_height > COALESCE(sqlc.narg('last_block_height'), -1)
+    OR
+    -- For rows with same block_height, use pub_key as tiebreaker.
+    (block_height = COALESCE(sqlc.narg('last_block_height'), -1)
+     AND pub_key > sqlc.narg('last_pub_key'))
+  )
+  -- Optional filter for public nodes only.
+  AND (
+    -- If only_public is false or not provided, include all nodes.
+    COALESCE(sqlc.narg('only_public'), FALSE) IS FALSE
+    OR
+    -- For V2 protocol, a node is public if it has at least one public channel.
+    -- A public channel has signature set (channel announcement received).
+    EXISTS (
+      SELECT 1
+      FROM graph_channels c
+      WHERE c.version = 2
+        AND COALESCE(length(c.signature), 0) > 0
+        AND (c.node_id_1 = graph_nodes.id OR c.node_id_2 = graph_nodes.id)
+    )
+  )
+ORDER BY block_height ASC, pub_key ASC
 LIMIT COALESCE(sqlc.narg('max_results'), 999999999);
 
 -- name: DeleteNodeAddresses :exec
@@ -498,6 +589,13 @@ FROM graph_channels c
 WHERE c.id IN (sqlc.slice('ids')/*SLICE:ids*/);
 
 -- name: GetChannelsByPolicyLastUpdateRange :many
+WITH candidate_channels AS (
+    SELECT DISTINCT channel_id
+    FROM graph_channel_policies
+    WHERE version = 1
+      AND last_update >= @start_time
+      AND last_update < @end_time
+)
 SELECT
     sqlc.embed(c),
     sqlc.embed(n1),
@@ -541,14 +639,15 @@ SELECT
     cp2.block_height AS policy2_block_height,
     cp2.disable_flags AS policy2_disable_flags
 
-FROM graph_channels c
+FROM candidate_channels cc
+    JOIN graph_channels c ON c.id = cc.channel_id
     JOIN graph_nodes n1 ON c.node_id_1 = n1.id
     JOIN graph_nodes n2 ON c.node_id_2 = n2.id
     LEFT JOIN graph_channel_policies cp1
         ON cp1.channel_id = c.id AND cp1.node_id = c.node_id_1 AND cp1.version = c.version
     LEFT JOIN graph_channel_policies cp2
         ON cp2.channel_id = c.id AND cp2.node_id = c.node_id_2 AND cp2.version = c.version
-WHERE c.version = @version
+WHERE c.version = 1
   AND (
        (cp1.last_update >= @start_time AND cp1.last_update < @end_time)
        OR
@@ -575,6 +674,96 @@ ORDER BY
         WHEN COALESCE(cp1.last_update, 0) >= COALESCE(cp2.last_update, 0)
             THEN COALESCE(cp1.last_update, 0)
         ELSE COALESCE(cp2.last_update, 0)
+    END ASC,
+    c.id ASC
+LIMIT COALESCE(sqlc.narg('max_results'), 999999999);
+
+-- name: GetChannelsByPolicyBlockRange :many
+WITH candidate_channels AS (
+    SELECT DISTINCT channel_id
+    FROM graph_channel_policies
+    WHERE version = @version
+      AND block_height >= @start_height
+      AND block_height < @end_height
+)
+SELECT
+    sqlc.embed(c),
+    sqlc.embed(n1),
+    sqlc.embed(n2),
+
+    -- Policy 1 (node_id_1)
+    cp1.id AS policy1_id,
+    cp1.node_id AS policy1_node_id,
+    cp1.version AS policy1_version,
+    cp1.timelock AS policy1_timelock,
+    cp1.fee_ppm AS policy1_fee_ppm,
+    cp1.base_fee_msat AS policy1_base_fee_msat,
+    cp1.min_htlc_msat AS policy1_min_htlc_msat,
+    cp1.max_htlc_msat AS policy1_max_htlc_msat,
+    cp1.last_update AS policy1_last_update,
+    cp1.disabled AS policy1_disabled,
+    cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
+    cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
+    cp1.message_flags AS policy1_message_flags,
+    cp1.channel_flags AS policy1_channel_flags,
+    cp1.signature AS policy1_signature,
+    cp1.block_height AS policy1_block_height,
+    cp1.disable_flags AS policy1_disable_flags,
+
+    -- Policy 2 (node_id_2)
+    cp2.id AS policy2_id,
+    cp2.node_id AS policy2_node_id,
+    cp2.version AS policy2_version,
+    cp2.timelock AS policy2_timelock,
+    cp2.fee_ppm AS policy2_fee_ppm,
+    cp2.base_fee_msat AS policy2_base_fee_msat,
+    cp2.min_htlc_msat AS policy2_min_htlc_msat,
+    cp2.max_htlc_msat AS policy2_max_htlc_msat,
+    cp2.last_update AS policy2_last_update,
+    cp2.disabled AS policy2_disabled,
+    cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
+    cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
+    cp2.message_flags AS policy2_message_flags,
+    cp2.channel_flags AS policy2_channel_flags,
+    cp2.signature AS policy2_signature,
+    cp2.block_height AS policy2_block_height,
+    cp2.disable_flags AS policy2_disable_flags
+
+FROM candidate_channels cc
+    JOIN graph_channels c ON c.id = cc.channel_id
+    JOIN graph_nodes n1 ON c.node_id_1 = n1.id
+    JOIN graph_nodes n2 ON c.node_id_2 = n2.id
+    LEFT JOIN graph_channel_policies cp1
+        ON cp1.channel_id = c.id AND cp1.node_id = c.node_id_1 AND cp1.version = c.version
+    LEFT JOIN graph_channel_policies cp2
+        ON cp2.channel_id = c.id AND cp2.node_id = c.node_id_2 AND cp2.version = c.version
+WHERE c.version = @version
+  AND (
+       (cp1.block_height >= @start_height AND cp1.block_height < @end_height)
+       OR
+       (cp2.block_height >= @start_height AND cp2.block_height < @end_height)
+  )
+  -- Pagination using compound cursor (max_block_height, id).
+  -- We use COALESCE with -1 as sentinel since heights are always positive.
+  AND (
+       (CASE
+           WHEN COALESCE(cp1.block_height, 0) >= COALESCE(cp2.block_height, 0)
+               THEN COALESCE(cp1.block_height, 0)
+           ELSE COALESCE(cp2.block_height, 0)
+       END > COALESCE(sqlc.narg('last_block_height'), -1))
+       OR
+       (CASE
+           WHEN COALESCE(cp1.block_height, 0) >= COALESCE(cp2.block_height, 0)
+               THEN COALESCE(cp1.block_height, 0)
+           ELSE COALESCE(cp2.block_height, 0)
+       END = COALESCE(sqlc.narg('last_block_height'), -1)
+       AND c.id > COALESCE(sqlc.narg('last_id'), -1))
+  )
+ORDER BY
+    CASE
+        WHEN COALESCE(cp1.block_height, 0) >= COALESCE(cp2.block_height, 0)
+            THEN COALESCE(cp1.block_height, 0)
+        ELSE COALESCE(cp2.block_height, 0)
     END ASC,
     c.id ASC
 LIMIT COALESCE(sqlc.narg('max_results'), 999999999);
@@ -752,6 +941,98 @@ FROM graph_channels c
 WHERE c.version = $1
   AND (c.node_id_1 = $2 OR c.node_id_2 = $2);
 
+-- name: ListPreferredDirectedChannelsPaginated :many
+WITH page_scids(cursor_scid) AS (
+    SELECT page.scid
+    FROM (
+        SELECT c2.scid AS scid
+        FROM graph_channels c2
+        WHERE c2.version = 2
+          AND (c2.node_id_1 = @node_id_v2 OR c2.node_id_2 = @node_id_v2)
+          AND c2.scid > @scid
+        UNION
+        SELECT c1.scid AS scid
+        FROM graph_channels c1
+        WHERE c1.version = 1
+          AND (c1.node_id_1 = @node_id_v1 OR c1.node_id_2 = @node_id_v1)
+          AND c1.scid > @scid
+    ) AS page
+    ORDER BY page.scid
+    LIMIT @page_limit
+),
+selected_channels AS (
+    SELECT
+        s.cursor_scid AS selected_scid,
+        COALESCE(
+            (
+                SELECT c.id
+                FROM graph_channels c
+                WHERE c.scid = s.cursor_scid
+                  AND c.version = 2
+                  AND (c.node_id_1 = @node_id_v2 OR c.node_id_2 = @node_id_v2)
+            ),
+            (
+                SELECT c.id
+                FROM graph_channels c
+                WHERE c.scid = s.cursor_scid
+                  AND c.version = 1
+                  AND (c.node_id_1 = @node_id_v1 OR c.node_id_2 = @node_id_v1)
+            )
+        ) AS channel_db_id
+    FROM page_scids s
+)
+SELECT sqlc.embed(c),
+    n1.pub_key AS node1_pubkey,
+    n2.pub_key AS node2_pubkey,
+
+    -- Policy 1
+    cp1.id AS policy1_id,
+    cp1.node_id AS policy1_node_id,
+    cp1.version AS policy1_version,
+    cp1.timelock AS policy1_timelock,
+    cp1.fee_ppm AS policy1_fee_ppm,
+    cp1.base_fee_msat AS policy1_base_fee_msat,
+    cp1.min_htlc_msat AS policy1_min_htlc_msat,
+    cp1.max_htlc_msat AS policy1_max_htlc_msat,
+    cp1.last_update AS policy1_last_update,
+    cp1.disabled AS policy1_disabled,
+    cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
+    cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
+    cp1.message_flags AS policy1_message_flags,
+    cp1.channel_flags AS policy1_channel_flags,
+    cp1.signature AS policy1_signature,
+    cp1.block_height AS policy1_block_height,
+    cp1.disable_flags AS policy1_disable_flags,
+
+    -- Policy 2
+    cp2.id AS policy2_id,
+    cp2.node_id AS policy2_node_id,
+    cp2.version AS policy2_version,
+    cp2.timelock AS policy2_timelock,
+    cp2.fee_ppm AS policy2_fee_ppm,
+    cp2.base_fee_msat AS policy2_base_fee_msat,
+    cp2.min_htlc_msat AS policy2_min_htlc_msat,
+    cp2.max_htlc_msat AS policy2_max_htlc_msat,
+    cp2.last_update AS policy2_last_update,
+    cp2.disabled AS policy2_disabled,
+    cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
+    cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
+    cp2.message_flags AS policy2_message_flags,
+    cp2.channel_flags AS policy2_channel_flags,
+    cp2.signature AS policy2_signature,
+    cp2.block_height AS policy2_block_height,
+    cp2.disable_flags AS policy2_disable_flags
+
+FROM selected_channels s
+JOIN graph_channels c ON c.id = s.channel_db_id
+JOIN graph_nodes n1 ON c.node_id_1 = n1.id
+JOIN graph_nodes n2 ON c.node_id_2 = n2.id
+LEFT JOIN graph_channel_policies cp1
+    ON cp1.channel_id = c.id AND cp1.node_id = c.node_id_1 AND cp1.version = c.version
+LEFT JOIN graph_channel_policies cp2
+    ON cp2.channel_id = c.id AND cp2.node_id = c.node_id_2 AND cp2.version = c.version
+ORDER BY s.selected_scid;
+
 -- name: GetPublicV1ChannelsBySCID :many
 SELECT *
 FROM graph_channels
@@ -840,6 +1121,121 @@ LEFT JOIN graph_channel_policies cp2
 WHERE c.version = $1 AND c.id > $2
 ORDER BY c.id
 LIMIT $3;
+
+-- name: ListPreferredChannelsWithPoliciesPaginated :many
+WITH page_scids(cursor_scid) AS (
+    SELECT page.scid
+    FROM (
+        SELECT c2.scid AS scid
+        FROM graph_channels c2
+        WHERE c2.version = 2
+          AND c2.scid > $1
+        UNION
+        SELECT c1.scid AS scid
+        FROM graph_channels c1
+        WHERE c1.version = 1
+          AND c1.scid > $1
+    ) AS page
+    ORDER BY page.scid
+    LIMIT $2
+),
+selected_channels AS (
+    SELECT
+        s.cursor_scid AS selected_scid,
+        COALESCE(
+            (
+                SELECT c.id
+                FROM graph_channels c
+                WHERE c.scid = s.cursor_scid
+                  AND c.version = 2
+                  AND EXISTS (
+                      SELECT 1
+                      FROM graph_channel_policies p
+                      WHERE p.channel_id = c.id
+                        AND p.version = 2
+                  )
+            ),
+            (
+                SELECT c.id
+                FROM graph_channels c
+                WHERE c.scid = s.cursor_scid
+                  AND c.version = 1
+                  AND EXISTS (
+                      SELECT 1
+                      FROM graph_channel_policies p
+                      WHERE p.channel_id = c.id
+                        AND p.version = 1
+                  )
+            ),
+            (
+                SELECT c.id
+                FROM graph_channels c
+                WHERE c.scid = s.cursor_scid
+                  AND c.version = 2
+            ),
+            (
+                SELECT c.id
+                FROM graph_channels c
+                WHERE c.scid = s.cursor_scid
+                  AND c.version = 1
+            )
+        ) AS channel_db_id
+    FROM page_scids s
+)
+SELECT
+    sqlc.embed(c),
+
+    -- Join node pubkeys
+    n1.pub_key AS node1_pubkey,
+    n2.pub_key AS node2_pubkey,
+
+    -- Node 1 policy
+    cp1.id AS policy_1_id,
+    cp1.node_id AS policy_1_node_id,
+    cp1.version AS policy_1_version,
+    cp1.timelock AS policy_1_timelock,
+    cp1.fee_ppm AS policy_1_fee_ppm,
+    cp1.base_fee_msat AS policy_1_base_fee_msat,
+    cp1.min_htlc_msat AS policy_1_min_htlc_msat,
+    cp1.max_htlc_msat AS policy_1_max_htlc_msat,
+    cp1.last_update AS policy_1_last_update,
+    cp1.disabled AS policy_1_disabled,
+    cp1.inbound_base_fee_msat AS policy1_inbound_base_fee_msat,
+    cp1.inbound_fee_rate_milli_msat AS policy1_inbound_fee_rate_milli_msat,
+    cp1.message_flags AS policy1_message_flags,
+    cp1.channel_flags AS policy1_channel_flags,
+    cp1.block_height AS policy1_block_height,
+    cp1.disable_flags AS policy1_disable_flags,
+    cp1.signature AS policy_1_signature,
+
+    -- Node 2 policy
+    cp2.id AS policy_2_id,
+    cp2.node_id AS policy_2_node_id,
+    cp2.version AS policy_2_version,
+    cp2.timelock AS policy_2_timelock,
+    cp2.fee_ppm AS policy_2_fee_ppm,
+    cp2.base_fee_msat AS policy_2_base_fee_msat,
+    cp2.min_htlc_msat AS policy_2_min_htlc_msat,
+    cp2.max_htlc_msat AS policy_2_max_htlc_msat,
+    cp2.last_update AS policy_2_last_update,
+    cp2.disabled AS policy_2_disabled,
+    cp2.inbound_base_fee_msat AS policy2_inbound_base_fee_msat,
+    cp2.inbound_fee_rate_milli_msat AS policy2_inbound_fee_rate_milli_msat,
+    cp2.message_flags AS policy2_message_flags,
+    cp2.channel_flags AS policy2_channel_flags,
+    cp2.signature AS policy_2_signature,
+    cp2.block_height AS policy_2_block_height,
+    cp2.disable_flags AS policy_2_disable_flags
+
+FROM selected_channels s
+JOIN graph_channels c ON c.id = s.channel_db_id
+JOIN graph_nodes n1 ON c.node_id_1 = n1.id
+JOIN graph_nodes n2 ON c.node_id_2 = n2.id
+LEFT JOIN graph_channel_policies cp1
+    ON cp1.channel_id = c.id AND cp1.node_id = c.node_id_1 AND cp1.version = c.version
+LEFT JOIN graph_channel_policies cp2
+    ON cp2.channel_id = c.id AND cp2.node_id = c.node_id_2 AND cp2.version = c.version
+ORDER BY s.selected_scid;
 
 -- name: ListChannelsWithPoliciesForCachePaginated :many
 SELECT

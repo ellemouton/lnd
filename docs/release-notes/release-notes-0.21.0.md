@@ -275,6 +275,12 @@
     [4](https://github.com/lightningnetwork/lnd/pull/10542),
     [5](https://github.com/lightningnetwork/lnd/pull/10572),
     [6](https://github.com/lightningnetwork/lnd/pull/10582).
+* Make the [graph `Store` interface
+  cross-version](https://github.com/lightningnetwork/lnd/pull/10656) so that
+  query methods (`ForEachNode`, `ForEachChannel`, `NodeUpdatesInHorizon`,
+  `ChanUpdatesInHorizon`, `FilterKnownChanIDs`) work across gossip v1 and v2.
+  Add `PreferHighest` fetch helpers and `GetVersions` queries so callers can
+  retrieve channels without knowing which gossip version announced them.
 * Updated waiting proof persistence for gossip upgrades by introducing typed
   waiting proof keys and payloads, with a DB migration to rewrite legacy
   waiting proof records to the new key/value format

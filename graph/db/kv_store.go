@@ -408,13 +408,10 @@ func (c *KVStore) AddrsForNode(ctx context.Context, v lnwire.GossipVersion,
 // NOTE: If an edge can't be found, or wasn't advertised, then a nil pointer
 // for that particular channel edge routing policy will be passed into the
 // callback.
-func (c *KVStore) ForEachChannel(_ context.Context, v lnwire.GossipVersion,
+func (c *KVStore) ForEachChannel(_ context.Context,
 	cb func(*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
-		*models.ChannelEdgePolicy) error, reset func()) error {
-
-	if v != lnwire.GossipVersion1 {
-		return ErrVersionNotSupportedForKVDB
-	}
+		*models.ChannelEdgePolicy) error,
+	reset func()) error {
 
 	return forEachChannel(c.db, cb, reset)
 }
@@ -842,12 +839,8 @@ func (c *KVStore) DisabledChannelIDs(
 // early.
 //
 // NOTE: this is part of the Store interface.
-func (c *KVStore) ForEachNode(_ context.Context, v lnwire.GossipVersion,
+func (c *KVStore) ForEachNode(_ context.Context,
 	cb func(*models.Node) error, reset func()) error {
-
-	if v != lnwire.GossipVersion1 {
-		return ErrVersionNotSupportedForKVDB
-	}
 
 	return forEachNode(c.db, func(tx kvdb.RTx,
 		node *models.Node) error {
@@ -2394,9 +2387,10 @@ func (c *KVStore) fetchNextChanUpdateBatch(
 }
 
 // ChanUpdatesInHorizon returns all the known channel edges which have at least
-// one edge that has an update timestamp within the specified horizon.
+// one edge that has an update within the specified range for the given gossip
+// version.
 func (c *KVStore) ChanUpdatesInHorizon(_ context.Context,
-	startTime, endTime time.Time,
+	v lnwire.GossipVersion, r ChanUpdateRange,
 	opts ...IteratorOption) iter.Seq2[ChannelEdge, error] {
 
 	cfg := defaultIteratorConfig()
@@ -2405,8 +2399,19 @@ func (c *KVStore) ChanUpdatesInHorizon(_ context.Context,
 	}
 
 	return func(yield func(ChannelEdge, error) bool) {
+		if v != lnwire.GossipVersion1 {
+			yield(ChannelEdge{}, ErrVersionNotSupportedForKVDB)
+			return
+		}
+		if err := r.validateForVersion(v); err != nil {
+			yield(ChannelEdge{}, err)
+			return
+		}
+
 		iterState := newChanUpdatesIterator(
-			cfg.chanUpdateIterBatchSize, startTime, endTime,
+			cfg.chanUpdateIterBatchSize,
+			r.StartTime.UnwrapOr(time.Time{}),
+			r.EndTime.UnwrapOr(time.Time{}),
 		)
 
 		for {
@@ -2455,8 +2460,8 @@ func (c *KVStore) ChanUpdatesInHorizon(_ context.Context,
 				float64(iterState.total), iterState.hits,
 				iterState.total)
 		} else {
-			log.Tracef("ChanUpdatesInHorizon returned no edges "+
-				"in horizon (%s, %s)", startTime, endTime)
+			log.Tracef("ChanUpdatesInHorizon(v%d) returned "+
+				"no edges in horizon", v)
 		}
 	}
 }
@@ -2645,9 +2650,9 @@ func (c *KVStore) fetchNextNodeBatch(
 }
 
 // NodeUpdatesInHorizon returns all the known lightning node which have an
-// update timestamp within the passed range.
-func (c *KVStore) NodeUpdatesInHorizon(_ context.Context, startTime,
-	endTime time.Time,
+// update timestamp within the passed range for the given gossip version.
+func (c *KVStore) NodeUpdatesInHorizon(_ context.Context,
+	v lnwire.GossipVersion, r NodeUpdateRange,
 	opts ...IteratorOption) iter.Seq2[*models.Node, error] {
 
 	cfg := defaultIteratorConfig()
@@ -2656,10 +2661,20 @@ func (c *KVStore) NodeUpdatesInHorizon(_ context.Context, startTime,
 	}
 
 	return func(yield func(*models.Node, error) bool) {
+		if v != lnwire.GossipVersion1 {
+			yield(nil, ErrVersionNotSupportedForKVDB)
+			return
+		}
+		if err := r.validateForVersion(v); err != nil {
+			yield(nil, err)
+			return
+		}
+
 		// Initialize iterator state.
 		state := newNodeUpdatesIterator(
 			cfg.nodeUpdateIterBatchSize,
-			startTime, endTime,
+			r.StartTime.UnwrapOr(time.Time{}),
+			r.EndTime.UnwrapOr(time.Time{}),
 			cfg.iterPublicNodes,
 		)
 
@@ -2696,7 +2711,12 @@ func (c *KVStore) NodeUpdatesInHorizon(_ context.Context, startTime,
 // channels another peer knows of that we don't. The ChannelUpdateInfos for the
 // known zombies is also returned.
 func (c *KVStore) FilterKnownChanIDs(_ context.Context,
+	v lnwire.GossipVersion,
 	chansInfo []ChannelUpdateInfo) ([]uint64, []ChannelUpdateInfo, error) {
+
+	if v != lnwire.GossipVersion1 {
+		return nil, nil, ErrVersionNotSupportedForKVDB
+	}
 
 	var (
 		newChanIDs   []uint64
@@ -4166,7 +4186,85 @@ func (c *KVStore) FetchChannelEdgesByID(_ context.Context,
 	return edgeInfo, policy1, policy2, nil
 }
 
-// IsPublicNode is a helper method that determines whether the node with the
+// FetchChannelEdgesByIDPreferHighest looks up the channel by ID. The KV store
+// only supports gossip v1, so this simply delegates to the versioned fetch.
+//
+// NOTE: part of the Store interface.
+func (c *KVStore) FetchChannelEdgesByIDPreferHighest(ctx context.Context,
+	chanID uint64) (
+	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy, error) {
+
+	return c.FetchChannelEdgesByID(ctx, lnwire.GossipVersion1, chanID)
+}
+
+// FetchChannelEdgesByOutpointPreferHighest looks up the channel by funding
+// outpoint. The KV store only supports gossip v1, so this simply delegates to
+// the versioned fetch.
+//
+// NOTE: part of the Store interface.
+func (c *KVStore) FetchChannelEdgesByOutpointPreferHighest(
+	ctx context.Context, op *wire.OutPoint) (
+	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy, error) {
+
+	return c.FetchChannelEdgesByOutpoint(
+		ctx, lnwire.GossipVersion1, op,
+	)
+}
+
+// GetVersionsBySCID returns the gossip versions for which a channel with the
+// given SCID exists. The KV store only supports gossip v1, so at most one
+// version is returned.
+//
+// NOTE: part of the Store interface.
+func (c *KVStore) GetVersionsBySCID(ctx context.Context,
+	chanID uint64) ([]lnwire.GossipVersion, error) {
+
+	_, _, _, err := c.FetchChannelEdgesByID(
+		ctx, lnwire.GossipVersion1, chanID,
+	)
+	switch {
+	case errors.Is(err, ErrEdgeNotFound):
+		return nil, nil
+
+	case errors.Is(err, ErrZombieEdge):
+		return nil, nil
+
+	case err != nil:
+		return nil, err
+
+	default:
+		return []lnwire.GossipVersion{lnwire.GossipVersion1}, nil
+	}
+}
+
+// GetVersionsByOutpoint returns the gossip versions for which a channel with
+// the given funding outpoint exists. The KV store only supports gossip v1, so
+// at most one version is returned.
+//
+// NOTE: part of the Store interface.
+func (c *KVStore) GetVersionsByOutpoint(ctx context.Context,
+	op *wire.OutPoint) ([]lnwire.GossipVersion, error) {
+
+	_, _, _, err := c.FetchChannelEdgesByOutpoint(
+		ctx, lnwire.GossipVersion1, op,
+	)
+	switch {
+	case errors.Is(err, ErrEdgeNotFound):
+		return nil, nil
+
+	case errors.Is(err, ErrZombieEdge):
+		return nil, nil
+
+	case err != nil:
+		return nil, err
+
+	default:
+		return []lnwire.GossipVersion{lnwire.GossipVersion1}, nil
+	}
+}
+
 // given public key is seen as a public node in the graph from the graph's
 // source node's point of view.
 func (c *KVStore) IsPublicNode(_ context.Context, v lnwire.GossipVersion,
