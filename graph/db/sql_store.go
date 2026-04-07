@@ -104,6 +104,7 @@ type SQLQueries interface {
 	GetChannelAndNodesBySCID(ctx context.Context, arg sqlc.GetChannelAndNodesBySCIDParams) (sqlc.GetChannelAndNodesBySCIDRow, error)
 	HighestSCID(ctx context.Context, version int16) ([]byte, error)
 	ListChannelsByNodeID(ctx context.Context, arg sqlc.ListChannelsByNodeIDParams) ([]sqlc.ListChannelsByNodeIDRow, error)
+	ListPreferredNodeChannelsPaginated(ctx context.Context, arg sqlc.ListPreferredNodeChannelsPaginatedParams) ([]sqlc.ListPreferredNodeChannelsPaginatedRow, error)
 	ListChannelsForNodeIDs(ctx context.Context, arg sqlc.ListChannelsForNodeIDsParams) ([]sqlc.ListChannelsForNodeIDsRow, error)
 	ListChannelsWithPoliciesPaginated(ctx context.Context, arg sqlc.ListChannelsWithPoliciesPaginatedParams) ([]sqlc.ListChannelsWithPoliciesPaginatedRow, error)
 	ListPreferredChannelsPaginated(ctx context.Context, arg sqlc.ListPreferredChannelsPaginatedParams) ([]sqlc.ListPreferredChannelsPaginatedRow, error)
@@ -1181,6 +1182,20 @@ func (s *SQLStore) ForEachNodeDirectedChannel(ctx context.Context,
 
 	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
 		return forEachNodeDirectedChannel(ctx, db, v, nodePub, cb)
+	}, reset)
+}
+
+// ForEachNodeDirectedChannelPreferHighest iterates through all channels of a
+// node across gossip versions, preferring v2 channels over v1 when both are
+// present for the same SCID.
+func (s *SQLStore) ForEachNodeDirectedChannelPreferHighest(
+	ctx context.Context, nodePub route.Vertex,
+	cb func(channel *DirectedChannel) error, reset func()) error {
+
+	return s.db.ExecTx(ctx, sqldb.ReadTxOpt(), func(db SQLQueries) error {
+		return forEachPreferredNodeDirectedChannel(
+			ctx, s.cfg.QueryCfg, db, nodePub, cb,
+		)
 	}, reset)
 }
 
@@ -4119,6 +4134,155 @@ func (s *sqlNodeTraverser) ForEachNodeDirectedChannel(
 		ctx, s.db, lnwire.GossipVersion1, nodePub, cb,
 	)
 }
+
+// optionalNodeID looks up a versioned node ID and returns -1 when that version
+// of the node is absent.
+func optionalNodeID(ctx context.Context, db SQLQueries, v lnwire.GossipVersion,
+	nodePub route.Vertex) (int64, error) {
+
+	id, err := db.GetNodeIDByPubKey(
+		ctx, sqlc.GetNodeIDByPubKeyParams{
+			Version: int16(v),
+			PubKey:  nodePub[:],
+		},
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return -1, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("unable to fetch node(%x): %w",
+			nodePub[:], err)
+	}
+
+	return id, nil
+}
+
+// forEachPreferredNodeDirectedChannel iterates through all channels of a given
+// node across gossip versions, preferring v2 channels over v1 when both
+// versions advertise the same SCID.
+func forEachPreferredNodeDirectedChannel(ctx context.Context,
+	cfg *sqldb.QueryConfig, db SQLQueries, nodePub route.Vertex,
+	cb func(channel *DirectedChannel) error) error {
+
+	// Load features for both versions so we can attach the right set
+	// to each directed channel based on its gossip version.
+	featuresByVersion := map[lnwire.GossipVersion]*lnwire.FeatureVector{
+		gossipV1: lnwire.EmptyFeatureVector(),
+		gossipV2: lnwire.EmptyFeatureVector(),
+	}
+
+	for _, v := range []lnwire.GossipVersion{gossipV1, gossipV2} {
+		nodeID, err := optionalNodeID(ctx, db, v, nodePub)
+		if err != nil {
+			return err
+		}
+		if nodeID == -1 {
+			continue
+		}
+
+		featuresByVersion[v], err = getNodeFeatures(
+			ctx, db, nodeID,
+		)
+		if err != nil {
+			return fmt.Errorf("unable to fetch v%d node "+
+				"features: %w", v, err)
+		}
+	}
+
+	toNodeCallback := func() route.Vertex {
+		return nodePub
+	}
+
+	pageQueryFunc := func(ctx context.Context, cursor []byte,
+		limit int32) ([]sqlc.ListPreferredNodeChannelsPaginatedRow,
+		error) {
+
+		return db.ListPreferredNodeChannelsPaginated(
+			ctx, sqlc.ListPreferredNodeChannelsPaginatedParams{
+				PubKey: nodePub[:],
+				Scid:   cursor,
+				Limit:  limit,
+			},
+		)
+	}
+
+	extractCursor := func(
+		row sqlc.ListPreferredNodeChannelsPaginatedRow) []byte {
+
+		return row.GraphChannel.Scid
+	}
+
+	processItem := func(_ context.Context,
+		row sqlc.ListPreferredNodeChannelsPaginatedRow) error {
+
+		node1, node2, err := buildNodeVertices(
+			row.Node1Pubkey, row.Node2Pubkey,
+		)
+		if err != nil {
+			return fmt.Errorf("unable to build node vertices: %w",
+				err)
+		}
+
+		edge := buildCacheableChannelInfo(
+			row.GraphChannel.Scid, row.GraphChannel.Capacity.Int64,
+			node1, node2,
+		)
+
+		dbPol1, dbPol2, err := extractChannelPolicies(row)
+		if err != nil {
+			return err
+		}
+
+		p1, p2, err := buildCachedChanPolicies(
+			dbPol1, dbPol2, edge.ChannelID, node1, node2,
+		)
+		if err != nil {
+			return err
+		}
+
+		outPolicy, inPolicy := p1, p2
+		if p1 != nil && node2 == nodePub {
+			outPolicy, inPolicy = p2, p1
+		} else if p2 != nil && node1 != nodePub {
+			outPolicy, inPolicy = p2, p1
+		}
+
+		var cachedInPolicy *models.CachedEdgePolicy
+		if inPolicy != nil {
+			cachedInPolicy = inPolicy
+			cachedInPolicy.ToNodePubKey = toNodeCallback
+			cachedInPolicy.ToNodeFeatures =
+				featuresByVersion[lnwire.GossipVersion(
+					row.GraphChannel.Version,
+				)]
+		}
+
+		directedChannel := &DirectedChannel{
+			ChannelID:    edge.ChannelID,
+			IsNode1:      nodePub == edge.NodeKey1Bytes,
+			OtherNode:    edge.NodeKey2Bytes,
+			Capacity:     edge.Capacity,
+			OutPolicySet: outPolicy != nil,
+			InPolicy:     cachedInPolicy,
+		}
+		if outPolicy != nil {
+			outPolicy.InboundFee.WhenSome(func(fee lnwire.Fee) {
+				directedChannel.InboundFee = fee
+			})
+		}
+
+		if nodePub == edge.NodeKey2Bytes {
+			directedChannel.OtherNode = edge.NodeKey1Bytes
+		}
+
+		return cb(directedChannel)
+	}
+
+	return sqldb.ExecutePaginatedQuery(
+		ctx, cfg, []byte{}, pageQueryFunc, extractCursor, processItem,
+	)
+}
+
 // FetchNodeFeatures returns the features of the given node. If the node is
 // unknown, assume no additional features are supported.
 //
