@@ -4198,6 +4198,85 @@ func (c *KVStore) FetchChannelEdgesByID(_ context.Context,
 	return edgeInfo, policy1, policy2, nil
 }
 
+// FetchChannelEdgesByIDPreferHighest looks up the channel by ID. The KV store
+// only supports gossip v1, so this simply delegates to the versioned fetch.
+//
+// NOTE: part of the Store interface.
+func (c *KVStore) FetchChannelEdgesByIDPreferHighest(ctx context.Context,
+	chanID uint64) (
+	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy, error) {
+
+	return c.FetchChannelEdgesByID(ctx, lnwire.GossipVersion1, chanID)
+}
+
+// FetchChannelEdgesByOutpointPreferHighest looks up the channel by funding
+// outpoint. The KV store only supports gossip v1, so this simply delegates to
+// the versioned fetch.
+//
+// NOTE: part of the Store interface.
+func (c *KVStore) FetchChannelEdgesByOutpointPreferHighest(
+	ctx context.Context, op *wire.OutPoint) (
+	*models.ChannelEdgeInfo, *models.ChannelEdgePolicy,
+	*models.ChannelEdgePolicy, error) {
+
+	return c.FetchChannelEdgesByOutpoint(
+		ctx, lnwire.GossipVersion1, op,
+	)
+}
+
+// GetVersionsBySCID returns the gossip versions for which a channel with the
+// given SCID exists. The KV store only supports gossip v1, so at most one
+// version is returned.
+//
+// NOTE: part of the Store interface.
+func (c *KVStore) GetVersionsBySCID(ctx context.Context,
+	chanID uint64) ([]lnwire.GossipVersion, error) {
+
+	_, _, _, err := c.FetchChannelEdgesByID(
+		ctx, lnwire.GossipVersion1, chanID,
+	)
+	switch {
+	case errors.Is(err, ErrEdgeNotFound):
+		return nil, nil
+
+	case errors.Is(err, ErrZombieEdge):
+		return nil, nil
+
+	case err != nil:
+		return nil, err
+
+	default:
+		return []lnwire.GossipVersion{lnwire.GossipVersion1}, nil
+	}
+}
+
+// GetVersionsByOutpoint returns the gossip versions for which a channel with
+// the given funding outpoint exists. The KV store only supports gossip v1, so
+// at most one version is returned.
+//
+// NOTE: part of the Store interface.
+func (c *KVStore) GetVersionsByOutpoint(ctx context.Context,
+	op *wire.OutPoint) ([]lnwire.GossipVersion, error) {
+
+	_, _, _, err := c.FetchChannelEdgesByOutpoint(
+		ctx, lnwire.GossipVersion1, op,
+	)
+	switch {
+	case errors.Is(err, ErrEdgeNotFound):
+		return nil, nil
+
+	case errors.Is(err, ErrZombieEdge):
+		return nil, nil
+
+	case err != nil:
+		return nil, err
+
+	default:
+		return []lnwire.GossipVersion{lnwire.GossipVersion1}, nil
+	}
+}
+
 // IsPublicNode is a helper method that determines whether the node with the
 // given public key is seen as a public node in the graph from the graph's
 // source node's point of view.
