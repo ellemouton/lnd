@@ -372,7 +372,7 @@ func TestPopulateDBs(t *testing.T) {
 			numPolicies = 0
 		)
 		err := graph.ForEachChannel(
-			ctx, lnwire.GossipVersion1,
+			ctx,
 			func(info *models.ChannelEdgeInfo, policy,
 				policy2 *models.ChannelEdgePolicy) error {
 
@@ -500,7 +500,7 @@ func syncGraph(t *testing.T, src, dest *ChannelGraph) {
 	}
 
 	var wgChans sync.WaitGroup
-	err = src.ForEachChannel(ctx, lnwire.GossipVersion1,
+	err = src.ForEachChannel(ctx,
 		func(info *models.ChannelEdgeInfo,
 			policy1, policy2 *models.ChannelEdgePolicy) error {
 
@@ -624,7 +624,7 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 			name: "ForEachNode",
 			fn: func(b testing.TB, store Store) {
 				err := store.ForEachNode(
-					ctx, lnwire.GossipVersion1,
+					ctx,
 					func(_ *models.Node) error {
 						// Increment the counter to
 						// ensure the callback is doing
@@ -640,12 +640,11 @@ func BenchmarkGraphReadMethods(b *testing.B) {
 		{
 			name: "ForEachChannel",
 			fn: func(b testing.TB, store Store) {
-				//nolint:ll
-				err := store.ForEachChannel(
-					ctx, lnwire.GossipVersion1,
+				err := store.ForEachChannel(ctx,
 					func(_ *models.ChannelEdgeInfo,
+						_,
 						_ *models.ChannelEdgePolicy,
-						_ *models.ChannelEdgePolicy) error {
+					) error {
 
 						// Increment the counter to
 						// ensure the callback is doing
@@ -996,7 +995,7 @@ func BenchmarkFindOptimalSQLQueryConfig(b *testing.B) {
 					)
 
 					err := store.ForEachNode(
-						ctx, lnwire.GossipVersion1,
+						ctx,
 						func(_ *models.Node) error {
 							numNodes++
 
@@ -1007,7 +1006,7 @@ func BenchmarkFindOptimalSQLQueryConfig(b *testing.B) {
 
 					//nolint:ll
 					err = store.ForEachChannel(
-						ctx, lnwire.GossipVersion1,
+						ctx,
 						func(_ *models.ChannelEdgeInfo,
 							_,
 							_ *models.ChannelEdgePolicy) error {
