@@ -131,6 +131,11 @@ var (
 			Version:       17,
 			SchemaVersion: 14,
 		},
+		{
+			Name:          "000015_graph_preferred_lookups",
+			Version:       18,
+			SchemaVersion: 15,
+		},
 	}, migrationAdditions...)
 
 	// ErrMigrationMismatch is returned when a migrated record does not
