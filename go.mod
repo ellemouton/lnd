@@ -227,3 +227,9 @@ replace google.golang.org/protobuf => github.com/lightninglabs/protobuf-go-hex-d
 go 1.25.5
 
 retract v0.0.2
+
+// TODO(elle): remove this replace and bump to the tagged btcwallet version
+// once https://github.com/btcsuite/btcwallet/pull/1264 merges. That PR adds
+// the SubmitPackage method on btcwallet's chain.Interface that
+// WalletKit.SubmitPackage depends on, which is not yet in a tagged release.
+replace github.com/btcsuite/btcwallet => github.com/ellemouton/btcwallet v0.11.1-0.20260615131242-f9cffbd39089
